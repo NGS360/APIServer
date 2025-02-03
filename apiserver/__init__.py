@@ -4,6 +4,7 @@ NGS360 REST API Server
 from flask import Flask
 
 from config import DefaultConfig
+from apiserver.api import BLUEPRINT_API
 
 def init_extensions(app):
     ''' Initialize Flask Extensions '''
@@ -13,6 +14,7 @@ def init_extensions(app):
 def register_blueprints(app):
     ''' Register blueprints '''
     app.logger.debug("Registering blueprints")
+    app.register_blueprint(BLUEPRINT_API)
     app.logger.debug("Registered blueprints")
 
 def create_app(config_class=DefaultConfig):
