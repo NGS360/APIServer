@@ -1,5 +1,5 @@
 # https://github.com/docker/awesome-compose/blob/master/flask/app/Dockerfile
-FROM --platform=$BUILDPLATFORM python:3.10-alpine AS builder
+FROM --platform=$BUILDPLATFORM python:3.13-alpine AS builder
 
 ENV INSTALLDIR=/app
 WORKDIR ${INSTALLDIR}
