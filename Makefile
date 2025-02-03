@@ -1,4 +1,5 @@
 build:
+	pylint apiserver/
 	docker build -t apiserver .
 
 run:
