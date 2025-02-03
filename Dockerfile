@@ -10,4 +10,4 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 COPY . ${INSTALLDIR}
 
 ENTRYPOINT ["python3"]
-CMD ["apiserver.py"]
+CMD ["application.py"]

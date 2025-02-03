@@ -1,5 +1,5 @@
 build:
-	pylint apiserver/
+	pylint --rcfile=.pylintrc *.py apiserver/
 	docker build -t apiserver .
 
 run:
