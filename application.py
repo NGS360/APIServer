@@ -1,5 +1,6 @@
 ''' NGS360 API Server '''
 from apiserver import create_app
+from apiserver import models
 
 app = create_app()
 
