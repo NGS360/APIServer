@@ -2,19 +2,33 @@
 NGS360 REST API Server
 '''
 from flask import Flask
+from flask_sqlalchemy import SQLAlchemy
+from flask_migrate import Migrate
 
 from config import DefaultConfig
 from apiserver.api import BLUEPRINT_API
 
+db = SQLAlchemy()
+migrate = Migrate()
+
 def init_extensions(app):
     ''' Initialize Flask Extensions '''
     app.logger.debug("Initializing extensions")
+
+    app.logger.debug("Initializing SQLAlchemy")
+    db.init_app(app)
+    app.logger.debug("Initializing Flask-Migrate")
+    migrate.init_app(app, db)
+
     app.logger.debug("Initialized extensions")
 
 def register_blueprints(app):
     ''' Register blueprints '''
     app.logger.debug("Registering blueprints")
+
+    app.logger.debug("Registering API blueprint")
     app.register_blueprint(BLUEPRINT_API)
+
     app.logger.debug("Registered blueprints")
 
 def create_app(config_class=DefaultConfig):
