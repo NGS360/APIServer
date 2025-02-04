@@ -1,6 +1,8 @@
 ''' NGS360 API Server '''
 from apiserver import create_app
-from apiserver import models
+
+# this is needed to register the models for flask-migrate / Alembic migrations
+from apiserver import models # pylint: disable=unused-import
 
 app = create_app()
 

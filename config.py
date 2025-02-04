@@ -10,5 +10,5 @@ class DefaultConfig:  # pylint: disable=too-few-public-methods
     DEBUG = os.environ.get("FLASK_DEBUG", False)
 
     SQLALCHEMY_DATABASE_URI = os.environ.get(
-        "DATABASE_URI", f"mysql+pymysql://username:password@localhost/flaskdb"
+        "DATABASE_URI", "mysql+pymysql://username:password@localhost/flaskdb"
     )
