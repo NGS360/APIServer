@@ -1,4 +1,4 @@
-"""empty message
+"""project table
 
 Revision ID: 02cc0a5ae0a1
 Revises: 
