@@ -13,4 +13,4 @@ class Project(db.Model):
     description: so.Mapped[str] = so.mapped_column(sa.String(256))
 
     def __repr__(self):
-        return '<Project {}>'.format(self.name)
+        return f'<Project {self.name}>'
