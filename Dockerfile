@@ -9,5 +9,5 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     pip3 install -r requirements.txt
 COPY . ${INSTALLDIR}
 
-ENTRYPOINT ["python3"]
-CMD ["application.py"]
+RUN chmod a+x boot.sh
+ENTRYPOINT [ "./boot.sh" ]
