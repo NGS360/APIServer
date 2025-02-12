@@ -9,6 +9,7 @@ from .projects import NS as projects_ns
 from .samples import NS as samples_ns
 from .files import NS as files_ns
 from .users import NS as users_ns
+from .workflows import NS as workflows_ns
 
 BLUEPRINT_API = Blueprint('api', __name__, url_prefix='/api')
 API = Api(BLUEPRINT_API,
@@ -21,3 +22,4 @@ API.add_namespace(projects_ns)
 API.add_namespace(samples_ns)
 API.add_namespace(files_ns)
 API.add_namespace(users_ns)
+API.add_namespace(workflows_ns)
