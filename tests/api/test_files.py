@@ -1,3 +1,4 @@
+''' Test cases for the files API '''
 import unittest
 
 class TestFiles(unittest.TestCase):
