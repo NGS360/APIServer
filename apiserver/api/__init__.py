@@ -7,6 +7,7 @@ from flask_restx import Api
 # Import the projects namespace
 from .projects import NS as projects_ns
 from .samples import NS as samples_ns
+from .files import NS as files_ns
 
 BLUEPRINT_API = Blueprint('api', __name__, url_prefix='/api')
 API = Api(BLUEPRINT_API,
@@ -17,3 +18,4 @@ API = Api(BLUEPRINT_API,
 
 API.add_namespace(projects_ns)
 API.add_namespace(samples_ns)
+API.add_namespace(files_ns)
