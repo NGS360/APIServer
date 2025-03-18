@@ -5,9 +5,9 @@ from flask import jsonify, request
 from flask_restx import Namespace, Resource
 
 projects = [
-    { 'id': 1, 'name': 'test project', 'assay': 'RNA-Seq' },
-    { 'id': 2, 'name': 'test 2 project', 'assay': 'RNA-Seq' },
-    { 'id': 3, 'name': 'test 3 project', 'assay': 'WES' },
+    { 'id': 1, 'name': 'test project'},
+    { 'id': 2, 'name': 'test 2 project'},
+    { 'id': 3, 'name': 'test 3 project'},
 ]
 
 NS = Namespace('projects', description='Projects API')

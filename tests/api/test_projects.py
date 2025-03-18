@@ -1,3 +1,6 @@
+'''
+Test /api/projects endpoint
+'''
 import unittest
 
 from config import TestConfig
@@ -10,6 +13,8 @@ class TestProjects(unittest.TestCase):
         self.app_context = self.app.app_context()
         self.app_context.push()
         db.create_all()
+        # Test Client
+        self.client = self.app.test_client()
 
     def tearDown(self):
         db.session.remove()
@@ -17,7 +22,15 @@ class TestProjects(unittest.TestCase):
         self.app_context.pop()
 
     def test_get_projects(self):
-        pass
+        ''' Test that we can get all projects '''
+        response = self.client.get('/api/projects')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json,
+            [
+                { 'id': 1, 'name': 'test project'},
+                { 'id': 2, 'name': 'test 2 project'},
+                { 'id': 3, 'name': 'test 3 project'},
+            ])
 
     def test_create_project(self):
         pass
