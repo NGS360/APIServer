@@ -10,7 +10,7 @@ from flask_migrate import Migrate
 from config import DefaultConfig
 from apiserver.api import BLUEPRINT_API
 
-db = SQLAlchemy()
+DB = SQLAlchemy()
 migrate = Migrate()
 
 # Configure (default) logging
@@ -35,9 +35,9 @@ def init_extensions(app):
     app.logger.debug("Initializing extensions")
 
     app.logger.debug("Initializing SQLAlchemy")
-    db.init_app(app)
+    DB.init_app(app)
     app.logger.debug("Initializing Flask-Migrate")
-    migrate.init_app(app, db)
+    migrate.init_app(app, DB)
 
     app.logger.debug("Initialized extensions")
 

@@ -4,7 +4,7 @@ from typing import Optional
 import sqlalchemy as sa
 import sqlalchemy.orm as so
 
-from apiserver import db
+from apiserver import DB as db
 class Project(db.Model):
     ''' Project '''
     __tablename__ = 'project'
