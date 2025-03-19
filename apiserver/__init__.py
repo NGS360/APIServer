@@ -8,7 +8,6 @@ from flask_sqlalchemy import SQLAlchemy
 from flask_migrate import Migrate
 
 from config import DefaultConfig
-from apiserver.api import BLUEPRINT_API
 
 DB = SQLAlchemy()
 migrate = Migrate()
@@ -43,6 +42,7 @@ def init_extensions(app):
 
 def register_blueprints(app):
     ''' Register blueprints '''
+    from apiserver.api import BLUEPRINT_API
     app.logger.debug("Registering blueprints")
 
     app.logger.debug("Registering API blueprint")
