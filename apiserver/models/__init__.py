@@ -4,8 +4,6 @@ from typing import Optional
 import sqlalchemy as sa
 import sqlalchemy.orm as so
 
-from marshmallow import Schema, fields
-
 from apiserver import DB as db
 class Project(db.Model):
     ''' Project '''
@@ -14,11 +12,9 @@ class Project(db.Model):
     name: so.Mapped[str] = so.mapped_column(sa.String(64), nullable=False)
     description: so.Mapped[Optional[str]] = so.mapped_column(sa.String(256))
 
+    def to_dict(self):
+        return {column.name: getattr(self, column.name) for column in self.__table__.columns}
+
     def __repr__(self):
         return f'<Project {self.name}>'
-
-class ProjectSchema(Schema):
-    id = fields.Integer(dump_only=True)
-    name = fields.String(required=True)
-    description = fields.String(required=False)
 
