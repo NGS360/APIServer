@@ -4,7 +4,7 @@ from typing import Optional
 import sqlalchemy as sa
 import sqlalchemy.orm as so
 
-from apiserver import DB as db
+from apiserver.extensions import DB as db
 class Project(db.Model):
     ''' Project '''
     __tablename__ = 'project'
@@ -14,3 +14,11 @@ class Project(db.Model):
 
     def __repr__(self):
         return f'<Project {self.name}>'
+
+    def to_dict(self):
+        ''' Convert to dictionary '''
+        return {
+            'id': self.id,
+            'name': self.name,
+            'description': self.description,
+        }
