@@ -2,8 +2,8 @@
 from flask import current_app
 from sqlalchemy.sql import text
 
-from apiserver import create_app, DB
-
+from apiserver import create_app
+from apiserver.extensions import DB
 # this is needed to register the models for flask-migrate / Alembic migrations
 from apiserver import models # pylint: disable=unused-import
 

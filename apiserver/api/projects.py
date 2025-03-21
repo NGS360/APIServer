@@ -1,14 +1,11 @@
 '''
 Projects API
 '''
-from flask import jsonify, request
+from flask import request
 from flask_restx import Namespace, Resource
 
-projects = [
-    { 'id': 1, 'name': 'test project'},
-    { 'id': 2, 'name': 'test 2 project'},
-    { 'id': 3, 'name': 'test 3 project'},
-]
+from apiserver.models import Project
+from apiserver.extensions import DB as db
 
 NS = Namespace('projects', description='Projects API')
 
@@ -18,9 +15,13 @@ class Projects(Resource):
 
     def get(self):
         ''' GET /projects '''
-        return jsonify(projects)
+        projects = Project.query.all()
+        return [project.to_dict() for project in projects]
 
     def post(self):
         ''' POST /projects '''
-        projects.append(request.get_json())
-        return '', 204
+        data = request.get_json()
+        project = Project(**data)
+        db.session.add(project)
+        db.session.commit()
+        return project.to_dict(), 201

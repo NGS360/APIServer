@@ -4,14 +4,11 @@ NGS360 REST API Server
 from logging.config import dictConfig
 
 from flask import Flask
-from flask_sqlalchemy import SQLAlchemy
-from flask_migrate import Migrate
 
 from config import DefaultConfig
-from apiserver.api import BLUEPRINT_API
+from apiserver.extensions import init_extensions
 
-DB = SQLAlchemy()
-migrate = Migrate()
+from apiserver.api import BLUEPRINT_API
 
 # Configure (default) logging
 dictConfig({
@@ -29,17 +26,6 @@ dictConfig({
         'handlers': ['wsgi']
     }
 })
-
-def init_extensions(app):
-    ''' Initialize Flask Extensions '''
-    app.logger.debug("Initializing extensions")
-
-    app.logger.debug("Initializing SQLAlchemy")
-    DB.init_app(app)
-    app.logger.debug("Initializing Flask-Migrate")
-    migrate.init_app(app, DB)
-
-    app.logger.debug("Initialized extensions")
 
 def register_blueprints(app):
     ''' Register blueprints '''
