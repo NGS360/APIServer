@@ -1,11 +1,11 @@
 '''
 Projects API
 '''
-from flask import jsonify, request, current_app
+from flask import request
 from flask_restx import Namespace, Resource
 
-from apiserver import DB as db
 from apiserver.models import Project
+from apiserver.extensions import DB as db
 
 NS = Namespace('projects', description='Projects API')
 
@@ -16,10 +16,12 @@ class Projects(Resource):
     def get(self):
         ''' GET /projects '''
         projects = db.session.query(Project).all()
-        current_app.logger.debug(projects)
         return [project.to_dict() for project in projects]
 
     def post(self):
         ''' POST /projects '''
-        return '', 201
-
+        data = request.get_json()
+        project = Project(**data)
+        db.session.add(project)
+        db.session.commit()
+        return project.to_dict(), 201

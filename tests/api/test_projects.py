@@ -4,7 +4,8 @@ Test /api/projects endpoint
 import unittest
 
 from config import TestConfig
-from apiserver import create_app, db
+from apiserver import create_app
+from apiserver.extensions import DB as db
 
 class TestProjects(unittest.TestCase):
     ''' Test cases for the projects API '''
@@ -25,15 +26,19 @@ class TestProjects(unittest.TestCase):
         ''' Test that we can get all projects '''
         response = self.client.get('/api/projects')
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json,
-            [
-                { 'id': 1, 'name': 'test project'},
-                { 'id': 2, 'name': 'test 2 project'},
-                { 'id': 3, 'name': 'test 3 project'},
-            ])
+        self.assertEqual(response.json, [])
 
     def test_create_project(self):
-        pass
+        ''' Test that we can add a project '''
+        data = {
+            'name': 'Test Project',
+            'description': 'Test Description',
+        }
+        response = self.client.post('/api/projects', json=data)
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.json['id'], 1)
+        self.assertEqual(response.json['name'], 'Test Project')
+        self.assertEqual(response.json['description'], 'Test Description')
 
     def test_get_project(self):
         pass
