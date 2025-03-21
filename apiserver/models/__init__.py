@@ -12,9 +12,8 @@ class Project(db.Model):
     name: so.Mapped[str] = so.mapped_column(sa.String(64), nullable=False)
     description: so.Mapped[Optional[str]] = so.mapped_column(sa.String(256))
 
-    def to_dict(self):
+    def to_dict(self): # pylint: disable=missing-function-docstring
         return {column.name: getattr(self, column.name) for column in self.__table__.columns}
 
     def __repr__(self):
         return f'<Project {self.name}>'
-

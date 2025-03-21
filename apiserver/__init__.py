@@ -29,7 +29,6 @@ dictConfig({
 
 def register_blueprints(app):
     ''' Register blueprints '''
-    from apiserver.api import BLUEPRINT_API
     app.logger.debug("Registering blueprints")
 
     app.logger.debug("Registering API blueprint")
