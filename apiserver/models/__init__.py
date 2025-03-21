@@ -1,4 +1,10 @@
-''' Database Model '''
+''' 
+Database Model
+
+Project table is the main table that stores the project name.
+ProjectAttribute table stores the key-value attributes for each project.
+Project model has a one-to-many relationship with ProjectAttribute model.
+'''
 # pylint: disable=too-few-public-methods
 from typing import Optional
 from sqlalchemy import ForeignKey
@@ -31,7 +37,7 @@ class ProjectAttribute(db.Model):
     id: so.Mapped[int] = so.mapped_column(primary_key=True)
     project_id: so.Mapped[int] = so.mapped_column(ForeignKey('project.id'), nullable=False)
     key: so.Mapped[str] = so.mapped_column(sa.String(64), nullable=False)
-    value: so.Mapped[str] = so.mapped_column(sa.String(256), nullable=False)
+    value: so.Mapped[str] = so.mapped_column(sa.String(1024), nullable=False)
 
     project = so.relationship('Project', back_populates='attributes')
 
