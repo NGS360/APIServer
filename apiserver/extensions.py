@@ -1,3 +1,6 @@
+'''
+Initialize Flask (3rd party) Extensions
+'''
 from flask_sqlalchemy import SQLAlchemy
 from flask_migrate import Migrate
 
