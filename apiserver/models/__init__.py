@@ -9,16 +9,11 @@ class Project(db.Model):
     ''' Project '''
     __tablename__ = 'project'
     id: so.Mapped[int] = so.mapped_column(primary_key=True)
-    name: so.Mapped[str] = so.mapped_column(sa.String(64), index=True, unique=True)
+    name: so.Mapped[str] = so.mapped_column(sa.String(64), nullable=False)
     description: so.Mapped[Optional[str]] = so.mapped_column(sa.String(256))
+
+    def to_dict(self): # pylint: disable=missing-function-docstring
+        return {column.name: getattr(self, column.name) for column in self.__table__.columns}
 
     def __repr__(self):
         return f'<Project {self.name}>'
-
-    def to_dict(self):
-        ''' Convert to dictionary '''
-        return {
-            'id': self.id,
-            'name': self.name,
-            'description': self.description,
-        }

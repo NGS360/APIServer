@@ -15,7 +15,7 @@ class Projects(Resource):
 
     def get(self):
         ''' GET /projects '''
-        projects = Project.query.all()
+        projects = db.session.query(Project).all()
         return [project.to_dict() for project in projects]
 
     def post(self):
