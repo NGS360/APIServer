@@ -28,7 +28,11 @@ class Project(db.Model):
 
     @staticmethod
     def generate_id():
-        ''' Generate a unique project_id '''
+        '''
+        Generate a unique project_id.
+        This ID could be anything as long as its unique and human-readable.
+        In this case, we generate an ID with the format P-YYYYMMDD-NNNN
+        '''
         current_date = datetime.now(timezone('US/Eastern'))
         project_prefix = f"P-{current_date.year:02d}{current_date.month:02d}{current_date.day:02d}-"
 
