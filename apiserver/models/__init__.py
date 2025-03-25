@@ -6,7 +6,9 @@ ProjectAttribute table stores the key-value attributes for each project.
 Project model has a one-to-many relationship with ProjectAttribute model.
 '''
 # pylint: disable=too-few-public-methods
-from typing import Optional
+from datetime import datetime
+from pytz import timezone
+
 from sqlalchemy import ForeignKey
 import sqlalchemy as sa
 import sqlalchemy.orm as so
@@ -16,10 +18,31 @@ class Project(db.Model):
     ''' Project '''
     __tablename__ = 'project'
     id: so.Mapped[int] = so.mapped_column(primary_key=True)
+
+    project_id: so.Mapped[str] = so.mapped_column(
+        sa.String(64), nullable=False, index=True, unique=True)
     name: so.Mapped[str] = so.mapped_column(sa.String(64), nullable=False)
 
     attributes = so.relationship(
         'ProjectAttribute', back_populates='project', cascade="all, delete-orphan")
+
+    @staticmethod
+    def generate_id():
+        ''' Generate a unique project_id '''
+        current_date = datetime.now(timezone('US/Eastern'))
+        project_prefix = f"P-{current_date.year:02d}{current_date.month:02d}{current_date.day:02d}-"
+
+        # Find last project with today's date
+        project = db.session.query(Project).filter(
+            Project.project_id.like(f'{project_prefix}%')).order_by(
+                Project.project_id.desc()).first()
+        if not project:
+            project_id = f'{project_prefix}0001'
+        else:
+            project_id = int(project.project_id.split('-')) + 1
+            project_id = f'{project_prefix}{project_id:04d}'
+
+        return project_id
 
     def to_dict(self):
         ''' Convert to dictionary including attributes '''

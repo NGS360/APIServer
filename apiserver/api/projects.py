@@ -7,7 +7,7 @@ from flask_restx import Namespace, Resource
 from sqlalchemy.orm import joinedload
 from sqlalchemy.exc import IntegrityError
 
-from apiserver.models import Project, ProjectAttribute
+from apiserver.models import Project as ProjectModel, ProjectAttribute
 from apiserver.extensions import DB as db
 
 NS = Namespace('projects', description='Projects API')
@@ -18,7 +18,7 @@ class Projects(Resource):
 
     def get(self):
         ''' GET /projects '''
-        projects = db.session.query(Project).options(joinedload(Project.attributes)).all()
+        projects = db.session.query(ProjectModel).options(joinedload(ProjectModel.attributes)).all()
         return [project.to_dict() for project in projects]
 
     def post(self):
@@ -29,7 +29,8 @@ class Projects(Resource):
         attributes_data = data.pop('attributes', {})
 
         # Create project instance
-        project = Project(**data)
+        project = ProjectModel(**data)
+        project.project_id = ProjectModel.generate_id()
 
         # Add attributes if provided
         for key, value in attributes_data.items():
@@ -46,3 +47,14 @@ class Projects(Resource):
             return {'message': 'Error creating project.'}, 400
 
         return project.to_dict(), 201
+
+@NS.route('/<string:project_id>')
+class Project(Resource):
+    ''' Projects API '''
+    def get(self, project_id):
+        ''' GET /projects/<project_id> '''
+        project = db.session.query(ProjectModel).filter(
+            ProjectModel.project_id == project_id).first()
+        if project:
+            return project.to_dict()
+        return {'message': 'Project not found.'}, 404

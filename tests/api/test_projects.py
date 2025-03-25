@@ -32,6 +32,7 @@ class TestProjects(unittest.TestCase):
 
         # Add a project
         new_project = Project(name="AI Research")
+        new_project.project_id = Project.generate_id()
         new_project.attributes.append(ProjectAttribute(key="description", value="Exploring AI techniques"))
         new_project.attributes.append(ProjectAttribute(key="Department", value="R&D"))
         new_project.attributes.append(ProjectAttribute(key="Priority", value="High"))
@@ -62,6 +63,7 @@ class TestProjects(unittest.TestCase):
         self.assertEqual(response.status_code, 201)
         # Validate project details
         self.assertEqual(response.json['id'], 1)
+        self.assertIn('project_id', response.json)
         self.assertEqual(response.json['name'], 'Test Project')
         # Validate attributes
         self.assertIn('attributes', response.json)
@@ -78,10 +80,34 @@ class TestProjects(unittest.TestCase):
         self.assertEqual(project.attributes[1].value, 'High')
 
     def test_get_project(self):
-        pass
+        # Test when project not found and db is empty
+        response = self.client.get('/api/projects/Test_Project')
+        self.assertEqual(response.status_code, 404)
+
+        # Add project to db
+        new_project = Project(name="Test Project")
+        project_id = Project.generate_id()
+        new_project.project_id = project_id
+        db.session.add(new_project)
+        db.session.commit()
+
+        # Test when project not found and db is not empty
+        response = self.client.get('/api/projects/Test_Project')
+        self.assertEqual(response.status_code, 404)
+        response = self.client.get('/api/projects/test_project')
+        self.assertEqual(response.status_code, 404)
+
+        # Test when project is found
+        response = self.client.get(f'/api/projects/{project_id}')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json['name'], 'Test Project') 
+        self.assertEqual(response.json['project_id'], project_id)
 
     def test_update_project(self):
         pass
 
     def test_delete_project(self):
         pass
+
+if __name__ == '__main__':
+    unittest.main()
