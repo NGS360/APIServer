@@ -94,9 +94,9 @@ class SampleAttribute(db.Model):
     value: so.Mapped[str] = so.mapped_column(sa.String(1024), nullable=False)
 
     sample = so.relationship('Sample', back_populates='attributes')
-    
+
     def to_dict(self): # pylint: disable=missing-function-docstring
         return {self.key: self.value}
-    
+
     def __repr__(self):
         return f'<SampleAttribute {self.key}={self.value}>'
