@@ -27,7 +27,7 @@ class Project(db.Model):
         'ProjectAttribute', back_populates='project', cascade="all, delete-orphan")
 
     @staticmethod
-    def generate_id():
+    def generate_project_id():
         '''
         Generate a unique project_id.
         This ID could be anything as long as its unique and human-readable.
@@ -84,6 +84,13 @@ class Sample(db.Model):
 
     attributes = so.relationship(
         'SampleAttribute', back_populates='sample', cascade="all, delete-orphan")
+
+    def to_dict(self):
+        ''' Convert to dictionary including attributes '''
+        data = {column.name: getattr(self, column.name) for column in self.__table__.columns}
+        # Include dynamic attributes
+        data['attributes'] = {attr.key: attr.value for attr in self.attributes}
+        return data
 
 class SampleAttribute(db.Model):
     ''' Key-Value attributes for Sample '''

@@ -32,7 +32,7 @@ class TestProjects(unittest.TestCase):
 
         # Add a project
         new_project = Project(name="AI Research")
-        new_project.project_id = Project.generate_id()
+        new_project.project_id = Project.generate_project_id()
         new_project.attributes.append(
             ProjectAttribute(key="description", value="Exploring AI techniques")
         )
@@ -89,7 +89,7 @@ class TestProjects(unittest.TestCase):
 
         # Add project to db
         new_project = Project(name="Test Project")
-        project_id = Project.generate_id()
+        project_id = Project.generate_project_id()
         new_project.project_id = project_id
         db.session.add(new_project)
         db.session.commit()
