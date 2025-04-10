@@ -27,7 +27,7 @@ class Project(db.Model):
         'ProjectAttribute', back_populates='project', cascade="all, delete-orphan")
 
     @staticmethod
-    def generate_id():
+    def generate_project_id():
         '''
         Generate a unique project_id.
         This ID could be anything as long as its unique and human-readable.
@@ -73,3 +73,37 @@ class ProjectAttribute(db.Model):
 
     def __repr__(self):
         return f'<ProjectAttribute {self.key}={self.value}>'
+
+class Sample(db.Model):
+    ''' Sample '''
+    __tablename__ = 'sample'
+    id: so.Mapped[int] = so.mapped_column(primary_key=True)
+
+    project_id: so.Mapped[int] = so.mapped_column(ForeignKey('project.id'), nullable=False)
+    sample_id: so.Mapped[str] = so.mapped_column(sa.String(64), nullable=False)
+
+    attributes = so.relationship(
+        'SampleAttribute', back_populates='sample', cascade="all, delete-orphan")
+
+    def to_dict(self):
+        ''' Convert to dictionary including attributes '''
+        data = {column.name: getattr(self, column.name) for column in self.__table__.columns}
+        # Include dynamic attributes
+        data['attributes'] = {attr.key: attr.value for attr in self.attributes}
+        return data
+
+class SampleAttribute(db.Model):
+    ''' Key-Value attributes for Sample '''
+    __tablename__ = 'sample_attribute'
+    id: so.Mapped[int] = so.mapped_column(primary_key=True)
+    sample_id: so.Mapped[int] = so.mapped_column(ForeignKey('sample.id'), nullable=False)
+    key: so.Mapped[str] = so.mapped_column(sa.String(64), nullable=False)
+    value: so.Mapped[str] = so.mapped_column(sa.String(1024), nullable=False)
+
+    sample = so.relationship('Sample', back_populates='attributes')
+
+    def to_dict(self): # pylint: disable=missing-function-docstring
+        return {self.key: self.value}
+
+    def __repr__(self):
+        return f'<SampleAttribute {self.key}={self.value}>'
