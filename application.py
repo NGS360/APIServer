@@ -1,5 +1,6 @@
 ''' NGS360 API Server '''
 from flask import current_app
+from dotenv import load_dotenv
 from sqlalchemy.sql import text
 
 from apiserver import create_app
@@ -7,6 +8,7 @@ from apiserver.extensions import DB
 # this is needed to register the models for flask-migrate / Alembic migrations
 from apiserver import models # pylint: disable=unused-import
 
+load_dotenv()
 app = create_app()
 
 @app.route('/healthcheck')
