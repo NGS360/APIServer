@@ -18,6 +18,9 @@
   {
     "ParameterKey": "notification_endpoint",
     "ParameterValue": "mg-ngs360-admin@company.com"
+  },
+  {
+    "ParameterKey": "sslcertificatearn",
+    "ParameterValue": "aws:acm:us-east-1:123456789:certificate/ssl-certificate-id"
   }
-
 ]
