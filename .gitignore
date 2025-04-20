@@ -1,6 +1,11 @@
 .env
+env/
 
 **/__pycache__/
 .coverage
 
 cloudformation/*/
+cloudformation/cloudformation-db-parameters.json
+cloudformation/cloudformation-parameters.json
+cloudformation/cloudformation-tags.txt
+
