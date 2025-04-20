@@ -15,17 +15,33 @@ Parameters:
   Subnet2:
     Type: AWS::EC2::Subnet::Id
     Description: The second subnet ID for the DB subnet group
+  DBSecurityGroup:
+    Type: String
+    Description: Security group to assign to the DB instance
 
 Resources:
   DBSecret:
     Type: AWS::SecretsManager::Secret
     Properties:
-      Description: 'Password MariaDB database access'
+      Description: 'NGS360 database access'
       GenerateSecretString:
-        SecretStringTemplate:  '{"username": "customchangeme"}'
+        SecretStringTemplate:  '{"username": "ngs360dbadmin"}'
         GenerateStringKey: 'password'
         PasswordLength: 16
         ExcludeCharacters: '"@/\'
+
+  DBSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: !Sub "${AWS::StackName} DB Subnet Group"
+      SubnetIds:
+        - !Ref Subnet1
+        - !Ref Subnet2
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-db-subnet-group"
+        - Key: Environment
+          Value: !Ref Environment
 
   DBInstance:
     Type: AWS::RDS::DBInstance
@@ -43,36 +59,9 @@ Resources:
       DBSubnetGroupName: !Ref DBSubnetGroup
       MultiAZ: false
       BackupRetentionPeriod: 7
-      DeletionPolicy: Snapshot
       Tags:
         - Key: Name
           Value: !Sub "${AWS::StackName}-db-instance"
         - Key: Environment
           Value: !Ref Environment
-  DBSubnetGroup:
-    Type: AWS::RDS::DBSubnetGroup
-    Properties:
-      DBSubnetGroupDescription: !Sub "${AWS::StackName} DB Subnet Group"
-      SubnetIds:
-        - !Ref Subnet1
-        - !Ref Subnet2
-      Tags:
-        - Key: Name
-          Value: !Sub "${AWS::StackName}-db-subnet-group"
-        - Key: Environment
-          Value: !Ref Environment
-  DBSecurityGroup:
-    Type: AWS::EC2::SecurityGroup
-    Properties:
-      GroupDescription: !Sub "${AWS::StackName} DB Security Group"
-      VpcId: !Ref VPCId
-      SecurityGroupIngress:
-        - IpProtocol: tcp
-          FromPort: '3306'
-          ToPort: '3306'
-          SourceSecurityGroupId: !Ref APISecurityGroup
-      Tags:
-        - Key: Name
-          Value: !Sub "${AWS::StackName}-db-security-group"
-        - Key: Environment
-          Value: !Ref Environment 
+
