@@ -2,10 +2,6 @@ AWSTemplateFormatVersion: '2010-09-09'
 Description: NGS360 API Server Database
 
 Parameters:
-  Environment:
-    Type: String
-    Default: dev
-    Description: The environment for the stack (e.g., dev, prod)
   VPCId:
     Type: AWS::EC2::VPC::Id
     Description: The ID of the VPC where the resources will be created
@@ -40,8 +36,6 @@ Resources:
       Tags:
         - Key: Name
           Value: !Sub "${AWS::StackName}-db-subnet-group"
-        - Key: Environment
-          Value: !Ref Environment
 
   DBInstance:
     Type: AWS::RDS::DBInstance
@@ -62,5 +56,3 @@ Resources:
       Tags:
         - Key: Name
           Value: !Sub "${AWS::StackName}-db-instance"
-        - Key: Environment
-          Value: !Ref Environment
