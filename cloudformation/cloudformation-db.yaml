@@ -45,7 +45,7 @@ Resources:
       EngineVersion: '8.0'
       AllocatedStorage: '20'
       StorageType: gp2
-      DBName: !Join ['-', ['ngs360', !Ref Environment]]
+      DBName: 'ngs360'
       MasterUsername: !Join ['', ['{{resolve:secretsmanager:', !Ref DBSecret, ':SecretString:username}}' ]]
       MasterUserPassword: !Join ['', ['{{resolve:secretsmanager:', !Ref DBSecret, ':SecretString:password}}' ]]
       VPCSecurityGroups:
