@@ -15,16 +15,18 @@ Parameters:
   Subnet2:
     Type: AWS::EC2::Subnet::Id
     Description: The second subnet ID for the DB subnet group
-  DBUsername:
-    Type: String
-    NoEcho: true
-    Description: The master username for the database
-  DBPassword:
-    Type: String
-    NoEcho: true
-    Description: The master password for the database
 
 Resources:
+  DBSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Description: 'Password MariaDB database access'
+      GenerateSecretString:
+        SecretStringTemplate:  '{"username": "customchangeme"}'
+        GenerateStringKey: 'password'
+        PasswordLength: 16
+        ExcludeCharacters: '"@/\'
+
   DBInstance:
     Type: AWS::RDS::DBInstance
     Properties:
@@ -34,8 +36,8 @@ Resources:
       AllocatedStorage: '20'
       StorageType: gp2
       DBName: ngs360
-      MasterUsername: !Ref DBUsername
-      MasterUserPassword: !Ref DBPassword
+      MasterUsername: !Join ['', ['{{resolve:secretsmanager:', !Ref DBSecret, ':SecretString:username}}' ]]
+      MasterUserPassword: !Join ['', ['{{resolve:secretsmanager:', !Ref DBSecret, ':SecretString:password}}' ]]
       VPCSecurityGroups:
         - !Ref DBSecurityGroup
       DBSubnetGroupName: !Ref DBSubnetGroup
