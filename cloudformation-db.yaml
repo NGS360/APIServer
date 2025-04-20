@@ -65,3 +65,10 @@ Resources:
         - Key: Environment
           Value: !Ref Environment
 
+Outputs:
+  DBInstanceEndpoint:
+    Description: The endpoint of the RDS DB instance
+    Value: !Join [DBInstance.Endpoint.Address, ':', DBInstance.Endpoint.Port]
+  DBSecretArn:
+    Description: The ARN of the Secrets Manager secret
+    Value: !Ref DBSecret
