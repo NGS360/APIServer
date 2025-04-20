@@ -1,0 +1,76 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: NGS360 API Server Database
+
+Parameters:
+  Environment:
+    Type: String
+    Default: dev
+    Description: The environment for the stack (e.g., dev, prod)
+  VPCId:
+    Type: AWS::EC2::VPC::Id
+    Description: The ID of the VPC where the resources will be created
+  Subnet1:
+    Type: AWS::EC2::Subnet::Id
+    Description: The first subnet ID for the DB subnet group
+  Subnet2:
+    Type: AWS::EC2::Subnet::Id
+    Description: The second subnet ID for the DB subnet group
+  DBUsername:
+    Type: String
+    NoEcho: true
+    Description: The master username for the database
+  DBPassword:
+    Type: String
+    NoEcho: true
+    Description: The master password for the database
+
+Resources:
+  DBInstance:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      DBInstanceClass: db.t3.medium
+      Engine: mysql
+      EngineVersion: '8.0'
+      AllocatedStorage: '20'
+      StorageType: gp2
+      DBName: ngs360
+      MasterUsername: !Ref DBUsername
+      MasterUserPassword: !Ref DBPassword
+      VPCSecurityGroups:
+        - !Ref DBSecurityGroup
+      DBSubnetGroupName: !Ref DBSubnetGroup
+      MultiAZ: false
+      BackupRetentionPeriod: 7
+      DeletionPolicy: Snapshot
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-db-instance"
+        - Key: Environment
+          Value: !Ref Environment
+  DBSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: !Sub "${AWS::StackName} DB Subnet Group"
+      SubnetIds:
+        - !Ref Subnet1
+        - !Ref Subnet2
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-db-subnet-group"
+        - Key: Environment
+          Value: !Ref Environment
+  DBSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub "${AWS::StackName} DB Security Group"
+      VpcId: !Ref VPCId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: '3306'
+          ToPort: '3306'
+          SourceSecurityGroupId: !Ref APISecurityGroup
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-db-security-group"
+        - Key: Environment
+          Value: !Ref Environment 
