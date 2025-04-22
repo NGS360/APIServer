@@ -22,3 +22,9 @@ Using Cloudformatin, you can deploy this app to ElasticBeanStalk.  There are two
 2. cloudformation.yaml
 
 We maintain two stacks such that if the Beanstalk stack is accidentally deleted, the database will live on.
+
+Once ElasticBeanStalk CLI is set up and application/environment are established, use
+
+eb deploy
+
+
