@@ -27,6 +27,7 @@ dictConfig({
     }
 })
 
+
 def register_blueprints(app):
     ''' Register blueprints '''
     app.logger.debug("Registering blueprints")
@@ -36,7 +37,9 @@ def register_blueprints(app):
 
     app.logger.debug("Registered blueprints")
 
+
 def print_environment_variables(app):
+    ''' Print environment variables to the log'''
     def mask_db_uri(uri):
         """Mask username and password in database URIs"""
         if not (isinstance(uri, str) and '://' in uri and '@' in uri):
@@ -50,22 +53,24 @@ def print_environment_variables(app):
             if '@' not in rest:
                 return uri
 
-            auth_host, remaining = rest.split('@', 1)
+            _, remaining = rest.split('@', 1)
 
             # Return masked URI
             return f"{protocol}://****:****@{remaining}"
-        except Exception:
+        except Exception: # pylint: disable=broad-except
             # If any parsing error occurs, return the original URI
             return uri
 
     for key, value in app.config.items():
         # Case 1: Key contains sensitive words - mask completely
-        if any(sensitive_word in key.upper() for sensitive_word in ['PASSWORD', 'SECRET', 'KEY', 'TOKEN', 'CREDENTIAL']):
+        if any(sensitive_word in key.upper() for sensitive_word in
+               ['PASSWORD', 'SECRET', 'KEY', 'TOKEN', 'CREDENTIAL']):
             app.logger.info('%s: %s', key, '********')
             continue
 
         # Case 2: Database URI - mask username and password
-        if isinstance(value, str) and ('DATABASE_URI' in key.upper() or 'DB_URI' in key.upper() or 'CONNECTION' in key.upper()):
+        if isinstance(value, str) and ('DATABASE_URI' in
+                key.upper() or 'DB_URI' in key.upper() or 'CONNECTION' in key.upper()):
             masked_value = mask_db_uri(value)
             app.logger.info('%s: %s', key, masked_value)
             continue
