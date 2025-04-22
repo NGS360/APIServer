@@ -9,9 +9,9 @@ from apiserver.extensions import DB
 from apiserver import models # pylint: disable=unused-import
 
 load_dotenv()
-app = create_app()
+application = create_app()
 
-@app.route('/healthcheck')
+@application.route('/healthcheck')
 def healthcheck():
     ''' Healthcheck endpoint '''
     try:
@@ -29,4 +29,6 @@ def healthcheck():
 
 if __name__ == '__main__':
     # host should be 0.0.0.0 when running in a Docker container
-    app.run(host='0.0.0.0')
+    #application.run(host='0.0.0.0')
+    # but not when run in ElasticBeanStalk
+    application.run()
