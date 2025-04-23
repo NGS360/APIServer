@@ -22,7 +22,7 @@ class Project(db.Model):
 
     project_id: so.Mapped[str] = so.mapped_column(
         sa.String(64), nullable=False, index=True, unique=True)
-    name: so.Mapped[str] = so.mapped_column(sa.String(64), nullable=False)
+    name: so.Mapped[str] = so.mapped_column(sa.String(2048), nullable=False)
 
     attributes = so.relationship(
         'ProjectAttribute', back_populates='project', cascade="all, delete-orphan")
