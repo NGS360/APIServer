@@ -28,7 +28,19 @@ class TestProjects(unittest.TestCase):
         # Test No projects
         response = self.client.get('/api/projects')
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json, [])
+        self.assertEqual(
+            response.json,
+            {'projects': [],
+             'pagination': {
+                    'total_items': 0,
+                    'total_pages': 0,
+                    'current_page': 1,
+                    'per_page': 20,
+                    'has_next': False,
+                    'has_prev': False
+                }
+            }
+        )
 
         # Add a project
         new_project = Project(name="AI Research")
@@ -44,11 +56,11 @@ class TestProjects(unittest.TestCase):
         # Test with projects
         response = self.client.get('/api/projects')
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(len(response.json), 1)
-        self.assertEqual(response.json[0]['name'], 'AI Research')
-        self.assertEqual(response.json[0]['attributes']['description'], 'Exploring AI techniques')
-        self.assertEqual(response.json[0]['attributes']['Department'], 'R&D')
-        self.assertEqual(response.json[0]['attributes']['Priority'], 'High')
+        self.assertEqual(len(response.json['projects']), 1)
+        self.assertEqual(response.json['projects'][0]['name'], 'AI Research')
+        self.assertEqual(response.json['projects'][0]['attributes']['description'], 'Exploring AI techniques')
+        self.assertEqual(response.json['projects'][0]['attributes']['Department'], 'R&D')
+        self.assertEqual(response.json['projects'][0]['attributes']['Priority'], 'High')
 
     def test_create_project(self):
         ''' Test that we can add a project '''
