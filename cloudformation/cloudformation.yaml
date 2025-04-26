@@ -171,6 +171,23 @@ Resources:
           OptionName: Notification Endpoint
           Value: !Ref notificationendpoint
 
+        # Managed Updates
+
+        - Namespace: aws:elasticbeanstalk:managedactions
+          OptionName: ManagedActionsEnabled
+          Value: true
+        - Namespace: aws:elasticbeanstalk:managedactions
+          OptionName: PreferredStartTime
+          Value: "Sun:09:00"
+
+        - Namespace: aws:elasticbeanstalk:managedactions:platformupdate
+          OptionName: UpdateLevel
+          Value: patch
+
+        - Namespace: aws:elasticbeanstalk:managedactions:platformupdate
+          OptionName: InstanceRefreshEnabled
+          Value: true
+
   ### Environments ####
 
   dev:
