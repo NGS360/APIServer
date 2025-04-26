@@ -1,8 +1,8 @@
 '''
 Projects API
 '''
-from flask import request, current_app
-from flask_restx import Namespace, Resource
+from flask import request, current_app, url_for
+from flask_restx import Namespace, Resource, reqparse
 
 from sqlalchemy.orm import joinedload
 from sqlalchemy.exc import IntegrityError
@@ -17,9 +17,63 @@ class Projects(Resource):
     ''' Projects API '''
 
     def get(self):
-        ''' GET /projects '''
-        projects = db.session.query(ProjectModel).options(joinedload(ProjectModel.attributes)).all()
-        return [project.to_dict() for project in projects]
+        ''' GET /projects
+
+        Returns a paginated list of projects.
+
+        Query Parameters:
+            page (int): Page number (1-indexed, default: 1)
+            per_page (int): Number of items per page (default: 20)
+            sort_by (str): Field to sort by (default: 'id')
+            sort_order (str): Sort order ('asc' or 'desc', default: 'asc')
+        '''
+        # Parse pagination parameters
+        parser = reqparse.RequestParser()
+        parser.add_argument('page', type=int, default=1, help='Page number (1-indexed)')
+        parser.add_argument('per_page', type=int, default=20, help='Number of items per page')
+        parser.add_argument('sort_by', type=str, default='id', help='Field to sort by')
+        parser.add_argument('sort_order', type=str, default='asc', choices=('asc', 'desc'),
+                           help='Sort order (asc or desc)')
+        args = parser.parse_args()
+
+        # Validate pagination parameters
+        page = max(1, args['page'])  # Ensure page is at least 1
+        per_page = min(max(1, args['per_page']), 100)  # Ensure per_page is between 1 and 100
+
+        # Determine sort field and direction
+        sort_field = getattr(ProjectModel, args['sort_by'], ProjectModel.id)
+        sort_direction = sort_field.asc() if args['sort_order'] == 'asc' else sort_field.desc()
+
+        try:
+            # Get total count for pagination metadata
+            total_count = db.session.query(ProjectModel).count()
+
+            # Get paginated projects with eager loading of attributes
+            query = db.session.query(ProjectModel).options(joinedload(ProjectModel.attributes))
+            query = query.order_by(sort_direction)
+            projects = query.limit(per_page).offset((page - 1) * per_page).all()
+
+            # Calculate pagination metadata
+            total_pages = (total_count + per_page - 1) // per_page  # Ceiling division
+
+            # Prepare response with pagination metadata
+            response = {
+                'projects': [project.to_dict() for project in projects],
+                'pagination': {
+                    'total_items': total_count,
+                    'total_pages': total_pages,
+                    'current_page': page,
+                    'per_page': per_page,
+                    'has_next': page < total_pages,
+                    'has_prev': page > 1
+                }
+            }
+
+            return response
+
+        except Exception as error:
+            current_app.logger.error('Error retrieving projects: %s', error)
+            return {'message': 'Error retrieving projects.'}, 500
 
     def post(self):
         ''' POST /projects '''
