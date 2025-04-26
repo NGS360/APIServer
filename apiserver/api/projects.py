@@ -1,7 +1,7 @@
 '''
 Projects API
 '''
-from flask import request, current_app, url_for
+from flask import request, current_app
 from flask_restx import Namespace, Resource, reqparse
 
 from sqlalchemy.orm import joinedload
@@ -71,7 +71,7 @@ class Projects(Resource):
 
             return response
 
-        except Exception as error:
+        except Exception as error: # pylint: disable=broad-exception-caught
             current_app.logger.error('Error retrieving projects: %s', error)
             return {'message': 'Error retrieving projects.'}, 500
 
