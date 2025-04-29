@@ -44,7 +44,8 @@ Resources:
       Engine: mysql
       EngineVersion: '8.0'
       AllocatedStorage: '20'
-      StorageType: gp2
+      StorageType: gp3
+      StorageEncrypted: True
       DBName: 'ngs360'
       MasterUsername: !Join ['', ['{{resolve:secretsmanager:', !Ref DBSecret, ':SecretString:username}}' ]]
       MasterUserPassword: !Join ['', ['{{resolve:secretsmanager:', !Ref DBSecret, ':SecretString:password}}' ]]
