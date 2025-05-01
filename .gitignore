@@ -13,7 +13,6 @@ cloudformation/cloudformation-tags.txt
 deploy*.sh
 
 # Elastic Beanstalk Files
-.ebextensions
 .ebignore
 .elasticbeanstalk/*
 !.elasticbeanstalk/*.cfg.yml
