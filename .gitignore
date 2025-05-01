@@ -9,8 +9,12 @@ cloudformation/cloudformation-db-parameters.json
 cloudformation/cloudformation-parameters.json
 cloudformation/cloudformation-tags.txt
 
+# Deployment scripts
+deploy*.sh
 
 # Elastic Beanstalk Files
+.ebextensions
+.ebignore
 .elasticbeanstalk/*
 !.elasticbeanstalk/*.cfg.yml
 !.elasticbeanstalk/*.global.yml
