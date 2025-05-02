@@ -44,7 +44,8 @@ class Project(db.Model):
         if not project:
             project_id = f'{project_prefix}0001'
         else:
-            project_id = int(project.project_id.split('-')) + 1
+            # Extract the numeric part (after the second hyphen) and increment it
+            project_id = int(project.project_id.split('-')[2]) + 1
             project_id = f'{project_prefix}{project_id:04d}'
 
         return project_id
