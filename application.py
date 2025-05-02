@@ -1,5 +1,6 @@
 ''' NGS360 API Server '''
-# Environment variables are loaded from .env file first, 
+# pylint: disable=wrong-import-position
+# Environment variables are loaded from .env file first,
 # before DefaultConfig is loaded or else DefaultConfig will not see
 # the environment variables set in .env file.
 from dotenv import load_dotenv
@@ -12,6 +13,7 @@ from apiserver import create_app
 from apiserver.extensions import DB
 # this is needed to register the models for flask-migrate / Alembic migrations
 from apiserver import models # pylint: disable=unused-import
+# pylint: enable=wrong-import-position
 
 application = create_app()
 
