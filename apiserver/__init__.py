@@ -85,6 +85,7 @@ def print_environment_variables(app):
 def setup_logging(app):
     ''' Setup logging '''
     if not app.debug:
+        app.logger.info("Setting up logging")
         # If FLASK_LOG_FILE and FLASK_LOG_LEVEL env vars defined, set up logging.
         log_file = app.config.get('FLASK_LOG_FILE')
         log_level = app.config.get('FLASK_LOG_LEVEL')
@@ -100,10 +101,10 @@ def setup_logging(app):
         # Send emails on critical errors
         mail_server = app.config.get('MAIL_SERVER')
         if mail_server:
+            app.logger.info("Setting up email logger")
+            auth = None
             mail_username = app.config.get('MAIL_USERNAME')
             mail_password = app.config.get('MAIL_PASSWORD')
-            auth = None
-            app.logger.info("Setting up email logger")
             if mail_username and mail_password:
                 auth = (mail_username, mail_password)
 
@@ -118,8 +119,6 @@ def setup_logging(app):
                 credentials=auth, secure=secure)
             mail_handler.setLevel(logging.ERROR)
             app.logger.addHandler(mail_handler)
-
-    app.logger.setLevel(logging.DEBUG)
 
 def create_app(config_class=DefaultConfig):
     ''' Application Factory '''
