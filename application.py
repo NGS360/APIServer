@@ -1,10 +1,13 @@
 ''' NGS360 API Server '''
+import os
+
 # pylint: disable=wrong-import-position
 # Environment variables are loaded from .env file first,
 # before DefaultConfig is loaded or else DefaultConfig will not see
 # the environment variables set in .env file.
 from dotenv import load_dotenv
 load_dotenv()
+# pylint: enable=wrong-import-position
 
 from flask import current_app
 from sqlalchemy.sql import text
@@ -13,7 +16,6 @@ from apiserver import create_app
 from apiserver.extensions import DB
 # this is needed to register the models for flask-migrate / Alembic migrations
 from apiserver import models # pylint: disable=unused-import
-# pylint: enable=wrong-import-position
 
 application = create_app()
 
@@ -35,6 +37,8 @@ def healthcheck():
 
 if __name__ == '__main__':
     # host should be 0.0.0.0 when running in a Docker container
-    #application.run(host='0.0.0.0')
     # but not when run in ElasticBeanStalk
-    application.run()
+    host = os.environ.get('FLASK_RUN_HOST', '127.0.0.1')
+    port = os.environ.get('FLASK_RUN_PORT', '5000')
+    application.logger.info('Starting %s on %s:%s', application.config['APP_NAME'], host, port)
+    application.run(host=host, port=int(port))

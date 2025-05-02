@@ -6,6 +6,7 @@ services:
       - "5000:5000"
     environment:
       - FLASK_APP=application.py
+      - FLASK_RUN_HOST=0.0.0.0
       - FLASK_ENV=development
       - DATABASE_URI=mysql+pymysql://user:password@db/flaskdb
     depends_on:
