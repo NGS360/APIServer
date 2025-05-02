@@ -6,6 +6,7 @@
 from dotenv import load_dotenv
 load_dotenv()
 
+import os
 from flask import current_app
 from sqlalchemy.sql import text
 
@@ -35,6 +36,8 @@ def healthcheck():
 
 if __name__ == '__main__':
     # host should be 0.0.0.0 when running in a Docker container
-    #application.run(host='0.0.0.0')
     # but not when run in ElasticBeanStalk
-    application.run()
+    host = os.environ.get('FLASK_RUN_HOST', '127.0.0.1')
+    port = os.environ.get('FLASK_RUN_PORT', '5000')
+    application.logger.info('Starting %s on %s:%s', application.config['APP_NAME'], host, port)
+    application.run(host=host, port=int(port))
