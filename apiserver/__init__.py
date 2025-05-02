@@ -12,26 +12,6 @@ from apiserver.extensions import init_extensions
 
 from apiserver.api import BLUEPRINT_API
 
-# Configure (default) logging
-dictConfig({
-    'version': 1,
-    'formatters': {'default': {
-        'format': '[%(asctime)s] %(levelname)s in %(module)s: %(message)s',
-    }},
-    'handlers': {
-        'wsgi': {
-            'class': 'logging.StreamHandler',
-            'stream': 'ext://flask.logging.wsgi_errors_stream',
-            'formatter': 'default'
-        }
-    },
-    'root': {
-        'level': 'INFO',
-        'handlers': ['wsgi']
-    }
-})
-
-
 def register_blueprints(app):
     ''' Register blueprints '''
     app.logger.debug("Registering blueprints")
