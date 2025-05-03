@@ -12,6 +12,16 @@ services:
     depends_on:
       - db
 
+  ga4ghwesservice:
+    build: ../GA4GH-WES-API-Service
+    container_name: ga4gh_service
+    ports:
+      - "5001:5000"
+    environment:
+      - FLASK_APP=application.py
+      - FLASK_RUN_HOST=0.0.0.0
+      - FLASK_ENV=development
+      - DATABASE_URI=mysql+pymysql://user:password@db/ga4gh_wes_db
   db:
     image: mysql:8.0
     container_name: mysql_db
