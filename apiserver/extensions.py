@@ -18,6 +18,6 @@ def init_extensions(app):
     app.logger.debug("Initializing Flask-Migrate")
     MIGRATE.init_app(app, DB)
     app.logger.debug("Initializing Flask-CORS")
-    CORES.init_app(app)
+    CORS.init_app(app)
     
     app.logger.debug("Initialized extensions")
