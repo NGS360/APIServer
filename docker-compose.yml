@@ -1,0 +1,81 @@
+services:
+  apiserver:
+    container_name: apiserver
+    networks:
+      - ngs360-network
+    build:
+      context: .
+      dockerfile: Dockerfile
+    depends_on:
+      db:
+        condition: service_healthy
+        restart: true
+    ports:
+      - "3000:5000"
+    environment:
+      - client_origin=http://localhost:8085
+      # Database variables
+      - DB_SERVER=db
+      - DB_PORT=3306
+      - DB_PASSWORD=password
+      - DB_USER=user
+      - DB_NAME=flaskdb
+    volumes:
+      - ./:/app
+
+  db:
+    image: mysql:8.0
+    container_name: mysql_db
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpassword
+      MYSQL_DATABASE: flaskdb
+      MYSQL_USER: user
+      MYSQL_PASSWORD: password
+    networks:
+      - ngs360-network
+    ports:
+      - "3306:3306"
+    volumes:
+      - db_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  phpmyadmin:
+    image: phpmyadmin/phpmyadmin
+    container_name: phpmyadmin
+    restart: always
+    networks:
+      - ngs360-network
+    ports:
+      - "8080:80"
+    environment:
+      - PMA_HOST=db
+      - MYSQL_ROOT_PASSWORD=rootpassword
+    depends_on:
+      - db
+
+volumes:
+  db_data:
+    # Uncomment the following lines to use a specific location on the host for the volume
+    # If not specified, Docker will manage the volume location automatically
+    #driver: local
+    #driver_opts:
+    #  type: none
+    #  device: ./mysql-data
+    #  o: bind
+  opensearch_data:
+    # Uncomment the following lines to use a specific location on the host for the volume
+    # If not specified, Docker will manage the volume location automatically
+    #driver: local
+    #driver_opts:
+    #  type: none
+    #  device: ./opensearch-data
+    #  o: bind
+
+networks:
+  ngs360-network:
+    external: true
