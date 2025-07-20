@@ -114,9 +114,9 @@ To install this for development, use:
 uv sync
 ```
 
-This will create a Python virtual environment in .venv (by default) using the version of python listed in .python-version, and install the dependencies listed in pyproject.toml
+This will create a Python virtual environment in .venv (by default) using the version of python listed in .python-version, and install the dependencies listed in pyproject.toml.
 
-Then to run the service, execute
+Make sure necessary environment variables are defined or present in .env, as need in core/config.py, then run the service:
 
 ```{bash}
 source .venv/bin/activate
