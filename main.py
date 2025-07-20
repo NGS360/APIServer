@@ -5,7 +5,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.routing import APIRoute
 from core.lifespan import lifespan
-from core.config import settings
+from core.config import get_settings
 
 # Customize route id's
 # Helpful for creating sensible names in the client
@@ -20,7 +20,7 @@ app = FastAPI(
 
 # CORS settings to allow client-server communication
 # Set with env variable
-origins = [settings.client_origin]
+origins = [get_settings().client_origin]
 
 app.add_middleware(
     CORSMiddleware,

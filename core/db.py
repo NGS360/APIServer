@@ -2,11 +2,11 @@
 Database configuration
 """
 from sqlmodel import SQLModel, create_engine, Session
-from core.config import settings
+from core.config import get_settings
 
 # Connect to db
 # Set echo=True to see SQL statements in logs
-engine = create_engine(str(settings.SQLALCHEMY_DATABASE_URI), echo=False)
+engine = create_engine(str(get_settings().SQLALCHEMY_DATABASE_URI), echo=False)
 
 # Create db and tables
 def create_db_and_tables():

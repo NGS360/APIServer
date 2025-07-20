@@ -2,6 +2,7 @@
 Define application startup and shutdown procedures
 """
 from fastapi import FastAPI
+from core.config import get_settings
 from core.init_db import main as init_db
 from core.db import drop_tables
 from core.logger import logger
@@ -11,6 +12,7 @@ async def lifespan(app: FastAPI):
   # Startup
   # Initialize database (if not done already)
   try:
+    logger.info("Connecting to database, %s", get_settings().SQLALCHEMY_DATABASE_URI_MASKED_PASSWORD)
     init_db()
     logger.info("Database initialized successfully")
   except Exception as e:

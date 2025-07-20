@@ -101,3 +101,24 @@ This FastAPI implementation represents several improvements over traditional app
 6. Clear separation of data models, routes, and business logic
 
 The application is designed to be modular and extensible, with new features easily added by creating additional modules in the `api/` directory and including their routers in `main.py`.
+
+## Install
+
+This application uses pyproject.toml and uv as the package manager.
+
+### Development
+
+To install this for development, use:
+
+```{bash}
+uv sync
+```
+
+This will create a Python virtual environment in .venv (by default) using the version of python listed in .python-version, and install the dependencies listed in pyproject.toml
+
+Then to run the service, execute
+
+```{bash}
+source .venv/bin/activate
+fastapi dev main.py
+```
