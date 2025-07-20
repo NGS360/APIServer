@@ -12,3 +12,92 @@ It uses FastAPI for building the API and SQLAlchemy for database interactions.
   - `models.py`: Defines the data models used in the API, including Pydantic models for request and response validation.
   - `routes.py`: Contains the FastAPI routes for handling HTTP requests related to the feature.
   - `services.py`: Contains the business logic and database interactions for the feature.
+
+```{text}
+APIServer/
+├── main.py                  # Application entry point
+├── core/                    # Core functionality 
+│   ├── config.py            # Configuration settings
+│   ├── db.py                # Database connection
+│   ├── deps.py              # Dependency injection
+│   ├── init_db.py           # Database initialization
+│   └── lifespan.py          # Application lifecycle
+└── api/                     # API endpoints by feature
+    └── project/             # Project feature module
+        ├── models.py        # Data models
+        ├── routes.py        # API routes/endpoints
+        └── services.py      # Business logic
+```
+
+## Key Components
+
+### FastAPI Setup (main.py)
+
+- The entry point creates the FastAPI application
+- Sets up CORS middleware for client communication
+- Includes routers for different API features
+- Configures the application lifespan for startup/shutdown tasks
+
+### Database Integration (core/)
+
+- Uses SQLModel (SQLAlchemy + Pydantic) for database operations
+- Connects to a MySQL database (configured via environment variables)
+- Database initialization happens on application startup
+- Clean database session management through dependency injection
+
+### Project API (api/project/)
+
+- **Models**:
+  - `Project` - Main project entity with UUID primary key and human-readable `project_id`
+  - `ProjectAttribute` - Key-value attributes associated with projects
+  - Separate models for input (`ProjectCreate`) and output (`ProjectPublic`, `ProjectsPublic`)
+
+- **Endpoints**:
+  - `POST /project/create_project` - Create a new project with optional attributes
+  - `GET /project/read_projects` - List projects with pagination and sorting
+  - `GET /project/{project_id}` - Get a single project by its project_id
+
+- **Services**:
+  - Project ID generation with format `P-YYYYMMDD-NNNN`
+  - Project creation with attribute mapping
+  - Paginated project retrieval
+  - Single project lookup by project_id
+
+## Modern FastAPI Patterns Used
+
+1. **Dependency Injection**
+   - Database sessions injected into endpoints using `Depends`
+   - Type aliases used for cleaner parameter annotations (`SessionDep`)
+
+2. **Pydantic Models**
+   - Clear separation between database models, input models, and output models
+   - Validation built into models
+
+3. **Application Lifecycle Management**
+   - `lifespan` context manager for startup/shutdown procedures
+   - Database initialized on startup and dropped on shutdown
+
+4. **SQLModel Integration**
+   - Modern ORM combining SQLAlchemy and Pydantic
+   - Relationship management between projects and attributes
+
+5. **Environment-based Configuration**
+   - Settings loaded from environment variables
+   - Pydantic-based configuration with computed values
+
+6. **Error Handling**
+   - Proper HTTP exceptions with status codes and descriptive messages
+   - Validation of business rules (e.g., unique attribute keys)
+
+## Improvements Over Traditional REST APIs
+
+This FastAPI implementation represents several improvements over traditional approaches:
+
+1. Strong typing throughout the codebase
+2. Automatic API documentation generation
+3. Dependency injection system for cleaner endpoint handlers
+4. Modern async support (though not heavily used in this codebase)
+5. Integrated validation via Pydantic models
+6. Clear separation of data models, routes, and business logic
+
+The application is designed to be modular and extensible, with new features easily added by creating additional modules in the `api/` directory and including their routers in `main.py`.
