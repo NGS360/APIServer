@@ -38,7 +38,7 @@ def root():
 # REST routers
 # Add each api/feature folder here
 from api.project.routes import router as project_router
-app.include_router(project_router, prefix="/project")
+app.include_router(project_router, prefix="/projects")
 
 if __name__ == '__main__':
     # For debugging purposes

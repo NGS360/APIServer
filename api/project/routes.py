@@ -17,7 +17,7 @@ import api.project.services as services
 router = APIRouter()
 
 @router.post(
-  "/create_project",
+  "",
   response_model=ProjectPublic,
   tags=["Project Endpoints"]
 )
@@ -28,11 +28,11 @@ def create_project(session: SessionDep, project_in: ProjectCreate) -> Project:
   return services.create_project(session=session, project_in=project_in)
 
 @router.get(
-  "/read_projects",
+  "",
   response_model=ProjectsPublic,
   tags=["Project Endpoints"]
 )
-def read_projects(
+def get_projects(
   session: SessionDep, 
   page: int = Query(1, description="Page number (1-indexed)"), 
   per_page: int = Query(20, description="Number of items per page"),
@@ -42,7 +42,7 @@ def read_projects(
   """
   Returns a paginated list of projects.
   """
-  return services.read_projects(
+  return services.get_projects(
     session=session, 
     page=page,
     per_page=per_page,

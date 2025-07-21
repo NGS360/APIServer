@@ -88,7 +88,7 @@ def create_project(*, session: Session, project_in: ProjectCreate) -> Project:
    logger.info(f"Created project {project.project_id}")
    return project
 
-def read_projects(
+def get_projects(
       *, 
       session: Session, 
       page: PositiveInt, 
