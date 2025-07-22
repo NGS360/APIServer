@@ -64,8 +64,8 @@ def create_default_projects(*, session: SessionDep):
 
 def main():
   create_db_and_tables()
-  with Session(engine) as session:
-    create_default_projects(session=session)
+  #with Session(engine) as session:
+    #create_default_projects(session=session)
 
 
 

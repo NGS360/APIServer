@@ -2,7 +2,7 @@
 Routes/endpoints for the Project API
 """
 from typing import Literal
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, status
 from core.deps import (
   SessionDep
 )
@@ -14,12 +14,13 @@ from api.project.models import (
 )
 import api.project.services as services
 
-router = APIRouter()
+router = APIRouter(prefix="/projects", tags=["Project Endpoints"])
 
 @router.post(
   "",
   response_model=ProjectPublic,
-  tags=["Project Endpoints"]
+  tags=["Project Endpoints"],
+  status_code=status.HTTP_201_CREATED
 )
 def create_project(session: SessionDep, project_in: ProjectCreate) -> Project:
   """
