@@ -122,3 +122,12 @@ Make sure necessary environment variables are defined or present in .env, as nee
 source .venv/bin/activate
 fastapi dev main.py
 ```
+
+### Unit Tests
+
+```{bash}
+uv pip install httpx pytest pvtest-cov
+pytest -xvs --cov
+coverage html
+open htmlcov/index.html
+```
