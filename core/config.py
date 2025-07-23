@@ -42,5 +42,5 @@ def get_settings() -> Settings:
 
 if __name__ == '__main__':
     # To use in other modules
-    # from core.config import settings
+    # from core.config import get_settings
     print(get_settings().SQLALCHEMY_DATABASE_URI)
