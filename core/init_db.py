@@ -5,6 +5,7 @@ with default (or test) data.
 from sqlmodel import Session
 from core.db import create_db_and_tables, engine
 from core.deps import SessionDep
+from core.logger import logger
 import api.project.services as project_services
 import api.project.models
 
@@ -63,10 +64,11 @@ def create_default_projects(*, session: SessionDep):
 
 
 def main():
+  logger.info("Create tables...")
   create_db_and_tables()
-  with Session(engine) as session:
-    create_default_projects(session=session)
-
+  # logger.info("Creating default projects")
+  #with Session(engine) as session:
+  #  create_default_projects(session=session)
 
 
 if __name__ == "__main__":
