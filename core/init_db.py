@@ -7,7 +7,6 @@ from core.db import init_db, engine
 from core.deps import SessionDep
 from core.logger import logger
 import api.project.services as project_services
-import api.project.models
 
 from api.project.models import (
   ProjectCreate,
