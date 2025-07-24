@@ -3,7 +3,9 @@ Initialize the database and populate it
 with default (or test) data.
 """
 from sqlmodel import Session
-from core.db import create_db_and_tables, engine
+from alembic.config import Config
+from alembic import command
+from core.db import engine
 from core.deps import SessionDep
 from core.logger import logger
 import api.project.services as project_services
@@ -62,13 +64,17 @@ def create_default_projects(*, session: SessionDep):
     project_in=project3
   )
 
-
 def main():
-  logger.info("Create tables...")
-  create_db_and_tables()
+  logger.info("Running database migrations...")
+  alembic_cfg = Config("alembic.ini")
+  command.upgrade(alembic_cfg, "head")
+  logger.info("Migrations completed successfully.")
+  
+  # Uncomment to create default projects
   # logger.info("Creating default projects")
-  #with Session(engine) as session:
-  #  create_default_projects(session=session)
+  # with Session(engine) as session:
+  #   create_default_projects(session=session)
+
 
 
 if __name__ == "__main__":
