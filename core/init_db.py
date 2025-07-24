@@ -3,7 +3,7 @@ Initialize the database and populate it
 with default (or test) data.
 """
 from sqlmodel import Session
-from core.db import create_db_and_tables, engine
+from core.db import init_db, engine
 from core.deps import SessionDep
 from core.logger import logger
 import api.project.services as project_services
@@ -64,11 +64,10 @@ def create_default_projects(*, session: SessionDep):
 
 
 def main():
-  logger.info("Create tables...")
-  create_db_and_tables()
-  # logger.info("Creating default projects")
-  #with Session(engine) as session:
-  #  create_default_projects(session=session)
+  init_db()
+  logger.info("Creating default projects")
+  with Session(engine) as session:
+    create_default_projects(session=session)
 
 
 if __name__ == "__main__":
