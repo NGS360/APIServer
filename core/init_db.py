@@ -63,6 +63,7 @@ def create_default_projects(*, session: SessionDep):
 
 
 def main():
+  logger.info("Create tables...")
   init_db()
   logger.info("Creating default projects")
   with Session(engine) as session:
