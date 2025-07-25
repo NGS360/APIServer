@@ -9,7 +9,7 @@ from core.config import get_settings
 engine = create_engine(str(get_settings().SQLALCHEMY_DATABASE_URI), echo=False)
 
 # Create db and tables
-def create_db_and_tables():
+def init_db():
     SQLModel.metadata.create_all(engine)
 
 # Drop tables
