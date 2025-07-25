@@ -1,5 +1,6 @@
 export COMPOSE_BAKE=true
 
+# Docker commands
 build:
 	docker compose build
 
@@ -14,6 +15,10 @@ down-rm:
 
 drop-db:
 	docker volume rm apiserver_db_data
+
+# Run FASTAPI in dev mode
+run-dev:
+	fastapi dev main.py
 
 # Alembic migration commands
 migrate:
