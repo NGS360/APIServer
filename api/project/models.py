@@ -4,6 +4,7 @@ Models for the Project API
 import uuid
 from sqlmodel import SQLModel, Field, Relationship, UniqueConstraint
 from typing import List
+from pydantic import ConfigDict
 
 class Attribute (SQLModel):
   key: str | None
@@ -26,9 +27,10 @@ class Project(SQLModel, table=True):
     back_populates="projects"
   )
 
-  class Config:
-    from_attributes=True # will eagerly load relationships (i.e., attributes)
-
+  #class Config:
+  #  from_attributes=True # will eagerly load relationships (i.e., attributes)
+  model_config = ConfigDict(from_attributes=True)
+  
 class ProjectCreate(SQLModel):
   name: str
   attributes: List[Attribute] | None = None
