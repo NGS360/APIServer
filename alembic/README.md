@@ -1,7 +1,6 @@
 # Database Migrations with Alembic
 
-This directory contains database migration scripts based on https://testdriven.io/blog/fastapi-sqlmodel/.
-The migrations are managed using Alembic, which is an industry-standard migration tool for SQLAlchemy-based applications.
+This directory contains database migration scripts.  The migrations are managed using Alembic, which is an industry-standard migration tool for SQLAlchemy-based applications.
 
 ## Migration Structure
 
@@ -94,3 +93,4 @@ When creating new models:
 
 - [Alembic Documentation](https://alembic.sqlalchemy.org/en/latest/)
 - [SQLModel Documentation](https://sqlmodel.tiangolo.com/)
+- [Blog post describing integration](https://testdriven.io/blog/fastapi-sqlmodel/)
