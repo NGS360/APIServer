@@ -63,6 +63,7 @@ To test the initial migration:
    - `DB_NAME`
 
 2. Run the migration:
+
    ```bash
    make migrate
    ```
