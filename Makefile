@@ -23,7 +23,7 @@ run-dev:
 # Unit Tests
 test:
 	pytest -xsv --cov
-	
+
 # Alembic migration commands
 migrate:
 	alembic upgrade head
