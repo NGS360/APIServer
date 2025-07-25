@@ -20,6 +20,10 @@ drop-db:
 run-dev:
 	fastapi dev main.py
 
+# Unit Tests
+test:
+	pytest -xsv --cov
+	
 # Alembic migration commands
 migrate:
 	alembic upgrade head
