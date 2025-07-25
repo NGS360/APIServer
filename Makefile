@@ -14,3 +14,21 @@ down-rm:
 
 drop-db:
 	docker volume rm apiserver_db_data
+
+# Alembic migration commands
+migrate:
+	alembic upgrade head
+
+migrate-new:
+	alembic revision --autogenerate -m "$(message)"
+
+migrate-rollback:
+	alembic downgrade -1
+
+# Create a new empty migration file
+migrate-empty:
+	alembic revision -m "$(message)"
+
+# Show current revision
+migrate-current:
+	alembic current
