@@ -21,7 +21,7 @@ class ProjectAttribute(SQLModel, table=True):
 class Project(SQLModel, table=True):
   id: uuid.UUID | None = Field(default_factory=uuid.uuid4, primary_key=True)
   project_id: str = Field(unique=True)
-  name: str | None
+  name: str | None = Field(max_length=2048)
   attributes: List[ProjectAttribute] | None = Relationship(
     back_populates="projects"
   )
