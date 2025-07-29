@@ -34,13 +34,13 @@ jobs:
        
       - name: Verify Python and pytest installation
         run: |
-          which python3
+          which python
           which pytest
-          python3 --version
+          python --version
           pytest --version
 
       - name: Run tests
-        run: python3 -m pytest -xsv --cov
+        run: python -m pytest -xsv --cov
 
       - name: Store coverage files
         uses: actions/upload-artifact@v4
