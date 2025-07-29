@@ -32,12 +32,12 @@ jobs:
       - name: Sync dependencies (including dev) from lockfile
         run: uv sync --locked
        
-      - name: Verify Python and pytest installation
-        run: |
-          which python
-          which pytest
-          python --version
-          pytest --version
+      #- name: Verify Python and pytest installation
+      #  run: |
+      #    which python
+      #    which pytest
+      #    python --version
+      #    pytest --version
 
       - name: Run tests
         run: python -m pytest -xsv --cov
