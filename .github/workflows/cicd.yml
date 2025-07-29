@@ -33,7 +33,7 @@ jobs:
         run: uv sync --locked
 
       - name: Install pytest and pytest-cov
-        run: uv pip install pytest pytest-cov
+        run: uv pip install pytest
         
       #- name: Verify Python and pytest installation
       #  run: |
