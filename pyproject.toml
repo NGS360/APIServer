@@ -17,3 +17,9 @@ dependencies = [
     "sqlmodel>=0.0.24",
     "uvicorn>=0.35.0",
 ]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-cov"
+]
