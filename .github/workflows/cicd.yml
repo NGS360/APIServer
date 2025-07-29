@@ -33,14 +33,16 @@ jobs:
         run: uv sync --locked
 
       - name: Install pytest and pytest-cov
-        run: uv pip install pytest
+        run: |
+          uv pip install pytest
+          which pytest
+          pytest --version
         
       #- name: Verify Python and pytest installation
       #  run: |
       #    which python3
       #    which pytest
       #    python3 --version
-      #    pytest --version
 
       - name: Run tests
         run: python3 -m pytest -xsv --cov
