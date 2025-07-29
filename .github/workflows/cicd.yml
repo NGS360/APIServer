@@ -17,20 +17,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Read Python version from .python-version
-        id: read_python
-        run: echo "version=$(cat .python-version)" >> $GITHUB_OUTPUT
-
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: ${{ steps.read_python.outputs.version }}
+          python-version: "3.13"
 
-      - name: Install uv
-        run: pip install uv
-
-      - name: Sync dependencies (including dev) from lockfile
-        run: uv sync --locked
+      - name: Install dependencies
+        run: |
+          pip install pytest
 
       - name: Run tests
         run: pytest -xsv --cov
