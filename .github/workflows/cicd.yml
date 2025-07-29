@@ -34,19 +34,16 @@ jobs:
 
       - name: Install pytest and pytest-cov
         run: uv pip install pytest pytest-cov
-
-      - name: Add Python bin directory to PATH
-        run: echo "$HOME/.local/bin" >> $GITHUB_PATH
         
       - name: Verify Python and pytest installation
         run: |
           which python
           which pytest
-          python --version
+          python3 --version
           pytest --version
 
       - name: Run tests
-        run: python -m pytest -xsv --cov
+        run: python3 -m pytest -xsv --cov
 
       - name: Store coverage files
         uses: actions/upload-artifact@v4
