@@ -30,9 +30,10 @@ jobs:
         run: pip install uv
 
       - name: Sync dependencies (including dev) from lockfile
-        run: |
-          uv sync --locked
-          uv pip install pytest
+        run: uv sync --locked
+
+      - name: Install pytest
+        run: uv pip install pytest
 
       - name: Run tests
         run: pytest -xsv --cov
