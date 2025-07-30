@@ -4,6 +4,7 @@ Add constants, secrets, env variables here
 """
 from functools import lru_cache
 import os
+from urllib.parse import urlparse, urlunparse, quote, unquote
 from pydantic import computed_field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -11,11 +12,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     # Computed or constant values
     client_origin: str | None = os.getenv("client_origin")
-    DB_SERVER: str | None = os.getenv("DB_SERVER")
-    DB_PORT: str | None = os.getenv("DB_PORT")
-    DB_PASSWORD: str | None = os.getenv("DB_PASSWORD")
-    DB_USER: str | None = os.getenv("DB_USER")
-    DB_NAME: str | None = os.getenv("DB_NAME")
+
+    SQLALCHEMY_DATABASE_URI: str | None = os.getenv("SQLALCHEMY_DATABASE_URI", "sqlite://")
 
     # Read environment variables from .env file, if it exists
     model_config = SettingsConfigDict(env_file=".env")
@@ -23,14 +21,39 @@ class Settings(BaseSettings):
     # SQLAlchemy - Create db connection string
     @computed_field
     @property
-    def SQLALCHEMY_DATABASE_URI(self) -> str:
-        return f"mysql+pymysql://{self.DB_USER}:{self.DB_PASSWORD}@{self.DB_SERVER}:{self.DB_PORT}/{self.DB_NAME}"
-
-    # SQLAlchemy - Create db connection string
-    @computed_field
-    @property
     def SQLALCHEMY_DATABASE_URI_MASKED_PASSWORD(self) -> str:
-        return f"mysql+pymysql://{self.DB_USER}:*****@{self.DB_SERVER}:{self.DB_PORT}/{self.DB_NAME}"
+        """
+        def mask_password_in_uri(uri: str, mask: str = "*****") -> str:
+
+        Mask the password in a SQLAlchemy database URI.
+
+        Args:
+            uri (str): The database URI (e.g. "postgresql://user:password@host/dbname").
+            mask (str): The string to replace the password with.
+
+        Returns:
+            str: The URI with the password masked.
+        """
+        uri = self.SQLALCHEMY_DATABASE_URI
+        mask = "*****"
+
+        parsed = urlparse(uri)
+
+        if parsed.password is None:
+            return uri  # Nothing to mask
+
+        # Rebuild the netloc with the password masked
+        userinfo = parsed.username or ''
+        if userinfo:
+            userinfo += f":{quote(mask)}"
+        netloc = f"{userinfo}@{parsed.hostname}"
+        if parsed.port:
+            netloc += f":{parsed.port}"
+
+        # Rebuild the full URI with masked password
+        masked = parsed._replace(netloc=netloc)
+        return urlunparse(masked)
+
 
 # Export settings
 @lru_cache
