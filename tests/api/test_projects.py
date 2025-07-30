@@ -86,6 +86,32 @@ def test_create_project(client: TestClient):
     assert json_response['attributes'][1]['key'] == 'Priority'
     assert json_response['attributes'][1]['value'] == 'High'
 
+def test_generate_project_id(session: Session):
+    ''' Test that we can generate a project id '''
+    # Generate a project id
+    project_id = generate_project_id(session=session)
+    # Check that the project id is not None
+    assert project_id is not None
+    # Check that the project id is a string
+    assert isinstance(project_id, str)
+    # Check that the project id is not empty
+    assert len(project_id) > 0
+    # Check that the project id ends with a 0001
+    assert project_id.endswith('0001')
+    # Add the project to the db
+    project = Project(
+        project_id=project_id,
+        name='a project'
+    )
+    session.add(project)
+    session.flush()
+
+    # Generate a 2nd project id
+    project_id = generate_project_id(session=session)
+    # Check that the project id ends with a 0002
+    assert project_id.endswith('0002')
+
+
 def test_get_project(client: TestClient, session: Session):
     ''' Test GET /api/projects/<project_id> works in different scenarios '''
     # Test when project not found and db is empty
