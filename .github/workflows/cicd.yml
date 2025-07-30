@@ -17,21 +17,17 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Read Python version from .python-version
-        id: read_python
-        run: echo "version=$(cat .python-version)" >> $GITHUB_OUTPUT
-
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: ${{ steps.read_python.outputs.version }}
+          python-version: ".python-version"
 
       - name: Install uv
-        run: pip install uv
+        uses: astral-sh/setup-uv@v6
 
-      - name: Sync dependencies (including dev) from lockfile
-        run: uv sync --locked
-       
+      - name: Install the project
+        run: uv sync --locked --all-extras --dev
+
       #- name: Verify Python and pytest installation
       #  run: |
       #    which python
@@ -40,7 +36,7 @@ jobs:
       #    pytest --version
 
       - name: Run tests
-        run: python -m pytest -xsv --cov
+        run: make test
 
       - name: Store coverage files
         uses: actions/upload-artifact@v4
