@@ -86,6 +86,23 @@ def test_create_project(client: TestClient):
     assert json_response['attributes'][1]['key'] == 'Priority'
     assert json_response['attributes'][1]['value'] == 'High'
 
+
+def test_create_project_fails_with_duplicate_attribute(client: TestClient):
+    ''' Test that we can add a project '''
+    data = {
+        'name': 'Test Project',
+        'attributes': [
+            {'key': 'Department', 'value': 'R&D'},
+            {'key': 'Priority', 'value': 'High'},
+            {'key': 'Priority', 'value': 'Low'}
+        ]
+    }
+    # Test
+    response = client.post('/api/v1/projects', json=data)
+    # Check the response code
+    assert response.status_code == 400
+
+
 def test_generate_project_id(session: Session):
     ''' Test that we can generate a project id '''
     # Generate a project id
