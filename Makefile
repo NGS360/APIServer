@@ -22,7 +22,8 @@ run-dev:
 
 # Unit Tests
 test:
-	pytest -xsv --cov
+	pytest -xv --cov
+	coverage html
 
 # Alembic migration commands
 migrate:
