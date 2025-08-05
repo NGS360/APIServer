@@ -10,8 +10,8 @@ services:
       - 8080:8080
     environment:
       - VITE_API_URL=http://localhost:3000/
-    volumes:
-      - ./:/app
+    volumes: # this allows live reloading of the frontend code
+      - ../frontend-ui:/app
       - /app/node_modules
 
   apiserver:
@@ -34,7 +34,7 @@ services:
       - client_origin=http://localhost:8085
       # Database variables
       - SQLALCHEMY_DATABASE_URI=mysql+pymysql://user:password@db:3306/ngs360
-    volumes:
+    volumes: # this allows live reloading of the backend code
       - ./:/app
  
   opensearch:
