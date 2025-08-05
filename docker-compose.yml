@@ -44,13 +44,15 @@ services:
       - "OPENSEARCH_JAVA_OPTS=-Xms512m -Xmx512m"
       - "discovery.type=single-node"
       - "plugins.security.disabled=true"
-      - "OPENSEARCH_PASSWORD=opensearchpassword"
+      - "OPENSEARCH_INITIAL_ADMIN_PASSWORD=0penSearch!"
     healthcheck:
       test: ['CMD-SHELL', 'curl -s http://localhost:9200/_cluster/health | grep -q "green"']
       interval: 3s
       retries: 5
       start_period: 30s
       timeout: 10s
+    networks:
+      - ngs360-network
     ports:
       - 9200:9200
     ulimits:
