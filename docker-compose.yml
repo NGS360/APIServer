@@ -23,16 +23,15 @@ services:
       db:
         condition: service_healthy
         restart: true
+      opensearch:
+        condition: service_healthy
+        restart: true
     ports:
       - "3000:3000"
     environment:
       - client_origin=http://localhost:8085
       # Database variables
-      - DB_SERVER=db
-      - DB_PORT=3306
-      - DB_PASSWORD=password
-      - DB_USER=user
-      - DB_NAME=flaskdb
+      - SQLALCHEMY_DATABASE_URI="mysql+pymysql://user:password@db:3306/ngs360"
     volumes:
       - ./:/app
 

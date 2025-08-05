@@ -13,7 +13,7 @@ class Settings(BaseSettings):
     # Computed or constant values
     client_origin: str | None = os.getenv("client_origin")
 
-    SQLALCHEMY_DATABASE_URI: str | None = os.getenv("SQLALCHEMY_DATABASE_URI", "sqlite://")
+    SQLALCHEMY_DATABASE_URI: str = os.getenv("SQLALCHEMY_DATABASE_URI", "sqlite://")
 
     # Read environment variables from .env file, if it exists
     model_config = SettingsConfigDict(env_file=".env")
