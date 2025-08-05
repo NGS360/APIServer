@@ -33,12 +33,16 @@ app.add_middleware(
 # Create a simple health check endpoint
 @app.get("/", tags=['index'])
 def root():
-    return {"message": f"Welcome to the NGS360 API!"}
+    return {"message": "Welcome to the NGS360 API!"}
 
 # REST routers
 # Add each api/feature folder here
+api_prefix = "/api/v1"
 from api.project.routes import router as project_router
-app.include_router(project_router, prefix="/api/v1")
+from api.samples.routes import router as samples_router
+
+app.include_router(project_router, prefix=api_prefix)
+app.include_router(samples_router, prefix=api_prefix)
 
 if __name__ == '__main__':
     # For debugging purposes
