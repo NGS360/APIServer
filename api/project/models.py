@@ -26,6 +26,7 @@ class Project(SQLModel, table=True):
   attributes: List[ProjectAttribute] | None = Relationship(
     back_populates="projects"
   )
+  #samples: List["Sample"] = Relationship(back_populates="project")
 
   #class Config:
   #  from_attributes=True # will eagerly load relationships (i.e., attributes)
