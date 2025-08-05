@@ -153,3 +153,7 @@ pytest -xvs --cov
 coverage html
 open htmlcov/index.html
 ```
+
+### Docker Stack
+
+Use the stack as describe in docker-compose.yml to launch all components.
