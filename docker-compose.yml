@@ -33,7 +33,7 @@ services:
     environment:
       - client_origin=http://localhost:8085
       # Database variables
-      - SQLALCHEMY_DATABASE_URI=mysql+pymysql://user:password@db:3306/ngs360
+      - SQLALCHEMY_DATABASE_URI=mysql+pymysql://root:rootpassword@db:3306/ngs360
     volumes: # this allows live reloading of the backend code
       - ./:/app
  
