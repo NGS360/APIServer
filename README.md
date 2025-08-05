@@ -23,10 +23,15 @@ APIServer/
 │   ├── init_db.py           # Database initialization
 │   └── lifespan.py          # Application lifecycle
 └── api/                     # API endpoints by feature
-    └── project/             # Project feature module
+    ├── project/             # Project feature module
         ├── models.py        # Data models
         ├── routes.py        # API routes/endpoints
         └── services.py      # Business logic
+    ├── samples/
+    ├── files/
+    ├── platforms/
+    ├── users/
+    └── workflows/
 ```
 
 ## Key Components
@@ -45,7 +50,7 @@ APIServer/
 - Database initialization happens on application startup
 - Clean database session management through dependency injection
 
-### Project API (api/project/)
+### Project API (api/v1/project/)
 
 - **Models**:
   - `Project` - Main project entity with UUID primary key and human-readable `project_id`
@@ -62,6 +67,23 @@ APIServer/
   - Project creation with attribute mapping
   - Paginated project retrieval
   - Single project lookup by project_id
+
+### Sample API (api/v1/sample/)
+
+- **Models**:
+  - `Sample` - Main sample entity with UUID primary key, sample_id, project_id foreign-key to Project
+  - `SampleAttribute` - Key-value attributes associated with samples
+  - Separate models for input (`SampleCreate`) and output (`SamplePublic`, `SamplesPublic`)
+
+- **Endpoints**:
+  - `POST /samples` - Create a new sample with optional attributes
+  - `GET /samples` - List samples with pagination and sorting
+  - `GET /samples/{sample_id}` - Get a single sample by its sample_id
+
+- **Services**:
+  - TBD 1
+  - TBD 2
+  - TBD 3
 
 ## Modern FastAPI Patterns Used
 
