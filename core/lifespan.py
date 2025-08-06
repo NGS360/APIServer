@@ -12,9 +12,20 @@ from core.logger import logger
 async def lifespan(app: FastAPI):
   # Startup
   logger.info("In lifespan...starting up")
+
+  # Print configuration settings (mask sensitive info)
+  logger.info("Configuration Settings:")
+  for key, value in vars(get_settings()).items():
+    if "SQLALCHEMY_DATABASE_URI" in key:
+      logger.info("  %s: %s", key, get_settings().SQLALCHEMY_DATABASE_URI_MASKED_PASSWORD)
+    elif ("PASSWORD" in key or "SECRET" in key) and value is not None:
+      logger.info("  %s: %s", key, "*****")
+    else:
+      logger.info("  %s: %s", key, value)
+
   # Initialize database (if not done already)
   #try:
-  logger.info("Initializing database, %s", get_settings().SQLALCHEMY_DATABASE_URI_MASKED_PASSWORD)
+  #  logger.info("Initializing database...")
   #  init_db()
   #  logger.info("Database initialized successfully")
   #except Exception as e:

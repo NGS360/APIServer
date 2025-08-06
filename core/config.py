@@ -4,7 +4,7 @@ Add constants, secrets, env variables here
 """
 from functools import lru_cache
 import os
-from urllib.parse import urlparse, urlunparse, quote, unquote
+from urllib.parse import urlparse, urlunparse, quote
 from pydantic import computed_field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -13,12 +13,8 @@ class Settings(BaseSettings):
     # Computed or constant values
     client_origin: str | None = os.getenv("client_origin")
 
-    SQLALCHEMY_DATABASE_URI: str = os.getenv("SQLALCHEMY_DATABASE_URI", "sqlite://")
-
-    # Read environment variables from .env file, if it exists
-    model_config = SettingsConfigDict(env_file=".env")
-
     # SQLAlchemy - Create db connection string
+    SQLALCHEMY_DATABASE_URI: str = os.getenv("SQLALCHEMY_DATABASE_URI", "sqlite://")
     @computed_field
     @property
     def SQLALCHEMY_DATABASE_URI_MASKED_PASSWORD(self) -> str:
@@ -45,7 +41,7 @@ class Settings(BaseSettings):
         # Rebuild the netloc with the password masked
         userinfo = parsed.username or ''
         if userinfo:
-            userinfo += f":{quote(mask)}"
+            userinfo += f":{mask}"
         netloc = f"{userinfo}@{parsed.hostname}"
         if parsed.port:
             netloc += f":{parsed.port}"
@@ -53,6 +49,14 @@ class Settings(BaseSettings):
         # Rebuild the full URI with masked password
         masked = parsed._replace(netloc=netloc)
         return urlunparse(masked)
+
+    # ElasticSearch Configuration
+    ELASTICSEARCH_URL: str | None = os.getenv("ELASTICSEARCH_URL")
+    ELASTICSEARCH_USER: str | None = os.getenv("ELASTICSEARCH_USER")
+    ELASTICSEARCH_PASSWORD: str | None = os.getenv("ELASTICSEARCH_PASSWORD")
+
+    # Read environment variables from .env file, if it exists
+    model_config = SettingsConfigDict(env_file=".env")
 
 
 # Export settings
