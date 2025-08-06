@@ -3,7 +3,7 @@ Define application startup and shutdown procedures
 """
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
-#from core.config import get_settings
+from core.config import get_settings
 #from core.db import init_db, drop_tables
 from core.logger import logger
 
@@ -14,7 +14,7 @@ async def lifespan(app: FastAPI):
   logger.info("In lifespan...starting up")
   # Initialize database (if not done already)
   #try:
-  #  logger.info("Initializing database, %s", get_settings().SQLALCHEMY_DATABASE_URI_MASKED_PASSWORD)
+  logger.info("Initializing database, %s", get_settings().SQLALCHEMY_DATABASE_URI_MASKED_PASSWORD)
   #  init_db()
   #  logger.info("Database initialized successfully")
   #except Exception as e:

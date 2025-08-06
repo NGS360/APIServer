@@ -7,11 +7,13 @@ services:
       context: ../frontend-ui
       dockerfile: Dockerfile
     ports:
-      - "8080:8080"
+      - 8080:8080
     environment:
-      - REACT_APP_API_URL=http://localhost:8080
-    volumes:
-      - ./frontend:/app
+      - VITE_API_URL=http://localhost:3000/
+    volumes: # this allows live reloading of the frontend code
+      - ../frontend-ui:/app
+      - /app/node_modules
+
   apiserver:
     container_name: apiserver
     networks:
@@ -23,18 +25,44 @@ services:
       db:
         condition: service_healthy
         restart: true
+      opensearch:
+        condition: service_healthy
+        restart: true
     ports:
       - "3000:3000"
     environment:
-      - client_origin=http://localhost:8085
+      - client_origin=http://localhost:8080
       # Database variables
-      - DB_SERVER=db
-      - DB_PORT=3306
-      - DB_PASSWORD=password
-      - DB_USER=user
-      - DB_NAME=flaskdb
-    volumes:
+      - SQLALCHEMY_DATABASE_URI=mysql+pymysql://root:rootpassword@db:3306/ngs360
+    volumes: # this allows live reloading of the backend code
       - ./:/app
+ 
+  opensearch:
+    image: opensearchproject/opensearch:2.19.3
+    cap_add:
+      - IPC_LOCK
+    environment:
+      - "OPENSEARCH_JAVA_OPTS=-Xms512m -Xmx512m"
+      - "discovery.type=single-node"
+      - "plugins.security.disabled=true"
+      - "OPENSEARCH_INITIAL_ADMIN_PASSWORD=0penSearch!"
+    healthcheck:
+      test: ['CMD-SHELL', 'curl -s http://localhost:9200/_cluster/health | grep -q "green"']
+      interval: 3s
+      retries: 5
+      start_period: 30s
+      timeout: 10s
+    networks:
+      - ngs360-network
+    ports:
+      - 9200:9200
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      nofile:
+        soft: 65536
+        hard: 65536
 
   db:
     image: mysql:8.0
@@ -42,7 +70,7 @@ services:
     restart: always
     environment:
       MYSQL_ROOT_PASSWORD: rootpassword
-      MYSQL_DATABASE: flaskdb
+      MYSQL_DATABASE: ngs360
       MYSQL_USER: user
       MYSQL_PASSWORD: password
     networks:
@@ -64,7 +92,7 @@ services:
     networks:
       - ngs360-network
     ports:
-      - "8080:8085"
+      - "8085:80"
     environment:
       - PMA_HOST=db
       - MYSQL_ROOT_PASSWORD=rootpassword
