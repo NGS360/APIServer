@@ -31,7 +31,7 @@ services:
     ports:
       - "3000:3000"
     environment:
-      - client_origin=http://localhost:8085
+      - client_origin=http://localhost:8080
       # Database variables
       - SQLALCHEMY_DATABASE_URI=mysql+pymysql://root:rootpassword@db:3306/ngs360
     volumes: # this allows live reloading of the backend code
