@@ -148,7 +148,7 @@ fastapi dev main.py
 ### Unit Tests
 
 ```{bash}
-uv pip install httpx pytest pvtest-cov
+uv sync --extra dev
 pytest -xvs --cov
 coverage html
 open htmlcov/index.html
