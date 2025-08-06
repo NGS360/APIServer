@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from core.config import get_settings
 #from core.db import init_db, drop_tables
+from core.opensearch import init_indexes
 from core.logger import logger
 
 # Handle startup/shutdown tasks
@@ -32,6 +33,9 @@ async def lifespan(app: FastAPI):
   #  logger.error(f"Database initialization failed: {e}")
     # Re-raise the exception to fail application startup
   #  raise RuntimeError(f"Cannot start application: database initialization failed - {str(e)}")
+
+  logger.info("Initializing OpenSearch indexes...")
+  init_indexes()
 
   logger.info("In lifespan...yield")
   try:
