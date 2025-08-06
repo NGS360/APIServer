@@ -51,9 +51,10 @@ class Settings(BaseSettings):
         return urlunparse(masked)
 
     # ElasticSearch Configuration
-    ELASTICSEARCH_URL: str | None = os.getenv("ELASTICSEARCH_URL")
-    ELASTICSEARCH_USER: str | None = os.getenv("ELASTICSEARCH_USER")
-    ELASTICSEARCH_PASSWORD: str | None = os.getenv("ELASTICSEARCH_PASSWORD")
+    OPENSEARCH_HOST: str | None = os.getenv("OPENSEARCH_HOST")
+    OPENSEARCH_PORT: str | None = os.getenv("OPENSEARCH_PORT")
+    OPENSEARCH_USER: str | None = os.getenv("OPENSEARCH_USER")
+    OPENSEARCH_PASSWORD: str | None = os.getenv("OPENSEARCH_PASSWORD")
 
     # Read environment variables from .env file, if it exists
     model_config = SettingsConfigDict(env_file=".env")
