@@ -16,6 +16,7 @@ from api.project.models import (
    ProjectPublic,
    ProjectsPublic
 )
+from api.search.services import add_project_to_index
 
 def generate_project_id(*, session: Session) -> str:
   '''
@@ -85,6 +86,10 @@ def create_project(*, session: Session, project_in: ProjectCreate) -> Project:
    # and mapped to ProjectPublic via response model
    session.commit()
    session.refresh(project)
+
+   # Add project to openseach
+   add_project_to_index(project)
+
    logger.info(f"Created project {project.project_id}")
    return project
 
