@@ -1,10 +1,10 @@
+from opensearchpy import OpenSearch
 from core.logger import logger
-from core.opensearch import client
-from api.project.models import (
-   Project
+from api.search.models import (
+   SearchObject
 )
 
-def add_project_to_index(project: Project) -> None:
+def add_object_to_index(client: OpenSearch, object: SearchObject, index: str) -> None:
     """
     Add the project to the OpenSearch index.
     """
@@ -15,13 +15,13 @@ def add_project_to_index(project: Project) -> None:
 
     # Prepare the document to index
     doc = {
-        "project_id": str(project.project_id),
-        "name": project.name,
+        "id": str(object.id),
+        "name": object.name,
         "attributes": [
-            {"key": attr.key, "value": attr.value} for attr in project.attributes or []
+            {"key": attr.key, "value": attr.value} for attr in object.attributes or []
         ]
     }
 
     # Index the document
-    client.index(index="projects", id=str(project.id), body=doc)
-    client.indices.refresh(index="projects")
+    client.index(index=index, id=str(object.id), body=doc)
+    client.indices.refresh(index=index)
