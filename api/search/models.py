@@ -1,18 +1,21 @@
 from typing import List
+from pydantic import BaseModel, computed_field
 
-class Attribute():
+class SearchAttribute(BaseModel):
   key: str | None
   value: str | None
 
-class SearchObject():
-    def __init__(self, id: str, name: str, attributes: List[Attribute]):
-        self.id = id
-        self.name = name
-        self.attributes = attributes
+class SearchObject(BaseModel):
+    id: str
+    name: str
+    attributes: List[SearchAttribute] | None = None
 
-    def to_dict(self):
-        return {
-            "id": self.id,
-            "name": self.name,
-            "attributes": self.attributes
-        }
+    @computed_field
+    def display_name(self) -> str:
+        return f"{self.id}: {self.name}"
+
+class SearchPublic(BaseModel):
+    items: List[SearchObject] | None = None
+    total: int
+    page: int
+    per_page: int

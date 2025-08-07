@@ -16,7 +16,10 @@ from api.project.models import (
    ProjectPublic,
    ProjectsPublic
 )
-from api.search.models import SearchObject
+from api.search.models import (
+    SearchAttribute,
+    SearchObject
+)
 
 from core.opensearch import client as opensearch_client
 from api.search.services import add_object_to_index
@@ -90,8 +93,12 @@ def create_project(*, session: Session, project_in: ProjectCreate) -> Project:
    session.commit()
    session.refresh(project)
 
-   # Add project to openseach
-   search_object = SearchObject(id=project.project_id, name=project.name, attributes=project_in.attributes)
+   # Add project to opensearch
+   search_attributes = [
+      SearchAttribute(key=attr.key, value=attr.value) 
+      for attr in project_in.attributes or []
+   ]
+   search_object = SearchObject(id=project.project_id, name=project.name, attributes=search_attributes)
    add_object_to_index(opensearch_client, search_object, index="projects")
 
    logger.info(f"Created project {project.project_id}")
