@@ -12,8 +12,6 @@ def test_search_projects(client: TestClient, opensearch_client: OpenSearch):
     assert response.status_code == 200
     assert response.json() == {'items': [], 'total': 0, 'page': 1, 'per_page': 20}
 
-
-def Xtest():
     # Add a project to search for
     new_project = {
         "name": "AI Research",
@@ -23,7 +21,7 @@ def Xtest():
             {"key": "Priority", "value": "High"}
         ]
     }
-    
+
     response = client.post('/api/v1/projects', json=new_project)
     assert response.status_code == 201
 
@@ -33,9 +31,9 @@ def Xtest():
     response_json = response.json()
 
     # Check the data structure
-    assert 'data' in response_json
-    assert len(response_json['data']) == 1
+    assert 'items' in response_json
+    assert len(response_json['items']) == 1
 
     # Verify project details
-    project = response_json['data'][0]
+    project = response_json['items'][0]
     assert project['name'] == 'AI Research'
