@@ -40,9 +40,11 @@ def root():
 api_prefix = "/api/v1"
 from api.project.routes import router as project_router
 from api.samples.routes import router as samples_router
+from api.search.routes import router as search_router
 
 app.include_router(project_router, prefix=api_prefix)
 app.include_router(samples_router, prefix=api_prefix)
+app.include_router(search_router, prefix=api_prefix)
 
 if __name__ == '__main__':
     # For debugging purposes

@@ -28,12 +28,6 @@ else:
         #ca_certs = ca_certs_path
     )
 
-# Yield session
-def get_session():
-    if client is None:
-        return None
-    yield client
-
 def init_indexes():
     if client is None:
         return
