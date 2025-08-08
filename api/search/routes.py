@@ -20,7 +20,6 @@ router = APIRouter(prefix="/search", tags=["Search Endpoints"])
   tags=["Search Endpoints"]
 )
 def search(
-  session: SessionDep,
   page: int = Query(1, description="Page number (1-indexed)"),
   per_page: int = Query(20, description="Number of items per page"),
   sort_by: str = Query('id', description="Field to sort by"),
@@ -30,7 +29,7 @@ def search(
   Perform a search with pagination and sorting.
   """
   return services.search(
-    session=session,
+    index="projects",  # Assuming the index is named 'projects'
     page=page,
     per_page=per_page,
     sort_by=sort_by,
