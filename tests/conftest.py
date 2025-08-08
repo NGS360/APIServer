@@ -26,3 +26,8 @@ def client_fixture(session: Session):
     client = TestClient(app)
     yield client
     app.dependency_overrides.clear()
+
+@pytest.fixture(name="opensearch_client")
+def opensearch_client_fixture():
+    from core.opensearch import client as opensearch_client
+    return opensearch_client

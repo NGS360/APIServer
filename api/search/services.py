@@ -1,7 +1,5 @@
-from typing import Literal
 from opensearchpy import OpenSearch
 from core.logger import logger
-from core.deps import SessionDep
 from api.search.models import (
    SearchObject, SearchPublic
 )
@@ -29,6 +27,7 @@ def add_object_to_index(client: OpenSearch, object: SearchObject, index: str) ->
     client.indices.refresh(index=index)
 
 def search(
+    client: OpenSearch,
     index: str,
     query: str,
     page: int = 1,
@@ -37,8 +36,6 @@ def search(
     """
     Perform a search with pagination and sorting.
     """
-    from core.opensearch import client  # Import the global client
-    
     if not client:
         logger.error("OpenSearch client is not available.")
         return SearchPublic(items=[], total=0, page=page, per_page=per_page)

@@ -3,24 +3,17 @@ Test /search endpoint
 '''
 
 from fastapi.testclient import TestClient
+from opensearchpy import OpenSearch
 
-def test_search_projects(client: TestClient):
+def test_search_projects(client: TestClient, opensearch_client: OpenSearch):
     ''' Test that we can search for projects '''
     # Test No projects, this also ensure we are using the test db
     response = client.get('/api/v1/search?query=AI')
     assert response.status_code == 200
+    assert response.json() == {'items': [], 'total': 0, 'page': 1, 'per_page': 20}
+
 
 def Xtest():
-    assert response.json() == {
-        'data': [],
-        'total_items': 0,
-        'total_pages': 0,
-        'current_page': 1,
-        'per_page': 20,
-        'has_next': False,
-        'has_prev': False
-    }
-
     # Add a project to search for
     new_project = {
         "name": "AI Research",
