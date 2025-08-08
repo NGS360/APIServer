@@ -30,6 +30,7 @@ def add_object_to_index(client: OpenSearch, object: SearchObject, index: str) ->
 
 def search(
     index: str,
+    query: str,
     page: int = 1,
     per_page: int = 20,
     sort_by: str = 'id',
@@ -47,7 +48,10 @@ def search(
     # Construct the search query
     query = {
         "query": {
-            "match_all": {}
+            "query_string": {
+                'query': query,
+                "fields": ['*'],
+            }
         },
         "sort": [
             {sort_by: {"order": sort_order}}
