@@ -29,7 +29,7 @@ def add_object_to_index(client: OpenSearch, object: SearchObject, index: str) ->
     client.indices.refresh(index=index)
 
 def search(
-    session: SessionDep,
+    index: str,
     page: int = 1,
     per_page: int = 20,
     sort_by: str = 'id',
@@ -56,8 +56,8 @@ def search(
         "size": per_page
     }
 
-    response = client.search(index="your_index_name", body=query)
-    
+    response = client.search(index=index, body=query)
+
     items = [
         SearchObject(
             id=hit["_id"],
