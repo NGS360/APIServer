@@ -33,8 +33,6 @@ def search(
     query: str,
     page: int = 1,
     per_page: int = 20,
-    sort_by: str = 'id',
-    sort_order: Literal['asc', 'desc'] = 'asc'
 ) -> SearchPublic:
     """
     Perform a search with pagination and sorting.
@@ -53,9 +51,6 @@ def search(
                 "fields": ['*'],
             }
         },
-        "sort": [
-            {sort_by: {"order": sort_order}}
-        ],
         "from": (page - 1) * per_page,
         "size": per_page
     }
