@@ -20,8 +20,7 @@ from api.search.models import (
     SearchAttribute,
     SearchObject
 )
-
-from core.opensearch import client as opensearch_client
+from opensearchpy import OpenSearch
 from api.search.services import add_object_to_index
 
 def generate_project_id(*, session: Session) -> str:
@@ -50,7 +49,7 @@ def generate_project_id(*, session: Session) -> str:
   return f"{prefix}{suffix:04d}"
 
 
-def create_project(*, session: Session, project_in: ProjectCreate) -> Project:
+def create_project(*, session: Session, project_in: ProjectCreate, opensearch_client: OpenSearch = None) -> Project:
    """
    Create a new project with optional attributes.
    """
@@ -94,12 +93,13 @@ def create_project(*, session: Session, project_in: ProjectCreate) -> Project:
    session.refresh(project)
 
    # Add project to opensearch
-   search_attributes = [
-      SearchAttribute(key=attr.key, value=attr.value) 
-      for attr in project_in.attributes or []
-   ]
-   search_object = SearchObject(id=project.project_id, name=project.name, attributes=search_attributes)
-   add_object_to_index(opensearch_client, search_object, index="projects")
+   if opensearch_client:
+      search_attributes = [
+         SearchAttribute(key=attr.key, value=attr.value)
+         for attr in project_in.attributes or []
+      ]
+      search_object = SearchObject(id=project.project_id, name=project.name, attributes=search_attributes)
+      add_object_to_index(opensearch_client, search_object, index="projects")
 
    logger.info(f"Created project {project.project_id}")
    return project

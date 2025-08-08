@@ -4,7 +4,8 @@ Routes/endpoints for the Project API
 from typing import Literal
 from fastapi import APIRouter, Query, status
 from core.deps import (
-  SessionDep
+  SessionDep,
+  OpenSearchDep
 )
 from api.project.models import (
   Project,
@@ -22,11 +23,19 @@ router = APIRouter(prefix="/projects", tags=["Project Endpoints"])
   tags=["Project Endpoints"],
   status_code=status.HTTP_201_CREATED
 )
-def create_project(session: SessionDep, project_in: ProjectCreate) -> Project:
+def create_project(
+  session: SessionDep,
+  opensearch_client: OpenSearchDep,
+  project_in: ProjectCreate
+) -> Project:
   """
   Create a new project with optional attributes.
   """
-  return services.create_project(session=session, project_in=project_in)
+  return services.create_project(
+    session=session,
+    project_in=project_in,
+    opensearch_client=opensearch_client
+  )
 
 @router.get(
   "",

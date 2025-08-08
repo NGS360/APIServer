@@ -41,7 +41,7 @@ def search(
         return SearchPublic(items=[], total=0, page=page, per_page=per_page)
 
     # Construct the search query
-    query = {
+    search_body = {
         "query": {
             "query_string": {
                 'query': query,
@@ -52,7 +52,7 @@ def search(
         "size": per_page
     }
 
-    response = client.search(index=index, body=query)
+    response = client.search(index=index, body=search_body)
 
     items = [
         SearchObject(
