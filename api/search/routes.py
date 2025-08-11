@@ -4,7 +4,6 @@ Routes/endpoints for the Search API
 from fastapi import APIRouter, Query
 
 from core.deps import (
-  SessionDep,
   OpenSearchDep
 )
 from api.search.models import (
