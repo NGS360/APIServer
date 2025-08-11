@@ -35,16 +35,3 @@ def search(
     page=page,
     per_page=per_page
   )
-
-@router.post(
-  "",
-  tags=["Search Endpoints"]
-)
-def reindex(
-  session: SessionDep,
-  client: OpenSearchDep,
-) -> None:
-  """
-  Reindex the search index.
-  """
-  return services.reindex(session=session, client=client, index="projects")  # Assuming the index is named 'projects'
