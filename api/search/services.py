@@ -1,10 +1,8 @@
 from opensearchpy import OpenSearch
 from core.logger import logger
 from api.search.models import (
-   SearchObject, SearchPublic, SearchAttribute
+   SearchObject, SearchPublic
 )
-from sqlmodel import Session
-# Removed circular import - will use lazy import in reindex function
 
 def add_object_to_index(client: OpenSearch, object: SearchObject, index: str) -> None:
     """
