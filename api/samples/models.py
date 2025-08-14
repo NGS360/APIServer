@@ -37,8 +37,8 @@ class Sample(SQLModel, table=True):
 
 class SampleCreate(SQLModel):
   sample_id: str
-  project_id: str
   attributes: List[Attribute] | None = None
+  model_config = ConfigDict(extra="forbid")
 
 class SamplePublic(SQLModel):
   sample_id: str

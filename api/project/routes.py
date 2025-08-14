@@ -117,3 +117,15 @@ def get_samples(
     sort_by=sort_by,
     sort_order=sort_order
   )
+
+@router.post(
+  "/{project_id}/samples",
+  response_model=SamplePublic,
+  tags=["Sample Endpoints"],
+  status_code=status.HTTP_201_CREATED
+)
+def add_sample_to_project(session: SessionDep, opensearch_client: OpenSearchDep, project_id: str, sample_in: SampleCreate) -> SamplePublic:
+  """
+  Create a new sample with optional attributes.
+  """
+  return sample_services.add_sample_to_project(session=session, opensearch_client=opensearch_client, project_id=project_id, sample_in=sample_in)
