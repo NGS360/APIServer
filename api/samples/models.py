@@ -37,8 +37,7 @@ class Sample(SQLModel, table=True):
 
 class SampleCreate(SQLModel):
   sample_id: str
-  project_id: uuid.UUID
-  name: str
+  project_id: str
   attributes: List[Attribute] | None = None
 
 class SamplePublic(SQLModel):

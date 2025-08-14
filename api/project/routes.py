@@ -14,12 +14,18 @@ from api.project.models import (
   ProjectsPublic
 )
 from api.samples.models import (
+  SampleCreate,
+  SamplePublic,
   SamplesPublic
 )
 import api.project.services as services
 import api.samples.services as sample_services
 
 router = APIRouter(prefix="/projects", tags=["Project Endpoints"])
+
+###############################################################################
+# Projects Endpoints /api/v1/projects/
+###############################################################################
 
 @router.post(
   "",
@@ -64,6 +70,10 @@ def get_projects(
     sort_order=sort_order
   )
 
+###############################################################################
+# Project Endpoints /api/v1/projects/{project_id}
+###############################################################################
+
 @router.get(
   "/{project_id}",
   response_model=ProjectPublic,
@@ -78,6 +88,10 @@ def get_project_by_project_id(session: SessionDep, project_id: str) -> Project:
     session=session,
     project_id=project_id
   )
+
+###############################################################################
+# Samples Endpoints /api/v1/projects/{project_id}/samples
+###############################################################################
 
 @router.get(
   "/{project_id}/samples",

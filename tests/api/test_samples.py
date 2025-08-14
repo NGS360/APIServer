@@ -62,3 +62,28 @@ def test_get_samples_for_a_project_with_samples(client: TestClient, session: Ses
     response = client.get(f'/api/v1/projects/{new_project_1.project_id}/samples')
     assert response.status_code == 200
     assert len(response.json()['data']) == 2
+
+def test_add_sample_to_project(client: TestClient, session: Session):
+    '''
+    Test that we can add a sample to a project
+    '''
+    # Add a project to the database
+    new_project = Project(name="Test Project")
+    new_project.project_id = generate_project_id(session=session)
+    new_project.attributes = []
+    session.add(new_project)
+    session.commit()
+
+    # Add a sample to the project
+    sample_data = {
+        "sample_id": "Sample_1",
+        "project_id": new_project.project_id,
+        "attributes": [
+            {"key": "Tissue", "value": "Liver"},
+            {"key": "Condition", "value": "Healthy"}
+        ]
+    }
+    
+    response = client.post(f'/api/v1/samples', json=sample_data)
+    assert response.status_code == 201
+    assert response.json()['sample_id'] == "Sample_1"
