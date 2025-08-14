@@ -25,7 +25,7 @@ class SampleAttribute(SQLModel, table=True):
 class Sample(SQLModel, table=True):
   id: uuid.UUID | None = Field(default_factory=uuid.uuid4, primary_key=True)
   sample_id: str
-  project_id: uuid.UUID = Field(foreign_key="project.id")
+  project_id: str = Field(foreign_key="project.project_id")
   attributes: List[SampleAttribute] | None = Relationship(
     back_populates="sample"
   )

@@ -1,8 +1,8 @@
-"""Add samples table
+"""Update sample project_id to string
 
-Revision ID: 1e67a7e63bb5
+Revision ID: a1245f51f52c
 Revises: 8f2133e8188e
-Create Date: 2025-08-13 20:55:03.510823
+Create Date: 2025-08-14 08:16:47.880144
 
 """
 from typing import Sequence, Union
@@ -13,7 +13,7 @@ import sqlmodel
 
 
 # revision identifiers, used by Alembic.
-revision: str = '1e67a7e63bb5'
+revision: str = 'a1245f51f52c'
 down_revision: Union[str, Sequence[str], None] = '8f2133e8188e'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
@@ -25,8 +25,8 @@ def upgrade() -> None:
     op.create_table('sample',
     sa.Column('id', sa.Uuid(), nullable=False),
     sa.Column('sample_id', sqlmodel.sql.sqltypes.AutoString(), nullable=False),
-    sa.Column('project_id', sa.Uuid(), nullable=False),
-    sa.ForeignKeyConstraint(['project_id'], ['project.id'], ),
+    sa.Column('project_id', sqlmodel.sql.sqltypes.AutoString(), nullable=False),
+    sa.ForeignKeyConstraint(['project_id'], ['project.project_id'], ),
     sa.PrimaryKeyConstraint('id'),
     sa.UniqueConstraint('sample_id', 'project_id')
     )
