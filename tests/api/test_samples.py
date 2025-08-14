@@ -7,7 +7,7 @@ from api.project.services import generate_project_id
 #from api.samples.models import Sample, SampleAttribute
 
 
-def Xtest_get_samples_for_a_project(client: TestClient, session: Session):
+def test_get_samples_for_a_project_with_no_samples(client: TestClient, session: Session):
     '''
     Test that we can get all samples for a project
     '''
@@ -19,10 +19,11 @@ def Xtest_get_samples_for_a_project(client: TestClient, session: Session):
     session.commit()
 
     # Test No samples
-    response = client.get('/api/v1/projects/P-1/samples')
+    response = client.get(f'/api/v1/projects/{new_project.project_id}/samples')
     assert response.status_code == 200
     assert response.json() == []
 
+def Xtest_get_samples_for_a_project_with_samples(client: TestClient, session: Session):
     # Add a sample
     new_sample = Sample(sample_id="Sample 1", project_id="P-1")
     session.add(new_sample)

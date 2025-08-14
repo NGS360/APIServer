@@ -26,7 +26,7 @@ test:
 	coverage html
 
 # Alembic migration commands
-migrate:
+migrate-upgrade:
 	alembic upgrade head
 
 migrate-new:
