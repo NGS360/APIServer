@@ -1,9 +1,12 @@
 from typing import List, Literal
 from pydantic import PositiveInt
 
-from sqlmodel import Session, select
+from sqlmodel import Session, select, func
 
-from api.samples.models import Sample, SampleCreate
+from api.samples.models import (
+    Sample, SampleCreate,
+    SamplePublic, SamplesPublic
+)
 
 def create_sample(session: Session, sample_in: SampleCreate) -> Sample:
     """
@@ -34,6 +37,14 @@ def get_samples(
     Returns:
         List of Sample objects
     """
+    # Get the total count of samples for the project
+    total_count = session.exec(
+        select(func.count()).select_from(Sample).where(Sample.project_id == project_id)
+    ).one()
+
+    # Compute total pages
+    total_pages = (total_count + per_page - 1) // per_page # Ceiling division
+
    # Calculate offset for pagination
     offset = (page - 1) * per_page
 
@@ -49,10 +60,31 @@ def get_samples(
     
     # Add pagination
     statement = statement.offset(offset).limit(per_page)
-    
-    # Execute the query
-    return session.exec(statement).all()
 
+    # Execute the query
+    samples = session.exec(statement).all()
+
+    # Map to public samples
+    public_samples = [
+        SamplePublic(
+            sample_id=sample.sample_id,
+            project_id=sample.project_id,
+            attributes=sample.attributes 
+            #[
+            #    {"key": attr.key, "value": attr.value} for attr in (sample.attributes or [])
+            #] if sample.attributes else []
+        )
+        for sample in samples
+    ]
+    return SamplesPublic(
+        data=public_samples,
+        total_items=total_count,
+        total_pages=total_pages,
+        current_page=page,
+        per_page=per_page,
+        has_next=page < total_pages,
+        has_prev=page > 1
+    )
 
 def get_sample_by_sample_id(
     session: Session,

@@ -21,7 +21,15 @@ def test_get_samples_for_a_project_with_no_samples(client: TestClient, session: 
     # Test No samples
     response = client.get(f'/api/v1/projects/{new_project.project_id}/samples')
     assert response.status_code == 200
-    assert response.json() == []
+    assert response.json() == {
+        'current_page': 1,
+        'data': [],
+        'per_page': 20,
+        'total_items': 0,
+        'total_pages': 0,
+        'has_next': False,
+        'has_prev': False
+    }
 
 def Xtest_get_samples_for_a_project_with_samples(client: TestClient, session: Session):
     # Add a sample
