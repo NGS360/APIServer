@@ -87,6 +87,29 @@ def test_add_sample_to_project(client: TestClient, session: Session):
     assert response.status_code == 201
     assert response.json()['sample_id'] == "Sample_1"
 
+def test_fail_to_add__sample_with_duplicate_attributes(client: TestClient, session: Session):
+    '''
+    Test that we properly fail to add a sample with duplicate keys.
+    '''
+    # Add a project to the database
+    new_project = Project(name="Test Project")
+    new_project.project_id = generate_project_id(session=session)
+    new_project.attributes = []
+    session.add(new_project)
+    session.commit()
+
+    # Add a sample to the project
+    sample_data = {
+        "sample_id": "Sample_1",
+        "attributes": [
+            {"key": "Tissue", "value": "Liver"},
+            {"key": "Tissue", "value": "Heart"},
+        ]
+    }
+    
+    response = client.post(f'/api/v1/projects/{new_project.project_id}/samples', json=sample_data)
+    assert response.status_code == 400
+
 
 def test_fail_to_add_sample_to_project(client: TestClient, session: Session):
     '''
