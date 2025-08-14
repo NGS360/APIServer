@@ -3,8 +3,11 @@ Models for the Project API
 """
 import uuid
 from sqlmodel import SQLModel, Field, Relationship, UniqueConstraint
-from typing import List
+from typing import List, TYPE_CHECKING
 from pydantic import ConfigDict
+
+if TYPE_CHECKING:
+  from api.samples.models import Sample
 
 class Attribute (SQLModel):
   key: str | None
@@ -26,7 +29,7 @@ class Project(SQLModel, table=True):
   attributes: List[ProjectAttribute] | None = Relationship(
     back_populates="projects"
   )
-  #samples: List["Sample"] = Relationship(back_populates="project")
+  samples: List["Sample"] = Relationship(back_populates="project")
 
   #class Config:
   #  from_attributes=True # will eagerly load relationships (i.e., attributes)

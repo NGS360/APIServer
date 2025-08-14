@@ -13,9 +13,19 @@ from api.project.models import (
   ProjectPublic,
   ProjectsPublic
 )
+from api.samples.models import (
+  SampleCreate,
+  SamplePublic,
+  SamplesPublic
+)
 import api.project.services as services
+import api.samples.services as sample_services
 
 router = APIRouter(prefix="/projects", tags=["Project Endpoints"])
+
+###############################################################################
+# Projects Endpoints /api/v1/projects/
+###############################################################################
 
 @router.post(
   "",
@@ -60,6 +70,10 @@ def get_projects(
     sort_order=sort_order
   )
 
+###############################################################################
+# Project Endpoints /api/v1/projects/{project_id}
+###############################################################################
+
 @router.get(
   "/{project_id}",
   response_model=ProjectPublic,
@@ -73,4 +87,33 @@ def get_project_by_project_id(session: SessionDep, project_id: str) -> Project:
   return services.get_project_by_project_id(
     session=session,
     project_id=project_id
+  )
+
+###############################################################################
+# Samples Endpoints /api/v1/projects/{project_id}/samples
+###############################################################################
+
+@router.get(
+  "/{project_id}/samples",
+  response_model=SamplesPublic,
+  tags=["Sample Endpoints"] # TODO: This causes the docs to misbehave :(
+)
+def get_samples(
+  session: SessionDep,
+  project_id: str,
+  page: int = Query(1, description="Page number (1-indexed)"),
+  per_page: int = Query(20, description="Number of items per page"),
+  sort_by: str = Query('sample_id', description="Field to sort by"),
+  sort_order: Literal['asc', 'desc'] = Query('asc', description="Sort order (asc or desc)")
+) -> SamplesPublic:
+  """
+  Returns a paginated list of samples.
+  """
+  return sample_services.get_samples(
+    session=session,
+    project_id=project_id,
+    page=page,
+    per_page=per_page,
+    sort_by=sort_by,
+    sort_order=sort_order
   )

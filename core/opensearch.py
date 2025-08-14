@@ -4,7 +4,7 @@ OpenSearch configuration
 from opensearchpy import OpenSearch
 from core.config import get_settings
 from core.logger import logger
-INDEXES = ["projects"]
+INDEXES = ["projects", "samples"]
 
 # Connect to opensearch
 if get_settings().OPENSEARCH_USER and get_settings().OPENSEARCH_PASSWORD:

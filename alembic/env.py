@@ -8,7 +8,11 @@ from alembic import context
 from core.config import get_settings
 
 # Import all models here so that they are registered with SQLModel metadata
-import api.project.models
+from api.samples.models import Sample, SampleAttribute
+from api.project.models import Project
+
+# Import Base from your SQLModel setup
+#from core.db import Base
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.

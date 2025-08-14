@@ -117,12 +117,12 @@ def get_projects(
    with pagination information.
    """
    # Get total project count
-   count = session.exec(
+   total_count = session.exec(
       select(func.count()).select_from(Project)
    ).one()
 
    # Compute total pages
-   total_pages = (count + per_page - 1) // per_page # Ceiling division
+   total_pages = (total_count + per_page - 1) // per_page # Ceiling division
 
    # Determine sort field and direction
    sort_field = getattr(Project, sort_by, Project.id)
@@ -148,7 +148,7 @@ def get_projects(
 
    return ProjectsPublic(
       data=public_projects,
-      total_items=count,
+      total_items=total_count,
       total_pages=total_pages,
       current_page=page,
       per_page=per_page,
