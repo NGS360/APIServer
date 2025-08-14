@@ -68,7 +68,7 @@ def create_sample(session: Session, sample_in: SampleCreate, opensearch_client: 
             for attr in sample_in.attributes or []
         ]
         search_object = SearchObject(id=sample.id, name=f'{sample_in.project_id}-{sample_in.sample_id}', attributes=search_attributes)
-        add_object_to_index(opensearch_client, search_object, index="projects")
+        add_object_to_index(opensearch_client, search_object, index="samples")
 
     logger.info(f"Created sample {sample.project_id}-{sample.sample_id}")
     return sample
