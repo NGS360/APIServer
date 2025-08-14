@@ -77,13 +77,55 @@ def test_add_sample_to_project(client: TestClient, session: Session):
     # Add a sample to the project
     sample_data = {
         "sample_id": "Sample_1",
-        "project_id": new_project.project_id,
         "attributes": [
             {"key": "Tissue", "value": "Liver"},
             {"key": "Condition", "value": "Healthy"}
         ]
     }
     
-    response = client.post(f'/api/v1/samples', json=sample_data)
+    response = client.post(f'/api/v1/projects/{new_project.project_id}/samples', json=sample_data)
     assert response.status_code == 201
     assert response.json()['sample_id'] == "Sample_1"
+
+
+def test_fail_to_add_sample_to_project(client: TestClient, session: Session):
+    '''
+    Test that we fail to add a sample to a project when a projecT_id is provided in sample data
+    '''
+    # Add a project to the database
+    new_project = Project(name="Test Project")
+    new_project.project_id = generate_project_id(session=session)
+    new_project.attributes = []
+    session.add(new_project)
+    session.commit()
+
+    # Add a sample to the project
+    sample_data = {
+        "sample_id": "Sample_1",
+        "project_id": 'a_project_id',
+        "attributes": [
+            {"key": "Tissue", "value": "Liver"},
+            {"key": "Condition", "value": "Healthy"}
+        ]
+    }
+
+    response = client.post(f'/api/v1/projects/{new_project.project_id}/samples', json=sample_data)
+    assert response.status_code == 422
+    assert "Extra inputs are not permitted" in response.json()["detail"][0]["msg"]
+
+
+def test_fail_to_add_sample_to_nonexistent_project(client: TestClient, session: Session):
+    '''
+    Test that we cannot add a sample to a non-existent project
+    '''
+    # Attempt to add a sample to a non-existent project
+    sample_data = {
+        "sample_id": "Sample_1",
+        "attributes": [
+            {"key": "Tissue", "value": "Liver"},
+            {"key": "Condition", "value": "Healthy"}
+        ]
+    }
+    
+    response = client.post(f'/api/v1/projects/non_existent_project/samples', json=sample_data)
+    assert response.status_code == 404

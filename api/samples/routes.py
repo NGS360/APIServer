@@ -17,18 +17,6 @@ import api.samples.services as services
 
 router = APIRouter(prefix="/samples", tags=["Sample Endpoints"])
 
-@router.post(
-  "",
-  response_model=SamplePublic,
-  tags=["Sample Endpoints"],
-  status_code=status.HTTP_201_CREATED
-)
-def create_sample(session: SessionDep, opensearch_client: OpenSearchDep, sample_in: SampleCreate) -> SamplePublic:
-  """
-  Create a new sample with optional attributes.
-  """
-  return services.create_sample(session=session, sample_in=sample_in)
-
 #@router.get(
 #  "/{sample_id}",
 #  response_model=SamplePublic,

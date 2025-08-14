@@ -10,7 +10,9 @@ from api.samples.models import (
     Sample, SampleAttribute, SampleCreate,
     SamplePublic, SamplesPublic
 )
-
+from api.project.models import (
+    Project
+)
 from api.search.models import (
     SearchAttribute,
     SearchObject
@@ -18,14 +20,25 @@ from api.search.models import (
 from opensearchpy import OpenSearch
 from api.search.services import add_object_to_index
 
-def create_sample(session: Session, sample_in: SampleCreate, opensearch_client: OpenSearch = None) -> Sample:
+def add_sample_to_project(session: Session, opensearch_client: OpenSearch, project_id: str, sample_in: SampleCreate) -> Sample:
     """
     Create a new sample with optional attributes.
     """
+    # Check if project exists
+    project = session.exec(
+        select(Project)
+            .where(Project.project_id == project_id)
+    ).first()
+    if not project:
+      raise HTTPException(
+         status_code=status.HTTP_404_NOT_FOUND,
+         detail=f"Project {project_id} not found."
+      )
+
     # Create initial sample
     sample = Sample(
         sample_id=sample_in.sample_id,
-        project_id=sample_in.project_id
+        project_id=project_id
     )
     session.add(sample)
     session.flush()
@@ -67,7 +80,7 @@ def create_sample(session: Session, sample_in: SampleCreate, opensearch_client: 
             SearchAttribute(key=attr.key, value=attr.value)
             for attr in sample_in.attributes or []
         ]
-        search_object = SearchObject(id=sample.id, name=f'{sample_in.project_id}-{sample_in.sample_id}', attributes=search_attributes)
+        search_object = SearchObject(id=str(sample.id), name=f'{sample.project_id}-{sample.sample_id}', attributes=search_attributes)
         add_object_to_index(opensearch_client, search_object, index="samples")
 
     logger.info(f"Created sample {sample.project_id}-{sample.sample_id}")
