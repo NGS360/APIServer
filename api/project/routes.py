@@ -85,9 +85,9 @@ def get_project_by_project_id(session: SessionDep, project_id: str) -> Project:
   tags=["Sample Endpoints"] # TODO: This causes the docs to misbehave :(
 )
 def get_samples(
-  session: SessionDep, 
+  session: SessionDep,
   project_id: str,
-  page: int = Query(1, description="Page number (1-indexed)"), 
+  page: int = Query(1, description="Page number (1-indexed)"),
   per_page: int = Query(20, description="Number of items per page"),
   sort_by: str = Query('sample_id', description="Field to sort by"),
   sort_order: Literal['asc', 'desc'] = Query('asc', description="Sort order (asc or desc)")

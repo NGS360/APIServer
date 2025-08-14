@@ -43,7 +43,7 @@ class SampleCreate(SQLModel):
 
 class SamplePublic(SQLModel):
   sample_id: str
-  project_id: uuid.UUID
+  project_id: str
   attributes: List[Attribute] | None
 
 class SamplesPublic(SQLModel):
