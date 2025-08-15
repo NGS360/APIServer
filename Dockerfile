@@ -1,14 +1,32 @@
-# https://github.com/docker/awesome-compose/blob/master/flask/app/Dockerfile
-FROM --platform=$BUILDPLATFORM python:3.13-alpine AS builder
+# Use python image with uv pre-installed
+FROM ghcr.io/astral-sh/uv:python3.13-bookworm-slim
 
-ENV INSTALLDIR=/app
-WORKDIR ${INSTALLDIR}
+# Install project into `/app`
+WORKDIR /app
 
-COPY requirements.txt ${INSTALLDIR}
-RUN --mount=type=cache,target=/root/.cache/pip \
-    pip3 install --upgrade pip && \
-    pip3 install -r requirements.txt
-COPY . ${INSTALLDIR}
+# Enable bytecode compilation
+ENV UV_COMPILE_BYTECODE=1
 
-RUN chmod a+x boot.sh
-ENTRYPOINT [ "./boot.sh" ]
+# Avoid .venv collisions in container
+ENV UV_PROJECT_ENVIRONMENT=.venv
+
+# Copy from the cache instead of linking since it's a
+# mounted volume
+ENV UV_LINK_MODE=copy
+
+# Install the project's dependencies
+RUN --mount=type=cache,target=/root/.cache \
+  --mount=type=bind,source=uv.lock,target=uv.lock \
+  --mount=type=bind,source=pyproject.toml,target=pyproject.toml \
+  uv sync --locked --no-install-project --no-dev
+
+# Add project source code and install it
+COPY ./ /app
+RUN --mount=type=cache,target=/root/.cache/uv \
+  uv sync --locked --no-dev
+
+# Expose FastAPI port
+EXPOSE 5000
+
+# Reset the entrypoint (don't invoke `uv`)
+ENTRYPOINT ["/app/entrypoint.sh"]

@@ -1,17 +1,44 @@
+export COMPOSE_BAKE=true
+
+# Docker commands
 build:
-	pylint --rcfile=.pylintrc *.py apiserver/ tests/
-	docker build -t apiserver .
+	docker compose build
 
-run:
-	# This target is just to run the apiserver application and assumes all other
-	# required resources (mysql) are running. Use launch-stack target instead
-	docker run -ti --rm -p 5000:5000 -e FLASK_APP=application.py -e FLASK_ENV=development --name apiserver apiserver
+up:
+	docker compose up -d --build
 
-test:	# This target is basically the same as the Github Action Workflow to lint and unit test locally
-	pylint --rcfile=.pylintrc *.py apiserver/ #tests/
-	coverage run -m pytest
-	coverage html && open htmlcov/index.html
+down:
+	docker compose down
 
-launch-stack:
-	# This target launches all requirements to run apiserver app
-	docker compose up -d
+down-rm:
+	docker compose down --rmi all
+
+drop-db:
+	docker volume rm apiserver_db_data
+
+# Run FASTAPI in dev mode
+run-dev:
+	fastapi dev main.py
+
+# Unit Tests
+test:
+	pytest -xv --cov
+	coverage html
+
+# Alembic migration commands
+migrate-upgrade:
+	alembic upgrade head
+
+migrate-new:
+	alembic revision --autogenerate -m "$(message)"
+
+migrate-rollback:
+	alembic downgrade -1
+
+# Create a new empty migration file
+migrate-empty:
+	alembic revision -m "$(message)"
+
+# Show current revision
+migrate-current:
+	alembic current
