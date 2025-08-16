@@ -10,6 +10,7 @@ from core.config import get_settings
 # Import all models here so that they are registered with SQLModel metadata
 from api.samples.models import Sample, SampleAttribute
 from api.project.models import Project
+from api.runs.models import SequencingRun
 
 # Import Base from your SQLModel setup
 #from core.db import Base
