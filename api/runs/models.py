@@ -6,7 +6,7 @@ from datetime import datetime, date
 from typing import Optional
 from sqlmodel import SQLModel, Field
 from sqlalchemy.ext.hybrid import hybrid_property
-from pydantic import ConfigDict
+from pydantic import ConfigDict, computed_field
 
 
 class SequencingRun(SQLModel, table=True):
@@ -29,7 +29,7 @@ class SequencingRun(SQLModel, table=True):
     status: str | None = Field(default=None, max_length=50)
     run_time: str | None = Field(default=None, max_length=4)
 
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(from_attributes=True, ignored_types=(hybrid_property,))
 
     @staticmethod
     def is_data_valid(data):
@@ -75,7 +75,7 @@ class SequencingRun(SQLModel, table=True):
         return (run_date, run_time, machine_id, run_number, flowcell_id)
 
     @hybrid_property
-    def barcode(self):
+    def barcode(self) -> str:
         if self.run_time is None:
             run_number = self.run_number.zfill(4)
             run_date = self.run_date.strftime("%y%m%d")

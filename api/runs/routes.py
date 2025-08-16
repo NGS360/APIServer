@@ -20,7 +20,7 @@ from api.runs.models import (
 )
 import api.runs.services as services
 
-router = APIRouter(prefix="/runs", tags=["Sample Endpoints"])
+router = APIRouter(prefix="/runs", tags=["Run Endpoints"])
 
 @router.get(
     "",

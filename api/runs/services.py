@@ -62,5 +62,7 @@ def get_runs(
         total_items=total_count,
         total_pages=total_pages,
         current_page=page,
-        per_page=per_page
+        per_page=per_page,
+        has_next=page < total_pages,
+        has_prev=page > 1
     )
