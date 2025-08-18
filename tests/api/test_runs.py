@@ -5,6 +5,44 @@ import datetime
 from fastapi.testclient import TestClient
 from sqlmodel import Session
 
+def test_add_run(client: TestClient, session: Session):
+    ''' Test that we can add a run '''
+    # Test No runs, this also ensure we are using the test db
+    response = client.get('/api/v1/runs')
+    assert response.status_code == 200
+    assert response.json() == {
+        'data': [],
+        'total_items': 0,
+        'total_pages': 0,
+        'current_page': 1,
+        'per_page': 20,
+        'has_next': False,
+        'has_prev': False
+    }
+
+    # Add a run to the database
+    new_run = {
+        'run_date': '2019-01-10', #datetime.date(2019, 1, 10),
+        'machine_id': 'MACHINE123',
+        'run_number': 'RUN001',
+        'flowcell_id': 'FLOWCELL123',
+        'experiment_name': 'Test Experiment',
+        's3_run_folder_path': 's3://bucket/path/to/run',
+        'status': 'completed'
+    }
+    response = client.post('/api/v1/runs', json=new_run)
+    assert response.status_code == 201
+    data = response.json()
+    assert data['run_date'] == '2019-01-10'
+    assert data['machine_id'] == 'MACHINE123'
+    assert data['run_number'] == 'RUN001'
+    assert data['flowcell_id'] == 'FLOWCELL123'
+    assert data['experiment_name'] == 'Test Experiment'
+    assert data['s3_run_folder_path'] == 's3://bucket/path/to/run'
+    assert data['status'] == 'completed'
+    assert data['barcode'] == '190110_MACHINE123_RUN001_FLOWCELL123'
+
+
 def test_get_runs(client: TestClient, session: Session):
     ''' Test that we can get all runs '''
     # Test No projects, this also ensure we are using the test db

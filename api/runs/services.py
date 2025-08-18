@@ -2,11 +2,52 @@ from sqlmodel import select, Session, func
 from typing import List, Literal
 from pydantic import PositiveInt
 from sqlalchemy import asc, desc
+from opensearchpy import OpenSearch
+
 from api.runs.models import (
     SequencingRun, 
+    SequencingRunCreate,
     SequencingRunPublic, 
     SequencingRunsPublic
 )
+
+def add_run(
+    session: Session,
+    sequencingrun_in: SequencingRunCreate,
+    opensearch_client: OpenSearch = None
+) -> SequencingRun:
+    """ Add a new sequencing run to the database and index it in OpenSearch.
+    """
+    # Create the SequencingRun instance
+    run = SequencingRun(**sequencingrun_in.model_dump())
+
+    # Add to the database
+    session.add(run)
+    session.commit()
+    session.refresh(run)
+
+    # Index in OpenSearch if client is provided
+    if opensearch_client:
+        from api.search.services import add_object_to_index
+        from api.search.models import SearchObject, SearchAttribute
+
+        attributes = [
+            SearchAttribute(key="machine_id", value=run.machine_id),
+            SearchAttribute(key="flowcell_id", value=run.flowcell_id),
+            SearchAttribute(key="run_number", value=run.run_number),
+            SearchAttribute(key="experiment_name", value=run.experiment_name),
+            SearchAttribute(key="status", value=run.status)
+        ]
+
+        search_object = SearchObject(
+            id=str(run.id),
+            name=run.experiment_name,
+            attributes=attributes
+        )
+
+        add_object_to_index(opensearch_client, search_object, "sequencing_runs")
+    return run
+
 
 def get_runs(
       *, 

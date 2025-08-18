@@ -14,9 +14,12 @@ GET    /api/v0/runs/[id]/metrics       Retrieve demux metrics from Stat.json
 """
 from fastapi import APIRouter, Query, status
 from typing import Literal
-from core.deps import SessionDep
+from core.deps import SessionDep, OpenSearchDep
 from api.runs.models import (
-    SequencingRunsPublic
+   SequencingRun,
+   SequencingRunCreate,
+   SequencingRunPublic,
+   SequencingRunsPublic
 )
 import api.runs.services as services
 
@@ -45,3 +48,23 @@ def get_runs(
         sort_by=sort_by,
         sort_order=sort_order
     )
+
+@router.post(
+  "",
+  response_model=SequencingRunPublic,
+  tags=["Run Endpoints"],
+  status_code=status.HTTP_201_CREATED
+)
+def add_run(
+  session: SessionDep,
+  opensearch_client: OpenSearchDep,
+  sequencingrun_in: SequencingRunCreate
+) -> SequencingRun:
+  """
+  Create a new project with optional attributes.
+  """
+  return services.add_run(
+    session=session,
+    sequencingrun_in=sequencingrun_in,
+    opensearch_client=opensearch_client
+  )
