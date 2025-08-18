@@ -24,7 +24,7 @@ def test_add_run(client: TestClient, session: Session):
     new_run = {
         'run_date': '2019-01-10',
         'machine_id': 'MACHINE123',
-        'run_number': '0001',
+        'run_number': 1,
         'flowcell_id': 'FLOWCELL123',
         'experiment_name': 'Test Experiment',
         's3_run_folder_path': 's3://bucket/path/to/run',
@@ -35,7 +35,7 @@ def test_add_run(client: TestClient, session: Session):
     data = response.json()
     assert data['run_date'] == '2019-01-10'
     assert data['machine_id'] == 'MACHINE123'
-    assert data['run_number'] == '0001'
+    assert data['run_number'] == 1
     assert data['flowcell_id'] == 'FLOWCELL123'
     assert data['experiment_name'] == 'Test Experiment'
     assert data['s3_run_folder_path'] == 's3://bucket/path/to/run'
@@ -65,7 +65,7 @@ def test_get_runs(client: TestClient, session: Session):
         id=uuid4(),
         run_date=datetime.date(2019, 1, 10),
         machine_id='MACHINE123',
-        run_number='0001',
+        run_number=1,
         flowcell_id='FLOWCELL123',
         experiment_name='Test Experiment',
         s3_run_folder_path='s3://bucket/path/to/run',
@@ -80,7 +80,7 @@ def test_get_runs(client: TestClient, session: Session):
     data = response.json()
     assert data['total_items'] == 1
     assert data['data'][0]['machine_id'] == 'MACHINE123'
-    assert data['data'][0]['run_number'] == '0001'
+    assert data['data'][0]['run_number'] == 1
     assert data['data'][0]['flowcell_id'] == 'FLOWCELL123'
     assert data['data'][0]['experiment_name'] == 'Test Experiment'
     assert data['data'][0]['s3_run_folder_path'] == 's3://bucket/path/to/run'
@@ -94,7 +94,7 @@ def test_get_runs(client: TestClient, session: Session):
     data = response.json()
     assert data['run_date'] == '2019-01-10'
     assert data['machine_id'] == 'MACHINE123'
-    assert data['run_number'] == '0001'
+    assert data['run_number'] == 1
     assert data['flowcell_id'] == 'FLOWCELL123'
     assert data['experiment_name'] == 'Test Experiment'
     assert data['s3_run_folder_path'] == 's3://bucket/path/to/run'

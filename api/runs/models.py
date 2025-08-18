@@ -18,18 +18,18 @@ class SequencingRun(SQLModel, table=True):
     # This field is iterated on to identify what fields are searchable
     # or inserted into the ElasticSearch index.
     __searchable__ = ['barcode', 'experiment_name', 's3_run_folder_path']
-    
+
     id: uuid.UUID | None = Field(default_factory=uuid.uuid4, primary_key=True)
-    run_date: date | None = None
-    machine_id: str | None = Field(default=None, max_length=25)
-    run_number: str | None = Field(default=None, max_length=8)
-    flowcell_id: str | None = Field(default=None, max_length=25)
+    run_date: date
+    machine_id: str = Field(max_length=25)
+    run_number: int
+    flowcell_id: str = Field(max_length=25)
     experiment_name: str | None = Field(default=None, max_length=255)
     s3_run_folder_path: str | None = Field(default=None, max_length=255)
     status: str | None = Field(default=None, max_length=50)
     run_time: str | None = Field(default=None, max_length=4)
 
-    model_config = ConfigDict(from_attributes=True, ignored_types=(hybrid_property,))
+    model_config = ConfigDict(from_attributes=True)
 
     @staticmethod
     def is_data_valid(data):
@@ -74,10 +74,11 @@ class SequencingRun(SQLModel, table=True):
 
         return (run_date, run_time, machine_id, run_number, flowcell_id)
 
-    @hybrid_property
+    @computed_field
+    @property
     def barcode(self) -> str:
         if self.run_time is None:
-            run_number = self.run_number.zfill(4)
+            run_number = str(self.run_number).zfill(4)
             run_date = self.run_date.strftime("%y%m%d")
             return f"{run_date}_{self.machine_id}_{run_number}_{self.flowcell_id}"
         run_date = self.run_date.strftime("%Y%m%d")
@@ -107,29 +108,28 @@ class SequencingRun(SQLModel, table=True):
 
 
 class SequencingRunCreate(SQLModel):
-    run_date: date | None = None
-    machine_id: str | None = None
-    run_number: str | None = None
-    flowcell_id: str | None = None
-    experiment_name: str
-    s3_run_folder_path: str
+    run_date: date
+    machine_id: str
+    run_number: int
+    flowcell_id: str
+    experiment_name: str | None = None
+    s3_run_folder_path: str | None = None
     status: str | None = None
     run_time: str | None = None
-    
+
     model_config = ConfigDict(extra="forbid")
 
 
 class SequencingRunPublic(SQLModel):
-    id: uuid.UUID
-    run_date: date | None
-    machine_id: str | None
-    run_number: str | None
-    flowcell_id: str | None
+    run_date: date
+    machine_id: str
+    run_number: int
+    flowcell_id: str
     experiment_name: str | None
     s3_run_folder_path: str | None
     status: str | None
     run_time: str | None
-    barcode: str | None = None
+    barcode: str | None
 
 
 class SequencingRunsPublic(SQLModel):

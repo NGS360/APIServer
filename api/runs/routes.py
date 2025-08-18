@@ -63,12 +63,22 @@ def add_run(
   """
   Create a new project with optional attributes.
   """
-  return services.add_run(
+  run = services.add_run(
     session=session,
     sequencingrun_in=sequencingrun_in,
     opensearch_client=opensearch_client
   )
-
+  return SequencingRunPublic(
+    run_date=run.run_date,
+    machine_id=run.machine_id,
+    run_number=run.run_number,
+    flowcell_id=run.flowcell_id,
+    experiment_name=run.experiment_name,
+    s3_run_folder_path=run.s3_run_folder_path,
+    status=run.status,
+    run_time=run.run_time,
+    barcode=run.barcode
+  )
 
 @router.get(
     "/{run_barcode}",
