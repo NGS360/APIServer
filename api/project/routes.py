@@ -50,6 +50,7 @@ def create_project(
 @router.get(
   "",
   response_model=ProjectsPublic,
+  status_code=status.HTTP_200_OK,
   tags=["Project Endpoints"]
 )
 def get_projects(
