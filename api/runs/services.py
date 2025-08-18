@@ -49,6 +49,39 @@ def add_run(
     return run
 
 
+def get_run(
+    session: Session,
+    run_barcode: str,
+) -> SequencingRunPublic:
+    """
+    Retrieve a sequencing run from the database.
+    """
+    (run_date, run_time, machine_id, run_number, flowcell_id) = SequencingRun.parse_barcode(run_barcode)
+    run = session.exec(
+        select(SequencingRun).where(
+            SequencingRun.run_date == run_date,
+            SequencingRun.machine_id == machine_id,
+            SequencingRun.run_number == run_number,
+            SequencingRun.flowcell_id == flowcell_id
+        )
+    ).one_or_none()
+
+    if run is None:
+        return None
+
+    return SequencingRunPublic(
+        id=run.id,
+        run_date=run.run_date,
+        machine_id=run.machine_id,
+        run_number=run.run_number,
+        flowcell_id=run.flowcell_id,
+        experiment_name=run.experiment_name,
+        s3_run_folder_path=run.s3_run_folder_path,
+        status=run.status,
+        run_time=run.run_time,
+        barcode=run.barcode
+    )
+
 def get_runs(
       *, 
       session: Session, 

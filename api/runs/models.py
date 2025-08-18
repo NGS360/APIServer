@@ -39,15 +39,15 @@ class SequencingRun(SQLModel, table=True):
         return True
 
     @staticmethod
-    def parse_runid(run_id):
+    def parse_barcode(barcode: str):
         '''
-        Converts a run_id to its parts
+        Converts a barcode to its parts
 
-        :param run_id: Run id in the form of <YYMMDD>_<machineid>_<zero padded run number>_<flowcell>
-        :param run_id: or ONT run id in the form of <YYYYMMDD>_<HHMM>_<machineid>_<flowcell>_<run string>
+        :param barcode: Barcode in the form of <YYMMDD>_<machineid>_<zero padded run number>_<flowcell>
+                  or ONT run id in the form of <YYYYMMDD>_<HHMM>_<machineid>_<flowcell>_<run string>
         :return: 5 parts (run_date, run_time, machine_id, run_number, flowcell_id) or None
         '''
-        run_id_fields = run_id.split("_")
+        run_id_fields = barcode.split("_")
         if len(run_id_fields) not in [4, 5]:
             return (None, None, None, None, None)
 

@@ -68,3 +68,22 @@ def add_run(
     sequencingrun_in=sequencingrun_in,
     opensearch_client=opensearch_client
   )
+
+
+@router.get(
+    "/{run_barcode}",
+    response_model=SequencingRunPublic,
+    status_code=status.HTTP_200_OK,
+    tags=["Run Endpoints"]
+)
+def get_run(
+  session: SessionDep,
+    run_barcode: str
+) -> SequencingRunPublic:
+    """
+    Retrieve a sequencing run.
+    """
+    return services.get_run(
+        session=session,
+        run_barcode=run_barcode
+    )
