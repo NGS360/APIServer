@@ -34,9 +34,7 @@ def add_run(
         attributes = [
             SearchAttribute(key="machine_id", value=run.machine_id),
             SearchAttribute(key="flowcell_id", value=run.flowcell_id),
-            SearchAttribute(key="run_number", value=run.run_number),
             SearchAttribute(key="experiment_name", value=run.experiment_name),
-            SearchAttribute(key="status", value=run.status)
         ]
 
         search_object = SearchObject(
