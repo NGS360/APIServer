@@ -41,10 +41,14 @@ def search(
         return SearchPublic(items=[], total=0, page=page, per_page=per_page)
 
     # Construct the search query
+    search_list = query.split(" ")
+    formatted_list = ["(*{}*)".format(token) for token in search_list]
+    search_str = " AND ".join(formatted_list)
+
     search_body = {
         "query": {
             "query_string": {
-                'query': query,
+                'query': search_str,
                 "fields": ['*'],
             }
         },

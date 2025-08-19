@@ -20,6 +20,7 @@ router = APIRouter(prefix="/search", tags=["Search Endpoints"])
 )
 def search(
   client: OpenSearchDep,
+  index: str = Query(..., description="Index to search"),
   query: str = Query(..., description="Search query string"),
   page: int = Query(1, description="Page number (1-indexed)"),
   per_page: int = Query(20, description="Number of items per page"),
@@ -29,7 +30,7 @@ def search(
   """
   return services.search(
     client=client,
-    index="projects",  # Assuming the index is named 'projects'
+    index=index,
     query=query,
     page=page,
     per_page=per_page

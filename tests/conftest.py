@@ -39,6 +39,28 @@ class MockOpenSearchClient:
         elif "match_all" in query_info:
             search_term = ""  # Match all documents
         
+        # Parse wildcard queries like (*AI*)
+        def parse_wildcard_query(query_term):
+            """Convert OpenSearch wildcard query to simple substring search"""
+            # Remove parentheses and convert (*term*) to just term
+            if query_term.startswith("(*") and query_term.endswith("*)"):
+                return query_term[2:-2]  # Remove (*..*)
+            elif query_term.startswith("*") and query_term.endswith("*"):
+                return query_term[1:-1]  # Remove *...*
+            return query_term
+        
+        # Handle AND queries by splitting on " AND "
+        def matches_query(text, query_term):
+            """Check if text matches the query term (handling wildcards and AND)"""
+            if " AND " in query_term:
+                # Split on AND and check all terms match
+                terms = [parse_wildcard_query(term.strip()) for term in query_term.split(" AND ")]
+                return all(term in text.lower() for term in terms if term)
+            else:
+                # Single term
+                parsed_term = parse_wildcard_query(query_term)
+                return parsed_term in text.lower()
+        
         # Filter documents based on search term
         hits = []
         for doc_id, doc_body in self.documents[index].items():
@@ -48,13 +70,13 @@ class MockOpenSearchClient:
                 should_include = True
             else:
                 # Search in name field
-                if search_term in doc_body.get("name", "").lower():
+                if matches_query(doc_body.get("name", ""), search_term):
                     should_include = True
                 
                 # Search in attributes
                 for attr in doc_body.get("attributes", []):
-                    if (search_term in attr.get("key", "").lower() or
-                        search_term in attr.get("value", "").lower()):
+                    if (matches_query(attr.get("key", ""), search_term) or
+                        matches_query(attr.get("value", ""), search_term)):
                         should_include = True
                         break
             

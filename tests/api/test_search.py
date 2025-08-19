@@ -8,7 +8,7 @@ from opensearchpy import OpenSearch
 def test_search_projects(client: TestClient, opensearch_client: OpenSearch):
     ''' Test that we can search for projects '''
     # Test No projects, this also ensure we are using the test db
-    response = client.get('/api/v1/search?query=AI')
+    response = client.get('/api/v1/search?query=AI&index=projects')
     assert response.status_code == 200
     assert response.json() == {'items': [], 'total': 0, 'page': 1, 'per_page': 20}
 
@@ -26,7 +26,7 @@ def test_search_projects(client: TestClient, opensearch_client: OpenSearch):
     assert response.status_code == 201
 
     # Now search for the project
-    response = client.get('/api/v1/search?query=AI')
+    response = client.get('/api/v1/search?query=AI&index=projects')
     assert response.status_code == 200
     response_json = response.json()
 
