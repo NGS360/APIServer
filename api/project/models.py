@@ -23,6 +23,8 @@ class ProjectAttribute(SQLModel, table=True):
   __table_args__ = (UniqueConstraint("project_id", "key"),)
 
 class Project(SQLModel, table=True):
+  __searchable__ = ["project_id", "name"]
+
   id: uuid.UUID | None = Field(default_factory=uuid.uuid4, primary_key=True)
   project_id: str = Field(unique=True)
   name: str | None = Field(max_length=2048)
