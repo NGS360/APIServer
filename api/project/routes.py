@@ -21,7 +21,7 @@ from api.samples.models import (
 import api.project.services as services
 import api.samples.services as sample_services
 
-router = APIRouter(prefix="/projects", tags=["Project Endpoints"])
+router = APIRouter(prefix="/projects")
 
 ###############################################################################
 # Projects Endpoints /api/v1/projects/
@@ -97,7 +97,7 @@ def get_project_by_project_id(session: SessionDep, project_id: str) -> Project:
 @router.get(
   "/{project_id}/samples",
   response_model=SamplesPublic,
-  tags=["Sample Endpoints"] # TODO: This causes the docs to misbehave :(
+  tags=["Sample Endpoints"]
 )
 def get_samples(
   session: SessionDep,
