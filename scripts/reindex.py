@@ -33,7 +33,6 @@ def reindex_sequencingruns(client, session, index="illumina_runs"):
     ).all()
 
     # Index all runs from this page
-    total_indexed = 0
     for run in runs:
         logger.debug(f"Reindexing run {run.barcode}")
 
@@ -41,14 +40,12 @@ def reindex_sequencingruns(client, session, index="illumina_runs"):
             SearchAttribute(key=attr, value=getattr(run, attr))
             for attr in run.__searchable__ or []
         ]
-        search_object = SearchObject(id=run.barcode, 
+        search_object = SearchObject(id=run.barcode,
                                      name=run.experiment_name if run.experiment_name else run.barcode,
                                      attributes=search_attributes)
         add_object_to_index(client, search_object, index)
-        total_indexed += 1
 
-    client.indices.refresh(index=index)
-    logger.info(f"Reindexing completed. Total runs indexed: {total_indexed}")
+    logger.info(f"Reindexing completed. Total runs indexed: {len(runs)}")
 
 
 def reindex_projects(client, session, index="projects"):
@@ -59,7 +56,6 @@ def reindex_projects(client, session, index="projects"):
     ).all()
 
     # Index all projects from this page
-    total_indexed = 0
     for project in projects:
         logger.debug(f"Reindexing project {project.project_id}")
 
@@ -69,10 +65,8 @@ def reindex_projects(client, session, index="projects"):
         ]
         search_object = SearchObject(id=project.project_id, name=project.name, attributes=search_attributes)
         add_object_to_index(client, search_object, index)
-        total_indexed += 1
 
-    client.indices.refresh(index=index)
-    logger.info(f"Reindexing completed. Total projects indexed: {total_indexed}")
+    logger.info(f"Reindexing completed. Total projects indexed: {len(projects)}")
 
 if __name__ == "__main__":
     client = get_opensearch_client()

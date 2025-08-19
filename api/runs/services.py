@@ -31,19 +31,14 @@ def add_run(
         from api.search.services import add_object_to_index
         from api.search.models import SearchObject, SearchAttribute
 
-        attributes = [
-            SearchAttribute(key="machine_id", value=run.machine_id),
-            SearchAttribute(key="flowcell_id", value=run.flowcell_id),
-            SearchAttribute(key="experiment_name", value=run.experiment_name),
+        search_attributes = [
+            SearchAttribute(key=attr, value=getattr(run, attr))
+            for attr in run.__searchable__ or []
         ]
-
-        search_object = SearchObject(
-            id=str(run.id),
-            name=run.experiment_name,
-            attributes=attributes
-        )
-
-        add_object_to_index(opensearch_client, search_object, "sequencing_runs")
+        search_object = SearchObject(id=run.barcode, 
+                                     name=run.experiment_name if run.experiment_name else run.barcode,
+                                     attributes=search_attributes)
+        add_object_to_index(opensearch_client, search_object, "illumina_runs")
     return run
 
 
