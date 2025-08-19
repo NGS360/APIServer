@@ -25,8 +25,8 @@ def search(
   query: str = Query(..., description="Search query string"),
   page: int = Query(1, description="Page number (1-indexed)"),
   per_page: int = Query(20, description="Number of items per page"),
-  sort_by: str = Query('project_id', description="Field to sort by"),
-  sort_order: Literal['asc', 'desc'] = Query('asc', description="Sort order (asc or desc)")
+  sort_by: str | None = Query('name', description="Field to sort by (id, name)"),
+  sort_order: Literal['asc', 'desc'] | None = Query('asc', description="Sort order (asc or desc)")
 ) -> SearchPublic:
   """
   Perform a search with pagination and sorting.
