@@ -63,6 +63,8 @@ services:
       nofile:
         soft: 65536
         hard: 65536
+    volumes:
+      - opensearch_data:/usr/share/opensearch/data
 
   db:
     image: mysql:8.0

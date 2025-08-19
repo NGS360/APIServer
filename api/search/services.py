@@ -1,3 +1,4 @@
+from typing import Literal
 from opensearchpy import OpenSearch
 from core.logger import logger
 from api.search.models import (
@@ -30,8 +31,10 @@ def search(
     client: OpenSearch,
     index: str,
     query: str,
-    page: int = 1,
-    per_page: int = 20,
+    page: int,
+    per_page: int,
+    sort_by: str,
+    sort_order: Literal['asc', 'desc']
 ) -> SearchPublic:
     """
     Perform a search with pagination and sorting.
