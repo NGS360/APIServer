@@ -35,8 +35,9 @@ def add_run(
             SearchAttribute(key=attr, value=getattr(run, attr))
             for attr in run.__searchable__ or []
         ]
-        search_object = SearchObject(id=run.barcode, 
+        search_object = SearchObject(id=run.barcode,
                                      name=run.experiment_name if run.experiment_name else run.barcode,
+                                     index_name="illumina_runs",
                                      attributes=search_attributes)
         add_object_to_index(opensearch_client, search_object, "illumina_runs")
     return run

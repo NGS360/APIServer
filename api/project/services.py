@@ -98,7 +98,7 @@ def create_project(*, session: Session, project_in: ProjectCreate, opensearch_cl
          SearchAttribute(key=attr.key, value=attr.value)
          for attr in project_in.attributes or []
       ]
-      search_object = SearchObject(id=project.project_id, name=project.name, attributes=search_attributes)
+      search_object = SearchObject(id=project.project_id, name=project.name, index_name="projects", attributes=search_attributes)
       add_object_to_index(opensearch_client, search_object, index="projects")
 
    logger.info(f"Created project {project.project_id}")

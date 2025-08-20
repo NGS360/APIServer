@@ -80,7 +80,7 @@ def add_sample_to_project(session: Session, opensearch_client: OpenSearch, proje
             SearchAttribute(key=attr.key, value=attr.value)
             for attr in sample_in.attributes or []
         ]
-        search_object = SearchObject(id=str(sample.id), name=f'{sample.project_id}-{sample.sample_id}', attributes=search_attributes)
+        search_object = SearchObject(id=str(sample.id), name=f'{sample.project_id}-{sample.sample_id}', index_name="samples", attributes=search_attributes)
         add_object_to_index(opensearch_client, search_object, index="samples")
 
     logger.info(f"Created sample {sample.project_id}-{sample.sample_id}")

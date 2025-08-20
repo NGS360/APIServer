@@ -17,6 +17,8 @@ class MockOpenSearchClient:
         """Mock index operation"""
         if index not in self.documents:
             self.documents[index] = {}
+        if index not in self.indices_data:
+            self.indices_data[index] = {}
         self.documents[index][id] = body
         return {"_id": id, "_index": index, "result": "created"}
     
@@ -113,6 +115,10 @@ class MockIndices:
     
     def exists(self, index: str):
         """Mock index exists check"""
+        # For testing purposes, automatically create valid indexes when they're checked
+        from core.opensearch import INDEXES
+        if index in INDEXES and index not in self.client.indices_data:
+            self.create(index)
         return index in self.client.indices_data
     
     def create(self, index: str, body=None):
