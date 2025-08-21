@@ -90,16 +90,16 @@ def test_search_projects_with_dynamic_key(client: TestClient, opensearch_client:
 
 
 def test_search_runs_index_uses_runs_key(client: TestClient, opensearch_client: OpenSearch):
-    ''' Test that runs index search returns results under "runs" key (without creating actual runs) '''
-    # Search the runs index (will be empty but should use correct key)
-    response = client.get('/api/v1/search?query=test&index=runs')
+    ''' Test that illumina_runs index search returns results under "illumina_runs" key (without creating actual illumina_runs) '''
+    # Search the illumina_runs index (will be empty but should use correct key)
+    response = client.get('/api/v1/search?query=test&index=illumina_runs')
     assert response.status_code == 200
     response_json = response.json()
 
     # Check that results are under "runs" key instead of "data"
-    assert 'runs' in response_json
+    assert 'illumina_runs' in response_json
     assert 'data' not in response_json  # Should not have the old "data" key
-    assert response_json['runs'] == []  # Empty results
+    assert response_json['illumina_runs'] == []  # Empty results
     assert response_json['total_items'] == 0
     assert response_json['total_pages'] == 0
     assert response_json['current_page'] == 1

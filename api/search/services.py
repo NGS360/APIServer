@@ -59,7 +59,7 @@ def _get_response_key_for_index(index: str) -> str:
     """
     index_to_key_mapping = {
         'projects': 'projects',
-        'runs': 'runs',
+        'illumina_runs': 'illumina_runs',
         # Add more mappings as needed
     }
     
