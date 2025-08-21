@@ -1,5 +1,7 @@
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Union
 from pydantic import BaseModel, computed_field
+from api.project.models import ProjectPublic
+from api.runs.models import SequencingRunPublic
 
 class SearchAttribute(BaseModel):
   key: str | None
@@ -27,6 +29,7 @@ class DynamicSearchResponse(BaseModel):
     """
     Dynamic search response that can have different field names based on the index.
     This allows for 'projects' key when searching projects index, 'runs' key when searching runs index, etc.
+    The data field will contain the appropriate model type based on the index.
     """
     model_config = {"extra": "allow"}  # Allow extra fields to be set dynamically
     
@@ -36,3 +39,8 @@ class DynamicSearchResponse(BaseModel):
     per_page: int = 0
     has_next: bool = False
     has_prev: bool = False
+    
+    # Dynamic fields that will be set based on index:
+    # - projects: List[ProjectPublic]
+    # - illumina_runs: List[SequencingRunPublic]
+    # - data: List[SearchObject] (fallback)

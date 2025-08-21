@@ -1,9 +1,12 @@
-from typing import Literal
+from typing import Literal, Union
+from datetime import datetime
 from opensearchpy import OpenSearch, RequestError
 from core.logger import logger
 from api.search.models import (
    SearchObject, SearchPublic, DynamicSearchResponse
 )
+from api.project.models import ProjectPublic, Attribute
+from api.runs.models import SequencingRunPublic
 
 def _get_searchable_text_fields():
     """
@@ -27,6 +30,67 @@ def _get_searchable_text_fields():
         logger.warning(f"Could not import models for searchable fields: {e}")
     
     return list(text_fields)
+
+
+def _create_model_from_hit(hit: dict, index: str) -> Union[ProjectPublic, SequencingRunPublic]:
+    """
+    Create the appropriate model instance based on the index type.
+    """
+    source = hit["_source"]
+    
+    if index == "projects":
+        # Convert attributes from list of dicts to list of Attribute objects
+        attributes = []
+        if source.get("attributes"):
+            attributes = [
+                Attribute(key=attr.get("key"), value=attr.get("value"))
+                for attr in source["attributes"]
+            ]
+        
+        return ProjectPublic(
+            project_id=hit["_id"],  # Use _id as project_id for consistency
+            name=source.get("name", ""),
+            attributes=attributes
+        )
+    
+    elif index in ["illumina_runs", "runs"]:
+        # For sequencing runs, we need to handle the data structure
+        # The OpenSearch document might have different field names
+        # Parse run_date from various possible formats or use a default
+        run_date_str = source.get("run_date")
+        if run_date_str:
+            try:
+                # Try different date formats
+                if len(run_date_str) == 10:  # YYYY-MM-DD
+                    run_date = datetime.strptime(run_date_str, "%Y-%m-%d").date()
+                elif len(run_date_str) == 8:  # YYYYMMDD
+                    run_date = datetime.strptime(run_date_str, "%Y%m%d").date()
+                else:
+                    run_date = datetime.strptime("1970-01-01", "%Y-%m-%d").date()
+            except ValueError:
+                run_date = datetime.strptime("1970-01-01", "%Y-%m-%d").date()
+        else:
+            run_date = datetime.strptime("1970-01-01", "%Y-%m-%d").date()
+        
+        return SequencingRunPublic(
+            run_date=run_date,
+            machine_id=source.get("machine_id", ""),
+            run_number=int(source.get("run_number", 0)) if source.get("run_number") else 0,
+            flowcell_id=source.get("flowcell_id", ""),
+            experiment_name=source.get("experiment_name"),
+            s3_run_folder_path=source.get("s3_run_folder_path"),
+            status=source.get("status"),
+            run_time=source.get("run_time"),
+            barcode=hit["_id"]  # Use _id as barcode for consistency
+        )
+    
+    else:
+        # Fallback to SearchObject for unknown indexes
+        return SearchObject(
+            id=hit["_id"],
+            name=source.get("name", ""),
+            attributes=source.get("attributes", [])
+        )
 
 
 def add_object_to_index(client: OpenSearch, object: SearchObject, index: str) -> None:
@@ -60,6 +124,7 @@ def _get_response_key_for_index(index: str) -> str:
     index_to_key_mapping = {
         'projects': 'projects',
         'illumina_runs': 'illumina_runs',
+        'runs': 'runs',
         # Add more mappings as needed
     }
     
@@ -133,13 +198,14 @@ def search(
             # Re-raise if it's a different error
             raise e
 
+    # Create appropriate model instances based on index
     items = [
-        SearchObject(
-            id=hit["_id"],
-            name=hit["_source"].get("name", ""),
-            attributes=hit["_source"].get("attributes", [])
-        ) for hit in response["hits"]["hits"]
+        _create_model_from_hit(hit, index)
+        for hit in response["hits"]["hits"]
     ]
+    
+    # Log search response structure for diagnosis
+    logger.debug(f"Search endpoint created {len(items)} {type(items[0]).__name__ if items else 'No'} items for index '{index}'")
 
     total_items = response["hits"]["total"]["value"]
     

@@ -138,12 +138,12 @@ def get_projects(
 
    # Map to public project
    public_projects = [
-      ProjectPublic(
-         project_id=project.project_id,
-         name=project.name,
-         attributes=project.attributes
-      )
-      for project in projects
+       ProjectPublic(
+           project_id=project.project_id,
+           name=project.name,
+           attributes=project.attributes
+       )
+       for project in projects
    ]
 
    return ProjectsPublic(
