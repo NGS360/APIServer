@@ -3,27 +3,31 @@ from pydantic import BaseModel, computed_field
 from api.project.models import ProjectPublic
 from api.runs.models import SequencingRunPublic
 
-class SearchAttribute(BaseModel):
-  key: str | None
-  value: str | None
+#class SearchAttribute(BaseModel):
+#  key: str | None
+#  value: str | None
 
-class SearchObject(BaseModel):
+#class SearchObject(BaseModel):
+#    id: str
+#    name: str
+#    attributes: List[SearchAttribute] | None = None
+
+#    @computed_field
+#    def display_name(self) -> str:
+#        return f"{self.id}: {self.name}"
+
+class SearchDocument(BaseModel):
     id: str
-    name: str
-    attributes: List[SearchAttribute] | None = None
+    body: Any
 
-    @computed_field
-    def display_name(self) -> str:
-        return f"{self.id}: {self.name}"
-
-class SearchPublic(BaseModel):
-    data: List[SearchObject] | None = None
-    total_items: int = 0
-    total_pages: int = 0
-    current_page: int = 1
-    per_page: int = 0
-    has_next: bool = False
-    has_prev: bool = False
+#class SearchPublic(BaseModel):
+#    data: List[SearchObject] | None = None
+#    total_items: int = 0
+#    total_pages: int = 0
+#    current_page: int = 1
+#    per_page: int = 0
+#    has_next: bool = False
+#    has_prev: bool = False
 
 class DynamicSearchResponse(BaseModel):
     """

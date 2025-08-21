@@ -10,15 +10,16 @@ from sqlmodel import Session, func, select
 from core.logger import logger
 
 from api.project.models import (
-   Project,
-   ProjectAttribute,
-   ProjectCreate,
-   ProjectPublic,
-   ProjectsPublic
+    Project,
+    ProjectAttribute,
+    ProjectCreate,
+    ProjectPublic,
+    ProjectsPublic
 )
 from api.search.models import (
-    SearchAttribute,
-    SearchObject
+    SearchDocument,
+#    SearchAttribute,
+#    SearchObject
 )
 from opensearchpy import OpenSearch
 from api.search.services import add_object_to_index
@@ -94,14 +95,14 @@ def create_project(*, session: Session, project_in: ProjectCreate, opensearch_cl
 
    # Add project to opensearch
    if opensearch_client:
-      search_attributes = [
-         SearchAttribute(key=attr.key, value=attr.value)
-         for attr in project_in.attributes or []
-      ]
-      search_object = SearchObject(id=project.project_id, name=project.name, attributes=search_attributes)
-      add_object_to_index(opensearch_client, search_object, index="projects")
+      #search_attributes = [
+      #   SearchAttribute(key=attr.key, value=attr.value)
+      #   for attr in project_in.attributes or []
+      #]
+      #search_object = SearchObject(id=project.project_id, name=project.name, attributes=search_attributes)
+      search_doc = SearchDocument(id=project.project_id, body=project)
+      add_object_to_index(opensearch_client, search_doc, index="projects")
 
-   logger.info(f"Created project {project.project_id}")
    return project
 
 def get_projects(

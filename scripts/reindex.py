@@ -14,7 +14,7 @@ from api.project.models import Project, ProjectAttribute
 from api.samples.models import Sample, SampleAttribute
 from api.runs.models import SequencingRun
 
-from api.search.models import SearchObject, SearchAttribute
+from api.search.models import SearchDocument
 from api.search.services import add_object_to_index
 
 def reset_index(client, index):
@@ -36,14 +36,8 @@ def reindex_sequencingruns(client, session, index="illumina_runs"):
     for run in runs:
         logger.debug(f"Reindexing run {run.barcode}")
 
-        search_attributes = [
-            SearchAttribute(key=attr, value=getattr(run, attr))
-            for attr in run.__searchable__ or []
-        ]
-        search_object = SearchObject(id=run.barcode,
-                                     name=run.experiment_name if run.experiment_name else run.barcode,
-                                     attributes=search_attributes)
-        add_object_to_index(client, search_object, index)
+        search_doc = SearchDocument(id=run.barcode, body=run)
+        add_object_to_index(client, search_doc, index)
 
     logger.info(f"Reindexing completed. Total runs indexed: {len(runs)}")
 
@@ -59,12 +53,8 @@ def reindex_projects(client, session, index="projects"):
     for project in projects:
         logger.debug(f"Reindexing project {project.project_id}")
 
-        search_attributes = [
-            SearchAttribute(key=attr, value=getattr(project, attr))
-            for attr in project.__searchable__ or []
-        ]
-        search_object = SearchObject(id=project.project_id, name=project.name, attributes=search_attributes)
-        add_object_to_index(client, search_object, index)
+        search_doc = SearchDocument(id=project.project_id, body=project)
+        add_object_to_index(client, search_doc, index)
 
     logger.info(f"Reindexing completed. Total projects indexed: {len(projects)}")
 

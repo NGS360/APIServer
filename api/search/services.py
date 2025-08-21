@@ -3,7 +3,9 @@ from datetime import datetime
 from opensearchpy import OpenSearch, RequestError
 from core.logger import logger
 from api.search.models import (
-   SearchObject, SearchPublic, DynamicSearchResponse
+#   SearchObject, 
+#   SearchPublic, 
+   DynamicSearchResponse, SearchDocument
 )
 from api.project.models import ProjectPublic, Attribute
 from api.runs.models import SequencingRunPublic
@@ -93,26 +95,25 @@ def _create_model_from_hit(hit: dict, index: str) -> Union[ProjectPublic, Sequen
         )
 
 
-def add_object_to_index(client: OpenSearch, object: SearchObject, index: str) -> None:
+def add_object_to_index(client: OpenSearch, document: SearchDocument, index: str) -> None:
     """
-    Add the project to the OpenSearch index.
+    Add a document (that can be converted to JSON) to the OpenSearch index.
     """
     # Assuming you have an OpenSearch client set up
     if client is None:
         logger.warning("OpenSearch client is not available.")
         return
 
-    # Prepare the document to index
-    doc = {
-        "id": str(object.id),
-        "name": object.name,
-        "attributes": [
-            {"key": attr.key, "value": attr.value} for attr in object.attributes or []
-        ]
-    }
+    # Convert the body to a dictionary if it's a Pydantic model
+    if hasattr(document.body, 'model_dump'):
+        body_dict = document.body.model_dump()
+    elif hasattr(document.body, 'dict'):
+        body_dict = document.body.dict()
+    else:
+        body_dict = document.body
 
     # Index the document
-    client.index(index=index, id=str(object.id), body=doc)
+    client.index(index=index, id=str(document.id), body=body_dict)
     client.indices.refresh(index=index)
 
 

@@ -14,8 +14,9 @@ from api.project.models import (
     Project
 )
 from api.search.models import (
-    SearchAttribute,
-    SearchObject
+    SearchDocument,
+#    SearchAttribute,
+#    SearchObject
 )
 from opensearchpy import OpenSearch
 from api.search.services import add_object_to_index
@@ -76,14 +77,14 @@ def add_sample_to_project(session: Session, opensearch_client: OpenSearch, proje
 
     # Add sample to opensearch
     if opensearch_client:
-        search_attributes = [
-            SearchAttribute(key=attr.key, value=attr.value)
-            for attr in sample_in.attributes or []
-        ]
-        search_object = SearchObject(id=str(sample.id), name=f'{sample.project_id}-{sample.sample_id}', attributes=search_attributes)
-        add_object_to_index(opensearch_client, search_object, index="samples")
+        #search_attributes = [
+        #    SearchAttribute(key=attr.key, value=attr.value)
+        #    for attr in sample_in.attributes or []
+        #]
+        #search_object = SearchObject(id=str(sample.id), name=f'{sample.project_id}-{sample.sample_id}', attributes=search_attributes)
+        search_doc = SearchDocument(id=str(sample.id), body=sample)
+        add_object_to_index(opensearch_client, search_doc, index="samples")
 
-    logger.info(f"Created sample {sample.project_id}-{sample.sample_id}")
     return sample
 
 def get_samples(
