@@ -2,7 +2,7 @@ from typing import Literal
 from opensearchpy import OpenSearch, RequestError
 from core.logger import logger
 from api.search.models import (
-   SearchObject, SearchPublic
+   SearchObject, SearchPublic, DynamicSearchResponse
 )
 
 def _get_searchable_text_fields():
@@ -52,6 +52,21 @@ def add_object_to_index(client: OpenSearch, object: SearchObject, index: str) ->
     client.indices.refresh(index=index)
 
 
+def _get_response_key_for_index(index: str) -> str:
+    """
+    Determine the appropriate response key based on the index name.
+    Maps index names to their corresponding response keys.
+    """
+    index_to_key_mapping = {
+        'projects': 'projects',
+        'runs': 'runs',
+        # Add more mappings as needed
+    }
+    
+    # Return the mapped key, or fallback to 'data' for unknown indexes
+    return index_to_key_mapping.get(index, 'data')
+
+
 def search(
     client: OpenSearch,
     index: str,
@@ -60,13 +75,15 @@ def search(
     per_page: int,
     sort_by: str | None,
     sort_order: Literal['asc', 'desc'] | None
-) -> SearchPublic:
+) -> DynamicSearchResponse:
     """
     Perform a search with pagination and sorting.
     """
+    logger.debug(f"Search called with index='{index}', query='{query}'")
+    
     if not client:
         logger.error("OpenSearch client is not available.")
-        return SearchPublic(items=[], total=0, page=page, per_page=per_page)
+        return SearchPublic()
 
     # Construct the search query
     search_list = query.split(" ")
@@ -124,6 +141,27 @@ def search(
         ) for hit in response["hits"]["hits"]
     ]
 
-    total = response["hits"]["total"]["value"]
+    total_items = response["hits"]["total"]["value"]
+    
+    # Calculate pagination metadata (same logic as projects service)
+    total_pages = (total_items + per_page - 1) // per_page  # Ceiling division
 
-    return SearchPublic(items=items, total=total, page=page, per_page=per_page)
+    # Determine the appropriate response key based on the index
+    response_key = _get_response_key_for_index(index)
+    
+    # Create the dynamic response
+    result = DynamicSearchResponse(
+        total_items=total_items,
+        total_pages=total_pages,
+        current_page=page,
+        per_page=per_page,
+        has_next=page < total_pages,
+        has_prev=page > 1
+    )
+    
+    # Dynamically set the results under the appropriate key
+    setattr(result, response_key, items)
+    
+    logger.debug(f"Returning search results with '{response_key}' key for index '{index}'. Items count: {len(items)}")
+    
+    return result

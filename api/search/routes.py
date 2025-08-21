@@ -8,7 +8,7 @@ from core.deps import (
   OpenSearchDep
 )
 from api.search.models import (
-  SearchPublic
+  DynamicSearchResponse
 )
 import api.search.services as services
 
@@ -16,7 +16,7 @@ router = APIRouter(prefix="/search", tags=["Search Endpoints"])
 
 @router.get(
   "",
-  response_model=SearchPublic,
+  response_model=DynamicSearchResponse,
   tags=["Search Endpoints"]
 )
 def search(
@@ -27,7 +27,7 @@ def search(
   per_page: int = Query(20, description="Number of items per page"),
   sort_by: str | None = Query('name', description="Field to sort by (id, name)"),
   sort_order: Literal['asc', 'desc'] | None = Query('asc', description="Sort order (asc or desc)")
-) -> SearchPublic:
+) -> DynamicSearchResponse:
   """
   Perform a search with pagination and sorting.
   """
