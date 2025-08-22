@@ -23,6 +23,8 @@ class SampleAttribute(SQLModel, table=True):
   sample: "Sample" = Relationship(back_populates="attributes")
 
 class Sample(SQLModel, table=True):
+  __searchable__ = ["sample_id"]
+
   id: uuid.UUID | None = Field(default_factory=uuid.uuid4, primary_key=True)
   sample_id: str
   project_id: str = Field(foreign_key="project.project_id")

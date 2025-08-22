@@ -87,6 +87,7 @@ def test_add_sample_to_project(client: TestClient, session: Session):
     assert response.status_code == 201
     assert response.json()['sample_id'] == "Sample_1"
 
+
 def test_fail_to_add__sample_with_duplicate_attributes(client: TestClient, session: Session):
     '''
     Test that we properly fail to add a sample with duplicate keys.
