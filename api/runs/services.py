@@ -13,8 +13,6 @@ from api.runs.models import (
 from api.search.services import add_object_to_index
 from api.search.models import (
     SearchDocument,
-#    SearchObject,
-#    SearchAttribute
 )
 
 def add_run(
@@ -34,13 +32,6 @@ def add_run(
 
     # Index in OpenSearch if client is provided
     if opensearch_client:
-        #search_attributes = [
-        #    SearchAttribute(key=attr, value=getattr(run, attr))
-        #    for attr in run.__searchable__ or []
-        #]
-        #search_object = SearchObject(id=run.barcode, 
-        #                             name=run.experiment_name if run.experiment_name else run.barcode,
-        #                             attributes=search_attributes)
         search_doc = SearchDocument(id=run.barcode, body=run)
         add_object_to_index(opensearch_client, search_doc, "illumina_runs")
 
