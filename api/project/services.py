@@ -17,9 +17,7 @@ from api.project.models import (
     ProjectsPublic
 )
 from api.search.models import (
-    SearchDocument,
-#    SearchAttribute,
-#    SearchObject
+    SearchDocument
 )
 from opensearchpy import OpenSearch
 from api.search.services import add_object_to_index
