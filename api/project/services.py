@@ -93,11 +93,6 @@ def create_project(*, session: Session, project_in: ProjectCreate, opensearch_cl
 
    # Add project to opensearch
    if opensearch_client:
-      #search_attributes = [
-      #   SearchAttribute(key=attr.key, value=attr.value)
-      #   for attr in project_in.attributes or []
-      #]
-      #search_object = SearchObject(id=project.project_id, name=project.name, attributes=search_attributes)
       search_doc = SearchDocument(id=project.project_id, body=project)
       add_object_to_index(opensearch_client, search_doc, index="projects")
 
