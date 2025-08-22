@@ -26,14 +26,6 @@ def add_object_to_index(client: OpenSearch, document: SearchDocument, index: str
         if value:
             payload[field] = getattr(document.body, field)
 
-    # Convert the body to a dictionary if it's a Pydantic model
-    #if hasattr(document.body, 'model_dump'):
-    #    body_dict = document.body.model_dump()
-    #elif hasattr(document.body, 'dict'):
-    #    body_dict = document.body.dict()
-    #else:
-    #    body_dict = document.body
-
     # Index the document
     client.index(index=index, id=str(document.id), body=payload)
     client.indices.refresh(index=index)
