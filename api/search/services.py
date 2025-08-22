@@ -9,8 +9,8 @@ from api.search.models import (
     SearchDocument,
     SearchResponse
 )
-from api.project.models import Project, ProjectPublic, Attribute
-from api.runs.models import SequencingRun, SequencingRunPublic
+from api.project.models import ProjectPublic
+from api.runs.models import SequencingRunPublic
 
 def add_object_to_index(client: OpenSearch, document: SearchDocument, index: str) -> None:
     """
