@@ -10,6 +10,10 @@ from api.runs.models import (
     SequencingRunPublic, 
     SequencingRunsPublic
 )
+from api.search.services import add_object_to_index
+from api.search.models import (
+    SearchDocument,
+)
 
 def add_run(
     session: Session,
@@ -28,17 +32,9 @@ def add_run(
 
     # Index in OpenSearch if client is provided
     if opensearch_client:
-        from api.search.services import add_object_to_index
-        from api.search.models import SearchObject, SearchAttribute
+        search_doc = SearchDocument(id=run.barcode, body=run)
+        add_object_to_index(opensearch_client, search_doc, "illumina_runs")
 
-        search_attributes = [
-            SearchAttribute(key=attr, value=getattr(run, attr))
-            for attr in run.__searchable__ or []
-        ]
-        search_object = SearchObject(id=run.barcode, 
-                                     name=run.experiment_name if run.experiment_name else run.barcode,
-                                     attributes=search_attributes)
-        add_object_to_index(opensearch_client, search_object, "illumina_runs")
     return run
 
 
@@ -62,18 +58,7 @@ def get_run(
     if run is None:
         return None
 
-    return SequencingRunPublic(
-        id=run.id,
-        run_date=run.run_date,
-        machine_id=run.machine_id,
-        run_number=run.run_number,
-        flowcell_id=run.flowcell_id,
-        experiment_name=run.experiment_name,
-        s3_run_folder_path=run.s3_run_folder_path,
-        status=run.status,
-        run_time=run.run_time,
-        barcode=run.barcode
-    )
+    return run
 
 def get_runs(
       *, 

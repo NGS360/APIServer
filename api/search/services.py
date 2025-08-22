@@ -1,56 +1,103 @@
-from typing import Literal
+from typing import Literal, Union, Dict, Type, Callable
+from datetime import datetime
 from opensearchpy import OpenSearch, RequestError
+from sqlmodel import Session, select
 from core.logger import logger
+from core.deps import get_db
+from core.opensearch import INDEXES
 from api.search.models import (
-   SearchObject, SearchPublic
+    SearchDocument,
+    SearchResponse,
+    ProjectSearchResponse,
+    RunSearchResponse,
+    GenericSearchResponse,
+    BaseSearchResponse
 )
+from api.project.models import ProjectPublic
+from api.runs.models import SequencingRunPublic
 
-def _get_searchable_text_fields():
+def add_object_to_index(client: OpenSearch, document: SearchDocument, index: str) -> None:
     """
-    Dynamically collect all searchable text fields from models that have __searchable__ attribute.
-    """
-    text_fields = set(['name'])  # Always include 'name' as it's a core text field
-    
-    try:
-        # Import models that have __searchable__ attributes
-        from api.runs.models import SequencingRun
-        from api.project.models import Project
-        
-        # Collect searchable fields from each model
-        if hasattr(SequencingRun, '__searchable__'):
-            text_fields.update(SequencingRun.__searchable__)
-        
-        if hasattr(Project, '__searchable__'):
-            text_fields.update(Project.__searchable__)
-            
-    except ImportError as e:
-        logger.warning(f"Could not import models for searchable fields: {e}")
-    
-    return list(text_fields)
-
-
-def add_object_to_index(client: OpenSearch, object: SearchObject, index: str) -> None:
-    """
-    Add the project to the OpenSearch index.
+    Add a document (that can be converted to JSON) to the OpenSearch index.
     """
     # Assuming you have an OpenSearch client set up
     if client is None:
         logger.warning("OpenSearch client is not available.")
         return
 
-    # Prepare the document to index
-    doc = {
-        "id": str(object.id),
-        "name": object.name,
-        "attributes": [
-            {"key": attr.key, "value": attr.value} for attr in object.attributes or []
-        ]
-    }
+    payload = {}
+    for field in document.body.__searchable__:
+        value = getattr(document.body, field)
+        if value:
+            payload[field] = getattr(document.body, field)
 
     # Index the document
-    client.index(index=index, id=str(object.id), body=doc)
+    client.index(index=index, id=str(document.id), body=payload)
     client.indices.refresh(index=index)
 
+
+# Index configuration mapping
+INDEX_CONFIG = {
+    'projects': {
+        'response_class': ProjectSearchResponse,
+        'field_name': 'projects',
+        'model_creator': lambda hit_id, session: _get_project_by_id(hit_id, session)
+    },
+    'illumina_runs': {
+        'response_class': RunSearchResponse,
+        'field_name': 'illumina_runs',
+        'model_creator': lambda hit_id, session: _get_run_by_barcode(hit_id, session)
+    }
+}
+
+def _get_project_by_id(project_id: str, session: Session) -> ProjectPublic:
+    """Get project by ID"""
+    from api.project.services import get_project_by_project_id
+    return get_project_by_project_id(session=session, project_id=project_id)
+
+def _get_run_by_barcode(run_barcode: str, session: Session) -> SequencingRunPublic:
+    """Get run by barcode"""
+    from api.runs.services import get_run
+    return get_run(session=session, run_barcode=run_barcode)
+
+def _create_model_from_hit(hit, index: str, session: Session) -> Union[ProjectPublic, SequencingRunPublic]:
+    """
+    Create a SQLModel object from the hit['_id'] field based on what index is.
+    
+    Args:
+        hit: OpenSearch hit object containing _id and _source
+        index: The index name ('projects' or 'illumina_runs')
+        session: Database session for fetching data
+        
+    Returns:
+        ProjectPublic or SequencingRunPublic object based on the index
+    """
+    hit_id = hit['_id']
+    
+    if index in INDEX_CONFIG:
+        return INDEX_CONFIG[index]['model_creator'](hit_id, session)
+    else:
+        logger.error(f"Unknown index: {index}")
+        return None
+
+def _get_empty_response(index: str) -> SearchResponse:
+    """Get appropriate empty response based on index"""
+    if index in INDEX_CONFIG:
+        return INDEX_CONFIG[index]['response_class']()
+    return GenericSearchResponse()
+
+def _create_response(index: str, items: list, base_params: dict) -> SearchResponse:
+    """Create appropriate response model based on index"""
+    if index in INDEX_CONFIG:
+        config = INDEX_CONFIG[index]
+        field_data = {config['field_name']: items}
+        return config['response_class'](**field_data, **base_params)
+    else:
+        # Convert items to SearchDocument for generic response
+        search_docs = []
+        for item in items:
+            search_docs.append(SearchDocument(id=str(item.id), body=item))
+        return GenericSearchResponse(data=search_docs, **base_params)
 
 def search(
     client: OpenSearch,
@@ -59,14 +106,20 @@ def search(
     page: int,
     per_page: int,
     sort_by: str | None,
-    sort_order: Literal['asc', 'desc'] | None
-) -> SearchPublic:
+    sort_order: Literal['asc', 'desc'] | None,
+    session: Session
+) -> SearchResponse:
     """
     Perform a search with pagination and sorting.
     """
+    # Early returns for error conditions
     if not client:
         logger.error("OpenSearch client is not available.")
-        return SearchPublic(items=[], total=0, page=page, per_page=per_page)
+        return _get_empty_response(index)
+            
+    if index not in INDEXES:
+        logger.error("Unknown index %s", index)
+        return _get_empty_response(index)
 
     # Construct the search query
     search_list = query.split(" ")
@@ -84,46 +137,37 @@ def search(
         "size": per_page
     }
 
-    # Add sorting if specified
+    # Add sorting if sort_by is provided
     if sort_by and sort_order:
-        # Get text fields that need .keyword suffix for sorting
-        text_fields = _get_searchable_text_fields()
-        
-        # Use .keyword suffix for text fields, otherwise use field as-is
-        sort_field = f"{sort_by}.keyword" if sort_by in text_fields else sort_by
-        
         search_body["sort"] = [
-            {sort_field: {"order": sort_order}}
+            {sort_by: {"order": sort_order}}
+        ]
+    elif sort_by:
+        # Default to ascending if only sort_by is provided
+        search_body["sort"] = [
+            {sort_by: {"order": "asc"}}
         ]
 
-    try:
-        response = client.search(index=index, body=search_body)
-    except RequestError as e:
-        # If sorting fails, try without .keyword suffix
-        if sort_by and sort_order and "Text fields are not optimised" in str(e):
-            logger.warning(f"Sorting failed with .keyword suffix, retrying with original field: {sort_by}")
-            search_body["sort"] = [
-                {sort_by: {"order": sort_order}}
-            ]
-            try:
-                response = client.search(index=index, body=search_body)
-            except RequestError as e2:
-                # If it still fails, remove sorting and log the error
-                logger.error(f"Sorting failed for field '{sort_by}': {str(e2)}")
-                search_body.pop("sort", None)
-                response = client.search(index=index, body=search_body)
-        else:
-            # Re-raise if it's a different error
-            raise e
+    response = client.search(index=index, body=search_body)
 
-    items = [
-        SearchObject(
-            id=hit["_id"],
-            name=hit["_source"].get("name", ""),
-            attributes=hit["_source"].get("attributes", [])
-        ) for hit in response["hits"]["hits"]
-    ]
+    total_items = response["hits"]["total"]["value"]
+    total_pages = (total_items + per_page - 1) // per_page  # Ceiling division
 
-    total = response["hits"]["total"]["value"]
+    # Create appropriate model instances based on index
+    items = []
+    for hit in response["hits"]["hits"]:
+        item = _create_model_from_hit(hit, index, session)
+        if item is not None:  # Skip None results (e.g., when data not found in DB)
+            items.append(item)
 
-    return SearchPublic(items=items, total=total, page=page, per_page=per_page)
+    # Create the appropriate response model based on index
+    base_params = {
+        "total_items": total_items,
+        "total_pages": total_pages,
+        "current_page": page,
+        "per_page": per_page,
+        "has_next": page < total_pages,
+        "has_prev": page > 1
+    }
+    
+    return _create_response(index, items, base_params)

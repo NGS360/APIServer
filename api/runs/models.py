@@ -17,7 +17,7 @@ class SequencingRun(SQLModel, table=True):
     # Searchable is a new field used for Elasticsearch
     # This field is iterated on to identify what fields are searchable
     # or inserted into the ElasticSearch index.
-    __searchable__ = ['barcode', 'experiment_name', 's3_run_folder_path']
+    __searchable__ = ['barcode', 'experiment_name']
 
     id: uuid.UUID | None = Field(default_factory=uuid.uuid4, primary_key=True)
     run_date: date

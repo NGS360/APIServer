@@ -1,21 +1,32 @@
-from typing import List
+from typing import List, Dict, Any, Union
 from pydantic import BaseModel, computed_field
+from api.project.models import ProjectPublic
+from api.runs.models import SequencingRunPublic
 
-class SearchAttribute(BaseModel):
-  key: str | None
-  value: str | None
-
-class SearchObject(BaseModel):
+class SearchDocument(BaseModel):
     id: str
-    name: str
-    attributes: List[SearchAttribute] | None = None
+    body: Any # This object has to have a __searchable__ property
 
-    @computed_field
-    def display_name(self) -> str:
-        return f"{self.id}: {self.name}"
+class BaseSearchResponse(BaseModel):
+    """Base response model with common pagination fields"""
+    total_items: int = 0
+    total_pages: int = 0
+    current_page: int = 1
+    per_page: int = 0
+    has_next: bool = False
+    has_prev: bool = False
 
-class SearchPublic(BaseModel):
-    items: List[SearchObject] | None = None
-    total: int
-    page: int
-    per_page: int
+class ProjectSearchResponse(BaseSearchResponse):
+    """Response model for project searches"""
+    projects: List[ProjectPublic] = []
+
+class RunSearchResponse(BaseSearchResponse):
+    """Response model for sequencing run searches"""
+    illumina_runs: List[SequencingRunPublic] = []
+
+class GenericSearchResponse(BaseSearchResponse):
+    """Fallback response model for other search types"""
+    data: List[SearchDocument] = []
+
+# Union type for all possible search responses
+SearchResponse = Union[ProjectSearchResponse, RunSearchResponse, GenericSearchResponse]

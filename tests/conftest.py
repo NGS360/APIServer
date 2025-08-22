@@ -87,6 +87,26 @@ class MockOpenSearchClient:
                     "_score": 1.0
                 })
         
+        # Apply sorting if specified
+        sort_config = body.get("sort", [])
+        if sort_config:
+            for sort_item in sort_config:
+                if isinstance(sort_item, dict):
+                    for field, sort_order in sort_item.items():
+                        order = sort_order.get("order", "asc") if isinstance(sort_order, dict) else "asc"
+                        reverse = (order == "desc")
+                        
+                        # Sort by the specified field
+                        def get_sort_key(hit):
+                            source = hit.get("_source", {})
+                            value = source.get(field, "")
+                            # Convert to string for consistent sorting
+                            return str(value).lower() if value is not None else ""
+                        
+                        hits.sort(key=get_sort_key, reverse=reverse)
+                        break  # Only apply first sort for simplicity
+                    break
+        
         # Apply pagination
         from_param = body.get("from", 0)
         size_param = body.get("size", 10)
