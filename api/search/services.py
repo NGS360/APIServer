@@ -47,56 +47,12 @@ def _create_model_from_hit(hit, index: str, session: Session) -> Union[ProjectPu
     hit_id = hit['_id']
     
     if index == 'projects':
-        # For projects, the _id is the project_id
-        project = session.exec(
-            select(Project).where(Project.project_id == hit_id)
-        ).first()
-        
-        if not project:
-            logger.warning(f"Project with project_id {hit_id} not found in database")
-            return None
-            
-        return ProjectPublic(
-            project_id=project.project_id,
-            name=project.name,
-            attributes=[
-                Attribute(key=attr.key, value=attr.value)
-                for attr in project.attributes or []
-            ]
-        )
+        from api.project.services import get_project_by_project_id
+        return get_project_by_project_id(session=session, project_id=hit_id)
     elif index == 'illumina_runs':
+        from api.runs.services import get_run
         # For runs, the _id is the barcode
-        # Parse the barcode to get the individual components
-        (run_date, run_time, machine_id, run_number, flowcell_id) = SequencingRun.parse_barcode(hit_id)
-        
-        if run_date is None:
-            logger.warning(f"Invalid barcode format: {hit_id}")
-            return None
-            
-        run = session.exec(
-            select(SequencingRun).where(
-                SequencingRun.run_date == run_date,
-                SequencingRun.machine_id == machine_id,
-                SequencingRun.run_number == run_number,
-                SequencingRun.flowcell_id == flowcell_id
-            )
-        ).first()
-        
-        if run is None:
-            logger.warning(f"Run with barcode {hit_id} not found in database")
-            return None
-            
-        return SequencingRunPublic(
-            run_date=run.run_date,
-            machine_id=run.machine_id,
-            run_number=run.run_number,
-            flowcell_id=run.flowcell_id,
-            experiment_name=run.experiment_name,
-            s3_run_folder_path=run.s3_run_folder_path,
-            status=run.status,
-            run_time=run.run_time,
-            barcode=run.barcode
-        )
+        return get_run(session=session, run_barcode=hit_id)
     else:
         logger.error(f"Unknown index: {index}")
         return None
