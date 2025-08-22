@@ -4,6 +4,7 @@ from opensearchpy import OpenSearch, RequestError
 from sqlmodel import Session, select
 from core.logger import logger
 from core.deps import get_db
+from core.opensearch import INDEXES
 from api.search.models import (
     SearchDocument,
     SearchResponse
@@ -113,10 +114,11 @@ def search(
     """
     Perform a search with pagination and sorting.
     """
-    logger.debug(f"Search called with index='{index}', query='{query}'")
-    
     if not client:
         logger.error("OpenSearch client is not available.")
+        return SearchResponse()
+    if index not in INDEXES:
+        logger.error("Uknown index %s", index)
         return SearchResponse()
 
     # Construct the search query

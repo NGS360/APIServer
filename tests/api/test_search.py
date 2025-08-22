@@ -116,6 +116,5 @@ def test_search_unknown_index_fallback(client: TestClient, opensearch_client: Op
     response_json = response.json()
 
     # Should fallback to "data" key for unknown indexes
-    assert 'data' in response_json
-    assert response_json['data'] == []  # Empty results
-    assert response_json['total_items'] == 0
+    assert response_json == {"total_items":0,"total_pages":0,"current_page":1,"per_page":0,"has_next":False,"has_prev":False}
+
