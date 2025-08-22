@@ -80,7 +80,7 @@ def get_projects(
   response_model=ProjectPublic,
   tags=["Project Endpoints"]
 )
-def get_project_by_project_id(session: SessionDep, project_id: str) -> Project:
+def get_project_by_project_id(session: SessionDep, project_id: str) -> ProjectPublic:
   """
   Returns a single project by its project_id.
   Note: This is different from its internal "id".

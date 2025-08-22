@@ -150,7 +150,7 @@ def get_projects(
       has_prev=page > 1
    )
 
-def get_project_by_project_id(session: Session, project_id: str) -> Project:
+def get_project_by_project_id(session: Session, project_id: str) -> ProjectPublic:
    """
    Returns a single project by its project_id.
    Note: This is different from its internal "id".

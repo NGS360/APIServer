@@ -58,18 +58,7 @@ def get_run(
     if run is None:
         return None
 
-    return SequencingRunPublic(
-        id=run.id,
-        run_date=run.run_date,
-        machine_id=run.machine_id,
-        run_number=run.run_number,
-        flowcell_id=run.flowcell_id,
-        experiment_name=run.experiment_name,
-        s3_run_folder_path=run.s3_run_folder_path,
-        status=run.status,
-        run_time=run.run_time,
-        barcode=run.barcode
-    )
+    return run
 
 def get_runs(
       *, 
