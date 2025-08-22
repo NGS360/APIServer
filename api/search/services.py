@@ -137,6 +137,17 @@ def search(
         "size": per_page
     }
 
+    # Add sorting if sort_by is provided
+    if sort_by and sort_order:
+        search_body["sort"] = [
+            {sort_by: {"order": sort_order}}
+        ]
+    elif sort_by:
+        # Default to ascending if only sort_by is provided
+        search_body["sort"] = [
+            {sort_by: {"order": "asc"}}
+        ]
+
     response = client.search(index=index, body=search_body)
 
     total_items = response["hits"]["total"]["value"]
