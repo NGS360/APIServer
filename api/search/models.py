@@ -7,7 +7,8 @@ class SearchDocument(BaseModel):
     id: str
     body: Any # This object has to have a __searchable__ property
 
-class SearchResponse(BaseModel):
+class BaseSearchResponse(BaseModel):
+    """Base response model with common pagination fields"""
     total_items: int = 0
     total_pages: int = 0
     current_page: int = 1
@@ -15,8 +16,17 @@ class SearchResponse(BaseModel):
     has_next: bool = False
     has_prev: bool = False
 
-    model_config = {"extra": "allow"}  # Allow extra fields to be set dynamically
-    # Dynamic fields that will be set based on index:
-    # - projects: List[ProjectPublic]
-    # - illumina_runs: List[SequencingRunPublic]
-    # - data: List[SearchObject] (fallback)
+class ProjectSearchResponse(BaseSearchResponse):
+    """Response model for project searches"""
+    projects: List[ProjectPublic] = []
+
+class RunSearchResponse(BaseSearchResponse):
+    """Response model for sequencing run searches"""
+    illumina_runs: List[SequencingRunPublic] = []
+
+class GenericSearchResponse(BaseSearchResponse):
+    """Fallback response model for other search types"""
+    data: List[SearchDocument] = []
+
+# Union type for all possible search responses
+SearchResponse = Union[ProjectSearchResponse, RunSearchResponse, GenericSearchResponse]
