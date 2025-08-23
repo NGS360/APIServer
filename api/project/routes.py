@@ -71,6 +71,31 @@ def get_projects(
     sort_order=sort_order
   )
 
+@router.get(
+    "/search",
+    response_model=ProjectsPublic,
+    status_code=status.HTTP_200_OK,
+    tags=["Project Endpoints"]
+)
+def search_projects(
+  session: SessionDep,
+  client: OpenSearchDep,
+  query: str | None = Query(description="Search query string"),
+  page: int = Query(1, description="Page number (1-indexed)"),
+  per_page: int = Query(20, description="Number of items per page"),
+  sort_by: Literal["project_id", "name"] | None = Query('name', description="Field to sort by"),
+  sort_order: Literal['asc', 'desc'] | None = Query('asc', description="Sort order (asc or desc)")
+) -> ProjectsPublic:
+  return services.search_projects(
+    session=session,
+    client=client,
+    query=query,
+    page=page,
+    per_page=per_page,
+    sort_by=sort_by,
+    sort_order=sort_order
+  )
+
 ###############################################################################
 # Project Endpoints /api/v1/projects/{project_id}
 ###############################################################################

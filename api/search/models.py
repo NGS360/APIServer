@@ -1,7 +1,7 @@
 from typing import List, Dict, Any, Union
 from pydantic import BaseModel, computed_field
-from api.project.models import ProjectPublic
-from api.runs.models import SequencingRunPublic
+from api.project.models import ProjectPublic, ProjectsPublic
+from api.runs.models import SequencingRunPublic, SequencingRunsPublic
 
 class SearchDocument(BaseModel):
     id: str
@@ -30,3 +30,7 @@ class GenericSearchResponse(BaseSearchResponse):
 
 # Union type for all possible search responses
 SearchResponse = Union[ProjectSearchResponse, RunSearchResponse, GenericSearchResponse]
+
+class SearchResponse2(BaseModel):
+    projects: ProjectsPublic
+    runs: SequencingRunsPublic
