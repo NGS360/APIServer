@@ -9,7 +9,8 @@ from core.deps import (
   SessionDep
 )
 from api.search.models import (
-  SearchResponse
+  SearchResponse,
+  SearchResponse2
 )
 import api.search.services as services
 
@@ -42,4 +43,22 @@ def search(
     sort_by=sort_by,
     sort_order=sort_order,
     session=session
+  )
+
+@router.get(
+  "2",
+  response_model=SearchResponse2,
+  tags=["Search Endpoints"]
+)
+def search2(
+  client: OpenSearchDep,
+  session: SessionDep,
+  query: str = Query(..., description="Search query string"),
+  n_results: int = Query(5, description="Number of results to return per index")
+) -> SearchResponse2:
+  return services.unified_search(
+    client=client,
+    session=session,
+    query=query,
+    n_results=n_results
   )

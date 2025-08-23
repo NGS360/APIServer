@@ -8,6 +8,7 @@ from pydantic import PositiveInt
 from pytz import timezone
 from sqlmodel import Session, func, select
 from core.logger import logger
+from core.utils import define_search_body
 
 from api.project.models import (
     Project,
@@ -167,3 +168,49 @@ def get_project_by_project_id(session: Session, project_id: str) -> ProjectPubli
       )
    
    return project
+
+def search_projects(
+    session: Session,
+    client: OpenSearch,
+    query: str,
+    page: int,
+    per_page: int,
+    sort_by: str | None = 'name',
+    sort_order: Literal['asc', 'desc'] | None = 'asc'
+) -> ProjectsPublic:
+   """
+   Search for projects
+   """
+   # Construct the search query
+   search_body = define_search_body(query, page, per_page, sort_by, sort_order)
+
+   try:
+
+      response = client.search(index='projects', body=search_body)
+      total_items = response["hits"]["total"]["value"]
+      total_pages = (total_items + per_page - 1) // per_page  # Ceiling division
+
+      # Unpack search results into ProjectPublic model
+      results = []
+      for hit in response["hits"]["hits"]:
+         source = hit["_source"]
+         project = get_project_by_project_id(session=session, project_id=source.get('project_id'))
+         results.append(
+            ProjectPublic.model_validate(project)
+         )
+      
+      return ProjectsPublic(
+         data=results,
+         total_items=total_items,
+         total_pages=total_pages,
+         current_page=page,
+         per_page=per_page,
+         has_next=page < total_pages,
+         has_prev=page > 1
+      )
+   
+   except Exception as e:
+      raise HTTPException(
+         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+         detail=str(e)
+      )

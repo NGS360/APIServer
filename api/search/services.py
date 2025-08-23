@@ -11,10 +11,12 @@ from api.search.models import (
     ProjectSearchResponse,
     RunSearchResponse,
     GenericSearchResponse,
-    BaseSearchResponse
+    BaseSearchResponse,
+    SearchResponse2
 )
 from api.project.models import ProjectPublic
 from api.runs.models import SequencingRunPublic
+
 
 def add_object_to_index(client: OpenSearch, document: SearchDocument, index: str) -> None:
     """
@@ -138,14 +140,15 @@ def search(
     }
 
     # Add sorting if sort_by is provided
+    sort_field = f"{sort_by}.keyword"
     if sort_by and sort_order:
         search_body["sort"] = [
-            {sort_by: {"order": sort_order}}
+            {sort_field: {"order": sort_order}}
         ]
     elif sort_by:
         # Default to ascending if only sort_by is provided
         search_body["sort"] = [
-            {sort_by: {"order": "asc"}}
+            {sort_field: {"order": "asc"}}
         ]
 
     response = client.search(index=index, body=search_body)
@@ -171,3 +174,28 @@ def search(
     }
     
     return _create_response(index, items, base_params)
+
+
+def unified_search(
+    client: OpenSearch,
+    session: Session,
+    query: str,
+    n_results: int = 5
+) -> SearchResponse2:
+    """
+    Unified search across indices
+    """
+    from api.project.services import search_projects
+    from api.runs.services import search_runs
+    args = {
+        "session": session,
+        "client": client,
+        "query": query,
+        "page": 1,
+        "per_page": n_results
+    }
+
+    return SearchResponse2(
+        projects = search_projects(**args),
+        runs = search_runs(**args)
+    )
