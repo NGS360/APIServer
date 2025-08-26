@@ -34,8 +34,11 @@ services:
       - client_origin=http://localhost:8080
       # Database variables
       - SQLALCHEMY_DATABASE_URI=mysql+pymysql://root:rootpassword@db:3306/ngs360
+      # Open search
+      - OPENSEARCH_HOST=opensearch
+      - OPENSEARCH_PORT=9200
     volumes: # this allows live reloading of the backend code
-      - ./:/app
+      - ${PWD}:/app
  
   opensearch:
     image: opensearchproject/opensearch:2.19.3

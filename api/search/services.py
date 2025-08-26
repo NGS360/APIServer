@@ -11,10 +11,12 @@ from api.search.models import (
     ProjectSearchResponse,
     RunSearchResponse,
     GenericSearchResponse,
-    BaseSearchResponse
+    BaseSearchResponse,
+    SearchResponseOriginal
 )
 from api.project.models import ProjectPublic
 from api.runs.models import SequencingRunPublic
+
 
 def add_object_to_index(client: OpenSearch, document: SearchDocument, index: str) -> None:
     """
@@ -80,13 +82,13 @@ def _create_model_from_hit(hit, index: str, session: Session) -> Union[ProjectPu
         logger.error(f"Unknown index: {index}")
         return None
 
-def _get_empty_response(index: str) -> SearchResponse:
+def _get_empty_response(index: str) -> SearchResponseOriginal:
     """Get appropriate empty response based on index"""
     if index in INDEX_CONFIG:
         return INDEX_CONFIG[index]['response_class']()
     return GenericSearchResponse()
 
-def _create_response(index: str, items: list, base_params: dict) -> SearchResponse:
+def _create_response(index: str, items: list, base_params: dict) -> SearchResponseOriginal:
     """Create appropriate response model based on index"""
     if index in INDEX_CONFIG:
         config = INDEX_CONFIG[index]
@@ -99,7 +101,7 @@ def _create_response(index: str, items: list, base_params: dict) -> SearchRespon
             search_docs.append(SearchDocument(id=str(item.id), body=item))
         return GenericSearchResponse(data=search_docs, **base_params)
 
-def search(
+def search_original(
     client: OpenSearch,
     index: str,
     query: str,
@@ -108,7 +110,7 @@ def search(
     sort_by: str | None,
     sort_order: Literal['asc', 'desc'] | None,
     session: Session
-) -> SearchResponse:
+) -> SearchResponseOriginal:
     """
     Perform a search with pagination and sorting.
     """
@@ -138,14 +140,15 @@ def search(
     }
 
     # Add sorting if sort_by is provided
+    sort_field = f"{sort_by}.keyword"
     if sort_by and sort_order:
         search_body["sort"] = [
-            {sort_by: {"order": sort_order}}
+            {sort_field: {"order": sort_order}}
         ]
     elif sort_by:
         # Default to ascending if only sort_by is provided
         search_body["sort"] = [
-            {sort_by: {"order": "asc"}}
+            {sort_field: {"order": "asc"}}
         ]
 
     response = client.search(index=index, body=search_body)
@@ -171,3 +174,28 @@ def search(
     }
     
     return _create_response(index, items, base_params)
+
+
+def search(
+    client: OpenSearch,
+    session: Session,
+    query: str,
+    n_results: int = 5
+) -> SearchResponse:
+    """
+    Unified search across indices
+    """
+    from api.project.services import search_projects
+    from api.runs.services import search_runs
+    args = {
+        "session": session,
+        "client": client,
+        "query": query,
+        "page": 1,
+        "per_page": n_results
+    }
+
+    return SearchResponse(
+        projects = search_projects(**args),
+        runs = search_runs(**args)
+    )
