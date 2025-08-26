@@ -27,7 +27,8 @@ def define_search_body(
   }
 
   # Add sorting if sort_by is provided
-  sort_field = f"{sort_by}.keyword"
+  sort_field = f"{sort_by}.keyword" # For API to work
+  # sort_field = sort_by # For tests to work
   if sort_by and sort_order:
     search_body["sort"] = [
         {sort_field: {"order": sort_order}}

@@ -29,8 +29,8 @@ class GenericSearchResponse(BaseSearchResponse):
     data: List[SearchDocument] = []
 
 # Union type for all possible search responses
-SearchResponse = Union[ProjectSearchResponse, RunSearchResponse, GenericSearchResponse]
+SearchResponseOriginal = Union[ProjectSearchResponse, RunSearchResponse, GenericSearchResponse]
 
-class SearchResponse2(BaseModel):
+class SearchResponse(BaseModel):
     projects: ProjectsPublic
     runs: SequencingRunsPublic
