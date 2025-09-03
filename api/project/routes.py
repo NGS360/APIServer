@@ -80,7 +80,7 @@ def get_projects(
 def search_projects(
   session: SessionDep,
   client: OpenSearchDep,
-  query: str = Query(default="*", description="Search query string"),
+  query: str = Query(description="Search query string"),
   page: int = Query(1, description="Page number (1-indexed)"),
   per_page: int = Query(20, description="Number of items per page"),
   sort_by: Literal["project_id", "name"] | None = Query('name', description="Field to sort by"),

@@ -89,7 +89,7 @@ def add_run(
 def search_runs(
   session: SessionDep,
   client: OpenSearchDep,
-  query: str | None = Query(description="Search query string"),
+  query: str = Query(description="Search query string"),
   page: int = Query(1, description="Page number (1-indexed)"),
   per_page: int = Query(20, description="Number of items per page"),
   sort_by: Literal['barcode', 'experiment_name'] | None = Query('barcode', description="Field to sort by"),
