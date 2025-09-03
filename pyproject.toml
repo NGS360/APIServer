@@ -21,12 +21,14 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
+    "flake8",
     "pytest",
     "pytest-cov"
 ]
 
 [dependency-groups]
 dev = [
+    "flake8>=7.3.0",
     "pytest>=8.4.1",
     "pytest-cov>=6.2.1",
 ]
