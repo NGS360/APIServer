@@ -1,0 +1,15 @@
+[flake8]
+exclude = 
+    .git,
+    __pycache__,
+    build,
+    dist,
+    *.egg-info,
+    .venv,
+    venv,
+    env,
+    .env,
+    htmlcov,
+    .pytest_cache,
+    .ruff_cache
+max-line-length = 88
