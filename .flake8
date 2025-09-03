@@ -11,5 +11,6 @@ exclude =
     .env,
     htmlcov,
     .pytest_cache,
-    .ruff_cache
+    .ruff_cache,
+    alembic
 max-line-length = 88

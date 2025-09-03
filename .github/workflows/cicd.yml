@@ -1,4 +1,4 @@
-name: Unit test and coverage report
+name: Unit test, lint and coverage report
 # Run unit tests and generate coverage report
 
 on:
