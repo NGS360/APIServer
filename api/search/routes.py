@@ -1,7 +1,6 @@
 """
 Routes/endpoints for the Search API
 """
-from typing import Literal
 from fastapi import APIRouter, Query
 
 from core.deps import (
@@ -10,7 +9,6 @@ from core.deps import (
 )
 from api.search.models import (
   SearchResponse,
-  SearchResponseOriginal
 )
 import api.search.services as services
 
