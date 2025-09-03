@@ -99,7 +99,9 @@ class MockOpenSearchClient:
                         # Sort by the specified field
                         def get_sort_key(hit):
                             source = hit.get("_source", {})
-                            value = source.get(field, "")
+                            # Remove .keyword suffix if present for compatibility with API
+                            base_field = field.split(".")[0] if "." in field else field
+                            value = source.get(base_field, "")
                             # Convert to string for consistent sorting
                             return str(value).lower() if value is not None else ""
                         
