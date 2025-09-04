@@ -25,30 +25,6 @@ import api.runs.services as services
 
 router = APIRouter(prefix="/runs", tags=["Run Endpoints"])
 
-@router.get(
-    "",
-    response_model=SequencingRunsPublic,
-    status_code=status.HTTP_200_OK,
-    tags=["Run Endpoints"]
-)
-def get_runs(
-  session: SessionDep, 
-  page: int = Query(1, description="Page number (1-indexed)"), 
-  per_page: int = Query(20, description="Number of items per page"),
-  sort_by: str = Query('project_id', description="Field to sort by"),
-  sort_order: Literal['asc', 'desc'] = Query('asc', description="Sort order (asc or desc)")
-) -> SequencingRunsPublic:
-    """
-    Retrieve a list of all sequencing runs.
-    """
-    return services.get_runs(
-        session=session, 
-        page=page,
-        per_page=per_page,
-        sort_by=sort_by,
-        sort_order=sort_order
-    )
-
 @router.post(
   "",
   response_model=SequencingRunPublic,
@@ -78,6 +54,56 @@ def add_run(
     status=run.status,
     run_time=run.run_time,
     barcode=run.barcode
+  )
+
+@router.get(
+    "",
+    response_model=SequencingRunsPublic,
+    status_code=status.HTTP_200_OK,
+    tags=["Run Endpoints"]
+)
+def get_runs(
+  session: SessionDep, 
+  page: int = Query(1, description="Page number (1-indexed)"), 
+  per_page: int = Query(20, description="Number of items per page"),
+  sort_by: str = Query('project_id', description="Field to sort by"),
+  sort_order: Literal['asc', 'desc'] = Query('asc', description="Sort order (asc or desc)")
+) -> SequencingRunsPublic:
+    """
+    Retrieve a list of all sequencing runs.
+    """
+    return services.get_runs(
+        session=session, 
+        page=page,
+        per_page=per_page,
+        sort_by=sort_by,
+        sort_order=sort_order
+    )
+
+@router.get(
+    "/search",
+    response_model=SequencingRunsPublic,
+    status_code=status.HTTP_200_OK,
+    tags=["Run Endpoints"]
+)
+def search_runs(
+  session: SessionDep,
+  client: OpenSearchDep,
+  query: str = Query(description="Search query string"),
+  page: int = Query(1, description="Page number (1-indexed)"),
+  per_page: int = Query(20, description="Number of items per page"),
+  sort_by: Literal['barcode', 'experiment_name'] | None = Query('barcode', description="Field to sort by"),
+  sort_order: Literal['asc', 'desc'] | None = Query('asc', description="Sort order (asc or desc)")
+) -> SequencingRunsPublic:
+  print("hello")
+  return services.search_runs(
+    session=session,
+    client=client,
+    query=query,
+    page=page,
+    per_page=per_page,
+    sort_by=sort_by,
+    sort_order=sort_order
   )
 
 @router.get(

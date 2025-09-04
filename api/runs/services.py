@@ -3,6 +3,8 @@ from typing import List, Literal
 from pydantic import PositiveInt
 from sqlalchemy import asc, desc
 from opensearchpy import OpenSearch
+from fastapi import HTTPException, status
+from core.utils import define_search_body
 
 from api.runs.models import (
     SequencingRun, 
@@ -118,3 +120,49 @@ def get_runs(
         has_next=page < total_pages,
         has_prev=page > 1
     )
+
+def search_runs(
+    session: Session,
+    client: OpenSearch,
+    query: str,
+    page: int,
+    per_page: int,
+    sort_by: str | None = 'barcode',
+    sort_order: Literal['asc', 'desc'] | None = 'asc'
+) -> SequencingRunsPublic:
+   """
+   Search for runs
+   """
+   # Construct the search query
+   search_body = define_search_body(query, page, per_page, sort_by, sort_order)
+
+   try:
+
+      response = client.search(index='illumina_runs', body=search_body)
+      total_items = response["hits"]["total"]["value"]
+      total_pages = (total_items + per_page - 1) // per_page  # Ceiling division
+
+      # Unpack search results into ProjectPublic model
+      results = []
+      for hit in response["hits"]["hits"]:
+         source = hit["_source"]
+         run = get_run(session=session, run_barcode=source.get('barcode'))
+         results.append(
+            SequencingRunPublic.model_validate(run)
+         )
+      
+      return SequencingRunsPublic(
+         data=results,
+         total_items=total_items,
+         total_pages=total_pages,
+         current_page=page,
+         per_page=per_page,
+         has_next=page < total_pages,
+         has_prev=page > 1
+      )
+   
+   except Exception as e:
+      raise HTTPException(
+         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+         detail=str(e)
+      )

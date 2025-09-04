@@ -21,6 +21,9 @@ run-dev:
 	fastapi dev main.py
 
 # Unit Tests
+lint:
+	flake8 .
+
 test:
 	pytest -xv --cov
 	coverage html

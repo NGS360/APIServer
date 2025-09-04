@@ -85,6 +85,31 @@ evolution_project = {
     ]
 }
 
+# Basic projects for testing basic functionality
+basic_projects = [
+    {
+        "name": "Test project 1",
+        "attributes": [
+            {"key": "description", "value": "First test project"},
+            {"key": "Department", "value": "Testing"}
+        ]
+    },
+    {
+        "name": "Test project 2",
+        "attributes": [
+            {"key": "description", "value": "Second test project"},
+            {"key": "Department", "value": "Testing"}
+        ]
+    },
+    {
+        "name": "Test project 3",
+        "attributes": [
+            {"key": "description", "value": "Third test project"},
+            {"key": "Department", "value": "Testing"}
+        ]
+    }
+]
+
 # List of all test projects for easy iteration
 TEST_PROJECTS = [
     genomics_project,

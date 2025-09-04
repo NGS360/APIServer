@@ -18,3 +18,4 @@ wheels/
 
 # Local computer files
 *.DS_Store
+.vscode
