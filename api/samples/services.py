@@ -4,7 +4,6 @@ from pydantic import PositiveInt
 
 from sqlmodel import Session, select, func
 
-from core.logger import logger
 
 from api.samples.models import (
     Sample,
