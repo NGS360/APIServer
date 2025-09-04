@@ -65,7 +65,8 @@ microbiome_project = {
     "attributes": [
         {
             "key": "description",
-            "value": "Investigating the relationship between gut microbiome composition and metabolic disorders",
+            "value": "Investigating the relationship between gut microbiome composition and "
+            "metabolic disorders",
         },
         {"key": "Department", "value": "Microbiology"},
         {"key": "Priority", "value": "High"},
@@ -85,7 +86,8 @@ evolution_project = {
     "attributes": [
         {
             "key": "description",
-            "value": "Comparative genomics study of primate species to understand evolutionary adaptations",
+            "value": "Comparative genomics study of primate species "
+            "to understand evolutionary adaptations",
         },
         {"key": "Department", "value": "Evolutionary Biology"},
         {"key": "Priority", "value": "Low"},

@@ -1,5 +1,8 @@
-from typing import List, Dict, Any, Union
-from pydantic import BaseModel, computed_field
+"""
+Search-related models
+"""
+from typing import List, Any, Union
+from pydantic import BaseModel
 from api.project.models import ProjectPublic, ProjectsPublic
 from api.runs.models import SequencingRunPublic, SequencingRunsPublic
 

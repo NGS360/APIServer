@@ -111,7 +111,7 @@ class MockOpenSearchClient:
         # Apply pagination
         from_param = body.get("from", 0)
         size_param = body.get("size", 10)
-        paginated_hits = hits[from_param : from_param + size_param]
+        paginated_hits = hits[from_param: from_param + size_param]
 
         return {"hits": {"total": {"value": len(hits)}, "hits": paginated_hits}}
 

@@ -1,7 +1,9 @@
-from sqlmodel import select, Session, func
+"""
+Services for managing sequencing runs.
+"""
 from typing import List, Literal
+from sqlmodel import select, Session, func
 from pydantic import PositiveInt
-from sqlalchemy import asc, desc
 from opensearchpy import OpenSearch
 from fastapi import HTTPException, status
 from core.utils import define_search_body

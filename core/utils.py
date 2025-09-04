@@ -8,14 +8,18 @@ def define_search_body(
     Define the search body for OpenSearch queries.
     Includes sorting and pagination
     """
-    search_list = query.split(" ")
-    formatted_list = ["(*{}*)".format(token) for token in search_list]
-    search_str = " AND ".join(formatted_list)
+    # Handle wildcard query as a special case
+    if query.strip() == "*":
+        search_query = "*"
+    else:
+        search_list = query.split(" ")
+        formatted_list = ["(*{}*)".format(token) for token in search_list]
+        search_query = " AND ".join(formatted_list)
 
     search_body = {
         "query": {
             "query_string": {
-                "query": search_str,
+                "query": search_query,
                 "fields": ["*"],
             }
         },

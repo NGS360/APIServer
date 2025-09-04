@@ -4,9 +4,7 @@ Models for the Runs API
 
 import uuid
 from datetime import datetime, date
-from typing import Optional
 from sqlmodel import SQLModel, Field
-from sqlalchemy.ext.hybrid import hybrid_property
 from pydantic import ConfigDict, computed_field
 
 
@@ -44,15 +42,21 @@ class SequencingRun(SQLModel, table=True):
         """
         Converts a barcode to its parts
 
-        :param barcode: Barcode in the form of <YYMMDD>_<machineid>_<zero padded run number>_<flowcell>
-                  or ONT run id in the form of <YYYYMMDD>_<HHMM>_<machineid>_<flowcell>_<run string>
+        :param barcode: Barcode in the form of
+                     <YYMMDD>_<machineid>_<zero padded run number>_<flowcell>
+                  or ONT run id in the form of
+                     <YYYYMMDD>_<HHMM>_<machineid>_<flowcell>_<run string>
         :return: 5 parts (run_date, run_time, machine_id, run_number, flowcell_id) or None
         """
+        # Define (default) return values
+        run_date, run_time, machine_id, run_number, flowcell_id = (None, None, None, None, None)
+
+        # Split the barcode into its parts
         run_id_fields = barcode.split("_")
         if len(run_id_fields) not in [4, 5]:
             return (None, None, None, None, None)
 
-        ##illumina run id has 4 fields
+        # illumina run id has 4 fields
         if len(run_id_fields) == 4:
             run_date = datetime.strptime(run_id_fields[0], "%y%m%d").date()
             machine_id = run_id_fields[1]
@@ -65,7 +69,7 @@ class SequencingRun(SQLModel, table=True):
             flowcell_id = run_id_fields[3]
             run_time = None
 
-        ##ONT will have 5 fields
+        # ONT will have 5 fields
         if len(run_id_fields) == 5:
             run_date = datetime.strptime(run_id_fields[0], "%Y%m%d").date()
             run_time = run_id_fields[1]

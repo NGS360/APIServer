@@ -2,7 +2,7 @@
 Database configuration
 """
 
-from sqlmodel import SQLModel, create_engine, Session
+from sqlmodel import create_engine, Session
 from core.config import get_settings
 
 # Connect to db

@@ -1,21 +1,15 @@
-from typing import Literal, Union, Dict, Type, Callable
-from datetime import datetime
-from opensearchpy import OpenSearch, RequestError
-from sqlmodel import Session, select
+"""
+Search-related services
+"""
+from opensearchpy import OpenSearch
+from sqlmodel import Session
+
 from core.logger import logger
-from core.deps import get_db
-from core.opensearch import INDEXES
+
 from api.search.models import (
     SearchDocument,
     SearchResponse,
-    ProjectSearchResponse,
-    RunSearchResponse,
-    GenericSearchResponse,
-    BaseSearchResponse,
-    SearchResponseOriginal,
 )
-from api.project.models import ProjectPublic
-from api.runs.models import SequencingRunPublic
 
 
 def add_object_to_index(

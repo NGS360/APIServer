@@ -5,7 +5,7 @@ Add constants, secrets, env variables here
 
 from functools import lru_cache
 import os
-from urllib.parse import urlparse, urlunparse, quote
+from urllib.parse import urlparse, urlunparse
 from pydantic import computed_field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 

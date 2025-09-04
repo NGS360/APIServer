@@ -3,8 +3,8 @@ Models for the Sample API
 """
 
 import uuid
+from typing import List, TYPE_CHECKING
 from sqlmodel import SQLModel, Field, Relationship, UniqueConstraint
-from typing import List, TYPE_CHECKING, Optional
 from pydantic import ConfigDict
 
 if TYPE_CHECKING:

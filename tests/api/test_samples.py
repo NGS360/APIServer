@@ -165,6 +165,6 @@ def test_fail_to_add_sample_to_nonexistent_project(
     }
 
     response = client.post(
-        f"/api/v1/projects/non_existent_project/samples", json=sample_data
+        "/api/v1/projects/non_existent_project/samples", json=sample_data
     )
     assert response.status_code == 404
