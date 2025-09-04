@@ -5,13 +5,15 @@ from api.project.models import Project
 from api.samples.models import Sample
 from api.project.services import generate_project_id
 
-#from api.samples.models import Sample, SampleAttribute
+# from api.samples.models import Sample, SampleAttribute
 
 
-def test_get_samples_for_a_project_with_no_samples(client: TestClient, session: Session):
-    '''
+def test_get_samples_for_a_project_with_no_samples(
+    client: TestClient, session: Session
+):
+    """
     Test that we can get all samples for a project
-    '''
+    """
     # Add a project to the database
     new_project = Project(name="Test Project")
     new_project.project_id = generate_project_id(session=session)
@@ -20,23 +22,23 @@ def test_get_samples_for_a_project_with_no_samples(client: TestClient, session: 
     session.commit()
 
     # Test No samples
-    response = client.get(f'/api/v1/projects/{new_project.project_id}/samples')
+    response = client.get(f"/api/v1/projects/{new_project.project_id}/samples")
     assert response.status_code == 200
     assert response.json() == {
-        'current_page': 1,
-        'data': [],
-        'per_page': 20,
-        'total_items': 0,
-        'total_pages': 0,
-        'has_next': False,
-        'has_prev': False
+        "current_page": 1,
+        "data": [],
+        "per_page": 20,
+        "total_items": 0,
+        "total_pages": 0,
+        "has_next": False,
+        "has_prev": False,
     }
 
 
 def test_get_samples_for_a_project_with_samples(client: TestClient, session: Session):
-    '''
+    """
     Test that we can get all samples for a project with samples
-    '''
+    """
     # Add a project to the database
     new_project_1 = Project(name="Test Project 1")
     new_project_1.project_id = generate_project_id(session=session)
@@ -59,14 +61,15 @@ def test_get_samples_for_a_project_with_samples(client: TestClient, session: Ses
     session.commit()
 
     # Test with samples
-    response = client.get(f'/api/v1/projects/{new_project_1.project_id}/samples')
+    response = client.get(f"/api/v1/projects/{new_project_1.project_id}/samples")
     assert response.status_code == 200
-    assert len(response.json()['data']) == 2
+    assert len(response.json()["data"]) == 2
+
 
 def test_add_sample_to_project(client: TestClient, session: Session):
-    '''
+    """
     Test that we can add a sample to a project
-    '''
+    """
     # Add a project to the database
     new_project = Project(name="Test Project")
     new_project.project_id = generate_project_id(session=session)
@@ -79,19 +82,23 @@ def test_add_sample_to_project(client: TestClient, session: Session):
         "sample_id": "Sample_1",
         "attributes": [
             {"key": "Tissue", "value": "Liver"},
-            {"key": "Condition", "value": "Healthy"}
-        ]
+            {"key": "Condition", "value": "Healthy"},
+        ],
     }
-    
-    response = client.post(f'/api/v1/projects/{new_project.project_id}/samples', json=sample_data)
+
+    response = client.post(
+        f"/api/v1/projects/{new_project.project_id}/samples", json=sample_data
+    )
     assert response.status_code == 201
-    assert response.json()['sample_id'] == "Sample_1"
+    assert response.json()["sample_id"] == "Sample_1"
 
 
-def test_fail_to_add__sample_with_duplicate_attributes(client: TestClient, session: Session):
-    '''
+def test_fail_to_add__sample_with_duplicate_attributes(
+    client: TestClient, session: Session
+):
+    """
     Test that we properly fail to add a sample with duplicate keys.
-    '''
+    """
     # Add a project to the database
     new_project = Project(name="Test Project")
     new_project.project_id = generate_project_id(session=session)
@@ -105,17 +112,19 @@ def test_fail_to_add__sample_with_duplicate_attributes(client: TestClient, sessi
         "attributes": [
             {"key": "Tissue", "value": "Liver"},
             {"key": "Tissue", "value": "Heart"},
-        ]
+        ],
     }
-    
-    response = client.post(f'/api/v1/projects/{new_project.project_id}/samples', json=sample_data)
+
+    response = client.post(
+        f"/api/v1/projects/{new_project.project_id}/samples", json=sample_data
+    )
     assert response.status_code == 400
 
 
 def test_fail_to_add_sample_to_project(client: TestClient, session: Session):
-    '''
+    """
     Test that we fail to add a sample to a project when a projecT_id is provided in sample data
-    '''
+    """
     # Add a project to the database
     new_project = Project(name="Test Project")
     new_project.project_id = generate_project_id(session=session)
@@ -126,30 +135,36 @@ def test_fail_to_add_sample_to_project(client: TestClient, session: Session):
     # Add a sample to the project
     sample_data = {
         "sample_id": "Sample_1",
-        "project_id": 'a_project_id',
+        "project_id": "a_project_id",
         "attributes": [
             {"key": "Tissue", "value": "Liver"},
-            {"key": "Condition", "value": "Healthy"}
-        ]
+            {"key": "Condition", "value": "Healthy"},
+        ],
     }
 
-    response = client.post(f'/api/v1/projects/{new_project.project_id}/samples', json=sample_data)
+    response = client.post(
+        f"/api/v1/projects/{new_project.project_id}/samples", json=sample_data
+    )
     assert response.status_code == 422
     assert "Extra inputs are not permitted" in response.json()["detail"][0]["msg"]
 
 
-def test_fail_to_add_sample_to_nonexistent_project(client: TestClient, session: Session):
-    '''
+def test_fail_to_add_sample_to_nonexistent_project(
+    client: TestClient, session: Session
+):
+    """
     Test that we cannot add a sample to a non-existent project
-    '''
+    """
     # Attempt to add a sample to a non-existent project
     sample_data = {
         "sample_id": "Sample_1",
         "attributes": [
             {"key": "Tissue", "value": "Liver"},
-            {"key": "Condition", "value": "Healthy"}
-        ]
+            {"key": "Condition", "value": "Healthy"},
+        ],
     }
-    
-    response = client.post(f'/api/v1/projects/non_existent_project/samples', json=sample_data)
+
+    response = client.post(
+        f"/api/v1/projects/non_existent_project/samples", json=sample_data
+    )
     assert response.status_code == 404

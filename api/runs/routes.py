@@ -12,114 +12,119 @@ POST   /api/v0/runs/[id]/samples       Post new samples after demux
 POST   /api/v0/runs/[id]/demultiplex   Demultiplex a run
 GET    /api/v0/runs/[id]/metrics       Retrieve demux metrics from Stat.json
 """
+
 from fastapi import APIRouter, Query, status
 from typing import Literal
 from core.deps import SessionDep, OpenSearchDep
 from api.runs.models import (
-   SequencingRun,
-   SequencingRunCreate,
-   SequencingRunPublic,
-   SequencingRunsPublic
+    SequencingRun,
+    SequencingRunCreate,
+    SequencingRunPublic,
+    SequencingRunsPublic,
 )
 import api.runs.services as services
 
 router = APIRouter(prefix="/runs", tags=["Run Endpoints"])
 
+
 @router.post(
-  "",
-  response_model=SequencingRunPublic,
-  tags=["Run Endpoints"],
-  status_code=status.HTTP_201_CREATED
+    "",
+    response_model=SequencingRunPublic,
+    tags=["Run Endpoints"],
+    status_code=status.HTTP_201_CREATED,
 )
 def add_run(
-  session: SessionDep,
-  opensearch_client: OpenSearchDep,
-  sequencingrun_in: SequencingRunCreate
+    session: SessionDep,
+    opensearch_client: OpenSearchDep,
+    sequencingrun_in: SequencingRunCreate,
 ) -> SequencingRun:
-  """
-  Create a new project with optional attributes.
-  """
-  run = services.add_run(
-    session=session,
-    sequencingrun_in=sequencingrun_in,
-    opensearch_client=opensearch_client
-  )
-  return SequencingRunPublic(
-    run_date=run.run_date,
-    machine_id=run.machine_id,
-    run_number=run.run_number,
-    flowcell_id=run.flowcell_id,
-    experiment_name=run.experiment_name,
-    s3_run_folder_path=run.s3_run_folder_path,
-    status=run.status,
-    run_time=run.run_time,
-    barcode=run.barcode
-  )
+    """
+    Create a new project with optional attributes.
+    """
+    run = services.add_run(
+        session=session,
+        sequencingrun_in=sequencingrun_in,
+        opensearch_client=opensearch_client,
+    )
+    return SequencingRunPublic(
+        run_date=run.run_date,
+        machine_id=run.machine_id,
+        run_number=run.run_number,
+        flowcell_id=run.flowcell_id,
+        experiment_name=run.experiment_name,
+        s3_run_folder_path=run.s3_run_folder_path,
+        status=run.status,
+        run_time=run.run_time,
+        barcode=run.barcode,
+    )
+
 
 @router.get(
     "",
     response_model=SequencingRunsPublic,
     status_code=status.HTTP_200_OK,
-    tags=["Run Endpoints"]
+    tags=["Run Endpoints"],
 )
 def get_runs(
-  session: SessionDep, 
-  page: int = Query(1, description="Page number (1-indexed)"), 
-  per_page: int = Query(20, description="Number of items per page"),
-  sort_by: str = Query('project_id', description="Field to sort by"),
-  sort_order: Literal['asc', 'desc'] = Query('asc', description="Sort order (asc or desc)")
+    session: SessionDep,
+    page: int = Query(1, description="Page number (1-indexed)"),
+    per_page: int = Query(20, description="Number of items per page"),
+    sort_by: str = Query("project_id", description="Field to sort by"),
+    sort_order: Literal["asc", "desc"] = Query(
+        "asc", description="Sort order (asc or desc)"
+    ),
 ) -> SequencingRunsPublic:
     """
     Retrieve a list of all sequencing runs.
     """
     return services.get_runs(
-        session=session, 
+        session=session,
         page=page,
         per_page=per_page,
         sort_by=sort_by,
-        sort_order=sort_order
+        sort_order=sort_order,
     )
+
 
 @router.get(
     "/search",
     response_model=SequencingRunsPublic,
     status_code=status.HTTP_200_OK,
-    tags=["Run Endpoints"]
+    tags=["Run Endpoints"],
 )
 def search_runs(
-  session: SessionDep,
-  client: OpenSearchDep,
-  query: str = Query(description="Search query string"),
-  page: int = Query(1, description="Page number (1-indexed)"),
-  per_page: int = Query(20, description="Number of items per page"),
-  sort_by: Literal['barcode', 'experiment_name'] | None = Query('barcode', description="Field to sort by"),
-  sort_order: Literal['asc', 'desc'] | None = Query('asc', description="Sort order (asc or desc)")
+    session: SessionDep,
+    client: OpenSearchDep,
+    query: str = Query(description="Search query string"),
+    page: int = Query(1, description="Page number (1-indexed)"),
+    per_page: int = Query(20, description="Number of items per page"),
+    sort_by: Literal["barcode", "experiment_name"] | None = Query(
+        "barcode", description="Field to sort by"
+    ),
+    sort_order: Literal["asc", "desc"] | None = Query(
+        "asc", description="Sort order (asc or desc)"
+    ),
 ) -> SequencingRunsPublic:
-  print("hello")
-  return services.search_runs(
-    session=session,
-    client=client,
-    query=query,
-    page=page,
-    per_page=per_page,
-    sort_by=sort_by,
-    sort_order=sort_order
-  )
+    print("hello")
+    return services.search_runs(
+        session=session,
+        client=client,
+        query=query,
+        page=page,
+        per_page=per_page,
+        sort_by=sort_by,
+        sort_order=sort_order,
+    )
+
 
 @router.get(
     "/{run_barcode}",
     response_model=SequencingRunPublic,
     status_code=status.HTTP_200_OK,
-    tags=["Run Endpoints"]
+    tags=["Run Endpoints"],
 )
-def get_run(
-  session: SessionDep,
-    run_barcode: str
-) -> SequencingRunPublic:
+def get_run(session: SessionDep, run_barcode: str) -> SequencingRunPublic:
     """
     Retrieve a sequencing run.
     """
-    return services.get_run(
-        session=session,
-        run_barcode=run_barcode
-    )
+    return services.get_run(session=session, run_barcode=run_barcode)

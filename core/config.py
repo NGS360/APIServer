@@ -2,11 +2,13 @@
 Application Configuration
 Add constants, secrets, env variables here
 """
+
 from functools import lru_cache
 import os
 from urllib.parse import urlparse, urlunparse, quote
 from pydantic import computed_field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
 
 # Define settings class for univeral access
 class Settings(BaseSettings):
@@ -15,6 +17,7 @@ class Settings(BaseSettings):
 
     # SQLAlchemy - Create db connection string
     SQLALCHEMY_DATABASE_URI: str = os.getenv("SQLALCHEMY_DATABASE_URI", "sqlite://")
+
     @computed_field
     @property
     def SQLALCHEMY_DATABASE_URI_MASKED_PASSWORD(self) -> str:
@@ -39,7 +42,7 @@ class Settings(BaseSettings):
             return uri  # Nothing to mask
 
         # Rebuild the netloc with the password masked
-        userinfo = parsed.username or ''
+        userinfo = parsed.username or ""
         if userinfo:
             userinfo += f":{mask}"
         netloc = f"{userinfo}@{parsed.hostname}"
@@ -68,7 +71,8 @@ def get_settings() -> Settings:
     """
     return Settings()
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     # To use in other modules
     # from core.config import get_settings
     print(get_settings().SQLALCHEMY_DATABASE_URI)

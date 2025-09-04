@@ -7,38 +7,41 @@ from sqlmodel import Session, select, func
 from core.logger import logger
 
 from api.samples.models import (
-    Sample, SampleAttribute, SampleCreate,
-    SamplePublic, SamplesPublic
+    Sample,
+    SampleAttribute,
+    SampleCreate,
+    SamplePublic,
+    SamplesPublic,
 )
-from api.project.models import (
-    Project
-)
+from api.project.models import Project
 from api.search.models import (
     SearchDocument,
 )
 from opensearchpy import OpenSearch
 from api.search.services import add_object_to_index
 
-def add_sample_to_project(session: Session, opensearch_client: OpenSearch, project_id: str, sample_in: SampleCreate) -> Sample:
+
+def add_sample_to_project(
+    session: Session,
+    opensearch_client: OpenSearch,
+    project_id: str,
+    sample_in: SampleCreate,
+) -> Sample:
     """
     Create a new sample with optional attributes.
     """
     # Check if project exists
     project = session.exec(
-        select(Project)
-            .where(Project.project_id == project_id)
+        select(Project).where(Project.project_id == project_id)
     ).first()
     if not project:
-      raise HTTPException(
-         status_code=status.HTTP_404_NOT_FOUND,
-         detail=f"Project {project_id} not found."
-      )
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Project {project_id} not found.",
+        )
 
     # Create initial sample
-    sample = Sample(
-        sample_id=sample_in.sample_id,
-        project_id=project_id
-    )
+    sample = Sample(sample_id=sample_in.sample_id, project_id=project_id)
     session.add(sample)
     session.flush()
 
@@ -51,17 +54,13 @@ def add_sample_to_project(session: Session, opensearch_client: OpenSearch, proje
         if dups:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Duplicate keys ({', '.join(dups)}) are not allowed in project attributes."
+                detail=f"Duplicate keys ({', '.join(dups)}) are not allowed in project attributes.",
             )
 
         # Parse and create project attributes
         # linking to new project
         sample_attributes = [
-            SampleAttribute(
-                sample_id=sample.id,
-                key=attr.key,
-                value=attr.value
-            )
+            SampleAttribute(sample_id=sample.id, key=attr.key, value=attr.value)
             for attr in sample_in.attributes
         ]
 
@@ -80,18 +79,19 @@ def add_sample_to_project(session: Session, opensearch_client: OpenSearch, proje
 
     return sample
 
+
 def get_samples(
-      *, 
-      session: Session,
-      project_id: str,
-      page: PositiveInt, 
-      per_page: PositiveInt, 
-      sort_by: str,
-      sort_order: Literal['asc', 'desc']
-   ) -> List[Sample]:
+    *,
+    session: Session,
+    project_id: str,
+    page: PositiveInt,
+    per_page: PositiveInt,
+    sort_by: str,
+    sort_order: Literal["asc", "desc"],
+) -> List[Sample]:
     """
     Get a paginated list of samples for a specific project.
-    
+
     Args:
         session: Database session
         project_id: Project ID to filter samples by
@@ -99,7 +99,7 @@ def get_samples(
         per_page: Number of items per page
         sort_by: Column name to sort by
         sort_order: Sort direction ('asc' or 'desc')
-    
+
     Returns:
         List of Sample objects
     """
@@ -109,21 +109,21 @@ def get_samples(
     ).one()
 
     # Compute total pages
-    total_pages = (total_count + per_page - 1) // per_page # Ceiling division
+    total_pages = (total_count + per_page - 1) // per_page  # Ceiling division
 
-   # Calculate offset for pagination
+    # Calculate offset for pagination
     offset = (page - 1) * per_page
 
     # Build the select statement
     statement = select(Sample).where(Sample.project_id == project_id)
-    
+
     # Add sorting
     if hasattr(Sample, sort_by):
         sort_column = getattr(Sample, sort_by)
-        if sort_order == 'desc':
+        if sort_order == "desc":
             sort_column = sort_column.desc()
         statement = statement.order_by(sort_column)
-    
+
     # Add pagination
     statement = statement.offset(offset).limit(per_page)
 
@@ -135,10 +135,10 @@ def get_samples(
         SamplePublic(
             sample_id=sample.sample_id,
             project_id=sample.project_id,
-            attributes=sample.attributes 
-            #[
+            attributes=sample.attributes,
+            # [
             #    {"key": attr.key, "value": attr.value} for attr in (sample.attributes or [])
-            #] if sample.attributes else []
+            # ] if sample.attributes else []
         )
         for sample in samples
     ]
@@ -149,12 +149,11 @@ def get_samples(
         current_page=page,
         per_page=per_page,
         has_next=page < total_pages,
-        has_prev=page > 1
+        has_prev=page > 1,
     )
 
-def get_sample_by_sample_id(
-    session: Session,
-    sample_id: str) -> Sample:
+
+def get_sample_by_sample_id(session: Session, sample_id: str) -> Sample:
     """
     Returns a single sample by its sample_id.
     Note: This is different from its internal "id".

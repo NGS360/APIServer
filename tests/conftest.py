@@ -8,37 +8,32 @@ from main import app
 
 class MockOpenSearchClient:
     """Mock OpenSearch client for testing"""
-    
+
     def __init__(self):
         self.documents = {}  # Store documents by index
         self.indices_data = {}  # Store index metadata
-    
+
     def index(self, index: str, id: str, body: dict):
         """Mock index operation"""
         if index not in self.documents:
             self.documents[index] = {}
         self.documents[index][id] = body
         return {"_id": id, "_index": index, "result": "created"}
-    
+
     def search(self, index: str, body: dict):
         """Mock search operation"""
         if index not in self.documents:
-            return {
-                "hits": {
-                    "total": {"value": 0},
-                    "hits": []
-                }
-            }
-        
+            return {"hits": {"total": {"value": 0}, "hits": []}}
+
         # Extract search query
         query_info = body.get("query", {})
         search_term = ""
-        
+
         if "query_string" in query_info:
             search_term = query_info["query_string"].get("query", "").lower()
         elif "match_all" in query_info:
             search_term = ""  # Match all documents
-        
+
         # Parse wildcard queries like (*AI*)
         def parse_wildcard_query(query_term):
             """Convert OpenSearch wildcard query to simple substring search"""
@@ -48,54 +43,58 @@ class MockOpenSearchClient:
             elif query_term.startswith("*") and query_term.endswith("*"):
                 return query_term[1:-1]  # Remove *...*
             return query_term
-        
+
         # Handle AND queries by splitting on " AND "
         def matches_query(text, query_term):
             """Check if text matches the query term (handling wildcards and AND)"""
             if " AND " in query_term:
                 # Split on AND and check all terms match
-                terms = [parse_wildcard_query(term.strip()) for term in query_term.split(" AND ")]
+                terms = [
+                    parse_wildcard_query(term.strip())
+                    for term in query_term.split(" AND ")
+                ]
                 return all(term in text.lower() for term in terms if term)
             else:
                 # Single term
                 parsed_term = parse_wildcard_query(query_term)
                 return parsed_term in text.lower()
-        
+
         # Filter documents based on search term
         hits = []
         for doc_id, doc_body in self.documents[index].items():
             should_include = False
-            
+
             if not search_term:  # Empty search or match_all
                 should_include = True
             else:
                 # Search in name field
                 if matches_query(doc_body.get("name", ""), search_term):
                     should_include = True
-                
+
                 # Search in attributes
                 for attr in doc_body.get("attributes", []):
-                    if (matches_query(attr.get("key", ""), search_term) or
-                        matches_query(attr.get("value", ""), search_term)):
+                    if matches_query(attr.get("key", ""), search_term) or matches_query(
+                        attr.get("value", ""), search_term
+                    ):
                         should_include = True
                         break
-            
+
             if should_include:
-                hits.append({
-                    "_id": doc_id,
-                    "_source": doc_body,
-                    "_score": 1.0
-                })
-        
+                hits.append({"_id": doc_id, "_source": doc_body, "_score": 1.0})
+
         # Apply sorting if specified
         sort_config = body.get("sort", [])
         if sort_config:
             for sort_item in sort_config:
                 if isinstance(sort_item, dict):
                     for field, sort_order in sort_item.items():
-                        order = sort_order.get("order", "asc") if isinstance(sort_order, dict) else "asc"
-                        reverse = (order == "desc")
-                        
+                        order = (
+                            sort_order.get("order", "asc")
+                            if isinstance(sort_order, dict)
+                            else "asc"
+                        )
+                        reverse = order == "desc"
+
                         # Sort by the specified field
                         def get_sort_key(hit):
                             source = hit.get("_source", {})
@@ -104,23 +103,18 @@ class MockOpenSearchClient:
                             value = source.get(base_field, "")
                             # Convert to string for consistent sorting
                             return str(value).lower() if value is not None else ""
-                        
+
                         hits.sort(key=get_sort_key, reverse=reverse)
                         break  # Only apply first sort for simplicity
                     break
-        
+
         # Apply pagination
         from_param = body.get("from", 0)
         size_param = body.get("size", 10)
-        paginated_hits = hits[from_param:from_param + size_param]
-        
-        return {
-            "hits": {
-                "total": {"value": len(hits)},
-                "hits": paginated_hits
-            }
-        }
-    
+        paginated_hits = hits[from_param : from_param + size_param]
+
+        return {"hits": {"total": {"value": len(hits)}, "hits": paginated_hits}}
+
     @property
     def indices(self):
         """Mock indices property"""
@@ -129,21 +123,21 @@ class MockOpenSearchClient:
 
 class MockIndices:
     """Mock indices operations"""
-    
+
     def __init__(self, client):
         self.client = client
-    
+
     def exists(self, index: str):
         """Mock index exists check"""
         return index in self.client.indices_data
-    
+
     def create(self, index: str, body=None):
         """Mock index creation"""
         self.client.indices_data[index] = body or {}
         if index not in self.client.documents:
             self.client.documents[index] = {}
         return {"acknowledged": True}
-    
+
     def refresh(self, index: str):
         """Mock index refresh"""
         return {"_shards": {"total": 1, "successful": 1, "failed": 0}}
@@ -171,7 +165,7 @@ def mock_opensearch_client_fixture():
 def client_fixture(session: Session, mock_opensearch_client: MockOpenSearchClient):
     def get_db_override():
         return session
-    
+
     def get_opensearch_client_override():
         return mock_opensearch_client
 
