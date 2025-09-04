@@ -1,29 +1,31 @@
-from sqlmodel import select, Session, func
+"""
+Services for managing sequencing runs.
+"""
 from typing import List, Literal
+from sqlmodel import select, Session, func
 from pydantic import PositiveInt
-from sqlalchemy import asc, desc
 from opensearchpy import OpenSearch
 from fastapi import HTTPException, status
 from core.utils import define_search_body
 
 from api.runs.models import (
-    SequencingRun, 
+    SequencingRun,
     SequencingRunCreate,
-    SequencingRunPublic, 
-    SequencingRunsPublic
+    SequencingRunPublic,
+    SequencingRunsPublic,
 )
 from api.search.services import add_object_to_index
 from api.search.models import (
     SearchDocument,
 )
 
+
 def add_run(
     session: Session,
     sequencingrun_in: SequencingRunCreate,
-    opensearch_client: OpenSearch = None
+    opensearch_client: OpenSearch = None,
 ) -> SequencingRun:
-    """ Add a new sequencing run to the database and index it in OpenSearch.
-    """
+    """Add a new sequencing run to the database and index it in OpenSearch."""
     # Create the SequencingRun instance
     run = SequencingRun(**sequencingrun_in.model_dump())
 
@@ -47,13 +49,15 @@ def get_run(
     """
     Retrieve a sequencing run from the database.
     """
-    (run_date, run_time, machine_id, run_number, flowcell_id) = SequencingRun.parse_barcode(run_barcode)
+    (run_date, run_time, machine_id, run_number, flowcell_id) = (
+        SequencingRun.parse_barcode(run_barcode)
+    )
     run = session.exec(
         select(SequencingRun).where(
             SequencingRun.run_date == run_date,
             SequencingRun.machine_id == machine_id,
             SequencingRun.run_number == run_number,
-            SequencingRun.flowcell_id == flowcell_id
+            SequencingRun.flowcell_id == flowcell_id,
         )
     ).one_or_none()
 
@@ -62,36 +66,35 @@ def get_run(
 
     return run
 
+
 def get_runs(
-      *, 
-      session: Session, 
-      page: PositiveInt, 
-      per_page: PositiveInt, 
-      sort_by: str,
-      sort_order: Literal['asc', 'desc']
-   ) -> List[SequencingRun]:
+    *,
+    session: Session,
+    page: PositiveInt,
+    per_page: PositiveInt,
+    sort_by: str,
+    sort_order: Literal["asc", "desc"],
+) -> List[SequencingRun]:
     """
     Returns all sequencing runs from the database along
     with pagination information.
     """
     # Get total run count
-    total_count = session.exec(
-        select(func.count()).select_from(SequencingRun)
-    ).one()
+    total_count = session.exec(select(func.count()).select_from(SequencingRun)).one()
 
     # Compute total pages
     total_pages = (total_count + per_page - 1) // per_page  # Ceiling division
 
     # Determine sort field and direction
     sort_field = getattr(SequencingRun, sort_by, SequencingRun.id)
-    sort_direction = sort_field.asc() if sort_order == 'asc' else sort_field.desc()
+    sort_direction = sort_field.asc() if sort_order == "asc" else sort_field.desc()
 
     # Get run selection
     runs = session.exec(
         select(SequencingRun)
-            .order_by(sort_direction)
-            .limit(per_page)
-            .offset((page - 1) * per_page)
+        .order_by(sort_direction)
+        .limit(per_page)
+        .offset((page - 1) * per_page)
     ).all()
 
     # Map to public run
@@ -106,7 +109,7 @@ def get_runs(
             s3_run_folder_path=run.s3_run_folder_path,
             status=run.status,
             run_time=run.run_time,
-            barcode=run.barcode
+            barcode=run.barcode,
         )
         for run in runs
     ]
@@ -118,8 +121,9 @@ def get_runs(
         current_page=page,
         per_page=per_page,
         has_next=page < total_pages,
-        has_prev=page > 1
+        has_prev=page > 1,
     )
+
 
 def search_runs(
     session: Session,
@@ -127,42 +131,39 @@ def search_runs(
     query: str,
     page: int,
     per_page: int,
-    sort_by: str | None = 'barcode',
-    sort_order: Literal['asc', 'desc'] | None = 'asc'
+    sort_by: str | None = "barcode",
+    sort_order: Literal["asc", "desc"] | None = "asc",
 ) -> SequencingRunsPublic:
-   """
-   Search for runs
-   """
-   # Construct the search query
-   search_body = define_search_body(query, page, per_page, sort_by, sort_order)
+    """
+    Search for runs
+    """
+    # Construct the search query
+    search_body = define_search_body(query, page, per_page, sort_by, sort_order)
 
-   try:
+    try:
 
-      response = client.search(index='illumina_runs', body=search_body)
-      total_items = response["hits"]["total"]["value"]
-      total_pages = (total_items + per_page - 1) // per_page  # Ceiling division
+        response = client.search(index="illumina_runs", body=search_body)
+        total_items = response["hits"]["total"]["value"]
+        total_pages = (total_items + per_page - 1) // per_page  # Ceiling division
 
-      # Unpack search results into ProjectPublic model
-      results = []
-      for hit in response["hits"]["hits"]:
-         source = hit["_source"]
-         run = get_run(session=session, run_barcode=source.get('barcode'))
-         results.append(
-            SequencingRunPublic.model_validate(run)
-         )
-      
-      return SequencingRunsPublic(
-         data=results,
-         total_items=total_items,
-         total_pages=total_pages,
-         current_page=page,
-         per_page=per_page,
-         has_next=page < total_pages,
-         has_prev=page > 1
-      )
-   
-   except Exception as e:
-      raise HTTPException(
-         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-         detail=str(e)
-      )
+        # Unpack search results into ProjectPublic model
+        results = []
+        for hit in response["hits"]["hits"]:
+            source = hit["_source"]
+            run = get_run(session=session, run_barcode=source.get("barcode"))
+            results.append(SequencingRunPublic.model_validate(run))
+
+        return SequencingRunsPublic(
+            data=results,
+            total_items=total_items,
+            total_pages=total_pages,
+            current_page=page,
+            per_page=per_page,
+            has_next=page < total_pages,
+            has_prev=page > 1,
+        )
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e)
+        )
