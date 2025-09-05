@@ -110,6 +110,29 @@ def get_project_by_project_id(session: SessionDep, project_id: str) -> ProjectPu
 ###############################################################################
 
 
+@router.post(
+    "/{project_id}/samples",
+    response_model=SamplePublic,
+    tags=["Sample Endpoints"],
+    status_code=status.HTTP_201_CREATED,
+)
+def add_sample_to_project(
+    session: SessionDep,
+    opensearch_client: OpenSearchDep,
+    project_id: str,
+    sample_in: SampleCreate,
+) -> SamplePublic:
+    """
+    Create a new sample with optional attributes.
+    """
+    return sample_services.add_sample_to_project(
+        session=session,
+        opensearch_client=opensearch_client,
+        project_id=project_id,
+        sample_in=sample_in,
+    )
+
+
 @router.get(
     "/{project_id}/samples", response_model=SamplesPublic, tags=["Sample Endpoints"]
 )
@@ -133,27 +156,4 @@ def get_samples(
         per_page=per_page,
         sort_by=sort_by,
         sort_order=sort_order,
-    )
-
-
-@router.post(
-    "/{project_id}/samples",
-    response_model=SamplePublic,
-    tags=["Sample Endpoints"],
-    status_code=status.HTTP_201_CREATED,
-)
-def add_sample_to_project(
-    session: SessionDep,
-    opensearch_client: OpenSearchDep,
-    project_id: str,
-    sample_in: SampleCreate,
-) -> SamplePublic:
-    """
-    Create a new sample with optional attributes.
-    """
-    return sample_services.add_sample_to_project(
-        session=session,
-        opensearch_client=opensearch_client,
-        project_id=project_id,
-        sample_in=sample_in,
     )
