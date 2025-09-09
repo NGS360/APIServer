@@ -13,8 +13,8 @@ POST   /api/v0/runs/[id]/demultiplex   Demultiplex a run
 GET    /api/v0/runs/[id]/metrics       Retrieve demux metrics from Stat.json
 """
 
-from fastapi import APIRouter, Query, status
 from typing import Literal
+from fastapi import APIRouter, Query, status
 from core.deps import SessionDep, OpenSearchDep
 from api.runs.models import (
     SequencingRun,
@@ -22,7 +22,7 @@ from api.runs.models import (
     SequencingRunPublic,
     SequencingRunsPublic,
 )
-import api.runs.services as services
+from api.runs import services
 
 router = APIRouter(prefix="/runs", tags=["Run Endpoints"])
 
@@ -105,7 +105,9 @@ def search_runs(
         "asc", description="Sort order (asc or desc)"
     ),
 ) -> SequencingRunsPublic:
-    print("hello")
+    '''
+    Search for sequencing runs using OpenSearch.
+    '''
     return services.search_runs(
         session=session,
         client=client,
