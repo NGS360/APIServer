@@ -3,11 +3,15 @@ Test /runs endpoint
 """
 
 import datetime
+from uuid import uuid4
+
 from fastapi.testclient import TestClient
 from sqlmodel import Session
 
+from api.runs.models import SequencingRun
 
-def test_add_run(client: TestClient, session: Session):
+
+def test_add_run(client: TestClient):
     """Test that we can add a run"""
     # Test No runs, this also ensure we are using the test db
     response = client.get("/api/v1/runs")
@@ -61,9 +65,6 @@ def test_get_runs(client: TestClient, session: Session):
     }
 
     # Add a run to the database
-    from api.runs.models import SequencingRun
-    from uuid import uuid4
-
     new_run = SequencingRun(
         id=uuid4(),
         run_date=datetime.date(2019, 1, 10),
@@ -103,3 +104,28 @@ def test_get_runs(client: TestClient, session: Session):
     assert data["s3_run_folder_path"] == "s3://bucket/path/to/run"
     assert data["status"] == "completed"
     assert data["barcode"] == "190110_MACHINE123_0001_FLOWCELL123"
+
+
+def test_get_run_samplesheet(client: TestClient, session: Session):
+    """Test that we can get a runs samplesheet"""
+    # Add a run to the database
+    new_run = SequencingRun(
+        id=uuid4(),
+        run_date=datetime.date(2019, 1, 10),
+        machine_id="MACHINE123",
+        run_number=1,
+        flowcell_id="FLOWCELL123",
+        experiment_name="Test Experiment",
+        s3_run_folder_path="s3://bucket/path/to/run",
+        status="completed",
+    )
+    session.add(new_run)
+    session.commit()
+
+    # Test get samplesheet for the run
+    run_barcode = "190110_MACHINE123_0001_FLOWCELL123"
+    response = client.get(f"/api/v1/runs/{run_barcode}/samplesheet")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["message"] == f"Samplesheet for run {run_barcode} retrieved successfully."
+    assert "samplesheet_content" in data
