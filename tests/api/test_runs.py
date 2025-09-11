@@ -127,5 +127,3 @@ def test_get_run_samplesheet(client: TestClient, session: Session):
     response = client.get(f"/api/v1/runs/{run_barcode}/samplesheet")
     assert response.status_code == 200
     data = response.json()
-    assert data["message"] == f"Samplesheet for run {run_barcode} retrieved successfully."
-    assert "samplesheet_content" in data

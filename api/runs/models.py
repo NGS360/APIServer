@@ -145,3 +145,12 @@ class SequencingRunsPublic(SQLModel):
     per_page: int
     has_next: bool
     has_prev: bool
+
+
+class IlluminaSampleSheetResponseModel(SQLModel):
+    Summary: dict[str, str] | None = None
+    Header: dict[str, str] | None = None
+    Reads: list[int] | None = None
+    Settings: dict[str, str] | None = None
+    Data: list[dict[str, str]] | None = None
+    DataCols: list[str] | None = None

@@ -165,3 +165,24 @@ def search_runs(
 
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e)) from e
+
+
+def get_run_samplesheet(session: Session, run_barcode: str):
+    """
+    Retrieve the samplesheet for a given sequencing run.
+    :return: A dictionary representing the samplesheet in JSON format.
+    """
+    sample_sheet_json = {
+        'Summary': {},
+        'Header': {},
+        'Reads': {},
+        'Settings': {},
+        'DataCols': [],
+        'Data': []
+    }
+    run = get_run(session=session, run_barcode=run_barcode)
+    if run is None:
+        return sample_sheet_json
+    sample_sheet_json['Summary'] = run.to_dict()
+
+    return sample_sheet_json

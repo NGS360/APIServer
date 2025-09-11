@@ -21,6 +21,7 @@ from api.runs.models import (
     SequencingRunCreate,
     SequencingRunPublic,
     SequencingRunsPublic,
+    IlluminaSampleSheetResponseModel,
 )
 from api.runs import services
 
@@ -130,3 +131,17 @@ def get_run(session: SessionDep, run_barcode: str) -> SequencingRunPublic:
     Retrieve a sequencing run.
     """
     return services.get_run(session=session, run_barcode=run_barcode)
+
+
+@router.get(
+    "/{run_barcode}/samplesheet",
+    response_model=IlluminaSampleSheetResponseModel,
+    status_code=status.HTTP_200_OK,
+    tags=["Run Endpoints"],
+)
+def get_run_samplesheet(session: SessionDep, run_barcode: str) -> str:
+    """
+    Retrieve the sample sheet for a specific run.
+    """
+    sample_sheet_json = services.get_run_samplesheet(session=session, run_barcode=run_barcode)
+    return IlluminaSampleSheetResponseModel(samplesheet=sample_sheet_json)
