@@ -139,9 +139,9 @@ def get_run(session: SessionDep, run_barcode: str) -> SequencingRunPublic:
     status_code=status.HTTP_200_OK,
     tags=["Run Endpoints"],
 )
-def get_run_samplesheet(session: SessionDep, run_barcode: str) -> str:
+def get_run_samplesheet(session: SessionDep, run_barcode: str) -> IlluminaSampleSheetResponseModel:
     """
     Retrieve the sample sheet for a specific run.
     """
     sample_sheet_json = services.get_run_samplesheet(session=session, run_barcode=run_barcode)
-    return IlluminaSampleSheetResponseModel(samplesheet=sample_sheet_json)
+    return IlluminaSampleSheetResponseModel(**sample_sheet_json)

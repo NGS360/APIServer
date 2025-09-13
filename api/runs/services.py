@@ -183,6 +183,18 @@ def get_run_samplesheet(session: Session, run_barcode: str):
     run = get_run(session=session, run_barcode=run_barcode)
     if run is None:
         return sample_sheet_json
-    sample_sheet_json['Summary'] = run.to_dict()
+
+    # Convert run data to strings for the response model, excluding the database ID
+    run_dict = run.to_dict()
+    summary_dict = {}
+    for key, value in run_dict.items():
+        if key == 'id':  # Skip the database ID field
+            continue
+        if value is None:
+            summary_dict[key] = ""
+        else:
+            summary_dict[key] = str(value)
+
+    sample_sheet_json['Summary'] = summary_dict
 
     return sample_sheet_json

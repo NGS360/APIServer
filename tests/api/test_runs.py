@@ -127,3 +127,13 @@ def test_get_run_samplesheet(client: TestClient, session: Session):
     response = client.get(f"/api/v1/runs/{run_barcode}/samplesheet")
     assert response.status_code == 200
     data = response.json()
+    assert data['Summary']['run_date'] == '2019-01-10'
+    assert data['Summary']['machine_id'] == 'MACHINE123'
+    assert data['Summary']['run_number'] == '1'
+    assert data['Summary']['run_time'] == ''
+    assert data['Summary']['flowcell_id'] == 'FLOWCELL123'
+    assert data['Summary']['experiment_name'] == 'Test Experiment'
+    assert data['Summary']['s3_run_folder_path'] == 's3://bucket/path/to/run'
+    assert data['Summary']['status'] == 'completed'
+    assert data['Summary']['barcode'] == run_barcode
+    assert 'id' not in data['Summary']  # Database ID should not be exposed

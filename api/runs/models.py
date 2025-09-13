@@ -150,7 +150,7 @@ class SequencingRunsPublic(SQLModel):
 class IlluminaSampleSheetResponseModel(SQLModel):
     Summary: dict[str, str] | None = None
     Header: dict[str, str] | None = None
-    Reads: list[int] | None = None
+    Reads: dict[str, int] | None = None
     Settings: dict[str, str] | None = None
     Data: list[dict[str, str]] | None = None
     DataCols: list[str] | None = None
