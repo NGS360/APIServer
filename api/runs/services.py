@@ -1,12 +1,17 @@
 """
 Services for managing sequencing runs.
 """
+import json
 from typing import List, Literal
 from sqlmodel import select, Session, func
 from pydantic import PositiveInt
 from opensearchpy import OpenSearch
 from fastapi import HTTPException, status
+
+from sample_sheet import SampleSheet as IlluminaSampleSheet
+
 from core.utils import define_search_body
+from core.amazon_utils import access, find_bucket_key
 
 from api.runs.models import (
     SequencingRun,
@@ -194,7 +199,22 @@ def get_run_samplesheet(session: Session, run_barcode: str):
             summary_dict[key] = ""
         else:
             summary_dict[key] = str(value)
-
     sample_sheet_json['Summary'] = summary_dict
+
+    # Check if the samplesheet exists in S3
+    if len(run.s3_run_folder_path):
+        sample_sheet_path = f"{run.s3_run_folder_path}/SampleSheet.csv"
+        bucket, key = find_bucket_key(sample_sheet_path)
+        if access(bucket, key):
+            # Read the samplesheet from S3
+            sample_sheet = IlluminaSampleSheet(sample_sheet_path)
+            sample_sheet = sample_sheet.to_json()
+            sample_sheet = json.loads(sample_sheet)
+            sample_sheet_json['Header'] = sample_sheet['Header']
+            sample_sheet_json['Reads'] = sample_sheet['Reads']
+            sample_sheet_json['Settings'] = sample_sheet['Settings']
+            if sample_sheet['Data']:
+                sample_sheet_json['DataCols'] = list(sample_sheet['Data'][0].keys())
+            sample_sheet_json['Data'] = sample_sheet['Data']
 
     return sample_sheet_json
