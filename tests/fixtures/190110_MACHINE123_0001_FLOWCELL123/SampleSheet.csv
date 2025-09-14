@@ -1,0 +1,24 @@
+[Header]
+IEMFileVersion,4
+Investigator Name,Jane Smith
+Experiment Name,Test Experiment
+Date,1/10/2019
+Workflow,GenerateFASTQ
+Application,FASTQ Only
+Assay,TruSeq HT
+Description,Test sequencing run
+Chemistry,Amplicon
+
+[Reads]
+151
+151
+
+[Settings]
+ReverseComplement,0
+Adapter,AGATCGGAAGAGCACACGTCTGAACTCCAGTCA
+
+[Data]
+Sample_ID,Sample_Name,Sample_Plate,Sample_Well,I7_Index_ID,index,I5_Index_ID,index2,Sample_Project,Description
+Sample_1,Sample_1,,,N701,TAAGGCGA,S501,TAGATCGC,TestProject,Test sample 1
+Sample_2,Sample_2,,,N702,CGTACTAG,S502,CTCTCTAT,TestProject,Test sample 2
+

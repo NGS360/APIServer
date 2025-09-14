@@ -24,7 +24,6 @@ class SequencingRun(SQLModel, table=True):
     run_number: int
     flowcell_id: str = Field(max_length=25)
     experiment_name: str | None = Field(default=None, max_length=255)
-    # s3_run_folder_path: str | None = Field(default=None, max_length=255)
     run_folder_uri: str | None = Field(default=None, max_length=255)
     status: str | None = Field(default=None, max_length=50)
     run_time: str | None = Field(default=None, max_length=4)
@@ -102,7 +101,6 @@ class SequencingRun(SQLModel, table=True):
             "run_time": self.run_time,
             "flowcell_id": self.flowcell_id,
             "experiment_name": self.experiment_name,
-            #"s3_run_folder_path": self.s3_run_folder_path,
             "run_folder_uri": self.run_folder_uri,
             "status": self.status,
             "barcode": self.barcode,
@@ -124,7 +122,6 @@ class SequencingRunCreate(SQLModel):
     run_number: int
     flowcell_id: str
     experiment_name: str | None = None
-    # s3_run_folder_path: str | None = None
     run_folder_uri: str | None = None
     status: str | None = None
     run_time: str | None = None
@@ -138,7 +135,6 @@ class SequencingRunPublic(SQLModel):
     run_number: int
     flowcell_id: str
     experiment_name: str | None
-    # s3_run_folder_path: str | None
     run_folder_uri: str | None
     status: str | None
     run_time: str | None
@@ -158,7 +154,7 @@ class SequencingRunsPublic(SQLModel):
 class IlluminaSampleSheetResponseModel(SQLModel):
     Summary: dict[str, str] | None = None
     Header: dict[str, str] | None = None
-    Reads: dict[str, int] | None = None
+    Reads: list[int] | None = None
     Settings: dict[str, str] | None = None
     Data: list[dict[str, str]] | None = None
     DataCols: list[str] | None = None
