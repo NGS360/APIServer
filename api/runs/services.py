@@ -11,7 +11,6 @@ from fastapi import HTTPException, status
 from sample_sheet import SampleSheet as IlluminaSampleSheet
 
 from core.utils import define_search_body
-from core.amazon_utils import access, find_bucket_key
 
 from api.runs.models import (
     SequencingRun,
