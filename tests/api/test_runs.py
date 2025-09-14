@@ -110,8 +110,8 @@ def test_get_runs(client: TestClient, session: Session):
 def test_get_run_samplesheet(client: TestClient, session: Session):
     """Test that we can get a runs samplesheet"""
 
-    # Read the test samplesheet file
-    samplesheet_path = (
+    # Set the test run folder
+    run_folder = (
         Path(__file__).parent.parent / "fixtures" / "190110_MACHINE123_0001_FLOWCELL123"
     )
 
@@ -123,7 +123,7 @@ def test_get_run_samplesheet(client: TestClient, session: Session):
         run_number=1,
         flowcell_id="FLOWCELL123",
         experiment_name="Test Experiment",
-        run_folder_uri=samplesheet_path.as_posix(),
+        run_folder_uri=run_folder.as_posix(),
         status="completed",
     )
     session.add(new_run)
@@ -140,7 +140,38 @@ def test_get_run_samplesheet(client: TestClient, session: Session):
     assert data["Summary"]["run_time"] == ""
     assert data["Summary"]["flowcell_id"] == "FLOWCELL123"
     assert data["Summary"]["experiment_name"] == "Test Experiment"
-    assert data["Summary"]["run_folder_uri"] == samplesheet_path.as_posix()
+    assert data["Summary"]["run_folder_uri"] == run_folder.as_posix()
     assert data["Summary"]["status"] == "completed"
     assert data["Summary"]["barcode"] == run_barcode
     assert "id" not in data["Summary"]  # Database ID should not be exposed
+
+
+def test_get_run_metrics(client: TestClient, session: Session):
+    """Test that we can get a runs demux metrics"""
+
+    # Set the test run folder
+    run_folder = (
+        Path(__file__).parent.parent / "fixtures" / "190110_MACHINE123_0001_FLOWCELL123"
+    )
+
+    # Add a run to the database
+    new_run = SequencingRun(
+        id=uuid4(),
+        run_date=datetime.date(2019, 1, 10),
+        machine_id="MACHINE123",
+        run_number=1,
+        flowcell_id="FLOWCELL123",
+        experiment_name="Test Experiment",
+        run_folder_uri=run_folder.as_posix(),
+        status="completed",
+    )
+    session.add(new_run)
+    session.commit()
+
+    # Test get metrics for the run
+    run_barcode = "190110_MACHINE123_0001_FLOWCELL123"
+    response = client.get(f"/api/v1/runs/{run_barcode}/metrics")
+    assert response.status_code == 200
+    data = response.json()
+    assert data['RunNumber'] == 1
+    assert data["Flowcell"] == "FLOWCELL123"

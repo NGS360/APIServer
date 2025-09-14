@@ -145,3 +145,16 @@ def get_run_samplesheet(session: SessionDep, run_barcode: str) -> IlluminaSample
     """
     sample_sheet_json = services.get_run_samplesheet(session=session, run_barcode=run_barcode)
     return IlluminaSampleSheetResponseModel(**sample_sheet_json)
+
+
+@router.get(
+    "/{run_barcode}/metrics",
+    response_model=dict,
+    status_code=status.HTTP_200_OK,
+    tags=["Run Endpoints"],
+)
+def get_run_metrics(session: SessionDep, run_barcode: str) -> dict:
+    """
+    Retrieve demultiplexing metrics for a specific run.
+    """
+    return services.get_run_metrics(session=session, run_barcode=run_barcode)

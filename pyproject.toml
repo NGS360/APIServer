@@ -17,6 +17,7 @@ dependencies = [
     "python-dotenv>=1.1.1",
     "pytz>=2025.2",
     "sample-sheet>=0.13.0",
+    "smart-open>=7.3.1",
     "sqlmodel>=0.0.24",
     "uvicorn>=0.35.0",
 ]

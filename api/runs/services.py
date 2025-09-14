@@ -7,6 +7,7 @@ from sqlmodel import select, Session, func
 from pydantic import PositiveInt
 from opensearchpy import OpenSearch
 from fastapi import HTTPException, status
+from smart_open import open as smart_open
 
 from sample_sheet import SampleSheet as IlluminaSampleSheet
 
@@ -217,3 +218,25 @@ def get_run_samplesheet(session: Session, run_barcode: str):
             # Samplesheet not found, return only the summary
             pass
     return sample_sheet_json
+
+
+def get_run_metrics(session: Session, run_barcode: str) -> dict:
+    """
+    Retrieve demultiplexing metrics for a specific run.
+    :return: A dictionary containing the demultiplexing metrics.
+    """
+    run = get_run(session=session, run_barcode=run_barcode)
+    if run is None:
+        return {}
+
+    # Check if the metrics file exists in S3
+    if run.run_folder_uri:
+        metrics_path = f"{run.run_folder_uri}/Stats/Stats.json"
+        try:
+            with smart_open(metrics_path, 'r') as f:
+                metrics = json.load(f)
+            return metrics
+        except FileNotFoundError:
+            # Metrics file not found, return empty dict
+            return {}
+    return {}
