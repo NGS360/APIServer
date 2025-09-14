@@ -24,7 +24,8 @@ class SequencingRun(SQLModel, table=True):
     run_number: int
     flowcell_id: str = Field(max_length=25)
     experiment_name: str | None = Field(default=None, max_length=255)
-    s3_run_folder_path: str | None = Field(default=None, max_length=255)
+    # s3_run_folder_path: str | None = Field(default=None, max_length=255)
+    run_folder_uri: str | None = Field(default=None, max_length=255)
     status: str | None = Field(default=None, max_length=50)
     run_time: str | None = Field(default=None, max_length=4)
 
@@ -32,7 +33,8 @@ class SequencingRun(SQLModel, table=True):
 
     @staticmethod
     def is_data_valid(data):
-        for field in ["experiment_name", "s3_run_folder_path"]:
+        ''' A Run must have an experiment_name and a run_folder_uri to be valid '''
+        for field in ["experiment_name", "run_folder_uri"]:
             if field not in data:
                 return False
         return True
@@ -82,6 +84,7 @@ class SequencingRun(SQLModel, table=True):
     @computed_field
     @property
     def barcode(self) -> str:
+        ''' Generates a barcode from the run fields '''
         if self.run_time is None:
             run_number = str(self.run_number).zfill(4)
             run_date = self.run_date.strftime("%y%m%d")
@@ -90,6 +93,7 @@ class SequencingRun(SQLModel, table=True):
         return f"{run_date}_{self.run_time}_{self.machine_id}_{self.flowcell_id}_{self.run_number}"
 
     def to_dict(self):
+        ''' Returns a dictionary representation of the object '''
         data = {
             "id": self.id,
             "run_date": self.run_date.strftime("%Y-%m-%d") if self.run_date else None,
@@ -98,13 +102,15 @@ class SequencingRun(SQLModel, table=True):
             "run_time": self.run_time,
             "flowcell_id": self.flowcell_id,
             "experiment_name": self.experiment_name,
-            "s3_run_folder_path": self.s3_run_folder_path,
+            #"s3_run_folder_path": self.s3_run_folder_path,
+            "run_folder_uri": self.run_folder_uri,
             "status": self.status,
             "barcode": self.barcode,
         }
         return data
 
     def from_dict(self, data):
+        ''' Updates the object from a dictionary '''
         for field in data:
             setattr(self, field, data[field])
 
@@ -118,7 +124,8 @@ class SequencingRunCreate(SQLModel):
     run_number: int
     flowcell_id: str
     experiment_name: str | None = None
-    s3_run_folder_path: str | None = None
+    # s3_run_folder_path: str | None = None
+    run_folder_uri: str | None = None
     status: str | None = None
     run_time: str | None = None
 
@@ -131,7 +138,8 @@ class SequencingRunPublic(SQLModel):
     run_number: int
     flowcell_id: str
     experiment_name: str | None
-    s3_run_folder_path: str | None
+    # s3_run_folder_path: str | None
+    run_folder_uri: str | None
     status: str | None
     run_time: str | None
     barcode: str | None

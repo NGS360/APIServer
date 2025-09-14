@@ -53,7 +53,7 @@ def add_run(
         run_number=run.run_number,
         flowcell_id=run.flowcell_id,
         experiment_name=run.experiment_name,
-        s3_run_folder_path=run.s3_run_folder_path,
+        run_folder_uri=run.run_folder_uri,
         status=run.status,
         run_time=run.run_time,
         barcode=run.barcode,

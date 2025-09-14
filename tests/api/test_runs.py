@@ -35,7 +35,8 @@ def test_add_run(client: TestClient):
         "run_number": 1,
         "flowcell_id": "FLOWCELL123",
         "experiment_name": "Test Experiment",
-        "s3_run_folder_path": "s3://bucket/path/to/run",
+        # "s3_run_folder_path": "s3://bucket/path/to/run",
+        "run_folder_uri": "s3://bucket/path/to/run",
         "status": "completed",
     }
     response = client.post("/api/v1/runs", json=new_run)
@@ -46,7 +47,8 @@ def test_add_run(client: TestClient):
     assert data["run_number"] == 1
     assert data["flowcell_id"] == "FLOWCELL123"
     assert data["experiment_name"] == "Test Experiment"
-    assert data["s3_run_folder_path"] == "s3://bucket/path/to/run"
+    # assert data["s3_run_folder_path"] == "s3://bucket/path/to/run"
+    assert data["run_folder_uri"] == "s3://bucket/path/to/run"
     assert data["status"] == "completed"
     assert data["barcode"] == "190110_MACHINE123_0001_FLOWCELL123"
 
@@ -74,7 +76,7 @@ def test_get_runs(client: TestClient, session: Session):
         run_number=1,
         flowcell_id="FLOWCELL123",
         experiment_name="Test Experiment",
-        s3_run_folder_path="s3://bucket/path/to/run",
+        run_folder_uri="s3://bucket/path/to/run",
         status="completed",
     )
     session.add(new_run)
@@ -89,7 +91,7 @@ def test_get_runs(client: TestClient, session: Session):
     assert data["data"][0]["run_number"] == 1
     assert data["data"][0]["flowcell_id"] == "FLOWCELL123"
     assert data["data"][0]["experiment_name"] == "Test Experiment"
-    assert data["data"][0]["s3_run_folder_path"] == "s3://bucket/path/to/run"
+    assert data["data"][0]["run_folder_uri"] == "s3://bucket/path/to/run"
     assert data["data"][0]["status"] == "completed"
     assert data["data"][0]["barcode"] == "190110_MACHINE123_0001_FLOWCELL123"
 
@@ -103,7 +105,7 @@ def test_get_runs(client: TestClient, session: Session):
     assert data["run_number"] == 1
     assert data["flowcell_id"] == "FLOWCELL123"
     assert data["experiment_name"] == "Test Experiment"
-    assert data["s3_run_folder_path"] == "s3://bucket/path/to/run"
+    assert data["run_folder_uri"] == "s3://bucket/path/to/run"
     assert data["status"] == "completed"
     assert data["barcode"] == "190110_MACHINE123_0001_FLOWCELL123"
 
@@ -118,7 +120,7 @@ def test_get_run_samplesheet(client: TestClient, session: Session):
         run_number=1,
         flowcell_id="FLOWCELL123",
         experiment_name="Test Experiment",
-        s3_run_folder_path="s3://bucket/path/to/run",
+        run_folder_uri="s3://bucket/path/to/run",
         status="completed",
     )
     session.add(new_run)
@@ -135,7 +137,7 @@ def test_get_run_samplesheet(client: TestClient, session: Session):
     assert data['Summary']['run_time'] == ''
     assert data['Summary']['flowcell_id'] == 'FLOWCELL123'
     assert data['Summary']['experiment_name'] == 'Test Experiment'
-    assert data['Summary']['s3_run_folder_path'] == 's3://bucket/path/to/run'
+    assert data['Summary']['run_folder_uri'] == 's3://bucket/path/to/run'
     assert data['Summary']['status'] == 'completed'
     assert data['Summary']['barcode'] == run_barcode
     assert 'id' not in data['Summary']  # Database ID should not be exposed
@@ -157,7 +159,7 @@ def mock_illumina_samplesheet():
             'run_time': '',
             'flowcell_id': 'FLOWCELL123',
             'experiment_name': 'Test Experiment',
-            's3_run_folder_path': 's3://bucket/path/to/run',
+            'run_folder_uri': 's3://bucket/path/to/run',
             'status': 'completed',
             'barcode': '190110_MACHINE123_0001_FLOWCELL123'
         },

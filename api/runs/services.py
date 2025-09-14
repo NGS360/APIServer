@@ -111,7 +111,7 @@ def get_runs(
             run_number=run.run_number,
             flowcell_id=run.flowcell_id,
             experiment_name=run.experiment_name,
-            s3_run_folder_path=run.s3_run_folder_path,
+            run_folder_uri=run.run_folder_uri,
             status=run.status,
             run_time=run.run_time,
             barcode=run.barcode,
@@ -202,11 +202,9 @@ def get_run_samplesheet(session: Session, run_barcode: str):
     sample_sheet_json['Summary'] = summary_dict
 
     # Check if the samplesheet exists in S3
-    if len(run.s3_run_folder_path):
-        sample_sheet_path = f"{run.s3_run_folder_path}/SampleSheet.csv"
-        bucket, key = find_bucket_key(sample_sheet_path)
-        if access(bucket, key):
-            # Read the samplesheet from S3
+    if run.run_folder_uri:
+        sample_sheet_path = f"{run.run_folder_uri}/SampleSheet.csv"
+        try:
             sample_sheet = IlluminaSampleSheet(sample_sheet_path)
             sample_sheet = sample_sheet.to_json()
             sample_sheet = json.loads(sample_sheet)
@@ -216,5 +214,7 @@ def get_run_samplesheet(session: Session, run_barcode: str):
             if sample_sheet['Data']:
                 sample_sheet_json['DataCols'] = list(sample_sheet['Data'][0].keys())
             sample_sheet_json['Data'] = sample_sheet['Data']
-
+        except FileNotFoundError:
+            # Samplesheet not found, return only the summary
+            pass
     return sample_sheet_json
