@@ -143,8 +143,7 @@ def get_run_samplesheet(session: SessionDep, run_barcode: str) -> IlluminaSample
     """
     Retrieve the sample sheet for a specific run.
     """
-    sample_sheet_json = services.get_run_samplesheet(session=session, run_barcode=run_barcode)
-    return IlluminaSampleSheetResponseModel(**sample_sheet_json)
+    return services.get_run_samplesheet(session=session, run_barcode=run_barcode)
 
 
 @router.get(

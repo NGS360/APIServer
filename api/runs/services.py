@@ -8,12 +8,14 @@ from pydantic import PositiveInt
 from opensearchpy import OpenSearch
 from fastapi import HTTPException, status
 from smart_open import open as smart_open
+from botocore.exceptions import NoCredentialsError
 
 from sample_sheet import SampleSheet as IlluminaSampleSheet
 
 from core.utils import define_search_body
 
 from api.runs.models import (
+    IlluminaSampleSheetResponseModel,
     SequencingRun,
     SequencingRunCreate,
     SequencingRunPublic,
@@ -180,7 +182,7 @@ def get_run_samplesheet(session: Session, run_barcode: str):
     sample_sheet_json = {
         'Summary': {},
         'Header': {},
-        'Reads': {},
+        'Reads': [],
         'Settings': {},
         'DataCols': [],
         'Data': []
@@ -201,7 +203,7 @@ def get_run_samplesheet(session: Session, run_barcode: str):
             summary_dict[key] = str(value)
     sample_sheet_json['Summary'] = summary_dict
 
-    # Check if the samplesheet exists in S3
+    # Check if the samplesheet exists in URI path
     if run.run_folder_uri:
         sample_sheet_path = f"{run.run_folder_uri}/SampleSheet.csv"
         try:
@@ -215,9 +217,19 @@ def get_run_samplesheet(session: Session, run_barcode: str):
                 sample_sheet_json['DataCols'] = list(sample_sheet['Data'][0].keys())
             sample_sheet_json['Data'] = sample_sheet['Data']
         except FileNotFoundError:
-            # Samplesheet not found, return only the summary
-            pass
-    return sample_sheet_json
+            # Samplesheet not found, raise not found error
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Samplesheet not found"
+            )
+        except NoCredentialsError:
+            # Throw a more helpful alert if AWS credentials are missing
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Configure AWS credentials to access your s3 bucket."
+            )
+
+    return IlluminaSampleSheetResponseModel(**sample_sheet_json)
 
 
 def get_run_metrics(session: Session, run_barcode: str) -> dict:
