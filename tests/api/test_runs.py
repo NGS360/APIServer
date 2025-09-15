@@ -146,6 +146,34 @@ def test_get_run_samplesheet(client: TestClient, session: Session):
     assert "id" not in data["Summary"]  # Database ID should not be exposed
 
 
+def test_get_run_samplesheet_no_result(client: TestClient, session: Session):
+    """Test that we get the correct response when no samplesheet is available"""
+
+    # Set the test run folder
+    run_folder = (
+        Path(__file__).parent.parent / "fixtures" / "190110_MACHINE123_0002_FLOWCELL123"
+    )
+
+    # Add a run to the database
+    new_run = SequencingRun(
+        id=uuid4(),
+        run_date=datetime.date(2019, 1, 10),
+        machine_id="MACHINE123",
+        run_number=2,
+        flowcell_id="FLOWCELL123",
+        experiment_name="Test Experiment",
+        run_folder_uri=run_folder.as_posix(),
+        status="completed",
+    )
+    session.add(new_run)
+    session.commit()
+
+    # Test get samplesheet for the run
+    run_barcode = "190110_MACHINE123_0002_FLOWCELL123"
+    response = client.get(f"/api/v1/runs/{run_barcode}/samplesheet")
+    assert response.status_code == 204
+
+
 def test_get_run_metrics(client: TestClient, session: Session):
     """Test that we can get a runs demux metrics"""
 
@@ -175,3 +203,30 @@ def test_get_run_metrics(client: TestClient, session: Session):
     data = response.json()
     assert data['RunNumber'] == 1
     assert data["Flowcell"] == "FLOWCELL123"
+
+def test_get_run_metrics_no_result(client: TestClient, session: Session):
+    """Test that we can get a runs demux metrics"""
+
+    # Set the test run folder
+    run_folder = (
+        Path(__file__).parent.parent / "fixtures" / "190110_MACHINE123_0002_FLOWCELL123"
+    )
+
+    # Add a run to the database
+    new_run = SequencingRun(
+        id=uuid4(),
+        run_date=datetime.date(2019, 1, 10),
+        machine_id="MACHINE123",
+        run_number=2,
+        flowcell_id="FLOWCELL123",
+        experiment_name="Test Experiment",
+        run_folder_uri=run_folder.as_posix(),
+        status="completed",
+    )
+    session.add(new_run)
+    session.commit()
+
+    # Test get metrics for the run
+    run_barcode = "190110_MACHINE123_0002_FLOWCELL123"
+    response = client.get(f"/api/v1/runs/{run_barcode}/metrics")
+    assert response.status_code == 204

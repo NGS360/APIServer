@@ -17,6 +17,7 @@ from typing import Literal
 from fastapi import APIRouter, Query, status
 from core.deps import SessionDep, OpenSearchDep
 from api.runs.models import (
+    IlluminaMetricsResponseModel,
     SequencingRun,
     SequencingRunCreate,
     SequencingRunPublic,
@@ -148,11 +149,11 @@ def get_run_samplesheet(session: SessionDep, run_barcode: str) -> IlluminaSample
 
 @router.get(
     "/{run_barcode}/metrics",
-    response_model=dict,
+    response_model=IlluminaMetricsResponseModel,
     status_code=status.HTTP_200_OK,
     tags=["Run Endpoints"],
 )
-def get_run_metrics(session: SessionDep, run_barcode: str) -> dict:
+def get_run_metrics(session: SessionDep, run_barcode: str) -> IlluminaMetricsResponseModel:
     """
     Retrieve demultiplexing metrics for a specific run.
     """

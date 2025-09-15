@@ -6,7 +6,7 @@ from typing import List, Literal
 from sqlmodel import select, Session, func
 from pydantic import PositiveInt
 from opensearchpy import OpenSearch
-from fastapi import HTTPException, status
+from fastapi import HTTPException, Response, status
 from smart_open import open as smart_open
 from botocore.exceptions import NoCredentialsError
 
@@ -15,6 +15,7 @@ from sample_sheet import SampleSheet as IlluminaSampleSheet
 from core.utils import define_search_body
 
 from api.runs.models import (
+    IlluminaMetricsResponseModel,
     IlluminaSampleSheetResponseModel,
     SequencingRun,
     SequencingRunCreate,
@@ -217,13 +218,12 @@ def get_run_samplesheet(session: Session, run_barcode: str):
                 sample_sheet_json['DataCols'] = list(sample_sheet['Data'][0].keys())
             sample_sheet_json['Data'] = sample_sheet['Data']
         except FileNotFoundError:
-            # Samplesheet not found, raise not found error
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Samplesheet not found"
+            # Samplesheet not found, signal with 204 response
+            return Response(
+                status_code=status.HTTP_204_NO_CONTENT,
             )
         except NoCredentialsError:
-            # Throw a more helpful alert if AWS credentials are missing
+            # Throw a more helpful error if AWS credentials are missing
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Configure AWS credentials to access your s3 bucket."
@@ -239,7 +239,10 @@ def get_run_metrics(session: Session, run_barcode: str) -> dict:
     """
     run = get_run(session=session, run_barcode=run_barcode)
     if run is None:
-        return {}
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Run with barcode {run_barcode} does not exist."
+        )
 
     # Check if the metrics file exists in S3
     if run.run_folder_uri:
@@ -249,6 +252,8 @@ def get_run_metrics(session: Session, run_barcode: str) -> dict:
                 metrics = json.load(f)
             return metrics
         except FileNotFoundError:
-            # Metrics file not found, return empty dict
-            return {}
-    return {}
+            # Metrics file not found, raise not found error
+            return Response(
+                status_code=status.HTTP_204_NO_CONTENT,
+            )
+    return IlluminaMetricsResponseModel(**metrics)
