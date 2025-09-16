@@ -206,7 +206,7 @@ class ConversionResult(SQLModel):
     TotalClustersPF: int
     Yield: int | None = None
     DemuxResults: list[DemuxResult] | None = None
-    Undetermined: UndeterminedType | None = None 
+    Undetermined: UndeterminedType | None = None
 
 
 class UnknownBarcode(SQLModel):
@@ -221,5 +221,3 @@ class IlluminaMetricsResponseModel(SQLModel):
     ReadInfosForLanes: list[ReadInfosForLane] | None = None
     ConversionResults: list[ConversionResult] | None = None
     UnknownBarcodes: list[UnknownBarcode] | None = None
-
-

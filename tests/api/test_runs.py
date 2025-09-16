@@ -210,7 +210,9 @@ def test_get_run_no_s3_credentials(client: TestClient, session: Session):
     data = response.json()
     assert (
         data["detail"]
-        == "Error accessing samplesheet: unable to access bucket: 'bucket' key: 'path/to/run/SampleSheet.csv' version: None error: An error occurred (AccessDenied) when calling the GetObject operation: Access Denied"
+        == "Error accessing samplesheet: unable to access bucket: 'bucket' "
+        "key: 'path/to/run/SampleSheet.csv' version: None error: "
+        "An error occurred (AccessDenied) when calling the GetObject operation: Access Denied"
     )
 
 

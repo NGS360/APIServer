@@ -8,7 +8,6 @@ from pydantic import PositiveInt
 from opensearchpy import OpenSearch
 from fastapi import HTTPException, Response, status
 from smart_open import open as smart_open
-from botocore.exceptions import NoCredentialsError
 
 from sample_sheet import SampleSheet as IlluminaSampleSheet
 
