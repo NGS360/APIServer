@@ -107,6 +107,15 @@ def test_get_runs(client: TestClient, session: Session):
     assert data["barcode"] == "190110_MACHINE123_0001_FLOWCELL123"
 
 
+def test_get_run_samplesheet_invalid_run(client: TestClient):
+    """Test that we get the correct response when the run does not exist"""
+    run_barcode = "NONEXISTENT_RUN"
+    response = client.get(f"/api/v1/runs/{run_barcode}/samplesheet")
+    assert response.status_code == 404
+    data = response.json()
+    assert data["detail"] == f"Run with barcode {run_barcode} not found"
+
+
 def test_get_run_samplesheet(client: TestClient, session: Session):
     """Test that we can get a runs samplesheet"""
 
@@ -203,6 +212,7 @@ def test_get_run_metrics(client: TestClient, session: Session):
     data = response.json()
     assert data['RunNumber'] == 1
     assert data["Flowcell"] == "FLOWCELL123"
+
 
 def test_get_run_metrics_no_result(client: TestClient, session: Session):
     """Test that we can get a runs demux metrics"""

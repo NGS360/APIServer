@@ -190,7 +190,10 @@ def get_run_samplesheet(session: Session, run_barcode: str):
     }
     run = get_run(session=session, run_barcode=run_barcode)
     if run is None:
-        return sample_sheet_json
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Run with barcode {run_barcode} not found"
+        )
 
     # Convert run data to strings for the response model, excluding the database ID
     run_dict = run.to_dict()
