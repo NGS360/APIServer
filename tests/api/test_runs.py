@@ -4,8 +4,10 @@ Test /runs endpoint
 
 import datetime
 from pathlib import Path
+from unittest.mock import patch
 from uuid import uuid4
 
+from botocore.exceptions import NoCredentialsError
 from fastapi.testclient import TestClient
 from sqlmodel import Session
 
@@ -183,8 +185,14 @@ def test_get_run_samplesheet_no_result(client: TestClient, session: Session):
     assert response.status_code == 204
 
 
-def test_get_run_samplesheet_no_s3_credentials(client: TestClient, session: Session):
+@patch('api.runs.services.IlluminaSampleSheet')
+def test_get_run_samplesheet_no_s3_credentials(
+    mock_sample_sheet, client: TestClient, session: Session
+):
     """Test that we get the correct response when no AWS credentials are configured"""
+
+    # Mock the SampleSheet to raise NoCredentialsError
+    mock_sample_sheet.side_effect = NoCredentialsError()
 
     # Set the test run folder to an S3 path
     run_folder = "s3://bucket/path/to/run"
@@ -208,7 +216,11 @@ def test_get_run_samplesheet_no_s3_credentials(client: TestClient, session: Sess
     response = client.get(f"/api/v1/runs/{run_barcode}/samplesheet")
     assert response.status_code == 500
     data = response.json()
-    assert data["detail"] == "Error accessing samplesheet: botocore.exceptions.NoCredentialsError: Unable to locate credentials"
+    expected_detail = (
+        "Error accessing samplesheet: "
+        "botocore.exceptions.NoCredentialsError: Unable to locate credentials"
+    )
+    assert data["detail"] == expected_detail
 
 
 def test_get_run_metrics_invalid_run(client: TestClient):
