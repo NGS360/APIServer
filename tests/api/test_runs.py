@@ -208,7 +208,10 @@ def test_get_run_no_s3_credentials(client: TestClient, session: Session):
     response = client.get(f"/api/v1/runs/{run_barcode}/samplesheet")
     assert response.status_code == 500
     data = response.json()
-    assert data["detail"] == "Error accessing samplesheet: unable to access bucket: 'bucket' key: 'path/to/run/SampleSheet.csv' version: None error: An error occurred (AccessDenied) when calling the GetObject operation: Access Denied"
+    assert (
+        data["detail"]
+        == "Error accessing samplesheet: unable to access bucket: 'bucket' key: 'path/to/run/SampleSheet.csv' version: None error: An error occurred (AccessDenied) when calling the GetObject operation: Access Denied"
+    )
 
 
 def test_get_run_metrics_invalid_run(client: TestClient):
@@ -247,7 +250,7 @@ def test_get_run_metrics(client: TestClient, session: Session):
     response = client.get(f"/api/v1/runs/{run_barcode}/metrics")
     assert response.status_code == 200
     data = response.json()
-    assert data['RunNumber'] == 1
+    assert data["RunNumber"] == 1
     assert data["Flowcell"] == "FLOWCELL123"
 
 
