@@ -1,14 +1,22 @@
 """
 Services for managing sequencing runs.
 """
+import json
 from typing import List, Literal
 from sqlmodel import select, Session, func
 from pydantic import PositiveInt
 from opensearchpy import OpenSearch
-from fastapi import HTTPException, status
+from fastapi import HTTPException, Response, status
+from smart_open import open as smart_open
+from botocore.exceptions import NoCredentialsError
+
+from sample_sheet import SampleSheet as IlluminaSampleSheet
+
 from core.utils import define_search_body
 
 from api.runs.models import (
+    IlluminaMetricsResponseModel,
+    IlluminaSampleSheetResponseModel,
     SequencingRun,
     SequencingRunCreate,
     SequencingRunPublic,
@@ -106,7 +114,7 @@ def get_runs(
             run_number=run.run_number,
             flowcell_id=run.flowcell_id,
             experiment_name=run.experiment_name,
-            s3_run_folder_path=run.s3_run_folder_path,
+            run_folder_uri=run.run_folder_uri,
             status=run.status,
             run_time=run.run_time,
             barcode=run.barcode,
@@ -165,3 +173,90 @@ def search_runs(
 
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e)) from e
+
+
+def get_run_samplesheet(session: Session, run_barcode: str):
+    """
+    Retrieve the samplesheet for a given sequencing run.
+    :return: A dictionary representing the samplesheet in JSON format.
+    """
+    sample_sheet_json = {
+        'Summary': {},
+        'Header': {},
+        'Reads': [],
+        'Settings': {},
+        'DataCols': [],
+        'Data': []
+    }
+    run = get_run(session=session, run_barcode=run_barcode)
+    if run is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Run with barcode {run_barcode} not found"
+        )
+
+    # Convert run data to strings for the response model, excluding the database ID
+    run_dict = run.to_dict()
+    summary_dict = {}
+    for key, value in run_dict.items():
+        if key == 'id':  # Skip the database ID field
+            continue
+        if value is None:
+            summary_dict[key] = ""
+        else:
+            summary_dict[key] = str(value)
+    sample_sheet_json['Summary'] = summary_dict
+
+    # Check if the samplesheet exists in URI path
+    if run.run_folder_uri:
+        sample_sheet_path = f"{run.run_folder_uri}/SampleSheet.csv"
+        try:
+            sample_sheet = IlluminaSampleSheet(sample_sheet_path)
+            sample_sheet = sample_sheet.to_json()
+            sample_sheet = json.loads(sample_sheet)
+            sample_sheet_json['Header'] = sample_sheet['Header']
+            sample_sheet_json['Reads'] = sample_sheet['Reads']
+            sample_sheet_json['Settings'] = sample_sheet['Settings']
+            if sample_sheet['Data']:
+                sample_sheet_json['DataCols'] = list(sample_sheet['Data'][0].keys())
+            sample_sheet_json['Data'] = sample_sheet['Data']
+        except FileNotFoundError:
+            # Samplesheet not found, signal with 204 response
+            return Response(
+                status_code=status.HTTP_204_NO_CONTENT,
+            )
+        except NoCredentialsError as e:
+            error_type = f"{type(e).__module__}.{type(e).__name__}"
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Error accessing samplesheet: {error_type}: {str(e)}"
+            ) from e
+
+    return IlluminaSampleSheetResponseModel(**sample_sheet_json)
+
+
+def get_run_metrics(session: Session, run_barcode: str) -> dict:
+    """
+    Retrieve demultiplexing metrics for a specific run.
+    :return: A dictionary containing the demultiplexing metrics.
+    """
+    run = get_run(session=session, run_barcode=run_barcode)
+    if run is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Run with barcode {run_barcode} not found"
+        )
+
+    # Check if the metrics file exists in S3
+    metrics = {}
+    if run.run_folder_uri:
+        metrics_path = f"{run.run_folder_uri}/Stats/Stats.json"
+        try:
+            with smart_open(metrics_path, 'r') as f:
+                metrics = json.load(f)
+        except FileNotFoundError:
+            # Metrics file not found, raise not found error
+            return Response(
+                status_code=status.HTTP_204_NO_CONTENT,
+            )
+    return IlluminaMetricsResponseModel(**metrics)

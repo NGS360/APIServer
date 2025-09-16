@@ -12,7 +12,7 @@ from core.db import get_session
 # Import all models first to ensure proper SQLAlchemy relationship resolution
 from api.project.models import Project
 from api.runs.models import SequencingRun
-
+from api.samples.models import Sample  # noqa: F401
 from api.search.models import SearchDocument
 from api.search.services import add_object_to_index
 

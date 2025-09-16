@@ -29,7 +29,7 @@ def upgrade() -> None:
     sa.Column('run_number', sa.Integer(), nullable=False),
     sa.Column('flowcell_id', sqlmodel.sql.sqltypes.AutoString(length=25), nullable=False),
     sa.Column('experiment_name', sqlmodel.sql.sqltypes.AutoString(length=255), nullable=True),
-    sa.Column('s3_run_folder_path', sqlmodel.sql.sqltypes.AutoString(length=255), nullable=True),
+    sa.Column('run_folder_uri', sqlmodel.sql.sqltypes.AutoString(length=255), nullable=True),
     sa.Column('status', sqlmodel.sql.sqltypes.AutoString(length=50), nullable=True),
     sa.Column('run_time', sqlmodel.sql.sqltypes.AutoString(length=4), nullable=True),
     sa.PrimaryKeyConstraint('id')

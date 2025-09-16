@@ -24,7 +24,7 @@ class SequencingRun(SQLModel, table=True):
     run_number: int
     flowcell_id: str = Field(max_length=25)
     experiment_name: str | None = Field(default=None, max_length=255)
-    s3_run_folder_path: str | None = Field(default=None, max_length=255)
+    run_folder_uri: str | None = Field(default=None, max_length=255)
     status: str | None = Field(default=None, max_length=50)
     run_time: str | None = Field(default=None, max_length=4)
 
@@ -32,7 +32,8 @@ class SequencingRun(SQLModel, table=True):
 
     @staticmethod
     def is_data_valid(data):
-        for field in ["experiment_name", "s3_run_folder_path"]:
+        ''' A Run must have an experiment_name and a run_folder_uri to be valid '''
+        for field in ["experiment_name", "run_folder_uri"]:
             if field not in data:
                 return False
         return True
@@ -82,6 +83,7 @@ class SequencingRun(SQLModel, table=True):
     @computed_field
     @property
     def barcode(self) -> str:
+        ''' Generates a barcode from the run fields '''
         if self.run_time is None:
             run_number = str(self.run_number).zfill(4)
             run_date = self.run_date.strftime("%y%m%d")
@@ -90,6 +92,7 @@ class SequencingRun(SQLModel, table=True):
         return f"{run_date}_{self.run_time}_{self.machine_id}_{self.flowcell_id}_{self.run_number}"
 
     def to_dict(self):
+        ''' Returns a dictionary representation of the object '''
         data = {
             "id": self.id,
             "run_date": self.run_date.strftime("%Y-%m-%d") if self.run_date else None,
@@ -98,13 +101,14 @@ class SequencingRun(SQLModel, table=True):
             "run_time": self.run_time,
             "flowcell_id": self.flowcell_id,
             "experiment_name": self.experiment_name,
-            "s3_run_folder_path": self.s3_run_folder_path,
+            "run_folder_uri": self.run_folder_uri,
             "status": self.status,
             "barcode": self.barcode,
         }
         return data
 
     def from_dict(self, data):
+        ''' Updates the object from a dictionary '''
         for field in data:
             setattr(self, field, data[field])
 
@@ -118,7 +122,7 @@ class SequencingRunCreate(SQLModel):
     run_number: int
     flowcell_id: str
     experiment_name: str | None = None
-    s3_run_folder_path: str | None = None
+    run_folder_uri: str | None = None
     status: str | None = None
     run_time: str | None = None
 
@@ -131,7 +135,7 @@ class SequencingRunPublic(SQLModel):
     run_number: int
     flowcell_id: str
     experiment_name: str | None
-    s3_run_folder_path: str | None
+    run_folder_uri: str | None
     status: str | None
     run_time: str | None
     barcode: str | None
@@ -145,3 +149,75 @@ class SequencingRunsPublic(SQLModel):
     per_page: int
     has_next: bool
     has_prev: bool
+
+
+class IlluminaSampleSheetResponseModel(SQLModel):
+    Summary: dict[str, str] | None = None
+    Header: dict[str, str] | None = None
+    Reads: list[int] | None = None
+    Settings: dict[str, str] | None = None
+    Data: list[dict[str, str]] | None = None
+    DataCols: list[str] | None = None
+
+
+# Helper types for IlluminaMetricsResponseModel
+class ReadMetricsType(SQLModel):
+    ReadNumber: int | None = None
+    Yield: int | None = None
+    YieldQ30: int | None = None
+    QualityScoreSum: int | None = None
+    TrimmedBases: int | None = None
+
+
+class ReadInfo(SQLModel):
+    Number: int | None = None
+    NumCycles: int | None = None
+    IsIndexedRead: bool | None = None
+
+
+class ReadInfosForLane(SQLModel):
+    LaneNumber: int | None = None
+    ReadInfos: list[ReadInfo] | None = None
+
+
+class IndexMetric(SQLModel):
+    IndexSequence: str | None = None
+    MismatchCounts: dict[str, int] | None = None
+
+
+class DemuxResult(SQLModel):
+    SampleId: str
+    SampleName: str | None = None
+    IndexMetrics: list[IndexMetric] | None = None
+    NumberReads: int = 0
+    Yield: int | None = None
+    ReadMetrics: list[ReadMetricsType] = None
+
+
+class UndeterminedType(SQLModel):
+    NumberReads: int | None = None
+    Yield: int | None = None
+    ReadMetrics: list[ReadMetricsType] | None = None
+
+
+class ConversionResult(SQLModel):
+    LaneNumber: int
+    TotalClustersRaw: int
+    TotalClustersPF: int
+    Yield: int | None = None
+    DemuxResults: list[DemuxResult] | None = None
+    Undetermined: UndeterminedType | None = None
+
+
+class UnknownBarcode(SQLModel):
+    Lane: int | None = None
+    Barcodes: dict[str, int] | None = None
+
+
+class IlluminaMetricsResponseModel(SQLModel):
+    Flowcell: str | None = None
+    RunNumber: int | None = None
+    RunId: str | None = None
+    ReadInfosForLanes: list[ReadInfosForLane] | None = None
+    ConversionResults: list[ConversionResult] | None = None
+    UnknownBarcodes: list[UnknownBarcode] | None = None

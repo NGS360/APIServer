@@ -17,10 +17,12 @@ from typing import Literal
 from fastapi import APIRouter, Query, status
 from core.deps import SessionDep, OpenSearchDep
 from api.runs.models import (
+    IlluminaMetricsResponseModel,
     SequencingRun,
     SequencingRunCreate,
     SequencingRunPublic,
     SequencingRunsPublic,
+    IlluminaSampleSheetResponseModel,
 )
 from api.runs import services
 
@@ -52,7 +54,7 @@ def add_run(
         run_number=run.run_number,
         flowcell_id=run.flowcell_id,
         experiment_name=run.experiment_name,
-        s3_run_folder_path=run.s3_run_folder_path,
+        run_folder_uri=run.run_folder_uri,
         status=run.status,
         run_time=run.run_time,
         barcode=run.barcode,
@@ -130,3 +132,29 @@ def get_run(session: SessionDep, run_barcode: str) -> SequencingRunPublic:
     Retrieve a sequencing run.
     """
     return services.get_run(session=session, run_barcode=run_barcode)
+
+
+@router.get(
+    "/{run_barcode}/samplesheet",
+    response_model=IlluminaSampleSheetResponseModel,
+    status_code=status.HTTP_200_OK,
+    tags=["Run Endpoints"],
+)
+def get_run_samplesheet(session: SessionDep, run_barcode: str) -> IlluminaSampleSheetResponseModel:
+    """
+    Retrieve the sample sheet for a specific run.
+    """
+    return services.get_run_samplesheet(session=session, run_barcode=run_barcode)
+
+
+@router.get(
+    "/{run_barcode}/metrics",
+    response_model=IlluminaMetricsResponseModel,
+    status_code=status.HTTP_200_OK,
+    tags=["Run Endpoints"],
+)
+def get_run_metrics(session: SessionDep, run_barcode: str) -> IlluminaMetricsResponseModel:
+    """
+    Retrieve demultiplexing metrics for a specific run.
+    """
+    return services.get_run_metrics(session=session, run_barcode=run_barcode)
