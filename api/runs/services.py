@@ -8,6 +8,7 @@ from pydantic import PositiveInt
 from opensearchpy import OpenSearch
 from fastapi import HTTPException, Response, status
 from smart_open import open as smart_open
+from botocore.exceptions import NoCredentialsError
 
 from sample_sheet import SampleSheet as IlluminaSampleSheet
 
@@ -224,10 +225,11 @@ def get_run_samplesheet(session: Session, run_barcode: str):
             return Response(
                 status_code=status.HTTP_204_NO_CONTENT,
             )
-        except OSError as e:
+        except NoCredentialsError as e:
+            error_type = f"{type(e).__module__}.{type(e).__name__}"
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Error accessing samplesheet: {str(e)}"
+                detail=f"Error accessing samplesheet: {error_type}: {str(e)}"
             ) from e
 
     return IlluminaSampleSheetResponseModel(**sample_sheet_json)
