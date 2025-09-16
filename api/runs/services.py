@@ -247,12 +247,12 @@ def get_run_metrics(session: Session, run_barcode: str) -> dict:
         )
 
     # Check if the metrics file exists in S3
+    metrics = {}
     if run.run_folder_uri:
         metrics_path = f"{run.run_folder_uri}/Stats/Stats.json"
         try:
             with smart_open(metrics_path, 'r') as f:
                 metrics = json.load(f)
-            return metrics
         except FileNotFoundError:
             # Metrics file not found, raise not found error
             return Response(
