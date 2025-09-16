@@ -211,6 +211,15 @@ def test_get_run_no_s3_credentials(client: TestClient, session: Session):
     assert data["detail"] == "Error accessing samplesheet: unable to access bucket: 'bucket' key: 'path/to/run/SampleSheet.csv' version: None error: An error occurred (AccessDenied) when calling the GetObject operation: Access Denied"
 
 
+def test_get_run_metrics_invalid_run(client: TestClient):
+    """Test that we get the correct response when the run does not exist"""
+    run_barcode = "NONEXISTENT_RUN"
+    response = client.get(f"/api/v1/runs/{run_barcode}/metrics")
+    assert response.status_code == 404
+    data = response.json()
+    assert data["detail"] == f"Run with barcode {run_barcode} not found"
+
+
 def test_get_run_metrics(client: TestClient, session: Session):
     """Test that we can get a runs demux metrics"""
 

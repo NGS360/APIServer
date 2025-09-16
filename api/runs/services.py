@@ -242,8 +242,8 @@ def get_run_metrics(session: Session, run_barcode: str) -> dict:
     run = get_run(session=session, run_barcode=run_barcode)
     if run is None:
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Run with barcode {run_barcode} does not exist."
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Run with barcode {run_barcode} not found"
         )
 
     # Check if the metrics file exists in S3
