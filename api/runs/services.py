@@ -225,12 +225,11 @@ def get_run_samplesheet(session: Session, run_barcode: str):
             return Response(
                 status_code=status.HTTP_204_NO_CONTENT,
             )
-        except NoCredentialsError:
-            # Throw a more helpful error if AWS credentials are missing
+        except OSError as e:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Configure AWS credentials to access your s3 bucket."
-            )
+                detail=f"Error accessing samplesheet: {str(e)}"
+            ) from e
 
     return IlluminaSampleSheetResponseModel(**sample_sheet_json)
 

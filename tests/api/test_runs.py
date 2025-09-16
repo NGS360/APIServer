@@ -183,6 +183,34 @@ def test_get_run_samplesheet_no_result(client: TestClient, session: Session):
     assert response.status_code == 204
 
 
+def test_get_run_no_s3_credentials(client: TestClient, session: Session):
+    """Test that we get the correct response when no AWS credentials are configured"""
+
+    # Set the test run folder to an S3 path
+    run_folder = "s3://bucket/path/to/run"
+
+    # Add a run to the database
+    new_run = SequencingRun(
+        id=uuid4(),
+        run_date=datetime.date(2019, 1, 10),
+        machine_id="MACHINE123",
+        run_number=1,
+        flowcell_id="FLOWCELL123",
+        experiment_name="Test Experiment",
+        run_folder_uri=run_folder,
+        status="completed",
+    )
+    session.add(new_run)
+    session.commit()
+
+    # Test get samplesheet for the run
+    run_barcode = "190110_MACHINE123_0001_FLOWCELL123"
+    response = client.get(f"/api/v1/runs/{run_barcode}/samplesheet")
+    assert response.status_code == 500
+    data = response.json()
+    assert data["detail"] == "Error accessing samplesheet: unable to access bucket: 'bucket' key: 'path/to/run/SampleSheet.csv' version: None error: An error occurred (AccessDenied) when calling the GetObject operation: Access Denied"
+
+
 def test_get_run_metrics(client: TestClient, session: Session):
     """Test that we can get a runs demux metrics"""
 
