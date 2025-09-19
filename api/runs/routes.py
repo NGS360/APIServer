@@ -18,6 +18,7 @@ from fastapi import APIRouter, Query, status, HTTPException
 from core.deps import SessionDep, OpenSearchDep
 from api.runs.models import (
     IlluminaMetricsResponseModel,
+    RunStatus,
     SequencingRun,
     SequencingRunCreate,
     SequencingRunPublic,
@@ -148,14 +149,6 @@ def update_run(
     """
     Update the status of a specific run.
     """
-    # Validate the run_status value
-    valid_statuses = ["In Progress", "Uploading", "Ready", "Resync"]
-    if update_request.run_status not in valid_statuses:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Invalid run_status. Must be one of: {valid_statuses}"
-        )
-
     return services.update_run(
         session=session,
         run_barcode=run_barcode,
