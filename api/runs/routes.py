@@ -14,7 +14,7 @@ GET    /api/v0/runs/[id]/metrics       Retrieve demux metrics from Stat.json
 """
 
 from typing import Literal
-from fastapi import APIRouter, Query, status
+from fastapi import APIRouter, Query, status, HTTPException
 from core.deps import SessionDep, OpenSearchDep
 from api.runs.models import (
     IlluminaMetricsResponseModel,
@@ -22,6 +22,7 @@ from api.runs.models import (
     SequencingRunCreate,
     SequencingRunPublic,
     SequencingRunsPublic,
+    SequencingRunUpdateRequest,
     IlluminaSampleSheetResponseModel,
 )
 from api.runs import services
@@ -132,6 +133,34 @@ def get_run(session: SessionDep, run_barcode: str) -> SequencingRunPublic:
     Retrieve a sequencing run.
     """
     return services.get_run(session=session, run_barcode=run_barcode)
+
+
+@router.put(
+    "/{run_barcode}",
+    response_model=SequencingRunPublic,
+    tags=["Run Endpoints"],
+)
+def update_run(
+    session: SessionDep,
+    run_barcode: str,
+    update_request: SequencingRunUpdateRequest,
+) -> SequencingRunPublic:
+    """
+    Update the status of a specific run.
+    """
+    # Validate the run_status value
+    valid_statuses = ["In Progress", "Uploading", "Ready", "Resync"]
+    if update_request.run_status not in valid_statuses:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Invalid run_status. Must be one of: {valid_statuses}"
+        )
+
+    return services.update_run(
+        session=session,
+        run_barcode=run_barcode,
+        run_status=update_request.run_status
+    )
 
 
 @router.get(

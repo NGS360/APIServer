@@ -260,3 +260,33 @@ def get_run_metrics(session: Session, run_barcode: str) -> dict:
                 status_code=status.HTTP_204_NO_CONTENT,
             )
     return IlluminaMetricsResponseModel(**metrics)
+
+
+def update_run(session: Session, run_barcode: str, run_status: str) -> SequencingRunPublic:
+    """
+    Update the status of a specific run.
+    """
+    run = get_run(session=session, run_barcode=run_barcode)
+    if run is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Run with barcode {run_barcode} not found"
+        )
+
+    run.status = run_status
+    session.add(run)
+    session.commit()
+    session.refresh(run)
+
+    return SequencingRunPublic(
+        id=run.id,
+        run_date=run.run_date,
+        machine_id=run.machine_id,
+        run_number=run.run_number,
+        flowcell_id=run.flowcell_id,
+        experiment_name=run.experiment_name,
+        run_folder_uri=run.run_folder_uri,
+        status=run.status,
+        run_time=run.run_time,
+        barcode=run.barcode,
+    )

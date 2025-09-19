@@ -25,7 +25,7 @@ class SequencingRun(SQLModel, table=True):
     flowcell_id: str = Field(max_length=25)
     experiment_name: str | None = Field(default=None, max_length=255)
     run_folder_uri: str | None = Field(default=None, max_length=255)
-    status: str | None = Field(default=None, max_length=50)
+    status: str | None = Field(default=None, max_length=50)  # In Progress, Uploading, Ready, Resync
     run_time: str | None = Field(default=None, max_length=4)
 
     model_config = ConfigDict(from_attributes=True)
@@ -126,6 +126,12 @@ class SequencingRunCreate(SQLModel):
     status: str | None = None
     run_time: str | None = None
 
+    model_config = ConfigDict(extra="forbid")
+
+
+class SequencingRunUpdateRequest(SQLModel):
+    run_status: str
+    
     model_config = ConfigDict(extra="forbid")
 
 

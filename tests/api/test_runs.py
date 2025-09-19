@@ -289,3 +289,30 @@ def test_get_run_metrics_no_result(client: TestClient, session: Session):
     run_barcode = "190110_MACHINE123_0002_FLOWCELL123"
     response = client.get(f"/api/v1/runs/{run_barcode}/metrics")
     assert response.status_code == 204
+
+
+def test_update_run_status(client: TestClient, session: Session):
+    """Test that we can update a runs status"""
+
+    # Add a run to the database
+    new_run = SequencingRun(
+        id=uuid4(),
+        run_date=datetime.date(2019, 1, 10),
+        machine_id="MACHINE123",
+        run_number=1,
+        flowcell_id="FLOWCELL123",
+        experiment_name="Test Experiment",
+        run_folder_uri="/dir/path/to/run",
+        status="In Progress",
+    )
+    session.add(new_run)
+    session.commit()
+
+    # Test update the run status
+    run_barcode = "190110_MACHINE123_0001_FLOWCELL123"
+    update_data = {"run_status": "Ready"}
+    response = client.put(f"/api/v1/runs/{run_barcode}", json=update_data)
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "Ready"
+    assert data["barcode"] == "190110_MACHINE123_0001_FLOWCELL123"
