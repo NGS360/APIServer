@@ -148,6 +148,7 @@ def update_run(
 ) -> SequencingRunPublic:
     """
     Update the status of a specific run.
+    Valid status values are: "In Progress", "Uploading", "Ready", "Resync"
     """
     return services.update_run(
         session=session,
