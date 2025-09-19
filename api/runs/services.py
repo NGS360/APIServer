@@ -17,6 +17,7 @@ from core.utils import define_search_body
 from api.runs.models import (
     IlluminaMetricsResponseModel,
     IlluminaSampleSheetResponseModel,
+    RunStatus,
     SequencingRun,
     SequencingRunCreate,
     SequencingRunPublic,
@@ -262,7 +263,7 @@ def get_run_metrics(session: Session, run_barcode: str) -> dict:
     return IlluminaMetricsResponseModel(**metrics)
 
 
-def update_run(session: Session, run_barcode: str, run_status: str) -> SequencingRunPublic:
+def update_run(session: Session, run_barcode: str, run_status: RunStatus) -> SequencingRunPublic:
     """
     Update the status of a specific run.
     """
