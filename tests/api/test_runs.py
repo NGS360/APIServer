@@ -316,3 +316,8 @@ def test_update_run_status(client: TestClient, session: Session):
     data = response.json()
     assert data["status"] == RunStatus.READY.value
     assert data["barcode"] == "190110_MACHINE123_0001_FLOWCELL123"
+
+    # Test that we can't specifiy an invalid status
+    update_data = {"run_status": "INVALID_STATUS"}
+    response = client.put(f"/api/v1/runs/{run_barcode}", json=update_data)
+    assert response.status_code == 422
