@@ -164,3 +164,16 @@ class FileFilters(SQLModel):
     search_query: str | None = None  # Search in filename/description
 
     model_config = ConfigDict(extra="forbid")
+
+
+class PaginatedFileResponse(SQLModel):
+    """Paginated response for file listings"""
+    data: list[FilePublic]
+    total_items: int
+    total_pages: int
+    current_page: int
+    per_page: int
+    has_next: bool
+    has_prev: bool
+
+    model_config = ConfigDict(from_attributes=True)
