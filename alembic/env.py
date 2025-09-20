@@ -11,6 +11,8 @@ from core.config import get_settings
 from api.samples.models import Sample, SampleAttribute
 from api.project.models import Project
 from api.runs.models import SequencingRun
+from api.files.models import File
+
 
 # Import Base from your SQLModel setup
 #from core.db import Base
@@ -30,6 +32,7 @@ if config.config_file_name is not None:
 # target_metadata = mymodel.Base.metadata
 # target_metadata = None
 target_metadata = SQLModel.metadata
+
 
 # other values from the config, defined by the needs of env.py,
 # can be acquired:

@@ -2,12 +2,12 @@
 Models for the Files API
 """
 
+from typing import List
 import uuid
 from datetime import datetime
 from enum import Enum
 from sqlmodel import SQLModel, Field
 from pydantic import ConfigDict
-from typing import List
 
 
 class FileType(str, Enum):
