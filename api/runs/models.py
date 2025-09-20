@@ -140,7 +140,7 @@ class SequencingRunCreate(SQLModel):
 
 class SequencingRunUpdateRequest(SQLModel):
     run_status: RunStatus
-    
+
     model_config = ConfigDict(extra="forbid")
 
 

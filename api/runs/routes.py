@@ -14,11 +14,10 @@ GET    /api/v0/runs/[id]/metrics       Retrieve demux metrics from Stat.json
 """
 
 from typing import Literal
-from fastapi import APIRouter, Query, status, HTTPException
+from fastapi import APIRouter, Query, status
 from core.deps import SessionDep, OpenSearchDep
 from api.runs.models import (
     IlluminaMetricsResponseModel,
-    RunStatus,
     SequencingRun,
     SequencingRunCreate,
     SequencingRunPublic,
