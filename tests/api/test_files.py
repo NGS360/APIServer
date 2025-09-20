@@ -73,7 +73,7 @@ class TestFileModels:
             is_public=True,
             created_by="testuser"
         )
-        
+
         assert file_create.filename == "test.txt"
         assert file_create.description == "Test file"
         assert file_create.file_type == FileType.DOCUMENT
@@ -89,7 +89,7 @@ class TestFileModels:
             description="Updated description",
             is_public=False
         )
-        
+
         assert file_update.filename == "updated.txt"
         assert file_update.description == "Updated description"
         assert file_update.is_public is False
@@ -110,7 +110,7 @@ class TestFileServices:
         file_id = generate_file_id()
         assert len(file_id) == 12
         assert file_id.isalnum()
-        
+
         # Test uniqueness
         file_id2 = generate_file_id()
         assert file_id != file_id2
@@ -123,7 +123,7 @@ class TestFileServices:
             FileType.FASTQ,
             "sample.fastq"
         )
-        
+
         # Should contain entity type, entity id, file type, year, month, filename
         path_parts = path.split("/")
         assert len(path_parts) == 6
@@ -131,7 +131,7 @@ class TestFileServices:
         assert path_parts[1] == "PROJ001"
         assert path_parts[2] == "fastq"
         assert path_parts[5] == "sample.fastq"
-        
+
         # Year and month should be current
         now = datetime.utcnow()
         assert path_parts[3] == now.strftime("%Y")
@@ -141,7 +141,7 @@ class TestFileServices:
         """Test file checksum calculation"""
         content = b"Hello, World!"
         checksum = calculate_file_checksum(content)
-        
+
         # Should be SHA-256 hash
         assert len(checksum) == 64
         assert checksum == "dffd6021bb2bd5b0af676290809ec3a53191dd81c7f70a4b28688a362182986f"
@@ -163,9 +163,9 @@ class TestFileServices:
             entity_id="PROJ001",
             created_by="testuser"
         )
-        
+
         file_record = create_file(session, file_create, storage_root=temp_storage)
-        
+
         assert file_record.filename == "test.txt"
         assert file_record.description == "Test file"
         assert file_record.file_type == FileType.DOCUMENT
@@ -187,12 +187,12 @@ class TestFileServices:
             entity_type=EntityType.PROJECT,
             entity_id="PROJ001"
         )
-        
+
         file_record = create_file(session, file_create, content, storage_root=temp_storage)
-        
+
         assert file_record.file_size == len(content)
         assert file_record.checksum == calculate_file_checksum(content)
-        
+
         # Check that file was actually written
         file_path = Path(temp_storage) / file_record.file_path
         assert file_path.exists()
@@ -205,10 +205,10 @@ class TestFileServices:
             entity_type=EntityType.PROJECT,
             entity_id="PROJ001"
         )
-        
+
         created_file = create_file(session, file_create, storage_root=temp_storage)
         retrieved_file = get_file(session, created_file.file_id)
-        
+
         assert retrieved_file.id == created_file.id
         assert retrieved_file.file_id == created_file.file_id
         assert retrieved_file.filename == created_file.filename
@@ -217,7 +217,7 @@ class TestFileServices:
         """Test getting non-existent file"""
         with pytest.raises(Exception) as exc_info:
             get_file(session, "nonexistent")
-        
+
         assert "not found" in str(exc_info.value)
 
     def test_update_file(self, session: Session, temp_storage):
@@ -228,17 +228,17 @@ class TestFileServices:
             entity_type=EntityType.PROJECT,
             entity_id="PROJ001"
         )
-        
+
         created_file = create_file(session, file_create, storage_root=temp_storage)
-        
+
         file_update = FileUpdate(
             filename="updated.txt",
             description="Updated description",
             is_public=True
         )
-        
+
         updated_file = update_file(session, created_file.file_id, file_update)
-        
+
         assert updated_file.filename == "updated.txt"
         assert updated_file.description == "Updated description"
         assert updated_file.is_public is True
@@ -251,20 +251,20 @@ class TestFileServices:
             entity_type=EntityType.PROJECT,
             entity_id="PROJ001"
         )
-        
+
         created_file = create_file(session, file_create, content, storage_root=temp_storage)
         file_path = Path(temp_storage) / created_file.file_path
-        
+
         # Verify file exists
         assert file_path.exists()
-        
+
         # Delete file
         result = delete_file(session, created_file.file_id, storage_root=temp_storage)
         assert result is True
-        
+
         # Verify file is deleted
         assert not file_path.exists()
-        
+
         # Verify database record is deleted
         with pytest.raises(Exception):
             get_file(session, created_file.file_id)
@@ -272,7 +272,7 @@ class TestFileServices:
     def test_list_files_empty(self, session: Session):
         """Test listing files when none exist"""
         result = list_files(session)
-        
+
         assert result.total_items == 0
         assert result.total_pages == 0
         assert result.current_page == 1
@@ -293,9 +293,9 @@ class TestFileServices:
                 file_type=FileType.DOCUMENT
             )
             create_file(session, file_create, storage_root=temp_storage)
-        
+
         result = list_files(session)
-        
+
         assert result.total_items == 3
         assert result.total_pages == 1
         assert result.current_page == 1
@@ -315,10 +315,10 @@ class TestFileServices:
                     entity_id=entity_id
                 )
                 create_file(session, file_create, storage_root=temp_storage)
-        
+
         # List files for PROJ001
         result = list_files_for_entity(session, EntityType.PROJECT, "PROJ001")
-        
+
         assert result.total_items == 2
         assert all(file.entity_id == "PROJ001" for file in result.data)
 
@@ -332,7 +332,7 @@ class TestFileServices:
                 entity_id="PROJ001"
             )
             create_file(session, file_create, storage_root=temp_storage)
-        
+
         count = get_file_count_for_entity(session, EntityType.PROJECT, "PROJ001")
         assert count == 3
 
@@ -344,12 +344,12 @@ class TestFileServices:
             entity_type=EntityType.PROJECT,
             entity_id="PROJ001"
         )
-        
+
         created_file = create_file(session, file_create, content, storage_root=temp_storage)
         retrieved_content = get_file_content(
             session, created_file.file_id, storage_root=temp_storage
         )
-        
+
         assert retrieved_content == content
 
     def test_get_file_content_not_found(self, session: Session, temp_storage):
@@ -359,13 +359,13 @@ class TestFileServices:
             entity_type=EntityType.PROJECT,
             entity_id="PROJ001"
         )
-        
+
         # Create file record without content
         created_file = create_file(session, file_create, storage_root=temp_storage)
-        
+
         with pytest.raises(Exception) as exc_info:
             get_file_content(session, created_file.file_id, storage_root=temp_storage)
-        
+
         assert "not found" in str(exc_info.value)
 
 
@@ -412,7 +412,7 @@ class TestFileIntegration:
     def test_complete_file_lifecycle(self, session: Session, temp_storage):
         """Test complete file lifecycle: create, read, update, delete"""
         content = b"Initial content"
-        
+
         # Create file
         file_create = FileCreate(
             filename="lifecycle.txt",
@@ -422,34 +422,34 @@ class TestFileIntegration:
             entity_id="PROJ001",
             created_by="testuser"
         )
-        
+
         created_file = create_file(session, file_create, content, storage_root=temp_storage)
         assert created_file.filename == "lifecycle.txt"
         assert created_file.file_size == len(content)
-        
+
         # Read file
         retrieved_file = get_file(session, created_file.file_id)
         assert retrieved_file.id == created_file.id
-        
+
         retrieved_content = get_file_content(
             session, created_file.file_id, storage_root=temp_storage
         )
         assert retrieved_content == content
-        
+
         # Update file metadata
         file_update = FileUpdate(
             description="Updated lifecycle test file",
             is_public=True
         )
-        
+
         updated_file = update_file(session, created_file.file_id, file_update)
         assert updated_file.description == "Updated lifecycle test file"
         assert updated_file.is_public is True
-        
+
         # Delete file
         result = delete_file(session, created_file.file_id, storage_root=temp_storage)
         assert result is True
-        
+
         # Verify deletion
         with pytest.raises(Exception):
             get_file(session, created_file.file_id)
@@ -461,9 +461,9 @@ class TestFileIntegration:
             (EntityType.PROJECT, "PROJ002"),
             (EntityType.RUN, "190110_MACHINE123_0001_FLOWCELL123")
         ]
-        
+
         created_files = []
-        
+
         # Create files for different entities
         for entity_type, entity_id in entities:
             for i in range(2):
@@ -473,26 +473,26 @@ class TestFileIntegration:
                     entity_id=entity_id,
                     file_type=FileType.DOCUMENT
                 )
-                
+
                 file_record = create_file(session, file_create, storage_root=temp_storage)
                 created_files.append(file_record)
-        
+
         # Verify total count
         all_files = list_files(session)
         assert all_files.total_items == 6
-        
+
         # Verify entity-specific counts
         for entity_type, entity_id in entities:
             entity_files = list_files_for_entity(session, entity_type, entity_id)
             assert entity_files.total_items == 2
-            
+
             count = get_file_count_for_entity(session, entity_type, entity_id)
             assert count == 2
 
     def test_file_type_filtering(self, session: Session, temp_storage):
         """Test filtering files by type"""
         file_types = [FileType.FASTQ, FileType.BAM, FileType.VCF, FileType.DOCUMENT]
-        
+
         # Create files of different types
         for file_type in file_types:
             file_create = FileCreate(
@@ -502,12 +502,12 @@ class TestFileIntegration:
                 file_type=file_type
             )
             create_file(session, file_create, storage_root=temp_storage)
-        
+
         # Test filtering by each type
         for file_type in file_types:
             from api.files.models import FileFilters
             filters = FileFilters(file_type=file_type)
             result = list_files(session, filters=filters)
-            
+
             assert result.total_items == 1
             assert result.data[0].file_type == file_type

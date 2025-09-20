@@ -40,9 +40,9 @@ class StorageBackend(str, Enum):
 
 class File(SQLModel, table=True):
     """Core file entity that can be associated with runs or projects"""
-    
+
     __searchable__ = ["filename", "description", "file_id"]
-    
+
     id: uuid.UUID | None = Field(default_factory=uuid.uuid4, primary_key=True)
     file_id: str = Field(unique=True, max_length=100)  # Human-readable identifier
     filename: str = Field(max_length=255)
@@ -51,17 +51,17 @@ class File(SQLModel, table=True):
     file_size: int | None = None  # Size in bytes
     mime_type: str | None = Field(default=None, max_length=100)
     checksum: str | None = Field(default=None, max_length=64)  # SHA-256 hash
-    
+
     # Metadata
     description: str | None = Field(default=None, max_length=1024)
     file_type: FileType = Field(default=FileType.OTHER)
     upload_date: datetime = Field(default_factory=datetime.utcnow)
     created_by: str | None = Field(default=None, max_length=100)  # User identifier
-    
+
     # Polymorphic associations
     entity_type: EntityType  # "project" or "run"
     entity_id: str = Field(max_length=100)  # project_id or run barcode
-    
+
     # Storage metadata
     storage_backend: StorageBackend = Field(default=StorageBackend.LOCAL)
     is_public: bool = Field(default=False)
@@ -87,7 +87,7 @@ class FileCreate(SQLModel):
     entity_id: str
     is_public: bool = False
     created_by: str | None = None
-    
+
     model_config = ConfigDict(extra="forbid")
 
 
@@ -98,7 +98,7 @@ class FileUpdate(SQLModel):
     file_type: FileType | None = None
     is_public: bool | None = None
     is_archived: bool | None = None
-    
+
     model_config = ConfigDict(extra="forbid")
 
 
@@ -138,7 +138,7 @@ class FileUploadRequest(SQLModel):
     description: str | None = None
     file_type: FileType = FileType.OTHER
     is_public: bool = False
-    
+
     model_config = ConfigDict(extra="forbid")
 
 
@@ -162,5 +162,5 @@ class FileFilters(SQLModel):
     is_public: bool | None = None
     is_archived: bool | None = None
     search_query: str | None = None  # Search in filename/description
-    
+
     model_config = ConfigDict(extra="forbid")
