@@ -33,8 +33,8 @@ def generate_file_path(
     entity_type: EntityType, entity_id: str, file_type: FileType, filename: str
 ) -> str:
     """Generate a structured file path"""
-    from datetime import datetime
-    now = datetime.utcnow()
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc)
     year = now.strftime("%Y")
     month = now.strftime("%m")
 

@@ -5,7 +5,7 @@ Test /files endpoint
 import tempfile
 import shutil
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone
 
 import pytest
 from fastapi.testclient import TestClient
@@ -133,7 +133,7 @@ class TestFileServices:
         assert path_parts[5] == "sample.fastq"
 
         # Year and month should be current
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         assert path_parts[3] == now.strftime("%Y")
         assert path_parts[4] == now.strftime("%m")
 
