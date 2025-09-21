@@ -342,22 +342,22 @@ def update_file_content(
     """Update file content"""
     # Get the file record
     file_record = get_file(session, file_id)
-    
+
     # Calculate new file metadata
     file_size = len(content)
     checksum = calculate_file_checksum(content)
-    
+
     # Write content to storage
     storage_path = Path(storage_root) / file_record.file_path
     storage_path.parent.mkdir(parents=True, exist_ok=True)
     storage_path.write_bytes(content)
-    
+
     # Update file record
     file_record.file_size = file_size
     file_record.checksum = checksum
-    
+
     session.add(file_record)
     session.commit()
     session.refresh(file_record)
-    
+
     return file_record

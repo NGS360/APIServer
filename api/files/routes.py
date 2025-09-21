@@ -33,7 +33,7 @@ def create_file(
 ) -> FilePublic:
     """
     Create a new file record with optional file content upload.
-    
+
     - **filename**: Name of the file
     - **description**: Optional description of the file
     - **file_type**: Type of file (fastq, bam, vcf, etc.)
@@ -45,7 +45,7 @@ def create_file(
     file_content = None
     if content and content.filename:
         file_content = content.file.read()
-    
+
     return services.create_file(session, file_in, file_content)
 
 
@@ -67,7 +67,7 @@ def list_files(
 ) -> PaginatedFileResponse:
     """
     Get a paginated list of files with optional filtering.
-    
+
     Supports filtering by:
     - Entity type and ID (project or run)
     - File type (fastq, bam, vcf, etc.)
@@ -83,7 +83,7 @@ def list_files(
         is_public=is_public,
         created_by=created_by,
     )
-    
+
     return services.list_files(session, filters, page, per_page)
 
 
@@ -98,7 +98,7 @@ def get_file(
 ) -> FilePublic:
     """
     Get a single file by its file_id.
-    
+
     - **file_id**: The unique file identifier
     """
     try:
@@ -122,7 +122,7 @@ def update_file(
 ) -> FilePublic:
     """
     Update file metadata.
-    
+
     - **file_id**: The unique file identifier
     - **file_update**: Fields to update
     """
@@ -146,7 +146,7 @@ def delete_file(
 ) -> None:
     """
     Delete a file and its content.
-    
+
     - **file_id**: The unique file identifier
     """
     try:
@@ -173,20 +173,20 @@ def download_file(
 ):
     """
     Download the content of a file.
-    
+
     - **file_id**: The unique file identifier
     """
     try:
         # Get file metadata
         file_record = services.get_file(session, file_id)
-        
+
         # Get file content
         content = services.get_file_content(session, file_id)
-        
+
         # Create streaming response
         def generate():
             yield content
-        
+
         return StreamingResponse(
             generate(),
             media_type=file_record.mime_type or "application/octet-stream",
@@ -213,7 +213,7 @@ def upload_file_content(
 ) -> FilePublic:
     """
     Upload content for an existing file record.
-    
+
     - **file_id**: The unique file identifier
     - **content**: The file content to upload
     """
@@ -242,7 +242,7 @@ def list_files_for_entity(
 ) -> PaginatedFileResponse:
     """
     Get all files associated with a specific project or run.
-    
+
     - **entity_type**: Either "project" or "run"
     - **entity_id**: The project ID or run barcode
     """
@@ -251,7 +251,7 @@ def list_files_for_entity(
         entity_id=entity_id,
         file_type=file_type,
     )
-    
+
     return services.list_files_for_entity(session, entity_type, entity_id, page, per_page, filters)
 
 
@@ -266,7 +266,7 @@ def get_file_count_for_entity(
 ) -> dict:
     """
     Get the total number of files for a specific project or run.
-    
+
     - **entity_type**: Either "project" or "run"
     - **entity_id**: The project ID or run barcode
     """
