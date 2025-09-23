@@ -374,29 +374,314 @@ class TestFileAPI:
 
     def test_create_file_endpoint(self, client: TestClient, session: Session):
         """Test file creation endpoint"""
-        # This would test the actual API endpoint once routes are implemented
-        # For now, we'll skip this as routes.py needs to be updated
-        pass
+        file_data = {
+            "filename": "test_api.txt",
+            "description": "Test file via API",
+            "file_type": "document",
+            "entity_type": "project",
+            "entity_id": "PROJ001",
+            "is_public": "true",  # Form data sends as string
+            "created_by": "api_test_user"
+        }
+
+        response = client.post("/api/v1/files", data=file_data)
+        assert response.status_code == 201
+        
+        data = response.json()
+        assert data["filename"] == "test_api.txt"
+        assert data["description"] == "Test file via API"
+        assert data["file_type"] == "document"
+        assert data["entity_type"] == "project"
+        assert data["entity_id"] == "PROJ001"
+        assert data["is_public"] is True
+        assert data["created_by"] == "api_test_user"
+        assert "file_id" in data
+        assert "upload_date" in data
 
     def test_get_files_endpoint(self, client: TestClient, session: Session):
         """Test file listing endpoint"""
-        # This would test the actual API endpoint once routes are implemented
-        pass
+        # First create some test files
+        for i in range(3):
+            file_data = {
+                "filename": f"test_list_{i}.txt",
+                "description": f"Test file {i}",
+                "file_type": "document",
+                "entity_type": "project",
+                "entity_id": "PROJ001",
+                "created_by": "list_test_user"
+            }
+            client.post("/api/v1/files", data=file_data)
+
+        # Test basic listing
+        response = client.get("/api/v1/files")
+        assert response.status_code == 200
+        
+        data = response.json()
+        assert "data" in data
+        assert "total_items" in data
+        assert "current_page" in data
+        assert "per_page" in data
+        assert data["total_items"] >= 3
+        assert len(data["data"]) >= 3
+
+        # Test pagination
+        response = client.get("/api/v1/files?page=1&per_page=2")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["current_page"] == 1
+        assert data["per_page"] == 2
+        assert len(data["data"]) <= 2
+
+        # Test filtering by entity
+        response = client.get("/api/v1/files?entity_type=project&entity_id=PROJ001")
+        assert response.status_code == 200
+        data = response.json()
+        for item in data["data"]:
+            assert item["entity_type"] == "project"
+            assert item["entity_id"] == "PROJ001"
+
+        # Test filtering by file type
+        response = client.get("/api/v1/files?file_type=document")
+        assert response.status_code == 200
+        data = response.json()
+        for item in data["data"]:
+            assert item["file_type"] == "document"
+
+        # Test search functionality
+        response = client.get("/api/v1/files?search=test_list_1")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["total_items"] >= 1
 
     def test_get_file_endpoint(self, client: TestClient, session: Session):
         """Test file retrieval endpoint"""
-        # This would test the actual API endpoint once routes are implemented
-        pass
+        # Create a test file
+        file_data = {
+            "filename": "test_get.txt",
+            "description": "Test file for GET",
+            "file_type": "document",
+            "entity_type": "project",
+            "entity_id": "PROJ001",
+            "created_by": "get_test_user"
+        }
+        
+        create_response = client.post("/api/v1/files", data=file_data)
+        assert create_response.status_code == 201
+        created_file = create_response.json()
+        file_id = created_file["file_id"]
+
+        # Test successful retrieval
+        response = client.get(f"/api/v1/files/{file_id}")
+        assert response.status_code == 200
+        
+        data = response.json()
+        assert data["file_id"] == file_id
+        assert data["filename"] == "test_get.txt"
+        assert data["description"] == "Test file for GET"
+
+        # Test non-existent file
+        response = client.get("/api/v1/files/non-existent-id")
+        assert response.status_code == 404
 
     def test_update_file_endpoint(self, client: TestClient, session: Session):
         """Test file update endpoint"""
-        # This would test the actual API endpoint once routes are implemented
-        pass
+        # Create a test file
+        file_data = {
+            "filename": "test_update.txt",
+            "description": "Original description",
+            "file_type": "document",
+            "entity_type": "project",
+            "entity_id": "PROJ001",
+            "created_by": "update_test_user"
+        }
+        
+        create_response = client.post("/api/v1/files", data=file_data)
+        assert create_response.status_code == 201
+        created_file = create_response.json()
+        file_id = created_file["file_id"]
+
+        # Test successful update
+        update_data = {
+            "description": "Updated description",
+            "is_public": True
+        }
+        
+        response = client.put(f"/api/v1/files/{file_id}", json=update_data)
+        assert response.status_code == 200
+        
+        data = response.json()
+        assert data["file_id"] == file_id
+        assert data["description"] == "Updated description"
+        assert data["is_public"] is True
+        assert data["filename"] == "test_update.txt"  # Should remain unchanged
+
+        # Test non-existent file update
+        response = client.put("/api/v1/files/non-existent-id", json=update_data)
+        assert response.status_code == 404
 
     def test_delete_file_endpoint(self, client: TestClient, session: Session):
         """Test file deletion endpoint"""
-        # This would test the actual API endpoint once routes are implemented
-        pass
+        # Create a test file
+        file_data = {
+            "filename": "test_delete.txt",
+            "description": "Test file for deletion",
+            "file_type": "document",
+            "entity_type": "project",
+            "entity_id": "PROJ001",
+            "created_by": "delete_test_user"
+        }
+        
+        create_response = client.post("/api/v1/files", data=file_data)
+        assert create_response.status_code == 201
+        created_file = create_response.json()
+        file_id = created_file["file_id"]
+
+        # Test successful deletion
+        response = client.delete(f"/api/v1/files/{file_id}")
+        assert response.status_code == 204
+
+        # Verify file is deleted by trying to get it
+        get_response = client.get(f"/api/v1/files/{file_id}")
+        assert get_response.status_code == 404
+
+        # Test non-existent file deletion
+        response = client.delete("/api/v1/files/non-existent-id")
+        assert response.status_code == 404
+
+    def test_list_files_for_entity_endpoint(self, client: TestClient, session: Session):
+        """Test listing files for a specific entity"""
+        # Create files for different entities
+        entities = [
+            ("project", "PROJ001"),
+            ("project", "PROJ002"),
+            ("run", "190110_MACHINE123_0001_FLOWCELL123")
+        ]
+        
+        for entity_type, entity_id in entities:
+            for i in range(2):
+                file_data = {
+                    "filename": f"entity_test_{i}.txt",
+                    "description": f"Test file {i} for {entity_type} {entity_id}",
+                    "file_type": "document",
+                    "entity_type": entity_type,
+                    "entity_id": entity_id,
+                    "created_by": "entity_test_user"
+                }
+                client.post("/api/v1/files", data=file_data)
+
+        # Test listing files for specific project
+        response = client.get("/api/v1/files/entity/project/PROJ001")
+        assert response.status_code == 200
+        
+        data = response.json()
+        assert data["total_items"] == 2
+        for item in data["data"]:
+            assert item["entity_type"] == "project"
+            assert item["entity_id"] == "PROJ001"
+
+        # Test listing files for specific run
+        response = client.get("/api/v1/files/entity/run/190110_MACHINE123_0001_FLOWCELL123")
+        assert response.status_code == 200
+        
+        data = response.json()
+        assert data["total_items"] == 2
+        for item in data["data"]:
+            assert item["entity_type"] == "run"
+            assert item["entity_id"] == "190110_MACHINE123_0001_FLOWCELL123"
+
+        # Test pagination for entity files
+        response = client.get("/api/v1/files/entity/project/PROJ001?page=1&per_page=1")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["current_page"] == 1
+        assert data["per_page"] == 1
+        assert len(data["data"]) == 1
+
+    def test_get_file_count_for_entity_endpoint(self, client: TestClient, session: Session):
+        """Test getting file count for a specific entity"""
+        # Create files for a specific entity
+        entity_type = "project"
+        entity_id = "PROJ_COUNT_TEST"
+        
+        for i in range(5):
+            file_data = {
+                "filename": f"count_test_{i}.txt",
+                "description": f"Count test file {i}",
+                "file_type": "document",
+                "entity_type": entity_type,
+                "entity_id": entity_id,
+                "created_by": "count_test_user"
+            }
+            client.post("/api/v1/files", data=file_data)
+
+        # Test file count endpoint
+        response = client.get(f"/api/v1/files/entity/{entity_type}/{entity_id}/count")
+        assert response.status_code == 200
+        
+        data = response.json()
+        assert data["entity_type"] == entity_type
+        assert data["entity_id"] == entity_id
+        assert data["file_count"] == 5
+
+        # Test count for entity with no files
+        response = client.get("/api/v1/files/entity/project/EMPTY_PROJECT/count")
+        assert response.status_code == 200
+        
+        data = response.json()
+        assert data["entity_type"] == "project"
+        assert data["entity_id"] == "EMPTY_PROJECT"
+        assert data["file_count"] == 0
+
+    def test_create_file_with_content_endpoint(self, client: TestClient, session: Session):
+        """Test file creation with content upload"""
+        import io
+        
+        # Create file data
+        file_data = {
+            "filename": "test_with_content.txt",
+            "description": "Test file with content",
+            "file_type": "document",
+            "entity_type": "project",
+            "entity_id": "PROJ001",
+            "created_by": "content_test_user"
+        }
+        
+        # Create file content
+        file_content = b"Hello, this is test content!"
+        files = {"content": ("test_content.txt", io.BytesIO(file_content), "text/plain")}
+        
+        # Send multipart form data
+        response = client.post("/api/v1/files", data=file_data, files=files)
+        assert response.status_code == 201
+        
+        data = response.json()
+        assert data["filename"] == "test_with_content.txt"
+        assert data["file_size"] == len(file_content)
+        assert data["mime_type"] == "text/plain"
+
+    def test_error_handling(self, client: TestClient, session: Session):
+        """Test API error handling"""
+        # Test invalid file type
+        invalid_file_data = {
+            "filename": "test.txt",
+            "file_type": "invalid_type",
+            "entity_type": "project",
+            "entity_id": "PROJ001"
+        }
+        
+        response = client.post("/api/v1/files", data=invalid_file_data)
+        assert response.status_code == 422  # Validation error
+
+        # Test invalid entity type
+        invalid_entity_data = {
+            "filename": "test.txt",
+            "file_type": "document",
+            "entity_type": "invalid_entity",
+            "entity_id": "PROJ001"
+        }
+        
+        response = client.post("/api/v1/files", data=invalid_entity_data)
+        assert response.status_code == 422  # Validation error
 
 
 class TestFileIntegration:

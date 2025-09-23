@@ -3,7 +3,7 @@ Routes/endpoints for the Files API
 """
 
 from typing import Optional
-from fastapi import APIRouter, Query, HTTPException, status, UploadFile, File as FastAPIFile
+from fastapi import APIRouter, Query, HTTPException, status, UploadFile, File as FastAPIFile, Form
 from fastapi.responses import StreamingResponse
 from core.deps import SessionDep
 from api.files.models import (
@@ -28,7 +28,13 @@ router = APIRouter(prefix="/files", tags=["Files"])
 )
 def create_file(
     session: SessionDep,
-    file_in: FileCreate,
+    filename: str = Form(...),
+    entity_type: EntityType = Form(...),
+    entity_id: str = Form(...),
+    description: Optional[str] = Form(None),
+    file_type: FileType = Form(FileType.OTHER),
+    is_public: bool = Form(False),
+    created_by: Optional[str] = Form(None),
     content: Optional[UploadFile] = FastAPIFile(None)
 ) -> FilePublic:
     """
@@ -42,6 +48,17 @@ def create_file(
     - **is_public**: Whether the file is publicly accessible
     - **created_by**: User who created the file
     """
+    # Create FileCreate object from form data
+    file_in = FileCreate(
+        filename=filename,
+        description=description,
+        file_type=file_type,
+        entity_type=entity_type,
+        entity_id=entity_id,
+        is_public=is_public,
+        created_by=created_by
+    )
+    
     file_content = None
     if content and content.filename:
         file_content = content.file.read()
@@ -246,13 +263,7 @@ def list_files_for_entity(
     - **entity_type**: Either "project" or "run"
     - **entity_id**: The project ID or run barcode
     """
-    filters = FileFilters(
-        entity_type=entity_type,
-        entity_id=entity_id,
-        file_type=file_type,
-    )
-
-    return services.list_files_for_entity(session, entity_type, entity_id, page, per_page, filters)
+    return services.list_files_for_entity(session, entity_type, entity_id, page, per_page, file_type)
 
 
 @router.get(
