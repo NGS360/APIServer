@@ -43,6 +43,9 @@ def add_run(
     """
     Create a new project with optional attributes.
     """
+    if sequencingrun_in.run_time == "":
+        sequencingrun_in.run_time = None
+
     run = services.add_run(
         session=session,
         sequencingrun_in=sequencingrun_in,
