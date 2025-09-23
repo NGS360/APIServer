@@ -58,7 +58,7 @@ def create_file(
         is_public=is_public,
         created_by=created_by
     )
-    
+
     file_content = None
     if content and content.filename:
         file_content = content.file.read()

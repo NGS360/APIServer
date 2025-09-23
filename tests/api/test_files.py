@@ -386,7 +386,7 @@ class TestFileAPI:
 
         response = client.post("/api/v1/files", data=file_data)
         assert response.status_code == 201
-        
+
         data = response.json()
         assert data["filename"] == "test_api.txt"
         assert data["description"] == "Test file via API"
@@ -415,7 +415,7 @@ class TestFileAPI:
         # Test basic listing
         response = client.get("/api/v1/files")
         assert response.status_code == 200
-        
+
         data = response.json()
         assert "data" in data
         assert "total_items" in data
@@ -464,7 +464,7 @@ class TestFileAPI:
             "entity_id": "PROJ001",
             "created_by": "get_test_user"
         }
-        
+
         create_response = client.post("/api/v1/files", data=file_data)
         assert create_response.status_code == 201
         created_file = create_response.json()
@@ -473,7 +473,7 @@ class TestFileAPI:
         # Test successful retrieval
         response = client.get(f"/api/v1/files/{file_id}")
         assert response.status_code == 200
-        
+
         data = response.json()
         assert data["file_id"] == file_id
         assert data["filename"] == "test_get.txt"
@@ -494,7 +494,7 @@ class TestFileAPI:
             "entity_id": "PROJ001",
             "created_by": "update_test_user"
         }
-        
+
         create_response = client.post("/api/v1/files", data=file_data)
         assert create_response.status_code == 201
         created_file = create_response.json()
@@ -505,10 +505,10 @@ class TestFileAPI:
             "description": "Updated description",
             "is_public": True
         }
-        
+
         response = client.put(f"/api/v1/files/{file_id}", json=update_data)
         assert response.status_code == 200
-        
+
         data = response.json()
         assert data["file_id"] == file_id
         assert data["description"] == "Updated description"
@@ -530,7 +530,7 @@ class TestFileAPI:
             "entity_id": "PROJ001",
             "created_by": "delete_test_user"
         }
-        
+
         create_response = client.post("/api/v1/files", data=file_data)
         assert create_response.status_code == 201
         created_file = create_response.json()
@@ -556,7 +556,7 @@ class TestFileAPI:
             ("project", "PROJ002"),
             ("run", "190110_MACHINE123_0001_FLOWCELL123")
         ]
-        
+
         for entity_type, entity_id in entities:
             for i in range(2):
                 file_data = {
@@ -572,7 +572,7 @@ class TestFileAPI:
         # Test listing files for specific project
         response = client.get("/api/v1/files/entity/project/PROJ001")
         assert response.status_code == 200
-        
+
         data = response.json()
         assert data["total_items"] == 2
         for item in data["data"]:
@@ -582,7 +582,7 @@ class TestFileAPI:
         # Test listing files for specific run
         response = client.get("/api/v1/files/entity/run/190110_MACHINE123_0001_FLOWCELL123")
         assert response.status_code == 200
-        
+
         data = response.json()
         assert data["total_items"] == 2
         for item in data["data"]:
@@ -602,7 +602,7 @@ class TestFileAPI:
         # Create files for a specific entity
         entity_type = "project"
         entity_id = "PROJ_COUNT_TEST"
-        
+
         for i in range(5):
             file_data = {
                 "filename": f"count_test_{i}.txt",
@@ -617,7 +617,7 @@ class TestFileAPI:
         # Test file count endpoint
         response = client.get(f"/api/v1/files/entity/{entity_type}/{entity_id}/count")
         assert response.status_code == 200
-        
+
         data = response.json()
         assert data["entity_type"] == entity_type
         assert data["entity_id"] == entity_id
@@ -626,7 +626,7 @@ class TestFileAPI:
         # Test count for entity with no files
         response = client.get("/api/v1/files/entity/project/EMPTY_PROJECT/count")
         assert response.status_code == 200
-        
+
         data = response.json()
         assert data["entity_type"] == "project"
         assert data["entity_id"] == "EMPTY_PROJECT"
@@ -635,7 +635,7 @@ class TestFileAPI:
     def test_create_file_with_content_endpoint(self, client: TestClient, session: Session):
         """Test file creation with content upload"""
         import io
-        
+
         # Create file data
         file_data = {
             "filename": "test_with_content.txt",
@@ -645,15 +645,15 @@ class TestFileAPI:
             "entity_id": "PROJ001",
             "created_by": "content_test_user"
         }
-        
+
         # Create file content
         file_content = b"Hello, this is test content!"
         files = {"content": ("test_content.txt", io.BytesIO(file_content), "text/plain")}
-        
+
         # Send multipart form data
         response = client.post("/api/v1/files", data=file_data, files=files)
         assert response.status_code == 201
-        
+
         data = response.json()
         assert data["filename"] == "test_with_content.txt"
         assert data["file_size"] == len(file_content)
@@ -668,7 +668,7 @@ class TestFileAPI:
             "entity_type": "project",
             "entity_id": "PROJ001"
         }
-        
+
         response = client.post("/api/v1/files", data=invalid_file_data)
         assert response.status_code == 422  # Validation error
 
@@ -679,7 +679,7 @@ class TestFileAPI:
             "entity_type": "invalid_entity",
             "entity_id": "PROJ001"
         }
-        
+
         response = client.post("/api/v1/files", data=invalid_entity_data)
         assert response.status_code == 422  # Validation error
 
