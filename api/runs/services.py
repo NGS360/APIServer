@@ -105,7 +105,7 @@ def get_runs(
         # Ensure we got a column, not a property
         if not hasattr(sort_field, 'asc'):
             sort_field = SequencingRun.id
-    
+
     sort_direction = sort_field.asc() if sort_order == "asc" else sort_field.desc()
 
     # Get run selection
