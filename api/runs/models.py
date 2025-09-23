@@ -1,12 +1,12 @@
 """
 Models for the Runs API
 """
-
+from typing import Optional
 import uuid
 from datetime import datetime, date
 from enum import Enum
 from sqlmodel import SQLModel, Field
-from pydantic import ConfigDict, computed_field
+from pydantic import ConfigDict, computed_field, field_validator
 
 
 class RunStatus(str, Enum):
@@ -136,6 +136,27 @@ class SequencingRunCreate(SQLModel):
     run_time: str | None = None
 
     model_config = ConfigDict(extra="forbid")
+
+    @field_validator('run_time', mode='before')
+    @classmethod
+    def preprocess_run_time(cls, v):
+        """Convert empty string to None before validation"""
+        return None if v == "" else v
+
+    @field_validator('run_time')
+    @classmethod
+    def validate_run_time_format(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+
+        if not isinstance(v, str) or len(v) != 4 or not v.isdigit():
+            raise ValueError('run_time must be exactly 4 digits (HHMM format)')
+
+        hours, minutes = int(v[:2]), int(v[2:])
+        if not (0 <= hours <= 23) or not (0 <= minutes <= 59):
+            raise ValueError('Hours must be 00-23, minutes must be 00-59')
+
+        return v
 
 
 class SequencingRunUpdateRequest(SQLModel):

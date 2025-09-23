@@ -80,9 +80,35 @@ def test_add_run(client: TestClient):
         "run_time": "invalid_time_format",
     }
     response = client.post("/api/v1/runs", json=new_run)
-    assert response.status_code == 404
-    data = response.json()
-    assert data["detail"] == "run_time must be in HHMM format"
+    assert response.status_code == 422
+
+    # Add a run with valid run_time
+    new_run = {
+        "run_date": "2019-01-10",
+        "machine_id": "MACHINE123",
+        "run_number": 4,
+        "flowcell_id": "FLOWCELL123",
+        "experiment_name": "Test Experiment",
+        "run_folder_uri": "s3://bucket/path/to/run",
+        "status": RunStatus.READY,
+        "run_time": "1230",
+    }
+    response = client.post("/api/v1/runs", json=new_run)
+    assert response.status_code == 201
+
+    # Add a run with an invalid run_time
+    new_run = {
+        "run_date": "2019-01-10",
+        "machine_id": "MACHINE123",
+        "run_number": 4,
+        "flowcell_id": "FLOWCELL123",
+        "experiment_name": "Test Experiment",
+        "run_folder_uri": "s3://bucket/path/to/run",
+        "status": RunStatus.READY,
+        "run_time": "5678",
+    }
+    response = client.post("/api/v1/runs", json=new_run)
+    assert response.status_code == 422
 
 
 def test_get_runs(client: TestClient, session: Session):
