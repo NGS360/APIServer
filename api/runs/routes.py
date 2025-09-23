@@ -14,7 +14,7 @@ GET    /api/v0/runs/[id]/metrics       Retrieve demux metrics from Stat.json
 """
 
 from typing import Literal
-from fastapi import APIRouter, Query, status
+from fastapi import APIRouter, Query, status, HTTPException
 from core.deps import SessionDep, OpenSearchDep
 from api.runs.models import (
     IlluminaMetricsResponseModel,
@@ -46,6 +46,11 @@ def add_run(
     """
     if sequencingrun_in.run_time == "":
         sequencingrun_in.run_time = None
+    elif sequencingrun_in.run_time and len(sequencingrun_in.run_time) != 4:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"run_time must be in HHMM format"
+        )
 
     run = services.add_run(
         session=session,
