@@ -247,7 +247,7 @@ def upload_file_content(
 @router.get(
     "/entity/{entity_type}/{entity_id}",
     response_model=PaginatedFileResponse,
-    summary="List files for a specific entity"
+    summary="List files for a specific entity."
 )
 def list_files_for_entity(
     session: SessionDep,
@@ -259,6 +259,7 @@ def list_files_for_entity(
 ) -> PaginatedFileResponse:
     """
     Get all files associated with a specific project or run.
+    This is the same as /api/v1/files, but scoped to a specific entity.
 
     - **entity_type**: Either "project" or "run"
     - **entity_id**: The project ID or run barcode
