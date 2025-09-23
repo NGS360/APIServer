@@ -95,7 +95,17 @@ def get_runs(
     total_pages = (total_count + per_page - 1) // per_page  # Ceiling division
 
     # Determine sort field and direction
-    sort_field = getattr(SequencingRun, sort_by, SequencingRun.id)
+    # Handle computed fields that can't be sorted directly
+    if sort_by == "barcode":
+        # For barcode sorting, use run_date as primary sort field since barcode starts with date
+        sort_field = SequencingRun.run_date
+    else:
+        # Get the actual database column, fallback to id if field doesn't exist
+        sort_field = getattr(SequencingRun, sort_by, SequencingRun.id)
+        # Ensure we got a column, not a property
+        if not hasattr(sort_field, 'asc'):
+            sort_field = SequencingRun.id
+    
     sort_direction = sort_field.asc() if sort_order == "asc" else sort_field.desc()
 
     # Get run selection
