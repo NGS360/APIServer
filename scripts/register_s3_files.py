@@ -6,6 +6,7 @@ This script scans S3 buckets and registers existing files in the database
 without moving them. Files remain in S3 but become discoverable through the API.
 
 Usage:
+    PYTHONPATH=.
     python scripts/register_s3_files.py --bucket my-bucket --prefix data/
     python scripts/register_s3_files.py --config s3_config.json
     python scripts/register_s3_files.py --bucket my-bucket --dry-run
@@ -25,7 +26,7 @@ from botocore.exceptions import ClientError, NoCredentialsError
 from sqlmodel import Session, select
 
 # Add project root to path for imports
-sys.path.append(str(Path(__file__).parent.parent))
+# sys.path.append(str(Path(__file__).parent.parent))
 
 from api.files.models import FileCreate, FileType, EntityType, StorageBackend
 from api.files.services import create_file
@@ -338,16 +339,16 @@ def main():
 Examples:
   # Register all files from a bucket
   python scripts/register_s3_files.py --bucket my-bucket
-  
+
   # Register files with specific prefix
   python scripts/register_s3_files.py --bucket my-bucket --prefix projects/
-  
+
   # Dry run to see what would be registered
   python scripts/register_s3_files.py --bucket my-bucket --dry-run
-  
+
   # Use configuration file for multiple buckets
   python scripts/register_s3_files.py --config s3_config.json
-  
+
   # Create sample configuration file
   python scripts/register_s3_files.py --create-config
         """,
