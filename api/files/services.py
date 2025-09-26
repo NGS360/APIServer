@@ -5,7 +5,9 @@ Services for managing files.
 import hashlib
 import secrets
 import string
+import os
 from pathlib import Path
+from datetime import datetime
 from sqlmodel import select, Session, func
 from pydantic import PositiveInt
 from fastapi import HTTPException, status
@@ -20,6 +22,10 @@ from api.files.models import (
     FileType,
     EntityType,
     StorageBackend,
+    FileBrowserData,
+    FileBrowserFolder,
+    FileBrowserFile,
+    FileBrowserColumns,
 )
 
 
@@ -361,3 +367,90 @@ def update_file_content(
     session.refresh(file_record)
 
     return file_record
+
+
+def browse_filesystem(directory_path: str, storage_root: str = "storage") -> FileBrowserData:
+    """Browse filesystem directory and return structured data"""
+    
+    # Construct full path
+    if os.path.isabs(directory_path):
+        full_path = Path(directory_path)
+    else:
+        full_path = Path(storage_root) / directory_path
+    
+    # Check if directory exists and is accessible
+    if not full_path.exists():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Directory not found: {directory_path}"
+        )
+    
+    if not full_path.is_dir():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Path is not a directory: {directory_path}"
+        )
+    
+    folders = []
+    files = []
+    
+    try:
+        # List directory contents
+        for item in full_path.iterdir():
+            # Get modification time
+            stat = item.stat()
+            mod_time = datetime.fromtimestamp(stat.st_mtime)
+            date_str = mod_time.strftime("%Y-%m-%d %H:%M:%S")
+            
+            if item.is_dir():
+                folders.append(FileBrowserFolder(
+                    name=item.name,
+                    date=date_str
+                ))
+            else:
+                files.append(FileBrowserFile(
+                    name=item.name,
+                    date=date_str,
+                    size=stat.st_size
+                ))
+    
+    except PermissionError:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Permission denied accessing directory: {directory_path}"
+        )
+    
+    # Sort folders and files by name
+    folders.sort(key=lambda x: x.name.lower())
+    files.sort(key=lambda x: x.name.lower())
+    
+    return FileBrowserData(folders=folders, files=files)
+
+
+def list_files_as_browser_data(
+    session: Session,
+    filters: FileFilters | None = None,
+    page: PositiveInt = 1,
+    per_page: PositiveInt = 20,
+    sort_by: str = "upload_date",
+    sort_order: str = "desc"
+) -> FileBrowserData:
+    """List database files in FileBrowserData format (files only, no folders)"""
+    
+    # Get files using existing list_files function
+    files_result = list_files(session, filters, page, per_page, sort_by, sort_order)
+    
+    # Convert to FileBrowserFile format
+    browser_files = []
+    for file_record in files_result.data:
+        # Format date
+        date_str = file_record.upload_date.strftime("%Y-%m-%d %H:%M:%S")
+        
+        browser_files.append(FileBrowserFile(
+            name=file_record.filename,
+            date=date_str,
+            size=file_record.file_size or 0
+        ))
+    
+    # No folders for database files
+    return FileBrowserData(folders=[], files=browser_files)

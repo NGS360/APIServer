@@ -177,3 +177,30 @@ class PaginatedFileResponse(SQLModel):
     has_prev: bool
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class FileBrowserColumns(SQLModel):
+    """Individual file/folder item for file browser"""
+    name: str
+    date: str
+    size: int | None = None  # None for directories
+    dir: bool  # True for directories, False for files
+
+
+class FileBrowserFolder(SQLModel):
+    """Folder item for file browser"""
+    name: str
+    date: str
+
+
+class FileBrowserFile(SQLModel):
+    """File item for file browser"""
+    name: str
+    date: str
+    size: int
+
+
+class FileBrowserData(SQLModel):
+    """File browser data structure with separate folders and files"""
+    folders: list[FileBrowserFolder]
+    files: list[FileBrowserFile]

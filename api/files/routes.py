@@ -14,6 +14,7 @@ from api.files.models import (
     FileFilters,
     FileType,
     EntityType,
+    FileBrowserData,
 )
 import api.files.services as services
 
@@ -102,6 +103,61 @@ def list_files(
     )
 
     return services.list_files(session, filters, page, per_page)
+
+
+@router.get(
+    "/browse",
+    response_model=FileBrowserData,
+    summary="Browse filesystem directory"
+)
+def browse_filesystem(
+    directory_path: str = Query("", description="Directory path to browse"),
+    storage_root: str = Query("storage", description="Storage root directory")
+) -> FileBrowserData:
+    """
+    Browse a filesystem directory and return folders and files in structured format.
+    
+    - **directory_path**: Path relative to storage root (empty for root)
+    - **storage_root**: Base storage directory (defaults to 'storage')
+    
+    Returns separate arrays for folders and files with name, date, and size information.
+    """
+    return services.browse_filesystem(directory_path, storage_root)
+
+
+@router.get(
+    "/browse-db",
+    response_model=FileBrowserData,
+    summary="List database files in browser format"
+)
+def list_files_browser_format(
+    session: SessionDep,
+    page: int = Query(1, ge=1, description="Page number (1-indexed)"),
+    per_page: int = Query(20, ge=1, le=100, description="Number of items per page"),
+    entity_type: Optional[EntityType] = Query(None, description="Filter by entity type"),
+    entity_id: Optional[str] = Query(None, description="Filter by entity ID"),
+    file_type: Optional[FileType] = Query(None, description="Filter by file type"),
+    search: Optional[str] = Query(None, description="Search in filename and description"),
+    is_public: Optional[bool] = Query(None, description="Filter by public/private status"),
+    created_by: Optional[str] = Query(None, description="Filter by creator"),
+) -> FileBrowserData:
+    """
+    Get database files in FileBrowserData format (files only, no folders).
+    
+    This endpoint returns the same file data as the regular list_files endpoint,
+    but formatted to match the FileBrowserData structure with separate folders and files arrays.
+    Since database files don't have folder structure, the folders array will be empty.
+    """
+    filters = FileFilters(
+        entity_type=entity_type,
+        entity_id=entity_id,
+        file_type=file_type,
+        search_query=search,
+        is_public=is_public,
+        created_by=created_by,
+    )
+
+    return services.list_files_as_browser_data(session, filters, page, per_page)
 
 
 @router.get(
@@ -284,3 +340,5 @@ def get_file_count_for_entity(
     """
     count = services.get_file_count_for_entity(session, entity_type, entity_id)
     return {"entity_type": entity_type, "entity_id": entity_id, "file_count": count}
+
+

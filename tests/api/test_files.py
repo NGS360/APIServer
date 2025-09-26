@@ -8,6 +8,7 @@ from pathlib import Path
 from datetime import datetime, timezone
 
 import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from sqlmodel import Session
 
@@ -17,6 +18,9 @@ from api.files.models import (
     FileType,
     EntityType,
     StorageBackend,
+    FileBrowserData,
+    FileBrowserFolder,
+    FileBrowserFile,
 )
 from api.files.services import (
     create_file,
@@ -31,6 +35,8 @@ from api.files.services import (
     generate_file_path,
     calculate_file_checksum,
     get_mime_type,
+    browse_filesystem,
+    list_files_as_browser_data,
 )
 
 
@@ -796,3 +802,187 @@ class TestFileIntegration:
 
             assert result.total_items == 1
             assert result.data[0].file_type == file_type
+
+
+
+class TestFileBrowserModels:
+    """Test file browser model functionality"""
+
+    def test_file_browser_folder_model(self):
+        """Test FileBrowserFolder model"""
+        folder = FileBrowserFolder(
+            name="test_folder",
+            date="2023-01-01 12:00:00"
+        )
+        
+        assert folder.name == "test_folder"
+        assert folder.date == "2023-01-01 12:00:00"
+
+    def test_file_browser_file_model(self):
+        """Test FileBrowserFile model"""
+        file = FileBrowserFile(
+            name="test_file.txt",
+            date="2023-01-01 12:00:00",
+            size=1024
+        )
+        
+        assert file.name == "test_file.txt"
+        assert file.date == "2023-01-01 12:00:00"
+        assert file.size == 1024
+
+    def test_file_browser_data_model(self):
+        """Test FileBrowserData model"""
+        folder = FileBrowserFolder(name="folder1", date="2023-01-01 12:00:00")
+        file = FileBrowserFile(name="file1.txt", date="2023-01-01 12:00:00", size=100)
+        
+        browser_data = FileBrowserData(
+            folders=[folder],
+            files=[file]
+        )
+        
+        assert len(browser_data.folders) == 1
+        assert len(browser_data.files) == 1
+        assert browser_data.folders[0].name == "folder1"
+        assert browser_data.files[0].name == "file1.txt"
+
+
+class TestFileBrowserServices:
+    """Test file browser service functions"""
+
+    @pytest.fixture
+    def temp_storage(self):
+        """Create temporary storage with folder/file structure"""
+        temp_dir = tempfile.mkdtemp()
+        
+        # Create some folders
+        (Path(temp_dir) / "folder1").mkdir()
+        (Path(temp_dir) / "folder2").mkdir()
+        
+        # Create some files
+        (Path(temp_dir) / "file1.txt").write_text("content1")
+        (Path(temp_dir) / "file2.txt").write_text("content2")
+        
+        yield temp_dir
+        shutil.rmtree(temp_dir)
+
+    def test_browse_filesystem(self, temp_storage):
+        """Test filesystem browsing"""
+        result = browse_filesystem("", temp_storage)
+        
+        assert isinstance(result, FileBrowserData)
+        assert len(result.folders) == 2
+        assert len(result.files) == 2
+        
+        # Check folder names
+        folder_names = [f.name for f in result.folders]
+        assert "folder1" in folder_names
+        assert "folder2" in folder_names
+        
+        # Check file names
+        file_names = [f.name for f in result.files]
+        assert "file1.txt" in file_names
+        assert "file2.txt" in file_names
+        
+        # Check file sizes
+        for file in result.files:
+            assert file.size > 0
+            assert file.date is not None
+
+    def test_browse_filesystem_nonexistent_directory(self):
+        """Test browsing non-existent directory"""
+        with pytest.raises(HTTPException) as exc_info:
+            browse_filesystem("nonexistent", "nonexistent_root")
+        
+        assert exc_info.value.status_code == 404
+        assert "not found" in str(exc_info.value.detail)
+
+    def test_list_files_as_browser_data(self, session: Session):
+        """Test converting database files to browser data format"""
+        # Create test files in database
+        for i in range(3):
+            file_create = FileCreate(
+                filename=f"db_file_{i}.txt",
+                description=f"Database file {i}",
+                entity_type=EntityType.PROJECT,
+                entity_id="PROJ001",
+                file_type=FileType.DOCUMENT
+            )
+            create_file(session, file_create)
+
+        # Get files in browser format
+        result = list_files_as_browser_data(session)
+        
+        assert isinstance(result, FileBrowserData)
+        assert len(result.folders) == 0  # No folders for database files
+        assert len(result.files) == 3
+        
+        # Check file properties
+        for file in result.files:
+            assert file.name.startswith("db_file_")
+            assert file.date is not None
+            assert file.size >= 0
+
+
+class TestFileBrowserAPI:
+    """Test file browser API endpoints"""
+
+    def test_browse_filesystem_endpoint(self, client: TestClient, temp_storage):
+        """Test filesystem browsing endpoint"""
+        # Create a temporary directory structure for testing
+        temp_dir = tempfile.mkdtemp()
+        try:
+            # Create test structure
+            (Path(temp_dir) / "test_folder").mkdir()
+            (Path(temp_dir) / "test_file.txt").write_text("test content")
+            
+            # Test the endpoint
+            response = client.get(f"/api/v1/files/browse?storage_root={temp_dir}")
+            assert response.status_code == 200
+            
+            data = response.json()
+            assert "folders" in data
+            assert "files" in data
+            assert isinstance(data["folders"], list)
+            assert isinstance(data["files"], list)
+            
+        finally:
+            shutil.rmtree(temp_dir)
+
+    def test_browse_db_endpoint(self, client: TestClient, session: Session):
+        """Test database files browser endpoint"""
+        # Create test files
+        for i in range(2):
+            file_data = {
+                "filename": f"browser_test_{i}.txt",
+                "description": f"Browser test file {i}",
+                "file_type": "document",
+                "entity_type": "project",
+                "entity_id": "PROJ001",
+                "created_by": "browser_test_user"
+            }
+            client.post("/api/v1/files", data=file_data)
+
+        # Test the browser endpoint
+        response = client.get("/api/v1/files/browse-db")
+        assert response.status_code == 200
+        
+        data = response.json()
+        assert "folders" in data
+        assert "files" in data
+        assert len(data["folders"]) == 0  # No folders for database files
+        assert len(data["files"]) >= 2
+        
+        # Check file structure
+        for file in data["files"]:
+            assert "name" in file
+            assert "date" in file
+            assert "size" in file
+
+    def test_browse_filesystem_error_handling(self, client: TestClient):
+        """Test error handling for filesystem browsing"""
+        # Test non-existent directory
+        response = client.get(
+            "/api/v1/files/browse?directory_path=nonexistent&storage_root=nonexistent"
+        )
+        assert response.status_code == 404
+
