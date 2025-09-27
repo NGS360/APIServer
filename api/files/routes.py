@@ -202,11 +202,11 @@ def get_file(session: SessionDep, file_id: str) -> FilePublic:
     """
     try:
         return services.get_file(session, file_id)
-    except Exception:
+    except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"File with id {file_id} not found",
-        )
+        ) from exc
 
 
 @router.put("/{file_id}", response_model=FilePublic, summary="Update file metadata")
@@ -221,11 +221,11 @@ def update_file(
     """
     try:
         return services.update_file(session, file_id, file_update)
-    except Exception:
+    except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"File with id {file_id} not found",
-        )
+        ) from exc
 
 
 @router.delete(
@@ -244,11 +244,11 @@ def delete_file(session: SessionDep, file_id: str) -> None:
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"File with id {file_id} not found",
             )
-    except Exception:
+    except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"File with id {file_id} not found",
-        )
+        ) from exc
 
 
 @router.get("/{file_id}/content", summary="Download file content")
@@ -276,11 +276,11 @@ def download_file(session: SessionDep, file_id: str):
                 "Content-Disposition": f"attachment; filename={file_record.filename}"
             },
         )
-    except Exception:
+    except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"File with id {file_id} not found or content not available",
-        )
+        ) from exc
 
 
 @router.post(
@@ -298,11 +298,11 @@ def upload_file_content(
     try:
         file_content = content.file.read()
         return services.update_file_content(session, file_id, file_content)
-    except Exception:
+    except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"File with id {file_id} not found",
-        )
+        ) from exc
 
 
 @router.get(
