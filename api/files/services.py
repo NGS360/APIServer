@@ -33,7 +33,6 @@ from api.files.models import (
     FileBrowserData,
     FileBrowserFolder,
     FileBrowserFile,
-    FileBrowserColumns,
 )
 
 
@@ -476,7 +475,7 @@ def browse_s3(s3_path: str) -> FileBrowserData:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e),
-        )
+        ) from e
 
     try:
         # Initialize S3 client
@@ -496,7 +495,7 @@ def browse_s3(s3_path: str) -> FileBrowserData:
             for common_prefix in page.get("CommonPrefixes", []):
                 folder_prefix = common_prefix["Prefix"]
                 # Remove the current prefix to get just the folder name
-                folder_name = folder_prefix[len(prefix) :].rstrip("/")
+                folder_name = folder_prefix[len(prefix):].rstrip("/")
                 if folder_name:  # Skip empty names
                     folders.append(
                         FileBrowserFolder(
@@ -513,7 +512,7 @@ def browse_s3(s3_path: str) -> FileBrowserData:
                     continue
 
                 # Remove the current prefix to get just the file name
-                file_name = key[len(prefix) :]
+                file_name = key[len(prefix):]
 
                 # Skip files that are in subdirectories (contain '/')
                 if "/" in file_name:
