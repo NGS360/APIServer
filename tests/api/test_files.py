@@ -944,6 +944,51 @@ class TestFileBrowserAPI:
         finally:
             shutil.rmtree(temp_dir)
 
+    def test_s3_path_detection(self):
+        """Test S3 path detection functionality"""
+        from api.files.services import _is_s3_path, _parse_s3_path
+        
+        # Test S3 path detection
+        assert _is_s3_path("s3://bucket/key") is True
+        assert _is_s3_path("s3://bucket") is True
+        assert _is_s3_path("/local/path") is False
+        assert _is_s3_path("local/path") is False
+        assert _is_s3_path("") is False
+        
+        # Test S3 path parsing
+        bucket, key = _parse_s3_path("s3://my-bucket/path/to/folder/")
+        assert bucket == "my-bucket"
+        assert key == "path/to/folder/"
+        
+        bucket, key = _parse_s3_path("s3://my-bucket")
+        assert bucket == "my-bucket"
+        assert key == ""
+        
+        bucket, key = _parse_s3_path("s3://my-bucket/")
+        assert bucket == "my-bucket"
+        assert key == ""
+        
+        # Test invalid S3 path
+        with pytest.raises(ValueError):
+            _parse_s3_path("invalid://path")
+
+    def test_browse_s3_without_boto3(self, client: TestClient, monkeypatch):
+        """Test S3 browsing when boto3 is not available"""
+        # Mock BOTO3_AVAILABLE to False
+        import api.files.services as services
+        monkeypatch.setattr(services, "BOTO3_AVAILABLE", False)
+        
+        response = client.get("/api/v1/files/browse?directory_path=s3://test-bucket/")
+        assert response.status_code == 501
+        assert "S3 support not available" in response.json()["detail"]
+
+    def test_browse_s3_invalid_path(self, client: TestClient):
+        """Test S3 browsing with invalid S3 path"""
+        # Test with a path that looks like S3 but has invalid format
+        response = client.get("/api/v1/files/browse?directory_path=s3://")
+        assert response.status_code == 400
+        assert "Invalid S3 path format" in response.json()["detail"]
+
     def test_browse_db_endpoint(self, client: TestClient, session: Session):
         """Test database files browser endpoint"""
         # Create test files

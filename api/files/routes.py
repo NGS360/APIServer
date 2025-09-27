@@ -123,16 +123,31 @@ def list_files(
     "/browse", response_model=FileBrowserData, summary="Browse filesystem directory"
 )
 def browse_filesystem(
-    directory_path: str = Query("", description="Directory path to browse"),
-    storage_root: str = Query("storage", description="Storage root directory"),
+    directory_path: str = Query(
+        "", description="Directory path to browse (local path or s3://bucket/key)"
+    ),
+    storage_root: str = Query(
+        "storage", description="Storage root directory (ignored for S3 paths)"
+    ),
 ) -> FileBrowserData:
     """
-    Browse a filesystem directory and return folders and files in structured format.
+    Browse a filesystem directory or S3 bucket and return folders and files in structured format.
 
-    - **directory_path**: Path relative to storage root (empty for root)
-    - **storage_root**: Base storage directory (defaults to 'storage')
+    Supports both local filesystem and AWS S3:
+    - **Local paths**: Relative to storage_root (empty for root) or absolute paths
+    - **S3 paths**: Use s3://bucket/key format (e.g., s3://my-bucket/path/to/folder/)
+    - **storage_root**: Base storage directory for local paths (ignored for S3)
 
     Returns separate arrays for folders and files with name, date, and size information.
+    
+    For S3 paths:
+    - Requires AWS credentials to be configured
+    - Folders represent S3 prefixes (common prefixes)
+    - Files show S3 object metadata (size, last modified)
+    
+    Examples:
+    - Local: `/browse?directory_path=project1/data`
+    - S3: `/browse?directory_path=s3://my-bucket/project1/data/`
     """
     return services.browse_filesystem(directory_path, storage_root)
 

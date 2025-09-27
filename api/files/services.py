@@ -12,6 +12,13 @@ from sqlmodel import select, Session, func
 from pydantic import PositiveInt
 from fastapi import HTTPException, status
 
+try:
+    import boto3
+    from botocore.exceptions import ClientError, NoCredentialsError
+    BOTO3_AVAILABLE = True
+except ImportError:
+    BOTO3_AVAILABLE = False
+
 from api.files.models import (
     File,
     FileCreate,
@@ -354,7 +361,24 @@ def update_file_content(
 def browse_filesystem(
     directory_path: str, storage_root: str = "storage"
 ) -> FileBrowserData:
-    """Browse filesystem directory and return structured data"""
+    """
+    Browse filesystem directory and return structured data.
+    
+    Automatically detects if the path is S3 (s3://bucket/key) or local filesystem
+    and routes to the appropriate handler.
+    """
+    # Check if this is an S3 path
+    if _is_s3_path(directory_path):
+        return browse_s3(directory_path)
+    
+    # Handle local filesystem
+    return _browse_local_filesystem(directory_path, storage_root)
+
+
+def _browse_local_filesystem(
+    directory_path: str, storage_root: str = "storage"
+) -> FileBrowserData:
+    """Browse local filesystem directory and return structured data"""
 
     # Construct full path
     if os.path.isabs(directory_path):
@@ -404,6 +428,140 @@ def browse_filesystem(
     files.sort(key=lambda x: x.name.lower())
 
     return FileBrowserData(folders=folders, files=files)
+
+
+def _is_s3_path(path: str) -> bool:
+    """Check if a path is an S3 URI (s3://bucket/key)"""
+    return path.startswith("s3://")
+
+
+def _parse_s3_path(s3_path: str) -> tuple[str, str]:
+    """Parse S3 path into bucket and prefix"""
+    if not s3_path.startswith("s3://"):
+        raise ValueError("Invalid S3 path format. Must start with s3://")
+    
+    # Remove s3:// prefix
+    path_without_scheme = s3_path[5:]
+    
+    # Check for empty path after s3://
+    if not path_without_scheme:
+        raise ValueError("Invalid S3 path format. Bucket name is required")
+    
+    # Split into bucket and key
+    if "/" in path_without_scheme:
+        bucket, key = path_without_scheme.split("/", 1)
+    else:
+        bucket = path_without_scheme
+        key = ""
+    
+    # Validate bucket name is not empty
+    if not bucket:
+        raise ValueError("Invalid S3 path format. Bucket name cannot be empty")
+    
+    return bucket, key
+
+
+def browse_s3(s3_path: str) -> FileBrowserData:
+    """Browse S3 bucket/prefix and return structured data"""
+    if not BOTO3_AVAILABLE:
+        raise HTTPException(
+            status_code=status.HTTP_501_NOT_IMPLEMENTED,
+            detail="S3 support not available. Install boto3 to enable S3 browsing.",
+        )
+    
+    try:
+        bucket, prefix = _parse_s3_path(s3_path)
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
+    
+    try:
+        # Initialize S3 client
+        s3_client = boto3.client('s3')
+         
+        # List objects with the given prefix
+        paginator = s3_client.get_paginator('list_objects_v2')
+        page_iterator = paginator.paginate(
+            Bucket=bucket,
+            Prefix=prefix,
+            Delimiter='/'  # This helps us get "folders"
+        )
+        
+        folders = []
+        files = []
+        
+        for page in page_iterator:
+            # Handle "folders" (common prefixes)
+            for common_prefix in page.get('CommonPrefixes', []):
+                folder_prefix = common_prefix['Prefix']
+                # Remove the current prefix to get just the folder name
+                folder_name = folder_prefix[len(prefix):].rstrip('/')
+                if folder_name:  # Skip empty names
+                    folders.append(FileBrowserFolder(
+                        name=folder_name,
+                        date=""  # S3 prefixes don't have modification dates
+                    ))
+            
+            # Handle actual files
+            for obj in page.get('Contents', []):
+                key = obj['Key']
+                # Skip if this is just the prefix itself (directory marker)
+                if key == prefix:
+                    continue
+                
+                # Remove the current prefix to get just the file name
+                file_name = key[len(prefix):]
+                
+                # Skip files that are in subdirectories (contain '/')
+                if '/' in file_name:
+                    continue
+                
+                if file_name:  # Skip empty names
+                    # Format the date
+                    mod_time = obj['LastModified']
+                    date_str = mod_time.strftime("%Y-%m-%d %H:%M:%S")
+                    
+                    files.append(FileBrowserFile(
+                        name=file_name,
+                        date=date_str,
+                        size=obj['Size']
+                    ))
+        
+        # Sort folders and files by name
+        folders.sort(key=lambda x: x.name.lower())
+        files.sort(key=lambda x: x.name.lower())
+        
+        return FileBrowserData(folders=folders, files=files)
+        
+    except NoCredentialsError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="AWS credentials not found. Please configure AWS credentials.",
+        )
+    except ClientError as e:
+        error_code = e.response['Error']['Code']
+        if error_code == 'NoSuchBucket':
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"S3 bucket not found: {bucket}",
+            )
+        elif error_code == 'AccessDenied':
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Access denied to S3 bucket: {bucket}",
+            )
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"S3 error: {e.response['Error']['Message']}",
+            )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Unexpected error browsing S3: {str(e)}",
+        )
 
 
 def list_files_as_browser_data(
