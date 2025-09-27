@@ -3,7 +3,15 @@ Routes/endpoints for the Files API
 """
 
 from typing import Optional
-from fastapi import APIRouter, Query, HTTPException, status, UploadFile, File as FastAPIFile, Form
+from fastapi import (
+    APIRouter,
+    Query,
+    HTTPException,
+    status,
+    UploadFile,
+    File as FastAPIFile,
+    Form,
+)
 from fastapi.responses import StreamingResponse
 from core.deps import SessionDep
 from api.files.models import (
@@ -14,6 +22,7 @@ from api.files.models import (
     FileFilters,
     FileType,
     EntityType,
+    FileBrowserData,
 )
 import api.files.services as services
 
@@ -24,7 +33,7 @@ router = APIRouter(prefix="/files", tags=["Files"])
     "",
     response_model=FilePublic,
     status_code=status.HTTP_201_CREATED,
-    summary="Create a new file record"
+    summary="Create a new file record",
 )
 def create_file(
     session: SessionDep,
@@ -35,7 +44,7 @@ def create_file(
     file_type: FileType = Form(FileType.OTHER),
     is_public: bool = Form(False),
     created_by: Optional[str] = Form(None),
-    content: Optional[UploadFile] = FastAPIFile(None)
+    content: Optional[UploadFile] = FastAPIFile(None),
 ) -> FilePublic:
     """
     Create a new file record with optional file content upload.
@@ -56,7 +65,7 @@ def create_file(
         entity_type=entity_type,
         entity_id=entity_id,
         is_public=is_public,
-        created_by=created_by
+        created_by=created_by,
     )
 
     file_content = None
@@ -69,17 +78,23 @@ def create_file(
 @router.get(
     "",
     response_model=PaginatedFileResponse,
-    summary="List files with filtering and pagination"
+    summary="List files with filtering and pagination",
 )
 def list_files(
     session: SessionDep,
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     per_page: int = Query(20, ge=1, le=100, description="Number of items per page"),
-    entity_type: Optional[EntityType] = Query(None, description="Filter by entity type"),
+    entity_type: Optional[EntityType] = Query(
+        None, description="Filter by entity type"
+    ),
     entity_id: Optional[str] = Query(None, description="Filter by entity ID"),
     file_type: Optional[FileType] = Query(None, description="Filter by file type"),
-    search: Optional[str] = Query(None, description="Search in filename and description"),
-    is_public: Optional[bool] = Query(None, description="Filter by public/private status"),
+    search: Optional[str] = Query(
+        None, description="Search in filename and description"
+    ),
+    is_public: Optional[bool] = Query(
+        None, description="Filter by public/private status"
+    ),
     created_by: Optional[str] = Query(None, description="Filter by creator"),
 ) -> PaginatedFileResponse:
     """
@@ -105,14 +120,81 @@ def list_files(
 
 
 @router.get(
-    "/{file_id}",
-    response_model=FilePublic,
-    summary="Get file by ID"
+    "/browse", response_model=FileBrowserData, summary="Browse filesystem directory"
 )
-def get_file(
+def browse_filesystem(
+    directory_path: str = Query(
+        "", description="Directory path to browse (local path or s3://bucket/key)"
+    ),
+    storage_root: str = Query(
+        "storage", description="Storage root directory (ignored for S3 paths)"
+    ),
+) -> FileBrowserData:
+    """
+    Browse a filesystem directory or S3 bucket and return folders and files in structured format.
+
+    Supports both local filesystem and AWS S3:
+    - **Local paths**: Relative to storage_root (empty for root) or absolute paths
+    - **S3 paths**: Use s3://bucket/key format (e.g., s3://my-bucket/path/to/folder/)
+    - **storage_root**: Base storage directory for local paths (ignored for S3)
+
+    Returns separate arrays for folders and files with name, date, and size information.
+
+    For S3 paths:
+    - Requires AWS credentials to be configured
+    - Folders represent S3 prefixes (common prefixes)
+    - Files show S3 object metadata (size, last modified)
+
+    Examples:
+    - Local: `/browse?directory_path=project1/data`
+    - S3: `/browse?directory_path=s3://my-bucket/project1/data/`
+    """
+    return services.browse_filesystem(directory_path, storage_root)
+
+
+@router.get(
+    "/browse-db",
+    response_model=FileBrowserData,
+    summary="List database files in browser format",
+)
+def list_files_browser_format(
     session: SessionDep,
-    file_id: str
-) -> FilePublic:
+    page: int = Query(1, ge=1, description="Page number (1-indexed)"),
+    per_page: int = Query(20, ge=1, le=100, description="Number of items per page"),
+    entity_type: Optional[EntityType] = Query(
+        None, description="Filter by entity type"
+    ),
+    entity_id: Optional[str] = Query(None, description="Filter by entity ID"),
+    file_type: Optional[FileType] = Query(None, description="Filter by file type"),
+    search: Optional[str] = Query(
+        None, description="Search in filename and description"
+    ),
+    is_public: Optional[bool] = Query(
+        None, description="Filter by public/private status"
+    ),
+    created_by: Optional[str] = Query(None, description="Filter by creator"),
+) -> FileBrowserData:
+    """
+    Get database files in FileBrowserData format (files only, no folders).
+
+    This endpoint returns the same file data as the regular list_files endpoint,
+    but formatted to match the FileBrowserData structure with separate folders and files arrays.
+    Since database files don't have folder structure, the folders array will be empty.
+    """
+    filters = FileFilters(
+        entity_type=entity_type,
+        entity_id=entity_id,
+        file_type=file_type,
+        search_query=search,
+        is_public=is_public,
+        created_by=created_by,
+    )
+
+    return services.list_files_as_browser_data(session, filters, page, per_page)
+
+
+@router.get("/{file_id}", response_model=FilePublic, summary="Get file by ID")
+def get_file(session: SessionDep, file_id: str) -> FilePublic:
     """
     Get a single file by its file_id.
 
@@ -120,22 +202,16 @@ def get_file(
     """
     try:
         return services.get_file(session, file_id)
-    except Exception:
+    except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"File with id {file_id} not found"
-        )
+            detail=f"File with id {file_id} not found",
+        ) from exc
 
 
-@router.put(
-    "/{file_id}",
-    response_model=FilePublic,
-    summary="Update file metadata"
-)
+@router.put("/{file_id}", response_model=FilePublic, summary="Update file metadata")
 def update_file(
-    session: SessionDep,
-    file_id: str,
-    file_update: FileUpdate
+    session: SessionDep, file_id: str, file_update: FileUpdate
 ) -> FilePublic:
     """
     Update file metadata.
@@ -145,22 +221,17 @@ def update_file(
     """
     try:
         return services.update_file(session, file_id, file_update)
-    except Exception:
+    except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"File with id {file_id} not found"
-        )
+            detail=f"File with id {file_id} not found",
+        ) from exc
 
 
 @router.delete(
-    "/{file_id}",
-    status_code=status.HTTP_204_NO_CONTENT,
-    summary="Delete file"
+    "/{file_id}", status_code=status.HTTP_204_NO_CONTENT, summary="Delete file"
 )
-def delete_file(
-    session: SessionDep,
-    file_id: str
-) -> None:
+def delete_file(session: SessionDep, file_id: str) -> None:
     """
     Delete a file and its content.
 
@@ -171,23 +242,17 @@ def delete_file(
         if not success:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"File with id {file_id} not found"
+                detail=f"File with id {file_id} not found",
             )
-    except Exception:
+    except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"File with id {file_id} not found"
-        )
+            detail=f"File with id {file_id} not found",
+        ) from exc
 
 
-@router.get(
-    "/{file_id}/content",
-    summary="Download file content"
-)
-def download_file(
-    session: SessionDep,
-    file_id: str
-):
+@router.get("/{file_id}/content", summary="Download file content")
+def download_file(session: SessionDep, file_id: str):
     """
     Download the content of a file.
 
@@ -209,24 +274,20 @@ def download_file(
             media_type=file_record.mime_type or "application/octet-stream",
             headers={
                 "Content-Disposition": f"attachment; filename={file_record.filename}"
-            }
+            },
         )
-    except Exception:
+    except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"File with id {file_id} not found or content not available"
-        )
+            detail=f"File with id {file_id} not found or content not available",
+        ) from exc
 
 
 @router.post(
-    "/{file_id}/content",
-    response_model=FilePublic,
-    summary="Upload file content"
+    "/{file_id}/content", response_model=FilePublic, summary="Upload file content"
 )
 def upload_file_content(
-    session: SessionDep,
-    file_id: str,
-    content: UploadFile = FastAPIFile(...)
+    session: SessionDep, file_id: str, content: UploadFile = FastAPIFile(...)
 ) -> FilePublic:
     """
     Upload content for an existing file record.
@@ -237,17 +298,17 @@ def upload_file_content(
     try:
         file_content = content.file.read()
         return services.update_file_content(session, file_id, file_content)
-    except Exception:
+    except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"File with id {file_id} not found"
-        )
+            detail=f"File with id {file_id} not found",
+        ) from exc
 
 
 @router.get(
     "/entity/{entity_type}/{entity_id}",
     response_model=PaginatedFileResponse,
-    summary="List files for a specific entity."
+    summary="List files for a specific entity.",
 )
 def list_files_for_entity(
     session: SessionDep,
@@ -264,17 +325,16 @@ def list_files_for_entity(
     - **entity_type**: Either "project" or "run"
     - **entity_id**: The project ID or run barcode
     """
-    return services.list_files_for_entity(session, entity_type, entity_id, page, per_page, file_type)
+    return services.list_files_for_entity(
+        session, entity_type, entity_id, page, per_page, file_type
+    )
 
 
 @router.get(
-    "/entity/{entity_type}/{entity_id}/count",
-    summary="Get file count for entity"
+    "/entity/{entity_type}/{entity_id}/count", summary="Get file count for entity"
 )
 def get_file_count_for_entity(
-    session: SessionDep,
-    entity_type: EntityType,
-    entity_id: str
+    session: SessionDep, entity_type: EntityType, entity_id: str
 ) -> dict:
     """
     Get the total number of files for a specific project or run.

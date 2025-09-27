@@ -5,10 +5,20 @@ Services for managing files.
 import hashlib
 import secrets
 import string
+import os
 from pathlib import Path
+from datetime import datetime
 from sqlmodel import select, Session, func
 from pydantic import PositiveInt
 from fastapi import HTTPException, status
+
+try:
+    import boto3
+    from botocore.exceptions import ClientError, NoCredentialsError
+
+    BOTO3_AVAILABLE = True
+except ImportError:
+    BOTO3_AVAILABLE = False
 
 from api.files.models import (
     File,
@@ -20,13 +30,16 @@ from api.files.models import (
     FileType,
     EntityType,
     StorageBackend,
+    FileBrowserData,
+    FileBrowserFolder,
+    FileBrowserFile,
 )
 
 
 def generate_file_id() -> str:
     """Generate a unique file ID"""
     alphabet = string.ascii_letters + string.digits
-    return ''.join(secrets.choice(alphabet) for _ in range(12))
+    return "".join(secrets.choice(alphabet) for _ in range(12))
 
 
 def generate_file_path(
@@ -34,19 +47,13 @@ def generate_file_path(
 ) -> str:
     """Generate a structured file path"""
     from datetime import datetime, timezone
+
     now = datetime.now(timezone.utc)
     year = now.strftime("%Y")
     month = now.strftime("%m")
 
     # Create path structure: /{entity_type}/{entity_id}/{file_type}/{year}/{month}/{filename}
-    path_parts = [
-        entity_type.value,
-        entity_id,
-        file_type.value,
-        year,
-        month,
-        filename
-    ]
+    path_parts = [entity_type.value, entity_id, file_type.value, year, month, filename]
     return "/".join(path_parts)
 
 
@@ -58,6 +65,7 @@ def calculate_file_checksum(file_content: bytes) -> str:
 def get_mime_type(filename: str) -> str:
     """Get MIME type based on file extension"""
     import mimetypes
+
     mime_type, _ = mimetypes.guess_type(filename)
     return mime_type or "application/octet-stream"
 
@@ -66,7 +74,7 @@ def create_file(
     session: Session,
     file_create: FileCreate,
     file_content: bytes | None = None,
-    storage_root: str = "storage"
+    storage_root: str = "storage",
 ) -> File:
     """Create a new file record and optionally store content"""
 
@@ -81,7 +89,7 @@ def create_file(
         file_create.entity_type,
         file_create.entity_id,
         file_create.file_type,
-        f"{file_id}_{file_create.filename}"
+        f"{file_id}_{file_create.filename}",
     )
 
     # Calculate file metadata if content is provided
@@ -104,7 +112,7 @@ def create_file(
         entity_type=file_create.entity_type,
         entity_id=file_create.entity_id,
         is_public=file_create.is_public,
-        storage_backend=StorageBackend.LOCAL
+        storage_backend=StorageBackend.LOCAL,
     )
 
     # Store file content if provided
@@ -124,14 +132,12 @@ def create_file(
 
 def get_file(session: Session, file_id: str) -> File:
     """Get a file by its file_id"""
-    file_record = session.exec(
-        select(File).where(File.file_id == file_id)
-    ).first()
+    file_record = session.exec(select(File).where(File.file_id == file_id)).first()
 
     if not file_record:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"File with id {file_id} not found"
+            detail=f"File with id {file_id} not found",
         )
 
     return file_record
@@ -139,14 +145,12 @@ def get_file(session: Session, file_id: str) -> File:
 
 def get_file_by_id(session: Session, id: str) -> File:
     """Get a file by its internal UUID"""
-    file_record = session.exec(
-        select(File).where(File.id == id)
-    ).first()
+    file_record = session.exec(select(File).where(File.id == id)).first()
 
     if not file_record:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"File with internal id {id} not found"
+            detail=f"File with internal id {id} not found",
         )
 
     return file_record
@@ -197,7 +201,7 @@ def list_files(
     page: PositiveInt = 1,
     per_page: PositiveInt = 20,
     sort_by: str = "upload_date",
-    sort_order: str = "desc"
+    sort_order: str = "desc",
 ) -> FilesPublic:
     """List files with filtering and pagination"""
 
@@ -223,14 +227,12 @@ def list_files(
         if filters.search_query:
             search_term = f"%{filters.search_query}%"
             query = query.where(
-                (File.filename.ilike(search_term)) |
-                (File.description.ilike(search_term))
+                (File.filename.ilike(search_term))
+                | (File.description.ilike(search_term))
             )
 
     # Get total count
-    total_count = session.exec(
-        select(func.count()).select_from(query.subquery())
-    ).one()
+    total_count = session.exec(select(func.count()).select_from(query.subquery())).one()
 
     # Calculate pagination
     total_pages = (total_count + per_page - 1) // per_page
@@ -265,7 +267,7 @@ def list_files(
             is_public=file.is_public,
             is_archived=file.is_archived,
             storage_backend=file.storage_backend,
-            checksum=file.checksum
+            checksum=file.checksum,
         )
         for file in files
     ]
@@ -277,11 +279,13 @@ def list_files(
         current_page=page,
         per_page=per_page,
         has_next=page < total_pages,
-        has_prev=page > 1
+        has_prev=page > 1,
     )
 
 
-def get_file_content(session: Session, file_id: str, storage_root: str = "storage") -> bytes:
+def get_file_content(
+    session: Session, file_id: str, storage_root: str = "storage"
+) -> bytes:
     """Get file content from storage"""
     file_record = get_file(session, file_id)
 
@@ -289,7 +293,7 @@ def get_file_content(session: Session, file_id: str, storage_root: str = "storag
     if not full_path.exists():
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"File content not found at {file_record.file_path}"
+            detail=f"File content not found at {file_record.file_path}",
         )
 
     with open(full_path, "rb") as f:
@@ -302,34 +306,25 @@ def list_files_for_entity(
     entity_id: str,
     page: PositiveInt = 1,
     per_page: PositiveInt = 20,
-    file_type: FileType | None = None
+    file_type: FileType | None = None,
 ) -> FilesPublic:
     """List files for a specific entity (project or run)"""
     filters = FileFilters(
-        entity_type=entity_type,
-        entity_id=entity_id,
-        file_type=file_type
+        entity_type=entity_type, entity_id=entity_id, file_type=file_type
     )
 
-    return list_files(
-        session=session,
-        filters=filters,
-        page=page,
-        per_page=per_page
-    )
+    return list_files(session=session, filters=filters, page=page, per_page=per_page)
 
 
 def get_file_count_for_entity(
-    session: Session,
-    entity_type: EntityType,
-    entity_id: str
+    session: Session, entity_type: EntityType, entity_id: str
 ) -> int:
     """Get the count of files for a specific entity"""
     count = session.exec(
         select(func.count(File.id)).where(
             File.entity_type == entity_type,
             File.entity_id == entity_id,
-            ~File.is_archived
+            ~File.is_archived,
         )
     ).one()
 
@@ -361,3 +356,238 @@ def update_file_content(
     session.refresh(file_record)
 
     return file_record
+
+
+def browse_filesystem(
+    directory_path: str, storage_root: str = "storage"
+) -> FileBrowserData:
+    """
+    Browse filesystem directory and return structured data.
+
+    Automatically detects if the path is S3 (s3://bucket/key) or local filesystem
+    and routes to the appropriate handler.
+    """
+    # Check if this is an S3 path
+    if _is_s3_path(directory_path):
+        return browse_s3(directory_path)
+
+    # Handle local filesystem
+    return _browse_local_filesystem(directory_path, storage_root)
+
+
+def _browse_local_filesystem(
+    directory_path: str, storage_root: str = "storage"
+) -> FileBrowserData:
+    """Browse local filesystem directory and return structured data"""
+
+    # Construct full path
+    if os.path.isabs(directory_path):
+        full_path = Path(directory_path)
+    else:
+        full_path = Path(storage_root) / directory_path
+
+    # Check if directory exists and is accessible
+    if not full_path.exists():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Directory not found: {directory_path}",
+        )
+
+    if not full_path.is_dir():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Path is not a directory: {directory_path}",
+        )
+
+    folders = []
+    files = []
+
+    try:
+        # List directory contents
+        for item in full_path.iterdir():
+            # Get modification time
+            stat = item.stat()
+            mod_time = datetime.fromtimestamp(stat.st_mtime)
+            date_str = mod_time.strftime("%Y-%m-%d %H:%M:%S")
+
+            if item.is_dir():
+                folders.append(FileBrowserFolder(name=item.name, date=date_str))
+            else:
+                files.append(
+                    FileBrowserFile(name=item.name, date=date_str, size=stat.st_size)
+                )
+
+    except PermissionError:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Permission denied accessing directory: {directory_path}",
+        )
+
+    # Sort folders and files by name
+    folders.sort(key=lambda x: x.name.lower())
+    files.sort(key=lambda x: x.name.lower())
+
+    return FileBrowserData(folders=folders, files=files)
+
+
+def _is_s3_path(path: str) -> bool:
+    """Check if a path is an S3 URI (s3://bucket/key)"""
+    return path.startswith("s3://")
+
+
+def _parse_s3_path(s3_path: str) -> tuple[str, str]:
+    """Parse S3 path into bucket and prefix"""
+    if not s3_path.startswith("s3://"):
+        raise ValueError("Invalid S3 path format. Must start with s3://")
+
+    # Remove s3:// prefix
+    path_without_scheme = s3_path[5:]
+
+    # Check for empty path after s3://
+    if not path_without_scheme:
+        raise ValueError("Invalid S3 path format. Bucket name is required")
+
+    # Split into bucket and key
+    if "/" in path_without_scheme:
+        bucket, key = path_without_scheme.split("/", 1)
+    else:
+        bucket = path_without_scheme
+        key = ""
+
+    # Validate bucket name is not empty
+    if not bucket:
+        raise ValueError("Invalid S3 path format. Bucket name cannot be empty")
+
+    return bucket, key
+
+
+def browse_s3(s3_path: str) -> FileBrowserData:
+    """Browse S3 bucket/prefix and return structured data"""
+    if not BOTO3_AVAILABLE:
+        raise HTTPException(
+            status_code=status.HTTP_501_NOT_IMPLEMENTED,
+            detail="S3 support not available. Install boto3 to enable S3 browsing.",
+        )
+
+    try:
+        bucket, prefix = _parse_s3_path(s3_path)
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        ) from e
+
+    try:
+        # Initialize S3 client
+        s3_client = boto3.client("s3")
+
+        # List objects with the given prefix
+        paginator = s3_client.get_paginator("list_objects_v2")
+        page_iterator = paginator.paginate(
+            Bucket=bucket, Prefix=prefix, Delimiter="/"  # This helps us get "folders"
+        )
+
+        folders = []
+        files = []
+
+        for page in page_iterator:
+            # Handle "folders" (common prefixes)
+            for common_prefix in page.get("CommonPrefixes", []):
+                folder_prefix = common_prefix["Prefix"]
+                # Remove the current prefix to get just the folder name
+                folder_name = folder_prefix[len(prefix):].rstrip("/")
+                if folder_name:  # Skip empty names
+                    folders.append(
+                        FileBrowserFolder(
+                            name=folder_name,
+                            date="",  # S3 prefixes don't have modification dates
+                        )
+                    )
+
+            # Handle actual files
+            for obj in page.get("Contents", []):
+                key = obj["Key"]
+                # Skip if this is just the prefix itself (directory marker)
+                if key == prefix:
+                    continue
+
+                # Remove the current prefix to get just the file name
+                file_name = key[len(prefix):]
+
+                # Skip files that are in subdirectories (contain '/')
+                if "/" in file_name:
+                    continue
+
+                if file_name:  # Skip empty names
+                    # Format the date
+                    mod_time = obj["LastModified"]
+                    date_str = mod_time.strftime("%Y-%m-%d %H:%M:%S")
+
+                    files.append(
+                        FileBrowserFile(name=file_name, date=date_str, size=obj["Size"])
+                    )
+
+        # Sort folders and files by name
+        folders.sort(key=lambda x: x.name.lower())
+        files.sort(key=lambda x: x.name.lower())
+
+        return FileBrowserData(folders=folders, files=files)
+
+    except NoCredentialsError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="AWS credentials not found. Please configure AWS credentials.",
+        )
+    except ClientError as e:
+        error_code = e.response["Error"]["Code"]
+        if error_code == "NoSuchBucket":
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"S3 bucket not found: {bucket}",
+            )
+        elif error_code == "AccessDenied":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Access denied to S3 bucket: {bucket}",
+            )
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"S3 error: {e.response['Error']['Message']}",
+            )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Unexpected error browsing S3: {str(e)}",
+        )
+
+
+def list_files_as_browser_data(
+    session: Session,
+    filters: FileFilters | None = None,
+    page: PositiveInt = 1,
+    per_page: PositiveInt = 20,
+    sort_by: str = "upload_date",
+    sort_order: str = "desc",
+) -> FileBrowserData:
+    """List database files in FileBrowserData format (files only, no folders)"""
+
+    # Get files using existing list_files function
+    files_result = list_files(session, filters, page, per_page, sort_by, sort_order)
+
+    # Convert to FileBrowserFile format
+    browser_files = []
+    for file_record in files_result.data:
+        # Format date
+        date_str = file_record.upload_date.strftime("%Y-%m-%d %H:%M:%S")
+
+        browser_files.append(
+            FileBrowserFile(
+                name=file_record.filename,
+                date=date_str,
+                size=file_record.file_size or 0,
+            )
+        )
+
+    # No folders for database files
+    return FileBrowserData(folders=[], files=browser_files)

@@ -8,6 +8,7 @@ from pathlib import Path
 from datetime import datetime, timezone
 
 import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from sqlmodel import Session
 
@@ -17,6 +18,9 @@ from api.files.models import (
     FileType,
     EntityType,
     StorageBackend,
+    FileBrowserData,
+    FileBrowserFolder,
+    FileBrowserFile,
 )
 from api.files.services import (
     create_file,
@@ -31,6 +35,8 @@ from api.files.services import (
     generate_file_path,
     calculate_file_checksum,
     get_mime_type,
+    browse_filesystem,
+    list_files_as_browser_data,
 )
 
 
@@ -71,7 +77,7 @@ class TestFileModels:
             entity_type=EntityType.PROJECT,
             entity_id="PROJ001",
             is_public=True,
-            created_by="testuser"
+            created_by="testuser",
         )
 
         assert file_create.filename == "test.txt"
@@ -85,9 +91,7 @@ class TestFileModels:
     def test_file_update_model(self):
         """Test FileUpdate model validation"""
         file_update = FileUpdate(
-            filename="updated.txt",
-            description="Updated description",
-            is_public=False
+            filename="updated.txt", description="Updated description", is_public=False
         )
 
         assert file_update.filename == "updated.txt"
@@ -118,10 +122,7 @@ class TestFileServices:
     def test_generate_file_path(self):
         """Test file path generation"""
         path = generate_file_path(
-            EntityType.PROJECT,
-            "PROJ001",
-            FileType.FASTQ,
-            "sample.fastq"
+            EntityType.PROJECT, "PROJ001", FileType.FASTQ, "sample.fastq"
         )
 
         # Should contain entity type, entity id, file type, year, month, filename
@@ -144,14 +145,19 @@ class TestFileServices:
 
         # Should be SHA-256 hash
         assert len(checksum) == 64
-        assert checksum == "dffd6021bb2bd5b0af676290809ec3a53191dd81c7f70a4b28688a362182986f"
+        assert (
+            checksum
+            == "dffd6021bb2bd5b0af676290809ec3a53191dd81c7f70a4b28688a362182986f"
+        )
 
     def test_get_mime_type(self):
         """Test MIME type detection"""
         assert get_mime_type("test.txt") == "text/plain"
         assert get_mime_type("test.pdf") == "application/pdf"
         assert get_mime_type("test.jpg") == "image/jpeg"
-        assert get_mime_type("test.fastq") == "application/octet-stream"  # Unknown extension
+        assert (
+            get_mime_type("test.fastq") == "application/octet-stream"
+        )  # Unknown extension
 
     def test_create_file_without_content(self, session: Session, temp_storage):
         """Test creating file record without content"""
@@ -161,7 +167,7 @@ class TestFileServices:
             file_type=FileType.DOCUMENT,
             entity_type=EntityType.PROJECT,
             entity_id="PROJ001",
-            created_by="testuser"
+            created_by="testuser",
         )
 
         file_record = create_file(session, file_create, storage_root=temp_storage)
@@ -185,10 +191,12 @@ class TestFileServices:
             description="Test file",
             file_type=FileType.DOCUMENT,
             entity_type=EntityType.PROJECT,
-            entity_id="PROJ001"
+            entity_id="PROJ001",
         )
 
-        file_record = create_file(session, file_create, content, storage_root=temp_storage)
+        file_record = create_file(
+            session, file_create, content, storage_root=temp_storage
+        )
 
         assert file_record.file_size == len(content)
         assert file_record.checksum == calculate_file_checksum(content)
@@ -201,9 +209,7 @@ class TestFileServices:
     def test_get_file(self, session: Session, temp_storage):
         """Test getting file by file_id"""
         file_create = FileCreate(
-            filename="test.txt",
-            entity_type=EntityType.PROJECT,
-            entity_id="PROJ001"
+            filename="test.txt", entity_type=EntityType.PROJECT, entity_id="PROJ001"
         )
 
         created_file = create_file(session, file_create, storage_root=temp_storage)
@@ -226,15 +232,13 @@ class TestFileServices:
             filename="test.txt",
             description="Original description",
             entity_type=EntityType.PROJECT,
-            entity_id="PROJ001"
+            entity_id="PROJ001",
         )
 
         created_file = create_file(session, file_create, storage_root=temp_storage)
 
         file_update = FileUpdate(
-            filename="updated.txt",
-            description="Updated description",
-            is_public=True
+            filename="updated.txt", description="Updated description", is_public=True
         )
 
         updated_file = update_file(session, created_file.file_id, file_update)
@@ -247,12 +251,12 @@ class TestFileServices:
         """Test deleting file and content"""
         content = b"Hello, World!"
         file_create = FileCreate(
-            filename="test.txt",
-            entity_type=EntityType.PROJECT,
-            entity_id="PROJ001"
+            filename="test.txt", entity_type=EntityType.PROJECT, entity_id="PROJ001"
         )
 
-        created_file = create_file(session, file_create, content, storage_root=temp_storage)
+        created_file = create_file(
+            session, file_create, content, storage_root=temp_storage
+        )
         file_path = Path(temp_storage) / created_file.file_path
 
         # Verify file exists
@@ -290,7 +294,7 @@ class TestFileServices:
                 description=f"Test file {i}",
                 entity_type=EntityType.PROJECT,
                 entity_id="PROJ001",
-                file_type=FileType.DOCUMENT
+                file_type=FileType.DOCUMENT,
             )
             create_file(session, file_create, storage_root=temp_storage)
 
@@ -312,7 +316,7 @@ class TestFileServices:
                 file_create = FileCreate(
                     filename=f"test{i}.txt",
                     entity_type=EntityType.PROJECT,
-                    entity_id=entity_id
+                    entity_id=entity_id,
                 )
                 create_file(session, file_create, storage_root=temp_storage)
 
@@ -329,7 +333,7 @@ class TestFileServices:
             file_create = FileCreate(
                 filename=f"test{i}.txt",
                 entity_type=EntityType.PROJECT,
-                entity_id="PROJ001"
+                entity_id="PROJ001",
             )
             create_file(session, file_create, storage_root=temp_storage)
 
@@ -340,12 +344,12 @@ class TestFileServices:
         """Test retrieving file content"""
         content = b"Hello, World!"
         file_create = FileCreate(
-            filename="test.txt",
-            entity_type=EntityType.PROJECT,
-            entity_id="PROJ001"
+            filename="test.txt", entity_type=EntityType.PROJECT, entity_id="PROJ001"
         )
 
-        created_file = create_file(session, file_create, content, storage_root=temp_storage)
+        created_file = create_file(
+            session, file_create, content, storage_root=temp_storage
+        )
         retrieved_content = get_file_content(
             session, created_file.file_id, storage_root=temp_storage
         )
@@ -355,9 +359,7 @@ class TestFileServices:
     def test_get_file_content_not_found(self, session: Session, temp_storage):
         """Test retrieving content for non-existent file"""
         file_create = FileCreate(
-            filename="test.txt",
-            entity_type=EntityType.PROJECT,
-            entity_id="PROJ001"
+            filename="test.txt", entity_type=EntityType.PROJECT, entity_id="PROJ001"
         )
 
         # Create file record without content
@@ -381,7 +383,7 @@ class TestFileAPI:
             "entity_type": "project",
             "entity_id": "PROJ001",
             "is_public": "true",  # Form data sends as string
-            "created_by": "api_test_user"
+            "created_by": "api_test_user",
         }
 
         response = client.post("/api/v1/files", data=file_data)
@@ -408,7 +410,7 @@ class TestFileAPI:
                 "file_type": "document",
                 "entity_type": "project",
                 "entity_id": "PROJ001",
-                "created_by": "list_test_user"
+                "created_by": "list_test_user",
             }
             client.post("/api/v1/files", data=file_data)
 
@@ -462,7 +464,7 @@ class TestFileAPI:
             "file_type": "document",
             "entity_type": "project",
             "entity_id": "PROJ001",
-            "created_by": "get_test_user"
+            "created_by": "get_test_user",
         }
 
         create_response = client.post("/api/v1/files", data=file_data)
@@ -492,7 +494,7 @@ class TestFileAPI:
             "file_type": "document",
             "entity_type": "project",
             "entity_id": "PROJ001",
-            "created_by": "update_test_user"
+            "created_by": "update_test_user",
         }
 
         create_response = client.post("/api/v1/files", data=file_data)
@@ -501,10 +503,7 @@ class TestFileAPI:
         file_id = created_file["file_id"]
 
         # Test successful update
-        update_data = {
-            "description": "Updated description",
-            "is_public": True
-        }
+        update_data = {"description": "Updated description", "is_public": True}
 
         response = client.put(f"/api/v1/files/{file_id}", json=update_data)
         assert response.status_code == 200
@@ -528,7 +527,7 @@ class TestFileAPI:
             "file_type": "document",
             "entity_type": "project",
             "entity_id": "PROJ001",
-            "created_by": "delete_test_user"
+            "created_by": "delete_test_user",
         }
 
         create_response = client.post("/api/v1/files", data=file_data)
@@ -554,7 +553,7 @@ class TestFileAPI:
         entities = [
             ("project", "PROJ001"),
             ("project", "PROJ002"),
-            ("run", "190110_MACHINE123_0001_FLOWCELL123")
+            ("run", "190110_MACHINE123_0001_FLOWCELL123"),
         ]
 
         for entity_type, entity_id in entities:
@@ -565,7 +564,7 @@ class TestFileAPI:
                     "file_type": "document",
                     "entity_type": entity_type,
                     "entity_id": entity_id,
-                    "created_by": "entity_test_user"
+                    "created_by": "entity_test_user",
                 }
                 client.post("/api/v1/files", data=file_data)
 
@@ -580,7 +579,9 @@ class TestFileAPI:
             assert item["entity_id"] == "PROJ001"
 
         # Test listing files for specific run
-        response = client.get("/api/v1/files/entity/run/190110_MACHINE123_0001_FLOWCELL123")
+        response = client.get(
+            "/api/v1/files/entity/run/190110_MACHINE123_0001_FLOWCELL123"
+        )
         assert response.status_code == 200
 
         data = response.json()
@@ -597,7 +598,9 @@ class TestFileAPI:
         assert data["per_page"] == 1
         assert len(data["data"]) == 1
 
-    def test_get_file_count_for_entity_endpoint(self, client: TestClient, session: Session):
+    def test_get_file_count_for_entity_endpoint(
+        self, client: TestClient, session: Session
+    ):
         """Test getting file count for a specific entity"""
         # Create files for a specific entity
         entity_type = "project"
@@ -610,7 +613,7 @@ class TestFileAPI:
                 "file_type": "document",
                 "entity_type": entity_type,
                 "entity_id": entity_id,
-                "created_by": "count_test_user"
+                "created_by": "count_test_user",
             }
             client.post("/api/v1/files", data=file_data)
 
@@ -632,7 +635,9 @@ class TestFileAPI:
         assert data["entity_id"] == "EMPTY_PROJECT"
         assert data["file_count"] == 0
 
-    def test_create_file_with_content_endpoint(self, client: TestClient, session: Session):
+    def test_create_file_with_content_endpoint(
+        self, client: TestClient, session: Session
+    ):
         """Test file creation with content upload"""
         import io
 
@@ -643,12 +648,14 @@ class TestFileAPI:
             "file_type": "document",
             "entity_type": "project",
             "entity_id": "PROJ001",
-            "created_by": "content_test_user"
+            "created_by": "content_test_user",
         }
 
         # Create file content
         file_content = b"Hello, this is test content!"
-        files = {"content": ("test_content.txt", io.BytesIO(file_content), "text/plain")}
+        files = {
+            "content": ("test_content.txt", io.BytesIO(file_content), "text/plain")
+        }
 
         # Send multipart form data
         response = client.post("/api/v1/files", data=file_data, files=files)
@@ -666,7 +673,7 @@ class TestFileAPI:
             "filename": "test.txt",
             "file_type": "invalid_type",
             "entity_type": "project",
-            "entity_id": "PROJ001"
+            "entity_id": "PROJ001",
         }
 
         response = client.post("/api/v1/files", data=invalid_file_data)
@@ -677,7 +684,7 @@ class TestFileAPI:
             "filename": "test.txt",
             "file_type": "document",
             "entity_type": "invalid_entity",
-            "entity_id": "PROJ001"
+            "entity_id": "PROJ001",
         }
 
         response = client.post("/api/v1/files", data=invalid_entity_data)
@@ -705,10 +712,12 @@ class TestFileIntegration:
             file_type=FileType.DOCUMENT,
             entity_type=EntityType.PROJECT,
             entity_id="PROJ001",
-            created_by="testuser"
+            created_by="testuser",
         )
 
-        created_file = create_file(session, file_create, content, storage_root=temp_storage)
+        created_file = create_file(
+            session, file_create, content, storage_root=temp_storage
+        )
         assert created_file.filename == "lifecycle.txt"
         assert created_file.file_size == len(content)
 
@@ -723,8 +732,7 @@ class TestFileIntegration:
 
         # Update file metadata
         file_update = FileUpdate(
-            description="Updated lifecycle test file",
-            is_public=True
+            description="Updated lifecycle test file", is_public=True
         )
 
         updated_file = update_file(session, created_file.file_id, file_update)
@@ -744,7 +752,7 @@ class TestFileIntegration:
         entities = [
             (EntityType.PROJECT, "PROJ001"),
             (EntityType.PROJECT, "PROJ002"),
-            (EntityType.RUN, "190110_MACHINE123_0001_FLOWCELL123")
+            (EntityType.RUN, "190110_MACHINE123_0001_FLOWCELL123"),
         ]
 
         created_files = []
@@ -756,10 +764,12 @@ class TestFileIntegration:
                     filename=f"file{i}.txt",
                     entity_type=entity_type,
                     entity_id=entity_id,
-                    file_type=FileType.DOCUMENT
+                    file_type=FileType.DOCUMENT,
                 )
 
-                file_record = create_file(session, file_create, storage_root=temp_storage)
+                file_record = create_file(
+                    session, file_create, storage_root=temp_storage
+                )
                 created_files.append(file_record)
 
         # Verify total count
@@ -784,15 +794,236 @@ class TestFileIntegration:
                 filename=f"test.{file_type.value}",
                 entity_type=EntityType.PROJECT,
                 entity_id="PROJ001",
-                file_type=file_type
+                file_type=file_type,
             )
             create_file(session, file_create, storage_root=temp_storage)
 
         # Test filtering by each type
         for file_type in file_types:
             from api.files.models import FileFilters
+
             filters = FileFilters(file_type=file_type)
             result = list_files(session, filters=filters)
 
             assert result.total_items == 1
             assert result.data[0].file_type == file_type
+
+
+class TestFileBrowserModels:
+    """Test file browser model functionality"""
+
+    def test_file_browser_folder_model(self):
+        """Test FileBrowserFolder model"""
+        folder = FileBrowserFolder(name="test_folder", date="2023-01-01 12:00:00")
+
+        assert folder.name == "test_folder"
+        assert folder.date == "2023-01-01 12:00:00"
+
+    def test_file_browser_file_model(self):
+        """Test FileBrowserFile model"""
+        file = FileBrowserFile(
+            name="test_file.txt", date="2023-01-01 12:00:00", size=1024
+        )
+
+        assert file.name == "test_file.txt"
+        assert file.date == "2023-01-01 12:00:00"
+        assert file.size == 1024
+
+    def test_file_browser_data_model(self):
+        """Test FileBrowserData model"""
+        folder = FileBrowserFolder(name="folder1", date="2023-01-01 12:00:00")
+        file = FileBrowserFile(name="file1.txt", date="2023-01-01 12:00:00", size=100)
+
+        browser_data = FileBrowserData(folders=[folder], files=[file])
+
+        assert len(browser_data.folders) == 1
+        assert len(browser_data.files) == 1
+        assert browser_data.folders[0].name == "folder1"
+        assert browser_data.files[0].name == "file1.txt"
+
+
+class TestFileBrowserServices:
+    """Test file browser service functions"""
+
+    @pytest.fixture
+    def temp_storage(self):
+        """Create temporary storage with folder/file structure"""
+        temp_dir = tempfile.mkdtemp()
+
+        # Create some folders
+        (Path(temp_dir) / "folder1").mkdir()
+        (Path(temp_dir) / "folder2").mkdir()
+
+        # Create some files
+        (Path(temp_dir) / "file1.txt").write_text("content1")
+        (Path(temp_dir) / "file2.txt").write_text("content2")
+
+        yield temp_dir
+        shutil.rmtree(temp_dir)
+
+    def test_browse_filesystem(self, temp_storage):
+        """Test filesystem browsing"""
+        result = browse_filesystem("", temp_storage)
+
+        assert isinstance(result, FileBrowserData)
+        assert len(result.folders) == 2
+        assert len(result.files) == 2
+
+        # Check folder names
+        folder_names = [f.name for f in result.folders]
+        assert "folder1" in folder_names
+        assert "folder2" in folder_names
+
+        # Check file names
+        file_names = [f.name for f in result.files]
+        assert "file1.txt" in file_names
+        assert "file2.txt" in file_names
+
+        # Check file sizes
+        for file in result.files:
+            assert file.size > 0
+            assert file.date is not None
+
+    def test_browse_filesystem_nonexistent_directory(self):
+        """Test browsing non-existent directory"""
+        with pytest.raises(HTTPException) as exc_info:
+            browse_filesystem("nonexistent", "nonexistent_root")
+
+        assert exc_info.value.status_code == 404
+        assert "not found" in str(exc_info.value.detail)
+
+    def test_list_files_as_browser_data(self, session: Session):
+        """Test converting database files to browser data format"""
+        # Create test files in database
+        for i in range(3):
+            file_create = FileCreate(
+                filename=f"db_file_{i}.txt",
+                description=f"Database file {i}",
+                entity_type=EntityType.PROJECT,
+                entity_id="PROJ001",
+                file_type=FileType.DOCUMENT,
+            )
+            create_file(session, file_create)
+
+        # Get files in browser format
+        result = list_files_as_browser_data(session)
+
+        assert isinstance(result, FileBrowserData)
+        assert len(result.folders) == 0  # No folders for database files
+        assert len(result.files) == 3
+
+        # Check file properties
+        for file in result.files:
+            assert file.name.startswith("db_file_")
+            assert file.date is not None
+            assert file.size >= 0
+
+
+class TestFileBrowserAPI:
+    """Test file browser API endpoints"""
+
+    def test_browse_filesystem_endpoint(self, client: TestClient):
+        """Test filesystem browsing endpoint"""
+        # Create a temporary directory structure for testing
+        temp_dir = tempfile.mkdtemp()
+        try:
+            # Create test structure
+            (Path(temp_dir) / "test_folder").mkdir()
+            (Path(temp_dir) / "test_file.txt").write_text("test content")
+
+            # Test the endpoint
+            response = client.get(f"/api/v1/files/browse?storage_root={temp_dir}")
+            assert response.status_code == 200
+
+            data = response.json()
+            assert "folders" in data
+            assert "files" in data
+            assert isinstance(data["folders"], list)
+            assert isinstance(data["files"], list)
+
+        finally:
+            shutil.rmtree(temp_dir)
+
+    def test_s3_path_detection(self):
+        """Test S3 path detection functionality"""
+        from api.files.services import _is_s3_path, _parse_s3_path
+
+        # Test S3 path detection
+        assert _is_s3_path("s3://bucket/key") is True
+        assert _is_s3_path("s3://bucket") is True
+        assert _is_s3_path("/local/path") is False
+        assert _is_s3_path("local/path") is False
+        assert _is_s3_path("") is False
+
+        # Test S3 path parsing
+        bucket, key = _parse_s3_path("s3://my-bucket/path/to/folder/")
+        assert bucket == "my-bucket"
+        assert key == "path/to/folder/"
+
+        bucket, key = _parse_s3_path("s3://my-bucket")
+        assert bucket == "my-bucket"
+        assert key == ""
+
+        bucket, key = _parse_s3_path("s3://my-bucket/")
+        assert bucket == "my-bucket"
+        assert key == ""
+
+        # Test invalid S3 path
+        with pytest.raises(ValueError):
+            _parse_s3_path("invalid://path")
+
+    def test_browse_s3_without_boto3(self, client: TestClient, monkeypatch):
+        """Test S3 browsing when boto3 is not available"""
+        # Mock BOTO3_AVAILABLE to False
+        import api.files.services as services
+
+        monkeypatch.setattr(services, "BOTO3_AVAILABLE", False)
+
+        response = client.get("/api/v1/files/browse?directory_path=s3://test-bucket/")
+        assert response.status_code == 501
+        assert "S3 support not available" in response.json()["detail"]
+
+    def test_browse_s3_invalid_path(self, client: TestClient):
+        """Test S3 browsing with invalid S3 path"""
+        # Test with a path that looks like S3 but has invalid format
+        response = client.get("/api/v1/files/browse?directory_path=s3://")
+        assert response.status_code == 400
+        assert "Invalid S3 path format" in response.json()["detail"]
+
+    def test_browse_db_endpoint(self, client: TestClient, session: Session):
+        """Test database files browser endpoint"""
+        # Create test files
+        for i in range(2):
+            file_data = {
+                "filename": f"browser_test_{i}.txt",
+                "description": f"Browser test file {i}",
+                "file_type": "document",
+                "entity_type": "project",
+                "entity_id": "PROJ001",
+                "created_by": "browser_test_user",
+            }
+            client.post("/api/v1/files", data=file_data)
+
+        # Test the browser endpoint
+        response = client.get("/api/v1/files/browse-db")
+        assert response.status_code == 200
+
+        data = response.json()
+        assert "folders" in data
+        assert "files" in data
+        assert len(data["folders"]) == 0  # No folders for database files
+        assert len(data["files"]) >= 2
+
+        # Check file structure
+        for file in data["files"]:
+            assert "name" in file
+            assert "date" in file
+            assert "size" in file
+
+    def test_browse_filesystem_error_handling(self, client: TestClient):
+        """Test error handling for filesystem browsing"""
+        # Test non-existent directory
+        response = client.get(
+            "/api/v1/files/browse?directory_path=nonexistent&storage_root=nonexistent"
+        )
+        assert response.status_code == 404
