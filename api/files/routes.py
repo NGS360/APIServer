@@ -139,12 +139,12 @@ def browse_filesystem(
     - **storage_root**: Base storage directory for local paths (ignored for S3)
 
     Returns separate arrays for folders and files with name, date, and size information.
-    
+
     For S3 paths:
     - Requires AWS credentials to be configured
     - Folders represent S3 prefixes (common prefixes)
     - Files show S3 object metadata (size, last modified)
-    
+
     Examples:
     - Local: `/browse?directory_path=project1/data`
     - S3: `/browse?directory_path=s3://my-bucket/project1/data/`

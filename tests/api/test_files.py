@@ -947,27 +947,27 @@ class TestFileBrowserAPI:
     def test_s3_path_detection(self):
         """Test S3 path detection functionality"""
         from api.files.services import _is_s3_path, _parse_s3_path
-        
+
         # Test S3 path detection
         assert _is_s3_path("s3://bucket/key") is True
         assert _is_s3_path("s3://bucket") is True
         assert _is_s3_path("/local/path") is False
         assert _is_s3_path("local/path") is False
         assert _is_s3_path("") is False
-        
+
         # Test S3 path parsing
         bucket, key = _parse_s3_path("s3://my-bucket/path/to/folder/")
         assert bucket == "my-bucket"
         assert key == "path/to/folder/"
-        
+
         bucket, key = _parse_s3_path("s3://my-bucket")
         assert bucket == "my-bucket"
         assert key == ""
-        
+
         bucket, key = _parse_s3_path("s3://my-bucket/")
         assert bucket == "my-bucket"
         assert key == ""
-        
+
         # Test invalid S3 path
         with pytest.raises(ValueError):
             _parse_s3_path("invalid://path")
@@ -976,8 +976,9 @@ class TestFileBrowserAPI:
         """Test S3 browsing when boto3 is not available"""
         # Mock BOTO3_AVAILABLE to False
         import api.files.services as services
+
         monkeypatch.setattr(services, "BOTO3_AVAILABLE", False)
-        
+
         response = client.get("/api/v1/files/browse?directory_path=s3://test-bucket/")
         assert response.status_code == 501
         assert "S3 support not available" in response.json()["detail"]
