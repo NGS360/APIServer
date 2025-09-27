@@ -12,6 +12,7 @@ from pydantic import ConfigDict
 
 class FileType(str, Enum):
     """File type categories"""
+
     FASTQ = "fastq"
     BAM = "bam"
     VCF = "vcf"
@@ -26,12 +27,14 @@ class FileType(str, Enum):
 
 class EntityType(str, Enum):
     """Entity types that can have files"""
+
     PROJECT = "project"
     RUN = "run"
 
 
 class StorageBackend(str, Enum):
     """Storage backend types"""
+
     LOCAL = "local"
     S3 = "s3"
     AZURE = "azure"
@@ -73,12 +76,14 @@ class File(SQLModel, table=True):
         """Generate a unique file ID"""
         import secrets
         import string
+
         alphabet = string.ascii_letters + string.digits
-        return ''.join(secrets.choice(alphabet) for _ in range(12))
+        return "".join(secrets.choice(alphabet) for _ in range(12))
 
 
 class FileCreate(SQLModel):
     """Request model for creating a file"""
+
     filename: str
     original_filename: str | None = None
     description: str | None = None
@@ -93,6 +98,7 @@ class FileCreate(SQLModel):
 
 class FileUpdate(SQLModel):
     """Request model for updating file metadata"""
+
     filename: str | None = None
     description: str | None = None
     file_type: FileType | None = None
@@ -104,6 +110,7 @@ class FileUpdate(SQLModel):
 
 class FilePublic(SQLModel):
     """Public file representation"""
+
     file_id: str
     filename: str
     original_filename: str
@@ -123,6 +130,7 @@ class FilePublic(SQLModel):
 
 class FilesPublic(SQLModel):
     """Paginated file listing"""
+
     data: List[FilePublic]
     total_items: int
     total_pages: int
@@ -134,6 +142,7 @@ class FilesPublic(SQLModel):
 
 class FileUploadRequest(SQLModel):
     """Request model for file upload"""
+
     filename: str
     description: str | None = None
     file_type: FileType = FileType.OTHER
@@ -144,6 +153,7 @@ class FileUploadRequest(SQLModel):
 
 class FileUploadResponse(SQLModel):
     """Response model for file upload"""
+
     file_id: str
     filename: str
     file_size: int | None = None
@@ -154,6 +164,7 @@ class FileUploadResponse(SQLModel):
 
 class FileFilters(SQLModel):
     """File filtering options"""
+
     entity_type: EntityType | None = None
     entity_id: str | None = None
     file_type: FileType | None = None
@@ -168,6 +179,7 @@ class FileFilters(SQLModel):
 
 class PaginatedFileResponse(SQLModel):
     """Paginated response for file listings"""
+
     data: list[FilePublic]
     total_items: int
     total_pages: int
@@ -181,6 +193,7 @@ class PaginatedFileResponse(SQLModel):
 
 class FileBrowserColumns(SQLModel):
     """Individual file/folder item for file browser"""
+
     name: str
     date: str
     size: int | None = None  # None for directories
@@ -189,12 +202,14 @@ class FileBrowserColumns(SQLModel):
 
 class FileBrowserFolder(SQLModel):
     """Folder item for file browser"""
+
     name: str
     date: str
 
 
 class FileBrowserFile(SQLModel):
     """File item for file browser"""
+
     name: str
     date: str
     size: int
@@ -202,5 +217,6 @@ class FileBrowserFile(SQLModel):
 
 class FileBrowserData(SQLModel):
     """File browser data structure with separate folders and files"""
+
     folders: list[FileBrowserFolder]
     files: list[FileBrowserFile]
