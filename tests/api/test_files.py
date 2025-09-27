@@ -804,7 +804,6 @@ class TestFileIntegration:
             assert result.data[0].file_type == file_type
 
 
-
 class TestFileBrowserModels:
     """Test file browser model functionality"""
 
@@ -926,7 +925,7 @@ class TestFileBrowserServices:
 class TestFileBrowserAPI:
     """Test file browser API endpoints"""
 
-    def test_browse_filesystem_endpoint(self, client: TestClient, temp_storage):
+    def test_browse_filesystem_endpoint(self, client: TestClient):
         """Test filesystem browsing endpoint"""
         # Create a temporary directory structure for testing
         temp_dir = tempfile.mkdtemp()
