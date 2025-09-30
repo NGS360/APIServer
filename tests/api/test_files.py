@@ -36,7 +36,6 @@ from api.files.services import (
     calculate_file_checksum,
     get_mime_type,
     browse_filesystem,
-    list_files_as_browser_data,
 )
 
 
@@ -1125,32 +1124,6 @@ class TestFileBrowserServices:
         assert exc_info.value.status_code == 404
         assert "not found" in str(exc_info.value.detail)
 
-    def test_list_files_as_browser_data(self, session: Session):
-        """Test converting database files to browser data format"""
-        # Create test files in database
-        for i in range(3):
-            file_create = FileCreate(
-                filename=f"db_file_{i}.txt",
-                description=f"Database file {i}",
-                entity_type=EntityType.PROJECT,
-                entity_id="PROJ001",
-                file_type=FileType.DOCUMENT,
-            )
-            create_file(session, file_create)
-
-        # Get files in browser format
-        result = list_files_as_browser_data(session)
-
-        assert isinstance(result, FileBrowserData)
-        assert len(result.folders) == 0  # No folders for database files
-        assert len(result.files) == 3
-
-        # Check file properties
-        for file in result.files:
-            assert file.name.startswith("db_file_")
-            assert file.date is not None
-            assert file.size >= 0
-
 
 class TestFileBrowserAPI:
     """Test file browser API endpoints"""
@@ -1222,36 +1195,6 @@ class TestFileBrowserAPI:
         response = client.get("/api/v1/files/browse?directory_path=s3://")
         assert response.status_code == 400
         assert "Invalid S3 path format" in response.json()["detail"]
-
-    def test_browse_db_endpoint(self, client: TestClient, session: Session):
-        """Test database files browser endpoint"""
-        # Create test files
-        for i in range(2):
-            file_data = {
-                "filename": f"browser_test_{i}.txt",
-                "description": f"Browser test file {i}",
-                "file_type": "document",
-                "entity_type": "project",
-                "entity_id": "PROJ001",
-                "created_by": "browser_test_user",
-            }
-            client.post("/api/v1/files", data=file_data)
-
-        # Test the browser endpoint
-        response = client.get("/api/v1/files/browse-db")
-        assert response.status_code == 200
-
-        data = response.json()
-        assert "folders" in data
-        assert "files" in data
-        assert len(data["folders"]) == 0  # No folders for database files
-        assert len(data["files"]) >= 2
-
-        # Check file structure
-        for file in data["files"]:
-            assert "name" in file
-            assert "date" in file
-            assert "size" in file
 
     def test_browse_filesystem_error_handling(self, client: TestClient):
         """Test error handling for filesystem browsing"""

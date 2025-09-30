@@ -126,9 +126,6 @@ def browse_filesystem(
     directory_path: str = Query(
         "", description="Directory path to browse (local path or s3://bucket/key)"
     ),
-    storage_root: str = Query(
-        "storage", description="Storage root directory (ignored for S3 paths)"
-    ),
 ) -> FileBrowserData:
     """
     Browse a filesystem directory or S3 bucket and return folders and files in structured format.
@@ -136,7 +133,6 @@ def browse_filesystem(
     Supports both local filesystem and AWS S3:
     - **Local paths**: Relative to storage_root (empty for root) or absolute paths
     - **S3 paths**: Use s3://bucket/key format (e.g., s3://my-bucket/path/to/folder/)
-    - **storage_root**: Base storage directory for local paths (ignored for S3)
 
     Returns separate arrays for folders and files with name, date, and size information.
 
@@ -149,48 +145,7 @@ def browse_filesystem(
     - Local: `/browse?directory_path=project1/data`
     - S3: `/browse?directory_path=s3://my-bucket/project1/data/`
     """
-    return services.browse_filesystem(directory_path, storage_root)
-
-
-@router.get(
-    "/browse-db",
-    response_model=FileBrowserData,
-    summary="List database files in browser format",
-)
-def list_files_browser_format(
-    session: SessionDep,
-    page: int = Query(1, ge=1, description="Page number (1-indexed)"),
-    per_page: int = Query(20, ge=1, le=100, description="Number of items per page"),
-    entity_type: Optional[EntityType] = Query(
-        None, description="Filter by entity type"
-    ),
-    entity_id: Optional[str] = Query(None, description="Filter by entity ID"),
-    file_type: Optional[FileType] = Query(None, description="Filter by file type"),
-    search: Optional[str] = Query(
-        None, description="Search in filename and description"
-    ),
-    is_public: Optional[bool] = Query(
-        None, description="Filter by public/private status"
-    ),
-    created_by: Optional[str] = Query(None, description="Filter by creator"),
-) -> FileBrowserData:
-    """
-    Get database files in FileBrowserData format (files only, no folders).
-
-    This endpoint returns the same file data as the regular list_files endpoint,
-    but formatted to match the FileBrowserData structure with separate folders and files arrays.
-    Since database files don't have folder structure, the folders array will be empty.
-    """
-    filters = FileFilters(
-        entity_type=entity_type,
-        entity_id=entity_id,
-        file_type=file_type,
-        search_query=search,
-        is_public=is_public,
-        created_by=created_by,
-    )
-
-    return services.list_files_as_browser_data(session, filters, page, per_page)
+    return services.browse_filesystem(directory_path)
 
 
 @router.get("/{file_id}", response_model=FilePublic, summary="Get file by ID")

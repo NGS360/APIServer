@@ -630,34 +630,3 @@ def browse_s3(s3_path: str) -> FileBrowserData:
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Unexpected error browsing S3: {str(e)}",
         )
-
-
-def list_files_as_browser_data(
-    session: Session,
-    filters: FileFilters | None = None,
-    page: PositiveInt = 1,
-    per_page: PositiveInt = 20,
-    sort_by: str = "upload_date",
-    sort_order: str = "desc",
-) -> FileBrowserData:
-    """List database files in FileBrowserData format (files only, no folders)"""
-
-    # Get files using existing list_files function
-    files_result = list_files(session, filters, page, per_page, sort_by, sort_order)
-
-    # Convert to FileBrowserFile format
-    browser_files = []
-    for file_record in files_result.data:
-        # Format date
-        date_str = file_record.upload_date.strftime("%Y-%m-%d %H:%M:%S")
-
-        browser_files.append(
-            FileBrowserFile(
-                name=file_record.filename,
-                date=date_str,
-                size=file_record.file_size or 0,
-            )
-        )
-
-    # No folders for database files
-    return FileBrowserData(folders=[], files=browser_files)
