@@ -812,6 +812,7 @@ class TestFileIntegration:
         """Test that samplesheets are saved to both database storage and run folder"""
         from api.runs.models import SequencingRun, RunStatus
         from datetime import date
+
         # Create a test run with run_folder_uri
         run = SequencingRun(
             run_date=date(2019, 1, 10),
@@ -825,11 +826,11 @@ class TestFileIntegration:
         session.add(run)
         session.commit()
         session.refresh(run)
-        
+
         # Create run folder directory
         run_folder = Path(temp_storage) / "run_folder"
         run_folder.mkdir(parents=True, exist_ok=True)
-        
+
         # Create samplesheet content
         samplesheet_content = b"""[Header]
 IEMFileVersion,4
@@ -839,7 +840,7 @@ Investigator Name,Test User
 Sample_ID,Sample_Name,index
 Sample1,Sample1,ATCG
 """
-        
+
         # Create samplesheet file
         file_create = FileCreate(
             filename="SampleSheet.csv",
@@ -849,29 +850,31 @@ Sample1,Sample1,ATCG
             entity_id=run.barcode,
             created_by="testuser",
         )
-        
+
         created_file = create_file(
             session, file_create, samplesheet_content, storage_root=temp_storage
         )
-        
+
         # Verify file was created in database storage
         db_file_path = Path(temp_storage) / created_file.file_path
         assert db_file_path.exists()
         assert db_file_path.read_bytes() == samplesheet_content
-        
+
         # Verify file was also saved to run folder
         run_folder_samplesheet = run_folder / "SampleSheet.csv"
         assert run_folder_samplesheet.exists()
         assert run_folder_samplesheet.read_bytes() == samplesheet_content
-        
+
         # Verify description indicates dual storage success
         assert "[Dual-stored to run folder]" in created_file.description
 
-    def test_samplesheet_dual_storage_no_run_folder(self, session: Session, temp_storage):
+    def test_samplesheet_dual_storage_no_run_folder(
+        self, session: Session, temp_storage
+    ):
         """Test samplesheet upload when run has no run_folder_uri"""
         from api.runs.models import SequencingRun, RunStatus
         from datetime import date
-        
+
         # Create a test run WITHOUT run_folder_uri
         run = SequencingRun(
             run_date=date(2019, 1, 10),
@@ -885,9 +888,9 @@ Sample1,Sample1,ATCG
         session.add(run)
         session.commit()
         session.refresh(run)
-        
+
         samplesheet_content = b"Sample samplesheet content"
-        
+
         # Create samplesheet file
         file_create = FileCreate(
             filename="SampleSheet.csv",
@@ -897,23 +900,28 @@ Sample1,Sample1,ATCG
             entity_id=run.barcode,
             created_by="testuser",
         )
-        
+
         created_file = create_file(
             session, file_create, samplesheet_content, storage_root=temp_storage
         )
-        
+
         # Verify file was created in database storage
         db_file_path = Path(temp_storage) / created_file.file_path
         assert db_file_path.exists()
-        
-        # Verify description indicates database-only storage
-        assert "[Database-only storage - run folder write failed]" in created_file.description
 
-    def test_samplesheet_dual_storage_invalid_path(self, session: Session, temp_storage):
+        # Verify description indicates database-only storage
+        assert (
+            "[Database-only storage - run folder write failed]"
+            in created_file.description
+        )
+
+    def test_samplesheet_dual_storage_invalid_path(
+        self, session: Session, temp_storage
+    ):
         """Test samplesheet upload when run_folder_uri has invalid format"""
         from api.runs.models import SequencingRun, RunStatus
         from datetime import date
-        
+
         # Create a test run with invalid run_folder_uri
         run = SequencingRun(
             run_date=date(2019, 1, 10),
@@ -927,9 +935,9 @@ Sample1,Sample1,ATCG
         session.add(run)
         session.commit()
         session.refresh(run)
-        
+
         samplesheet_content = b"Sample samplesheet content"
-        
+
         # Create samplesheet file
         file_create = FileCreate(
             filename="SampleSheet.csv",
@@ -939,23 +947,28 @@ Sample1,Sample1,ATCG
             entity_id=run.barcode,
             created_by="testuser",
         )
-        
+
         created_file = create_file(
             session, file_create, samplesheet_content, storage_root=temp_storage
         )
-        
+
         # Verify file was created in database storage
         db_file_path = Path(temp_storage) / created_file.file_path
         assert db_file_path.exists()
-        
-        # Verify description indicates database-only storage
-        assert "[Database-only storage - run folder write failed]" in created_file.description
 
-    def test_non_samplesheet_files_not_dual_stored(self, session: Session, temp_storage):
+        # Verify description indicates database-only storage
+        assert (
+            "[Database-only storage - run folder write failed]"
+            in created_file.description
+        )
+
+    def test_non_samplesheet_files_not_dual_stored(
+        self, session: Session, temp_storage
+    ):
         """Test that non-samplesheet files are not dual-stored"""
         from api.runs.models import SequencingRun, RunStatus
         from datetime import date
-        
+
         # Create a test run with run_folder_uri
         run = SequencingRun(
             run_date=date(2019, 1, 10),
@@ -969,11 +982,11 @@ Sample1,Sample1,ATCG
         session.add(run)
         session.commit()
         session.refresh(run)
-        
+
         # Create run folder directory
         run_folder = Path(temp_storage) / "run_folder_2"
         run_folder.mkdir(parents=True, exist_ok=True)
-        
+
         # Create a NON-samplesheet file for the run
         file_content = b"Some other file content"
         file_create = FileCreate(
@@ -984,24 +997,26 @@ Sample1,Sample1,ATCG
             entity_id=run.barcode,
             created_by="testuser",
         )
-        
+
         created_file = create_file(
             session, file_create, file_content, storage_root=temp_storage
         )
-        
+
         # Verify file was created in database storage
         db_file_path = Path(temp_storage) / created_file.file_path
         assert db_file_path.exists()
-        
+
         # Verify file was NOT saved to run folder
         run_folder_file = run_folder / "SampleSheet.csv"
         assert not run_folder_file.exists()
-        
+
         # Verify description does NOT contain dual storage note
         assert "[Dual-stored to run folder]" not in (created_file.description or "")
         assert "[Database-only storage" not in (created_file.description or "")
 
-    def test_samplesheet_for_project_not_dual_stored(self, session: Session, temp_storage):
+    def test_samplesheet_for_project_not_dual_stored(
+        self, session: Session, temp_storage
+    ):
         """Test that samplesheets for projects are not dual-stored"""
         # Create a samplesheet for a PROJECT (not a run)
         samplesheet_content = b"Sample samplesheet content"
@@ -1013,15 +1028,15 @@ Sample1,Sample1,ATCG
             entity_id="PROJ001",
             created_by="testuser",
         )
-        
+
         created_file = create_file(
             session, file_create, samplesheet_content, storage_root=temp_storage
         )
-        
+
         # Verify file was created in database storage
         db_file_path = Path(temp_storage) / created_file.file_path
         assert db_file_path.exists()
-        
+
         # Verify description does NOT contain dual storage note
         assert "[Dual-stored to run folder]" not in (created_file.description or "")
         assert "[Database-only storage" not in (created_file.description or "")

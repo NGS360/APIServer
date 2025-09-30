@@ -74,7 +74,7 @@ def get_mime_type(filename: str) -> str:
 def _is_valid_storage_path(path: str) -> bool:
     """Validate storage path format"""
     # Allow S3 paths, local paths, network paths
-    valid_prefixes = ['s3://', '/', 'file://', 'smb://', 'ftp://']
+    valid_prefixes = ["s3://", "/", "file://", "smb://", "ftp://"]
     return any(path.startswith(prefix) for prefix in valid_prefixes)
 
 
@@ -86,32 +86,34 @@ def _save_samplesheet_to_run_folder(
     Returns True if successful, False otherwise.
     """
     from smart_open import open as smart_open
-    
+
     try:
         # Import here to avoid circular imports
         from api.runs.services import get_run
-        
+
         # Get run information
         run = get_run(session, run_barcode)
         if not run or not run.run_folder_uri:
             logging.warning(f"No run folder URI found for run {run_barcode}")
             return False
-        
+
         # Construct samplesheet path - always use SampleSheet.csv as the standard name
         samplesheet_path = f"{run.run_folder_uri.rstrip('/')}/SampleSheet.csv"
-        
+
         # Validate path format
         if not _is_valid_storage_path(samplesheet_path):
             logging.warning(f"Invalid storage path format: {samplesheet_path}")
             return False
-        
+
         # Save using smart_open (handles S3, local, network paths)
-        with smart_open(samplesheet_path, 'wb') as f:
+        with smart_open(samplesheet_path, "wb") as f:
             f.write(file_content)
-        
-        logging.info(f"Successfully saved samplesheet to run folder: {samplesheet_path}")
+
+        logging.info(
+            f"Successfully saved samplesheet to run folder: {samplesheet_path}"
+        )
         return True
-        
+
     except Exception as e:
         # Log error but don't fail the upload
         logging.error(f"Failed to save samplesheet to run folder {run_barcode}: {e}")
@@ -172,8 +174,10 @@ def create_file(
             f.write(file_content)
 
         # 2. SPECIAL HANDLING: If samplesheet for run, also save to run folder
-        if (file_create.file_type == FileType.SAMPLESHEET and
-                file_create.entity_type == EntityType.RUN):
+        if (
+            file_create.file_type == FileType.SAMPLESHEET
+            and file_create.entity_type == EntityType.RUN
+        ):
             dual_storage_success = _save_samplesheet_to_run_folder(
                 session, file_create.entity_id, file_content
             )
@@ -182,7 +186,7 @@ def create_file(
                 status_note = "[Dual-stored to run folder]"
             else:
                 status_note = "[Database-only storage - run folder write failed]"
-            
+
             if file_record.description:
                 file_record.description = f"{file_record.description} {status_note}"
             else:
@@ -561,7 +565,7 @@ def browse_s3(s3_path: str) -> FileBrowserData:
             for common_prefix in page.get("CommonPrefixes", []):
                 folder_prefix = common_prefix["Prefix"]
                 # Remove the current prefix to get just the folder name
-                folder_name = folder_prefix[len(prefix):].rstrip("/")
+                folder_name = folder_prefix[len(prefix) :].rstrip("/")
                 if folder_name:  # Skip empty names
                     folders.append(
                         FileBrowserFolder(
@@ -578,7 +582,7 @@ def browse_s3(s3_path: str) -> FileBrowserData:
                     continue
 
                 # Remove the current prefix to get just the file name
-                file_name = key[len(prefix):]
+                file_name = key[len(prefix) :]
 
                 # Skip files that are in subdirectories (contain '/')
                 if "/" in file_name:
