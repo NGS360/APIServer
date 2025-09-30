@@ -6,6 +6,7 @@ import hashlib
 import secrets
 import string
 import os
+import logging
 from pathlib import Path
 from datetime import datetime
 from sqlmodel import select, Session, func
@@ -70,6 +71,55 @@ def get_mime_type(filename: str) -> str:
     return mime_type or "application/octet-stream"
 
 
+def _is_valid_storage_path(path: str) -> bool:
+    """Validate storage path format"""
+    # Allow S3 paths, local paths, network paths
+    valid_prefixes = ["s3://", "/", "file://", "smb://", "ftp://"]
+    return any(path.startswith(prefix) for prefix in valid_prefixes)
+
+
+def _save_samplesheet_to_run_folder(
+    session: Session, run_barcode: str, file_content: bytes
+) -> bool:
+    """
+    Save samplesheet content to the run's folder URI location.
+    Returns True if successful, False otherwise.
+    """
+    from smart_open import open as smart_open
+
+    try:
+        # Import here to avoid circular imports
+        from api.runs.services import get_run
+
+        # Get run information
+        run = get_run(session, run_barcode)
+        if not run or not run.run_folder_uri:
+            logging.warning(f"No run folder URI found for run {run_barcode}")
+            return False
+
+        # Construct samplesheet path - always use SampleSheet.csv as the standard name
+        samplesheet_path = f"{run.run_folder_uri.rstrip('/')}/SampleSheet.csv"
+
+        # Validate path format
+        if not _is_valid_storage_path(samplesheet_path):
+            logging.warning(f"Invalid storage path format: {samplesheet_path}")
+            return False
+
+        # Save using smart_open (handles S3, local, network paths)
+        with smart_open(samplesheet_path, "wb") as f:
+            f.write(file_content)
+
+        logging.info(
+            f"Successfully saved samplesheet to run folder: {samplesheet_path}"
+        )
+        return True
+
+    except Exception as e:
+        # Log error but don't fail the upload
+        logging.error(f"Failed to save samplesheet to run folder {run_barcode}: {e}")
+        return False
+
+
 def create_file(
     session: Session,
     file_create: FileCreate,
@@ -117,10 +167,30 @@ def create_file(
 
     # Store file content if provided
     if file_content:
+        # 1. Save to standard database storage location
         full_path = Path(storage_root) / file_path
         full_path.parent.mkdir(parents=True, exist_ok=True)
         with open(full_path, "wb") as f:
             f.write(file_content)
+
+        # 2. SPECIAL HANDLING: If samplesheet for run, also save to run folder
+        if (
+            file_create.file_type == FileType.SAMPLESHEET
+            and file_create.entity_type == EntityType.RUN
+        ):
+            dual_storage_success = _save_samplesheet_to_run_folder(
+                session, file_create.entity_id, file_content
+            )
+            # Add note to description about dual storage status
+            if dual_storage_success:
+                status_note = "[Dual-stored to run folder]"
+            else:
+                status_note = "[Database-only storage - run folder write failed]"
+
+            if file_record.description:
+                file_record.description = f"{file_record.description} {status_note}"
+            else:
+                file_record.description = status_note
 
     # Save to database
     session.add(file_record)
