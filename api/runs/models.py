@@ -137,7 +137,7 @@ class SequencingRunCreate(SQLModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    @field_validator("run_time", mode="before")
+    @field_validator('run_time', mode='before')
     @classmethod
     def preprocess_run_time(cls, v):
         """Convert empty string to None before validation"""
