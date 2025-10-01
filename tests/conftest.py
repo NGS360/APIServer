@@ -159,21 +159,24 @@ class MockS3Paginator:
             error_type = self.client.error_mode
             if error_type == "NoSuchBucket":
                 from botocore.exceptions import ClientError
+
                 error_response = {
                     "Error": {
                         "Code": "NoSuchBucket",
-                        "Message": "The specified bucket does not exist"
+                        "Message": "The specified bucket does not exist",
                     }
                 }
                 raise ClientError(error_response, "ListObjectsV2")
             elif error_type == "AccessDenied":
                 from botocore.exceptions import ClientError
+
                 raise ClientError(
                     {"Error": {"Code": "AccessDenied", "Message": "Access Denied"}},
-                    "ListObjectsV2"
+                    "ListObjectsV2",
                 )
             elif error_type == "NoCredentialsError":
                 from botocore.exceptions import NoCredentialsError
+
                 raise NoCredentialsError()
 
         # Get bucket data
@@ -185,7 +188,9 @@ class MockS3Paginator:
 
         # Add CommonPrefixes (folders)
         if prefix_data["folders"]:
-            page["CommonPrefixes"] = [{"Prefix": folder} for folder in prefix_data["folders"]]
+            page["CommonPrefixes"] = [
+                {"Prefix": folder} for folder in prefix_data["folders"]
+            ]
 
         # Add Contents (files)
         if prefix_data["files"]:
@@ -199,13 +204,15 @@ class MockS3Client:
     """Mock S3 client for testing"""
 
     def __init__(self):
-        self.buckets = {}  # Store bucket data: {bucket_name: {prefix: {"files": [], "folders": []}}}
+        self.buckets = (
+            {}
+        )  # Store bucket data: {bucket_name: {prefix: {"files": [], "folders": []}}}
         self.error_mode = None  # For simulating errors
 
     def setup_bucket(self, bucket: str, prefix: str, files: list, folders: list):
         """
         Setup mock data for a bucket/prefix
-        
+
         Args:
             bucket: S3 bucket name
             prefix: S3 prefix/path
@@ -214,11 +221,8 @@ class MockS3Client:
         """
         if bucket not in self.buckets:
             self.buckets[bucket] = {}
-        
-        self.buckets[bucket][prefix] = {
-            "files": files,
-            "folders": folders
-        }
+
+        self.buckets[bucket][prefix] = {"files": files, "folders": folders}
 
     def get_paginator(self, operation: str):
         """Return a mock paginator"""
@@ -226,24 +230,24 @@ class MockS3Client:
             # Return a factory function that creates paginator with params
             def create_paginator(Bucket: str, Prefix: str, Delimiter: str):
                 return MockS3Paginator(self, Bucket, Prefix, Delimiter)
-            
+
             # Return object with paginate method
             class PaginatorFactory:
                 def __init__(self, client):
                     self.client = client
-                
+
                 def paginate(self, Bucket: str, Prefix: str, Delimiter: str):
                     paginator = MockS3Paginator(self.client, Bucket, Prefix, Delimiter)
                     return paginator.paginate()
-            
+
             return PaginatorFactory(self)
-        
+
         raise NotImplementedError(f"Paginator for {operation} not implemented")
 
     def simulate_error(self, error_type: str):
         """
         Configure client to raise specific errors
-        
+
         Args:
             error_type: One of "NoSuchBucket", "AccessDenied", "NoCredentialsError"
         """
@@ -278,7 +282,7 @@ def mock_s3_client_fixture():
 def client_fixture(
     session: Session,
     mock_opensearch_client: MockOpenSearchClient,
-    mock_s3_client: MockS3Client
+    mock_s3_client: MockS3Client,
 ):
     def get_db_override():
         return session
