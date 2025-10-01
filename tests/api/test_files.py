@@ -14,7 +14,6 @@ from sqlmodel import Session
 
 from api.files.models import (
     FileCreate,
-    FileUpdate,
     FileType,
     EntityType,
     StorageBackend,
@@ -25,7 +24,6 @@ from api.files.models import (
 from api.files.services import (
     create_file,
     get_file,
-    update_file,
     delete_file,
     list_files,
     get_file_content,
@@ -71,31 +69,13 @@ class TestFileModels:
         """Test FileCreate model validation"""
         file_create = FileCreate(
             filename="test.txt",
-            description="Test file",
-            file_type=FileType.DOCUMENT,
-            entity_type=EntityType.PROJECT,
-            entity_id="PROJ001",
-            is_public=True,
+            destination_uri="/data/test.txt",
             created_by="testuser",
         )
 
         assert file_create.filename == "test.txt"
-        assert file_create.description == "Test file"
-        assert file_create.file_type == FileType.DOCUMENT
-        assert file_create.entity_type == EntityType.PROJECT
-        assert file_create.entity_id == "PROJ001"
-        assert file_create.is_public is True
+        assert file_create.destination_uri == "/data/test.txt"
         assert file_create.created_by == "testuser"
-
-    def test_file_update_model(self):
-        """Test FileUpdate model validation"""
-        file_update = FileUpdate(
-            filename="updated.txt", description="Updated description", is_public=False
-        )
-
-        assert file_update.filename == "updated.txt"
-        assert file_update.description == "Updated description"
-        assert file_update.is_public is False
 
 
 class TestFileServices:
@@ -162,20 +142,13 @@ class TestFileServices:
         """Test creating file record without content"""
         file_create = FileCreate(
             filename="test.txt",
-            description="Test file",
-            file_type=FileType.DOCUMENT,
-            entity_type=EntityType.PROJECT,
-            entity_id="PROJ001",
+            destination_uri="/project/PROJ001/test.txt",
             created_by="testuser",
         )
 
         file_record = create_file(session, file_create)
 
         assert file_record.filename == "test.txt"
-        assert file_record.description == "Test file"
-        assert file_record.file_type == FileType.DOCUMENT
-        assert file_record.entity_type == EntityType.PROJECT
-        assert file_record.entity_id == "PROJ001"
         assert file_record.created_by == "testuser"
         assert file_record.file_size is None
         assert file_record.checksum is None
@@ -187,15 +160,11 @@ class TestFileServices:
         content = b"Hello, World!"
         file_create = FileCreate(
             filename="test.txt",
-            description="Test file",
-            file_type=FileType.DOCUMENT,
-            entity_type=EntityType.PROJECT,
-            entity_id="PROJ001",
-        )
+            destination_uri="/project/PROJ001/test.txt",
+            created_by="testuser")
 
         # Create file with explicit storage path in temp directory
-        storage_path = str(Path(temp_storage) / "project" / "PROJ001" / "test.txt")
-        file_record = create_file(session, file_create, content, storage_path=storage_path)
+        file_record = create_file(session, file_create, content)
 
         assert file_record.file_size == len(content)
         assert file_record.checksum == calculate_file_checksum(content)
@@ -207,7 +176,8 @@ class TestFileServices:
     def test_get_file(self, session: Session, temp_storage):
         """Test getting file by file_id"""
         file_create = FileCreate(
-            filename="test.txt", entity_type=EntityType.PROJECT, entity_id="PROJ001"
+            filename="test.txt",
+            destination_uri="/project/PROJ001/test.txt",
         )
 
         created_file = create_file(session, file_create)
@@ -224,36 +194,14 @@ class TestFileServices:
 
         assert "not found" in str(exc_info.value)
 
-    def test_update_file(self, session: Session, temp_storage):
-        """Test updating file metadata"""
-        file_create = FileCreate(
-            filename="test.txt",
-            description="Original description",
-            entity_type=EntityType.PROJECT,
-            entity_id="PROJ001",
-        )
-
-        created_file = create_file(session, file_create)
-
-        file_update = FileUpdate(
-            filename="updated.txt", description="Updated description", is_public=True
-        )
-
-        updated_file = update_file(session, created_file.file_id, file_update)
-
-        assert updated_file.filename == "updated.txt"
-        assert updated_file.description == "Updated description"
-        assert updated_file.is_public is True
-
     def test_delete_file(self, session: Session, temp_storage):
         """Test deleting file and content"""
         content = b"Hello, World!"
         file_create = FileCreate(
-            filename="test.txt", entity_type=EntityType.PROJECT, entity_id="PROJ001"
+            filename="test.txt", destination_uri="/project/PROJ001/test.txt"
         )
 
-        storage_path = str(Path(temp_storage) / "project" / "PROJ001" / "test.txt")
-        created_file = create_file(session, file_create, content, storage_path=storage_path)
+        created_file = create_file(session, file_create, content)
         file_path = Path(created_file.file_path)
 
         # Verify file exists
@@ -288,10 +236,7 @@ class TestFileServices:
         for i in range(3):
             file_create = FileCreate(
                 filename=f"test{i}.txt",
-                description=f"Test file {i}",
-                entity_type=EntityType.PROJECT,
-                entity_id="PROJ001",
-                file_type=FileType.DOCUMENT,
+                destination_uri=f"/project/PROJ001/test{i}.txt",
             )
             create_file(session, file_create)
 

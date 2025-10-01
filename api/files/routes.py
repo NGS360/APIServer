@@ -16,7 +16,6 @@ from fastapi.responses import StreamingResponse
 from core.deps import SessionDep
 from api.files.models import (
     FileCreate,
-    FileUpdate,
     FilePublic,
     PaginatedFileResponse,
     FileFilters,
@@ -38,11 +37,11 @@ router = APIRouter(prefix="/files", tags=["Files"])
 def create_file(
     session: SessionDep,
     filename: str = Form(...),
-    entity_type: EntityType = Form(...),
-    entity_id: str = Form(...),
-    description: Optional[str] = Form(None),
-    file_type: FileType = Form(FileType.OTHER),
-    is_public: bool = Form(False),
+    #entity_type: EntityType = Form(...),
+    #entity_id: str = Form(...),
+    destination_uri: str = Form(...),
+    #description: Optional[str] = Form(None),
+    #file_type: FileType = Form(FileType.OTHER),
     created_by: Optional[str] = Form(None),
     content: Optional[UploadFile] = FastAPIFile(None),
 ) -> FilePublic:
@@ -50,21 +49,14 @@ def create_file(
     Create a new file record with optional file content upload.
 
     - **filename**: Name of the file
-    - **description**: Optional description of the file
-    - **file_type**: Type of file (fastq, bam, vcf, etc.)
-    - **entity_type**: Whether this file belongs to a project or run
-    - **entity_id**: ID of the project or run this file belongs to
-    - **is_public**: Whether the file is publicly accessible
+    - **destination_uri**: URI where the file will be stored (e.g., s3://bucket/key or /local/path). If a name is not included, use the filename provided.
     - **created_by**: User who created the file
+    - **content**: Optional file content to upload
     """
     # Create FileCreate object from form data
     file_in = FileCreate(
         filename=filename,
-        description=description,
-        file_type=file_type,
-        entity_type=entity_type,
-        entity_id=entity_id,
-        is_public=is_public,
+        destination_uri=destination_uri,
         created_by=created_by,
     )
 
@@ -158,25 +150,6 @@ def get_file(session: SessionDep, file_id: str) -> FilePublic:
     """
     try:
         return services.get_file(session, file_id)
-    except Exception as exc:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"File with id {file_id} not found",
-        ) from exc
-
-
-@router.put("/{file_id}", response_model=FilePublic, summary="Update file metadata")
-def update_file(
-    session: SessionDep, file_id: str, file_update: FileUpdate
-) -> FilePublic:
-    """
-    Update file metadata.
-
-    - **file_id**: The unique file identifier
-    - **file_update**: Fields to update
-    """
-    try:
-        return services.update_file(session, file_id, file_update)
     except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

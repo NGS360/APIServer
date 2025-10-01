@@ -24,7 +24,6 @@ except ImportError:
 from api.files.models import (
     File,
     FileCreate,
-    FileUpdate,
     FilePublic,
     FilesPublic,
     FileFilters,
@@ -123,8 +122,7 @@ def _save_samplesheet_to_run_folder(
 def create_file(
     session: Session,
     file_create: FileCreate,
-    file_content: bytes | None = None,
-    storage_path: str | None = None,
+    file_content: bytes | None = None
 ) -> File:
     """
     Create a new file record and optionally store content.
@@ -133,37 +131,15 @@ def create_file(
         session: Database session
         file_create: File creation request
         file_content: Optional file content to store
-        storage_path: Optional explicit storage path. If provided, must be either:
-                     - S3 URI: s3://bucket/key/path
-                     - Absolute local path: /path/to/file
-                     If not provided, defaults to local storage in storage/ directory
     """
     from smart_open import open as smart_open
 
-    # Generate unique file ID
-    file_id = generate_file_id()
-
-    # Use original_filename if provided, otherwise use filename
-    original_filename = file_create.original_filename or file_create.filename
-
     # Determine storage backend and file path
-    if storage_path:
-        # Use explicitly provided storage path
-        file_path = storage_path
-        if storage_path.startswith("s3://"):
-            storage_backend = StorageBackend.S3
-        else:
-            storage_backend = StorageBackend.LOCAL
+    if file_create.destination_uri.startswith("s3://"):
+        file_path = file_create.destination_uri
     else:
         # Default to local storage in storage/ directory
-        storage_backend = StorageBackend.LOCAL
-        relative_path = generate_file_path(
-            file_create.entity_type,
-            file_create.entity_id,
-            file_create.file_type,
-            f"{file_id}_{file_create.filename}",
-        )
-        file_path = f"storage/{relative_path}"
+        file_path = f"storage/{file_create.destination_uri}"
 
     # Calculate file metadata if content is provided
     file_size = len(file_content) if file_content else None
@@ -172,20 +148,14 @@ def create_file(
 
     # Create file record
     file_record = File(
-        file_id=file_id,
+        file_id=generate_file_id(),
         filename=file_create.filename,
-        original_filename=original_filename,
+        destination_uri=file_create.destination_uri,
         file_path=file_path,
         file_size=file_size,
         mime_type=mime_type,
         checksum=checksum,
-        description=file_create.description,
-        file_type=file_create.file_type,
         created_by=file_create.created_by,
-        entity_type=file_create.entity_type,
-        entity_id=file_create.entity_id,
-        is_public=file_create.is_public,
-        storage_backend=storage_backend,
     )
 
     # Store file content if provided
@@ -199,30 +169,11 @@ def create_file(
             with smart_open(file_path, "wb") as f:
                 f.write(file_content)
         except Exception as e:
-            logging.error(f"Failed to write file to {file_path}: {e}")
+            logging.error("Failed to write file to %s: %s", file_path, e)
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"Failed to store file content: {str(e)}",
-            )
-
-        # SPECIAL HANDLING: If samplesheet for run, also save to run folder
-        if (
-            file_create.file_type == FileType.SAMPLESHEET
-            and file_create.entity_type == EntityType.RUN
-        ):
-            dual_storage_success = _save_samplesheet_to_run_folder(
-                session, file_create.entity_id, file_content
-            )
-            # Add note to description about dual storage status
-            if dual_storage_success:
-                status_note = "[Also stored to run folder]"
-            else:
-                status_note = "[Run folder write failed - file only in database location]"
-
-            if file_record.description:
-                file_record.description = f"{file_record.description} {status_note}"
-            else:
-                file_record.description = status_note
+            ) from e
 
     # Save to database
     session.add(file_record)
@@ -254,22 +205,6 @@ def get_file_by_id(session: Session, id: str) -> File:
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"File with internal id {id} not found",
         )
-
-    return file_record
-
-
-def update_file(session: Session, file_id: str, file_update: FileUpdate) -> File:
-    """Update file metadata"""
-    file_record = get_file(session, file_id)
-
-    # Update fields that are provided
-    update_data = file_update.model_dump(exclude_unset=True)
-    for field, value in update_data.items():
-        setattr(file_record, field, value)
-
-    session.add(file_record)
-    session.commit()
-    session.refresh(file_record)
 
     return file_record
 
@@ -324,14 +259,6 @@ def list_files(
 
     # Apply filters
     if filters:
-        if filters.entity_type:
-            query = query.where(File.entity_type == filters.entity_type)
-        if filters.entity_id:
-            query = query.where(File.entity_id == filters.entity_id)
-        if filters.file_type:
-            query = query.where(File.file_type == filters.file_type)
-        if filters.mime_type:
-            query = query.where(File.mime_type == filters.mime_type)
         if filters.created_by:
             query = query.where(File.created_by == filters.created_by)
         if filters.is_public is not None:
@@ -369,18 +296,10 @@ def list_files(
         FilePublic(
             file_id=file.file_id,
             filename=file.filename,
-            original_filename=file.original_filename,
             file_size=file.file_size,
             mime_type=file.mime_type,
-            description=file.description,
-            file_type=file.file_type,
             upload_date=file.upload_date,
             created_by=file.created_by,
-            entity_type=file.entity_type,
-            entity_id=file.entity_id,
-            is_public=file.is_public,
-            is_archived=file.is_archived,
-            storage_backend=file.storage_backend,
             checksum=file.checksum,
         )
         for file in files
