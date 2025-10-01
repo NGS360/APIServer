@@ -2,7 +2,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlmodel import Session, create_engine, SQLModel
 from sqlmodel.pool import StaticPool
-from core.deps import get_db, get_opensearch_client
+from core.deps import get_db, get_opensearch_client, get_s3_client
 from main import app
 
 
@@ -143,6 +143,113 @@ class MockIndices:
         return {"_shards": {"total": 1, "successful": 1, "failed": 0}}
 
 
+class MockS3Paginator:
+    """Mock S3 paginator for list_objects_v2"""
+
+    def __init__(self, client, bucket: str, prefix: str, delimiter: str):
+        self.client = client
+        self.bucket = bucket
+        self.prefix = prefix
+        self.delimiter = delimiter
+
+    def paginate(self, **kwargs):
+        """Return mock page iterator"""
+        # Check if client is in error mode
+        if self.client.error_mode:
+            error_type = self.client.error_mode
+            if error_type == "NoSuchBucket":
+                from botocore.exceptions import ClientError
+                error_response = {
+                    "Error": {
+                        "Code": "NoSuchBucket",
+                        "Message": "The specified bucket does not exist"
+                    }
+                }
+                raise ClientError(error_response, "ListObjectsV2")
+            elif error_type == "AccessDenied":
+                from botocore.exceptions import ClientError
+                raise ClientError(
+                    {"Error": {"Code": "AccessDenied", "Message": "Access Denied"}},
+                    "ListObjectsV2"
+                )
+            elif error_type == "NoCredentialsError":
+                from botocore.exceptions import NoCredentialsError
+                raise NoCredentialsError()
+
+        # Get bucket data
+        bucket_data = self.client.buckets.get(self.bucket, {})
+        prefix_data = bucket_data.get(self.prefix, {"files": [], "folders": []})
+
+        # Build response page
+        page = {}
+
+        # Add CommonPrefixes (folders)
+        if prefix_data["folders"]:
+            page["CommonPrefixes"] = [{"Prefix": folder} for folder in prefix_data["folders"]]
+
+        # Add Contents (files)
+        if prefix_data["files"]:
+            page["Contents"] = prefix_data["files"]
+
+        # Return single page (simplified for testing)
+        yield page
+
+
+class MockS3Client:
+    """Mock S3 client for testing"""
+
+    def __init__(self):
+        self.buckets = {}  # Store bucket data: {bucket_name: {prefix: {"files": [], "folders": []}}}
+        self.error_mode = None  # For simulating errors
+
+    def setup_bucket(self, bucket: str, prefix: str, files: list, folders: list):
+        """
+        Setup mock data for a bucket/prefix
+        
+        Args:
+            bucket: S3 bucket name
+            prefix: S3 prefix/path
+            files: List of file dicts with Keys, LastModified, Size
+            folders: List of folder prefixes (strings ending with /)
+        """
+        if bucket not in self.buckets:
+            self.buckets[bucket] = {}
+        
+        self.buckets[bucket][prefix] = {
+            "files": files,
+            "folders": folders
+        }
+
+    def get_paginator(self, operation: str):
+        """Return a mock paginator"""
+        if operation == "list_objects_v2":
+            # Return a factory function that creates paginator with params
+            def create_paginator(Bucket: str, Prefix: str, Delimiter: str):
+                return MockS3Paginator(self, Bucket, Prefix, Delimiter)
+            
+            # Return object with paginate method
+            class PaginatorFactory:
+                def __init__(self, client):
+                    self.client = client
+                
+                def paginate(self, Bucket: str, Prefix: str, Delimiter: str):
+                    paginator = MockS3Paginator(self.client, Bucket, Prefix, Delimiter)
+                    return paginator.paginate()
+            
+            return PaginatorFactory(self)
+        
+        raise NotImplementedError(f"Paginator for {operation} not implemented")
+
+    def simulate_error(self, error_type: str):
+        """
+        Configure client to raise specific errors
+        
+        Args:
+            error_type: One of "NoSuchBucket", "AccessDenied", "NoCredentialsError"
+        """
+        self.error_mode = error_type
+
+
 @pytest.fixture(name="session")
 def session_fixture():
     engine = create_engine(
@@ -161,16 +268,30 @@ def mock_opensearch_client_fixture():
     return MockOpenSearchClient()
 
 
+@pytest.fixture(name="mock_s3_client")
+def mock_s3_client_fixture():
+    """Provide a mock S3 client for testing"""
+    return MockS3Client()
+
+
 @pytest.fixture(name="client")
-def client_fixture(session: Session, mock_opensearch_client: MockOpenSearchClient):
+def client_fixture(
+    session: Session,
+    mock_opensearch_client: MockOpenSearchClient,
+    mock_s3_client: MockS3Client
+):
     def get_db_override():
         return session
 
     def get_opensearch_client_override():
         return mock_opensearch_client
 
+    def get_s3_client_override():
+        return mock_s3_client
+
     app.dependency_overrides[get_db] = get_db_override
     app.dependency_overrides[get_opensearch_client] = get_opensearch_client_override
+    app.dependency_overrides[get_s3_client] = get_s3_client_override
 
     client = TestClient(app)
     yield client
