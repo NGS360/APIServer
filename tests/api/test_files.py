@@ -211,3 +211,98 @@ class TestFileBrowserAPI:
 
         folder_names = [f["name"] for f in data["folders"]]
         assert folder_names == ["aardvark", "middle", "zoo"]
+
+    def test_list_local_storage(self, client: TestClient):
+        """Test listing local storage directory"""
+        # Use the test fixtures directory
+        response = client.get("/api/v1/files/list?uri=tests/fixtures/test_storage")
+
+        assert response.status_code == 200
+        data = response.json()
+
+        # Verify structure
+        assert "folders" in data
+        assert "files" in data
+        assert isinstance(data["folders"], list)
+        assert isinstance(data["files"], list)
+
+        # Verify we have folders and files
+        assert len(data["folders"]) == 2  # subfolder1, subfolder2
+        assert len(data["files"]) == 3  # file1.txt, file2.txt, zebra.txt
+
+        # Verify folder names
+        folder_names = [f["name"] for f in data["folders"]]
+        assert "subfolder1" in folder_names
+        assert "subfolder2" in folder_names
+
+        # Verify file names
+        file_names = [f["name"] for f in data["files"]]
+        assert "file1.txt" in file_names
+        assert "file2.txt" in file_names
+        assert "zebra.txt" in file_names
+
+        # Verify files have size and date
+        for file in data["files"]:
+            assert "size" in file
+            assert "date" in file
+            assert file["size"] > 0
+
+    def test_list_local_storage_with_leading_slash(self, client: TestClient):
+        """Test listing local storage with leading slash in path"""
+        response = client.get("/api/v1/files/list?uri=/tests/fixtures/test_storage")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data["folders"]) == 2
+        assert len(data["files"]) == 3
+
+    def test_list_local_storage_sorting(self, client: TestClient):
+        """Test that local storage files and folders are sorted alphabetically"""
+        response = client.get("/api/v1/files/list?uri=tests/fixtures/test_storage")
+
+        assert response.status_code == 200
+        data = response.json()
+
+        # Verify alphabetical sorting (case-insensitive)
+        file_names = [f["name"] for f in data["files"]]
+        assert file_names == ["file1.txt", "file2.txt", "zebra.txt"]
+
+        folder_names = [f["name"] for f in data["folders"]]
+        assert folder_names == ["subfolder1", "subfolder2"]
+
+    def test_list_local_storage_nonexistent_directory(self, client: TestClient):
+        """Test error when directory doesn't exist"""
+        response = client.get(
+            "/api/v1/files/list?uri=tests/fixtures/nonexistent_directory"
+        )
+
+        assert response.status_code == 404
+        assert "not found" in response.json()["detail"].lower()
+
+    def test_list_local_storage_file_not_directory(self, client: TestClient):
+        """Test error when path points to a file instead of directory"""
+        response = client.get(
+            "/api/v1/files/list?uri=tests/fixtures/test_storage/file1.txt"
+        )
+
+        assert response.status_code == 400
+        assert "not a directory" in response.json()["detail"].lower()
+
+    def test_list_local_storage_empty_directory(self, client: TestClient):
+        """Test listing an empty directory"""
+        # Create empty directory for test
+        import os
+        empty_dir = "tests/fixtures/test_storage/empty_dir"
+        os.makedirs(empty_dir, exist_ok=True)
+
+        try:
+            response = client.get(f"/api/v1/files/list?uri={empty_dir}")
+
+            assert response.status_code == 200
+            data = response.json()
+            assert len(data["folders"]) == 0
+            assert len(data["files"]) == 0
+        finally:
+            # Cleanup
+            if os.path.exists(empty_dir):
+                os.rmdir(empty_dir)

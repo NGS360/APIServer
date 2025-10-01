@@ -149,7 +149,18 @@ def _list_local_storage(
     List files and folders in local storage at the specified directory path.
     """
     # Construct the full path
-    full_path = Path(storage_root) / directory_path
+    # remove the leading slash if present
+    if directory_path.startswith("/"):
+        directory_path = directory_path[1:]
+    
+    # Check if path is absolute or relative
+    path_obj = Path(directory_path)
+    if path_obj.is_absolute() or path_obj.exists():
+        # Use the path as-is if it's absolute or exists
+        full_path = path_obj
+    else:
+        # Otherwise, treat it as relative to storage_root
+        full_path = Path(storage_root) / path_obj
 
     # Check if directory exists and is accessible
     if not full_path.exists():
