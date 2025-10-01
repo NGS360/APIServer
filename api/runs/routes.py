@@ -75,7 +75,7 @@ def get_runs(
     session: SessionDep,
     page: int = Query(1, description="Page number (1-indexed)"),
     per_page: int = Query(20, description="Number of items per page"),
-    sort_by: str = Query("project_id", description="Field to sort by"),
+    sort_by: str = Query("barcode", description="Field to sort by"),
     sort_order: Literal["asc", "desc"] = Query(
         "asc", description="Sort order (asc or desc)"
     ),
