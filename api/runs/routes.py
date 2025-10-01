@@ -22,6 +22,7 @@ from api.runs.models import (
     SequencingRunCreate,
     SequencingRunPublic,
     SequencingRunsPublic,
+    SequencingRunUpdateRequest,
     IlluminaSampleSheetResponseModel,
 )
 from api.runs import services
@@ -132,6 +133,27 @@ def get_run(session: SessionDep, run_barcode: str) -> SequencingRunPublic:
     Retrieve a sequencing run.
     """
     return services.get_run(session=session, run_barcode=run_barcode)
+
+
+@router.put(
+    "/{run_barcode}",
+    response_model=SequencingRunPublic,
+    tags=["Run Endpoints"],
+)
+def update_run(
+    session: SessionDep,
+    run_barcode: str,
+    update_request: SequencingRunUpdateRequest,
+) -> SequencingRunPublic:
+    """
+    Update the status of a specific run.
+    Valid status values are: "In Progress", "Uploading", "Ready", "Resync"
+    """
+    return services.update_run(
+        session=session,
+        run_barcode=run_barcode,
+        run_status=update_request.run_status
+    )
 
 
 @router.get(

@@ -4,8 +4,17 @@ Models for the Runs API
 
 import uuid
 from datetime import datetime, date
+from enum import Enum
 from sqlmodel import SQLModel, Field
 from pydantic import ConfigDict, computed_field
+
+
+class RunStatus(str, Enum):
+    """Enumeration of valid sequencing run statuses"""
+    IN_PROGRESS = "In Progress"
+    UPLOADING = "Uploading"
+    READY = "Ready"
+    RESYNC = "Resync"
 
 
 class SequencingRun(SQLModel, table=True):
@@ -25,7 +34,7 @@ class SequencingRun(SQLModel, table=True):
     flowcell_id: str = Field(max_length=25)
     experiment_name: str | None = Field(default=None, max_length=255)
     run_folder_uri: str | None = Field(default=None, max_length=255)
-    status: str | None = Field(default=None, max_length=50)
+    status: RunStatus | None = Field(default=None)
     run_time: str | None = Field(default=None, max_length=4)
 
     model_config = ConfigDict(from_attributes=True)
@@ -102,7 +111,7 @@ class SequencingRun(SQLModel, table=True):
             "flowcell_id": self.flowcell_id,
             "experiment_name": self.experiment_name,
             "run_folder_uri": self.run_folder_uri,
-            "status": self.status,
+            "status": self.status.value if self.status else None,
             "barcode": self.barcode,
         }
         return data
@@ -123,8 +132,14 @@ class SequencingRunCreate(SQLModel):
     flowcell_id: str
     experiment_name: str | None = None
     run_folder_uri: str | None = None
-    status: str | None = None
+    status: RunStatus | None = None
     run_time: str | None = None
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class SequencingRunUpdateRequest(SQLModel):
+    run_status: RunStatus
 
     model_config = ConfigDict(extra="forbid")
 
@@ -136,7 +151,7 @@ class SequencingRunPublic(SQLModel):
     flowcell_id: str
     experiment_name: str | None
     run_folder_uri: str | None
-    status: str | None
+    status: RunStatus | None
     run_time: str | None
     barcode: str | None
 

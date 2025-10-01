@@ -11,7 +11,7 @@ from botocore.exceptions import NoCredentialsError
 from fastapi.testclient import TestClient
 from sqlmodel import Session
 
-from api.runs.models import SequencingRun
+from api.runs.models import SequencingRun, RunStatus
 
 
 def test_add_run(client: TestClient):
@@ -37,7 +37,7 @@ def test_add_run(client: TestClient):
         "flowcell_id": "FLOWCELL123",
         "experiment_name": "Test Experiment",
         "run_folder_uri": "s3://bucket/path/to/run",
-        "status": "completed",
+        "status": RunStatus.READY,
     }
     response = client.post("/api/v1/runs", json=new_run)
     assert response.status_code == 201
@@ -48,7 +48,7 @@ def test_add_run(client: TestClient):
     assert data["flowcell_id"] == "FLOWCELL123"
     assert data["experiment_name"] == "Test Experiment"
     assert data["run_folder_uri"] == "s3://bucket/path/to/run"
-    assert data["status"] == "completed"
+    assert data["status"] == RunStatus.READY.value
     assert data["barcode"] == "190110_MACHINE123_0001_FLOWCELL123"
 
 
@@ -76,7 +76,7 @@ def test_get_runs(client: TestClient, session: Session):
         flowcell_id="FLOWCELL123",
         experiment_name="Test Experiment",
         run_folder_uri="/dir/path/to/run",
-        status="completed",
+        status=RunStatus.READY,
     )
     session.add(new_run)
     session.commit()
@@ -91,7 +91,7 @@ def test_get_runs(client: TestClient, session: Session):
     assert data["data"][0]["flowcell_id"] == "FLOWCELL123"
     assert data["data"][0]["experiment_name"] == "Test Experiment"
     assert data["data"][0]["run_folder_uri"] == "/dir/path/to/run"
-    assert data["data"][0]["status"] == "completed"
+    assert data["data"][0]["status"] == RunStatus.READY.value
     assert data["data"][0]["barcode"] == "190110_MACHINE123_0001_FLOWCELL123"
 
     # Test that we can get a specific run by ID
@@ -105,7 +105,7 @@ def test_get_runs(client: TestClient, session: Session):
     assert data["flowcell_id"] == "FLOWCELL123"
     assert data["experiment_name"] == "Test Experiment"
     assert data["run_folder_uri"] == "/dir/path/to/run"
-    assert data["status"] == "completed"
+    assert data["status"] == RunStatus.READY.value
     assert data["barcode"] == "190110_MACHINE123_0001_FLOWCELL123"
 
 
@@ -135,7 +135,7 @@ def test_get_run_samplesheet(client: TestClient, session: Session):
         flowcell_id="FLOWCELL123",
         experiment_name="Test Experiment",
         run_folder_uri=run_folder.as_posix(),
-        status="completed",
+        status=RunStatus.READY,
     )
     session.add(new_run)
     session.commit()
@@ -152,7 +152,7 @@ def test_get_run_samplesheet(client: TestClient, session: Session):
     assert data["Summary"]["flowcell_id"] == "FLOWCELL123"
     assert data["Summary"]["experiment_name"] == "Test Experiment"
     assert data["Summary"]["run_folder_uri"] == run_folder.as_posix()
-    assert data["Summary"]["status"] == "completed"
+    assert data["Summary"]["status"] == RunStatus.READY.value
     assert data["Summary"]["barcode"] == run_barcode
     assert "id" not in data["Summary"]  # Database ID should not be exposed
 
@@ -174,7 +174,7 @@ def test_get_run_samplesheet_no_result(client: TestClient, session: Session):
         flowcell_id="FLOWCELL123",
         experiment_name="Test Experiment",
         run_folder_uri=run_folder.as_posix(),
-        status="completed",
+        status=RunStatus.READY,
     )
     session.add(new_run)
     session.commit()
@@ -206,7 +206,7 @@ def test_get_run_samplesheet_no_s3_credentials(
         flowcell_id="FLOWCELL123",
         experiment_name="Test Experiment",
         run_folder_uri=run_folder,
-        status="completed",
+        status=RunStatus.READY,
     )
     session.add(new_run)
     session.commit()
@@ -249,7 +249,7 @@ def test_get_run_metrics(client: TestClient, session: Session):
         flowcell_id="FLOWCELL123",
         experiment_name="Test Experiment",
         run_folder_uri=run_folder.as_posix(),
-        status="completed",
+        status=RunStatus.READY,
     )
     session.add(new_run)
     session.commit()
@@ -280,7 +280,7 @@ def test_get_run_metrics_no_result(client: TestClient, session: Session):
         flowcell_id="FLOWCELL123",
         experiment_name="Test Experiment",
         run_folder_uri=run_folder.as_posix(),
-        status="completed",
+        status=RunStatus.READY,
     )
     session.add(new_run)
     session.commit()
@@ -289,3 +289,35 @@ def test_get_run_metrics_no_result(client: TestClient, session: Session):
     run_barcode = "190110_MACHINE123_0002_FLOWCELL123"
     response = client.get(f"/api/v1/runs/{run_barcode}/metrics")
     assert response.status_code == 204
+
+
+def test_update_run_status(client: TestClient, session: Session):
+    """Test that we can update a runs status"""
+
+    # Add a run to the database
+    new_run = SequencingRun(
+        id=uuid4(),
+        run_date=datetime.date(2019, 1, 10),
+        machine_id="MACHINE123",
+        run_number=1,
+        flowcell_id="FLOWCELL123",
+        experiment_name="Test Experiment",
+        run_folder_uri="/dir/path/to/run",
+        status=RunStatus.IN_PROGRESS,
+    )
+    session.add(new_run)
+    session.commit()
+
+    # Test update the run status
+    run_barcode = "190110_MACHINE123_0001_FLOWCELL123"
+    update_data = {"run_status": RunStatus.READY}
+    response = client.put(f"/api/v1/runs/{run_barcode}", json=update_data)
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == RunStatus.READY.value
+    assert data["barcode"] == "190110_MACHINE123_0001_FLOWCELL123"
+
+    # Test that we can't specifiy an invalid status
+    update_data = {"run_status": "INVALID_STATUS"}
+    response = client.put(f"/api/v1/runs/{run_barcode}", json=update_data)
+    assert response.status_code == 422
