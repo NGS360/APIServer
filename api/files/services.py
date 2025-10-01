@@ -124,9 +124,21 @@ def create_file(
     session: Session,
     file_create: FileCreate,
     file_content: bytes | None = None,
-    storage_root: str = "storage",
+    storage_path: str | None = None,
 ) -> File:
-    """Create a new file record and optionally store content"""
+    """
+    Create a new file record and optionally store content.
+
+    Args:
+        session: Database session
+        file_create: File creation request
+        file_content: Optional file content to store
+        storage_path: Optional explicit storage path. If provided, must be either:
+                     - S3 URI: s3://bucket/key/path
+                     - Absolute local path: /path/to/file
+                     If not provided, defaults to local storage in storage/ directory
+    """
+    from smart_open import open as smart_open
 
     # Generate unique file ID
     file_id = generate_file_id()
@@ -134,13 +146,24 @@ def create_file(
     # Use original_filename if provided, otherwise use filename
     original_filename = file_create.original_filename or file_create.filename
 
-    # Generate file path
-    file_path = generate_file_path(
-        file_create.entity_type,
-        file_create.entity_id,
-        file_create.file_type,
-        f"{file_id}_{file_create.filename}",
-    )
+    # Determine storage backend and file path
+    if storage_path:
+        # Use explicitly provided storage path
+        file_path = storage_path
+        if storage_path.startswith("s3://"):
+            storage_backend = StorageBackend.S3
+        else:
+            storage_backend = StorageBackend.LOCAL
+    else:
+        # Default to local storage in storage/ directory
+        storage_backend = StorageBackend.LOCAL
+        relative_path = generate_file_path(
+            file_create.entity_type,
+            file_create.entity_id,
+            file_create.file_type,
+            f"{file_id}_{file_create.filename}",
+        )
+        file_path = f"storage/{relative_path}"
 
     # Calculate file metadata if content is provided
     file_size = len(file_content) if file_content else None
@@ -162,18 +185,27 @@ def create_file(
         entity_type=file_create.entity_type,
         entity_id=file_create.entity_id,
         is_public=file_create.is_public,
-        storage_backend=StorageBackend.LOCAL,
+        storage_backend=storage_backend,
     )
 
     # Store file content if provided
     if file_content:
-        # 1. Save to standard database storage location
-        full_path = Path(storage_root) / file_path
-        full_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(full_path, "wb") as f:
-            f.write(file_content)
+        # Save to storage using smart_open (handles both local and S3)
+        try:
+            # For local files, ensure parent directory exists
+            if not file_path.startswith("s3://"):
+                Path(file_path).parent.mkdir(parents=True, exist_ok=True)
 
-        # 2. SPECIAL HANDLING: If samplesheet for run, also save to run folder
+            with smart_open(file_path, "wb") as f:
+                f.write(file_content)
+        except Exception as e:
+            logging.error(f"Failed to write file to {file_path}: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to store file content: {str(e)}",
+            )
+
+        # SPECIAL HANDLING: If samplesheet for run, also save to run folder
         if (
             file_create.file_type == FileType.SAMPLESHEET
             and file_create.entity_type == EntityType.RUN
@@ -183,9 +215,9 @@ def create_file(
             )
             # Add note to description about dual storage status
             if dual_storage_success:
-                status_note = "[Dual-stored to run folder]"
+                status_note = "[Also stored to run folder]"
             else:
-                status_note = "[Database-only storage - run folder write failed]"
+                status_note = "[Run folder write failed - file only in database location]"
 
             if file_record.description:
                 file_record.description = f"{file_record.description} {status_note}"
@@ -242,21 +274,33 @@ def update_file(session: Session, file_id: str, file_update: FileUpdate) -> File
     return file_record
 
 
-def delete_file(session: Session, file_id: str, storage_root: str = "storage") -> bool:
+def delete_file(session: Session, file_id: str) -> bool:
     """Delete a file record and its content"""
     file_record = get_file(session, file_id)
 
     # Delete physical file if it exists
-    full_path = Path(storage_root) / file_record.file_path
-    if full_path.exists():
-        full_path.unlink()
+    try:
+        if file_record.file_path.startswith("s3://"):
+            # Delete from S3
+            if BOTO3_AVAILABLE:
+                bucket, key = _parse_s3_path(file_record.file_path)
+                s3_client = boto3.client("s3")
+                s3_client.delete_object(Bucket=bucket, Key=key)
+        else:
+            # Delete from local filesystem
+            file_path = Path(file_record.file_path)
+            if file_path.exists():
+                file_path.unlink()
 
-        # Try to remove empty directories
-        try:
-            full_path.parent.rmdir()
-        except OSError:
-            # Directory not empty, that's fine
-            pass
+                # Try to remove empty directories
+                try:
+                    file_path.parent.rmdir()
+                except OSError:
+                    # Directory not empty, that's fine
+                    pass
+    except Exception as e:
+        logging.warning(f"Failed to delete physical file {file_record.file_path}: {e}")
+        # Continue with database deletion even if physical file deletion fails
 
     # Delete from database
     session.delete(file_record)
@@ -353,21 +397,26 @@ def list_files(
     )
 
 
-def get_file_content(
-    session: Session, file_id: str, storage_root: str = "storage"
-) -> bytes:
-    """Get file content from storage"""
+def get_file_content(session: Session, file_id: str) -> bytes:
+    """Get file content from storage (local or S3)"""
+    from smart_open import open as smart_open
+
     file_record = get_file(session, file_id)
 
-    full_path = Path(storage_root) / file_record.file_path
-    if not full_path.exists():
+    try:
+        with smart_open(file_record.file_path, "rb") as f:
+            return f.read()
+    except FileNotFoundError:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"File content not found at {file_record.file_path}",
         )
-
-    with open(full_path, "rb") as f:
-        return f.read()
+    except Exception as e:
+        logging.error(f"Failed to read file {file_record.file_path}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to read file content: {str(e)}",
+        )
 
 
 def list_files_for_entity(
@@ -401,10 +450,10 @@ def get_file_count_for_entity(
     return count
 
 
-def update_file_content(
-    session: Session, file_id: str, content: bytes, storage_root: str = "storage"
-) -> File:
+def update_file_content(session: Session, file_id: str, content: bytes) -> File:
     """Update file content"""
+    from smart_open import open as smart_open
+
     # Get the file record
     file_record = get_file(session, file_id)
 
@@ -412,10 +461,20 @@ def update_file_content(
     file_size = len(content)
     checksum = calculate_file_checksum(content)
 
-    # Write content to storage
-    storage_path = Path(storage_root) / file_record.file_path
-    storage_path.parent.mkdir(parents=True, exist_ok=True)
-    storage_path.write_bytes(content)
+    # Write content to storage using smart_open (handles both local and S3)
+    try:
+        # For local files, ensure parent directory exists
+        if not file_record.file_path.startswith("s3://"):
+            Path(file_record.file_path).parent.mkdir(parents=True, exist_ok=True)
+
+        with smart_open(file_record.file_path, "wb") as f:
+            f.write(content)
+    except Exception as e:
+        logging.error(f"Failed to write file to {file_record.file_path}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to update file content: {str(e)}",
+        )
 
     # Update file record
     file_record.file_size = file_size
@@ -428,33 +487,36 @@ def update_file_content(
     return file_record
 
 
-def browse_filesystem(
-    directory_path: str, storage_root: str = "storage"
-) -> FileBrowserData:
+def browse_filesystem(directory_path: str) -> FileBrowserData:
     """
     Browse filesystem directory and return structured data.
 
     Automatically detects if the path is S3 (s3://bucket/key) or local filesystem
     and routes to the appropriate handler.
+
+    Args:
+        directory_path: Path to browse. Can be:
+                       - S3 URI: s3://bucket/key/path
+                       - Absolute local path: /path/to/directory
+                       - Relative path (interpreted relative to current directory)
     """
     # Check if this is an S3 path
     if _is_s3_path(directory_path):
         return browse_s3(directory_path)
 
     # Handle local filesystem
-    return _browse_local_filesystem(directory_path, storage_root)
+    return _browse_local_filesystem(directory_path)
 
 
-def _browse_local_filesystem(
-    directory_path: str, storage_root: str = "storage"
-) -> FileBrowserData:
-    """Browse local filesystem directory and return structured data"""
+def _browse_local_filesystem(directory_path: str) -> FileBrowserData:
+    """
+    Browse local filesystem directory and return structured data.
 
-    # Construct full path
-    if os.path.isabs(directory_path):
-        full_path = Path(directory_path)
-    else:
-        full_path = Path(storage_root) / directory_path
+    Args:
+        directory_path: Absolute or relative path to directory
+    """
+    # Use path as-is (can be absolute or relative)
+    full_path = Path(directory_path)
 
     # Check if directory exists and is accessible
     if not full_path.exists():

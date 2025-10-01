@@ -169,7 +169,7 @@ class TestFileServices:
             created_by="testuser",
         )
 
-        file_record = create_file(session, file_create, storage_root=temp_storage)
+        file_record = create_file(session, file_create)
 
         assert file_record.filename == "test.txt"
         assert file_record.description == "Test file"
@@ -193,17 +193,16 @@ class TestFileServices:
             entity_id="PROJ001",
         )
 
-        file_record = create_file(
-            session, file_create, content, storage_root=temp_storage
-        )
+        # Create file with explicit storage path in temp directory
+        storage_path = str(Path(temp_storage) / "project" / "PROJ001" / "test.txt")
+        file_record = create_file(session, file_create, content, storage_path=storage_path)
 
         assert file_record.file_size == len(content)
         assert file_record.checksum == calculate_file_checksum(content)
 
         # Check that file was actually written
-        file_path = Path(temp_storage) / file_record.file_path
-        assert file_path.exists()
-        assert file_path.read_bytes() == content
+        assert Path(file_record.file_path).exists()
+        assert Path(file_record.file_path).read_bytes() == content
 
     def test_get_file(self, session: Session, temp_storage):
         """Test getting file by file_id"""
@@ -211,7 +210,7 @@ class TestFileServices:
             filename="test.txt", entity_type=EntityType.PROJECT, entity_id="PROJ001"
         )
 
-        created_file = create_file(session, file_create, storage_root=temp_storage)
+        created_file = create_file(session, file_create)
         retrieved_file = get_file(session, created_file.file_id)
 
         assert retrieved_file.id == created_file.id
@@ -234,7 +233,7 @@ class TestFileServices:
             entity_id="PROJ001",
         )
 
-        created_file = create_file(session, file_create, storage_root=temp_storage)
+        created_file = create_file(session, file_create)
 
         file_update = FileUpdate(
             filename="updated.txt", description="Updated description", is_public=True
@@ -253,16 +252,15 @@ class TestFileServices:
             filename="test.txt", entity_type=EntityType.PROJECT, entity_id="PROJ001"
         )
 
-        created_file = create_file(
-            session, file_create, content, storage_root=temp_storage
-        )
-        file_path = Path(temp_storage) / created_file.file_path
+        storage_path = str(Path(temp_storage) / "project" / "PROJ001" / "test.txt")
+        created_file = create_file(session, file_create, content, storage_path=storage_path)
+        file_path = Path(created_file.file_path)
 
         # Verify file exists
         assert file_path.exists()
 
         # Delete file
-        result = delete_file(session, created_file.file_id, storage_root=temp_storage)
+        result = delete_file(session, created_file.file_id)
         assert result is True
 
         # Verify file is deleted
@@ -295,7 +293,7 @@ class TestFileServices:
                 entity_id="PROJ001",
                 file_type=FileType.DOCUMENT,
             )
-            create_file(session, file_create, storage_root=temp_storage)
+            create_file(session, file_create)
 
         result = list_files(session)
 
@@ -317,7 +315,7 @@ class TestFileServices:
                     entity_type=EntityType.PROJECT,
                     entity_id=entity_id,
                 )
-                create_file(session, file_create, storage_root=temp_storage)
+                create_file(session, file_create)
 
         # List files for PROJ001
         result = list_files_for_entity(session, EntityType.PROJECT, "PROJ001")
@@ -334,7 +332,7 @@ class TestFileServices:
                 entity_type=EntityType.PROJECT,
                 entity_id="PROJ001",
             )
-            create_file(session, file_create, storage_root=temp_storage)
+            create_file(session, file_create)
 
         count = get_file_count_for_entity(session, EntityType.PROJECT, "PROJ001")
         assert count == 3
@@ -347,10 +345,10 @@ class TestFileServices:
         )
 
         created_file = create_file(
-            session, file_create, content, storage_root=temp_storage
+            session, file_create, content
         )
         retrieved_content = get_file_content(
-            session, created_file.file_id, storage_root=temp_storage
+            session, created_file.file_id
         )
 
         assert retrieved_content == content
@@ -362,10 +360,10 @@ class TestFileServices:
         )
 
         # Create file record without content
-        created_file = create_file(session, file_create, storage_root=temp_storage)
+        created_file = create_file(session, file_create)
 
         with pytest.raises(Exception) as exc_info:
-            get_file_content(session, created_file.file_id, storage_root=temp_storage)
+            get_file_content(session, created_file.file_id)
 
         assert "not found" in str(exc_info.value)
 
@@ -715,7 +713,7 @@ class TestFileIntegration:
         )
 
         created_file = create_file(
-            session, file_create, content, storage_root=temp_storage
+            session, file_create, content
         )
         assert created_file.filename == "lifecycle.txt"
         assert created_file.file_size == len(content)
@@ -725,7 +723,7 @@ class TestFileIntegration:
         assert retrieved_file.id == created_file.id
 
         retrieved_content = get_file_content(
-            session, created_file.file_id, storage_root=temp_storage
+            session, created_file.file_id
         )
         assert retrieved_content == content
 
@@ -739,7 +737,7 @@ class TestFileIntegration:
         assert updated_file.is_public is True
 
         # Delete file
-        result = delete_file(session, created_file.file_id, storage_root=temp_storage)
+        result = delete_file(session, created_file.file_id)
         assert result is True
 
         # Verify deletion
@@ -767,7 +765,7 @@ class TestFileIntegration:
                 )
 
                 file_record = create_file(
-                    session, file_create, storage_root=temp_storage
+                    session, file_create
                 )
                 created_files.append(file_record)
 
@@ -795,7 +793,7 @@ class TestFileIntegration:
                 entity_id="PROJ001",
                 file_type=file_type,
             )
-            create_file(session, file_create, storage_root=temp_storage)
+            create_file(session, file_create)
 
         # Test filtering by each type
         for file_type in file_types:
@@ -851,11 +849,11 @@ Sample1,Sample1,ATCG
         )
 
         created_file = create_file(
-            session, file_create, samplesheet_content, storage_root=temp_storage
+            session, file_create, samplesheet_content
         )
 
         # Verify file was created in database storage
-        db_file_path = Path(temp_storage) / created_file.file_path
+        db_file_path = Path(created_file.file_path)
         assert db_file_path.exists()
         assert db_file_path.read_bytes() == samplesheet_content
 
@@ -865,7 +863,7 @@ Sample1,Sample1,ATCG
         assert run_folder_samplesheet.read_bytes() == samplesheet_content
 
         # Verify description indicates dual storage success
-        assert "[Dual-stored to run folder]" in created_file.description
+        assert "[Also stored to run folder]" in created_file.description
 
     def test_samplesheet_dual_storage_no_run_folder(
         self, session: Session, temp_storage
@@ -901,16 +899,16 @@ Sample1,Sample1,ATCG
         )
 
         created_file = create_file(
-            session, file_create, samplesheet_content, storage_root=temp_storage
+            session, file_create, samplesheet_content
         )
 
         # Verify file was created in database storage
-        db_file_path = Path(temp_storage) / created_file.file_path
+        db_file_path = Path(created_file.file_path)
         assert db_file_path.exists()
 
         # Verify description indicates database-only storage
         assert (
-            "[Database-only storage - run folder write failed]"
+            "[Run folder write failed - file only in database location]"
             in created_file.description
         )
 
@@ -948,16 +946,16 @@ Sample1,Sample1,ATCG
         )
 
         created_file = create_file(
-            session, file_create, samplesheet_content, storage_root=temp_storage
+            session, file_create, samplesheet_content
         )
 
         # Verify file was created in database storage
-        db_file_path = Path(temp_storage) / created_file.file_path
+        db_file_path = Path(created_file.file_path)
         assert db_file_path.exists()
 
         # Verify description indicates database-only storage
         assert (
-            "[Database-only storage - run folder write failed]"
+            "[Run folder write failed - file only in database location]"
             in created_file.description
         )
 
@@ -998,11 +996,11 @@ Sample1,Sample1,ATCG
         )
 
         created_file = create_file(
-            session, file_create, file_content, storage_root=temp_storage
+            session, file_create, file_content
         )
 
         # Verify file was created in database storage
-        db_file_path = Path(temp_storage) / created_file.file_path
+        db_file_path = Path(created_file.file_path)
         assert db_file_path.exists()
 
         # Verify file was NOT saved to run folder
@@ -1010,7 +1008,7 @@ Sample1,Sample1,ATCG
         assert not run_folder_file.exists()
 
         # Verify description does NOT contain dual storage note
-        assert "[Dual-stored to run folder]" not in (created_file.description or "")
+        assert "[Also stored to run folder]" not in (created_file.description or "")
         assert "[Database-only storage" not in (created_file.description or "")
 
     def test_samplesheet_for_project_not_dual_stored(
@@ -1029,15 +1027,15 @@ Sample1,Sample1,ATCG
         )
 
         created_file = create_file(
-            session, file_create, samplesheet_content, storage_root=temp_storage
+            session, file_create, samplesheet_content
         )
 
         # Verify file was created in database storage
-        db_file_path = Path(temp_storage) / created_file.file_path
+        db_file_path = Path(created_file.file_path)
         assert db_file_path.exists()
 
         # Verify description does NOT contain dual storage note
-        assert "[Dual-stored to run folder]" not in (created_file.description or "")
+        assert "[Also stored to run folder]" not in (created_file.description or "")
         assert "[Database-only storage" not in (created_file.description or "")
 
 
@@ -1095,7 +1093,7 @@ class TestFileBrowserServices:
 
     def test_browse_filesystem(self, temp_storage):
         """Test filesystem browsing"""
-        result = browse_filesystem("", temp_storage)
+        result = browse_filesystem(temp_storage)
 
         assert isinstance(result, FileBrowserData)
         assert len(result.folders) == 2
@@ -1119,7 +1117,7 @@ class TestFileBrowserServices:
     def test_browse_filesystem_nonexistent_directory(self):
         """Test browsing non-existent directory"""
         with pytest.raises(HTTPException) as exc_info:
-            browse_filesystem("nonexistent", "nonexistent_root")
+            browse_filesystem("nonexistent")
 
         assert exc_info.value.status_code == 404
         assert "not found" in str(exc_info.value.detail)
@@ -1138,7 +1136,7 @@ class TestFileBrowserAPI:
             (Path(temp_dir) / "test_file.txt").write_text("test content")
 
             # Test the endpoint
-            response = client.get(f"/api/v1/files/browse?storage_root={temp_dir}")
+            response = client.get(f"/api/v1/files/browse?directory_path={temp_dir}")
             assert response.status_code == 200
 
             data = response.json()
@@ -1200,6 +1198,6 @@ class TestFileBrowserAPI:
         """Test error handling for filesystem browsing"""
         # Test non-existent directory
         response = client.get(
-            "/api/v1/files/browse?directory_path=nonexistent&storage_root=nonexistent"
+            "/api/v1/files/browse?directory_path=/nonexistent/path/that/does/not/exist"
         )
         assert response.status_code == 404

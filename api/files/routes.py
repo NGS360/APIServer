@@ -131,7 +131,7 @@ def browse_filesystem(
     Browse a filesystem directory or S3 bucket and return folders and files in structured format.
 
     Supports both local filesystem and AWS S3:
-    - **Local paths**: Relative to storage_root (empty for root) or absolute paths
+    - **Local paths**: Absolute paths (e.g., /path/to/directory) or relative paths
     - **S3 paths**: Use s3://bucket/key format (e.g., s3://my-bucket/path/to/folder/)
 
     Returns separate arrays for folders and files with name, date, and size information.
@@ -142,7 +142,8 @@ def browse_filesystem(
     - Files show S3 object metadata (size, last modified)
 
     Examples:
-    - Local: `/browse?directory_path=project1/data`
+    - Local absolute: `/browse?directory_path=/data/project1`
+    - Local relative: `/browse?directory_path=storage/project1`
     - S3: `/browse?directory_path=s3://my-bucket/project1/data/`
     """
     return services.browse_filesystem(directory_path)

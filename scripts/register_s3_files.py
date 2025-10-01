@@ -182,17 +182,15 @@ class S3FileRegistrar:
             return True
 
         try:
-            # Register file in database
+            # Register file in database with S3 storage path
             file_record = create_file(
                 session=self.session,
                 file_create=file_create,
                 file_content=None,  # No content upload, file stays in S3
-                storage_root="storage",  # Use default storage settings
+                storage_path=s3_uri,  # Use S3 URI as storage path
             )
 
             # Update the file record with S3-specific information
-            file_record.file_path = s3_uri
-            file_record.storage_backend = StorageBackend.S3
             file_record.file_size = obj.get("Size", 0)
             file_record.mime_type = mime_type
             file_record.upload_date = obj.get(

@@ -25,8 +25,8 @@ lint:
 	flake8 .
 
 test:
-	pytest -xv --cov
-	coverage html
+	. .venv/bin/activate && pytest -xv --cov
+	. .venv/bin/activate && coverage html
 
 # Alembic migration commands
 migrate-upgrade:
