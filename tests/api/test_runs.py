@@ -51,6 +51,23 @@ def test_add_run(client: TestClient):
     assert data["status"] == RunStatus.READY.value
     assert data["barcode"] == "190110_MACHINE123_0001_FLOWCELL123"
 
+    # Add a run with empty run_time string
+    new_run = {
+        "run_date": "2019-01-10",
+        "machine_id": "MACHINE123",
+        "run_number": 2,
+        "flowcell_id": "FLOWCELL123",
+        "experiment_name": "Test Experiment",
+        "run_folder_uri": "s3://bucket/path/to/run",
+        "status": RunStatus.READY,
+        "run_time": "",
+    }
+    response = client.post("/api/v1/runs", json=new_run)
+    assert response.status_code == 201
+    data = response.json()
+    assert data["run_time"] is None
+    assert data["barcode"] == "190110_MACHINE123_0002_FLOWCELL123"
+
 
 def test_get_runs(client: TestClient, session: Session):
     """Test that we can get all runs"""
