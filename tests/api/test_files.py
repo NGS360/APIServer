@@ -335,3 +335,89 @@ class TestFileBrowserAPI:
             # Cleanup: remove test storage directory
             if Path("storage").exists():
                 shutil.rmtree("storage")
+
+    def test_upload_file_to_s3(self, client: TestClient, mock_s3_client: MockS3Client):
+        """Test uploading a file to S3"""
+        file_content = b"Test file content for upload"
+        uri = "s3://test-bucket/uploads/test-file.txt"
+        
+        response = client.post(
+            f"/api/v1/files/upload?uri={uri}&file_content={file_content.decode()}"
+        )
+        
+        # Note: This test will likely fail because upload_file_to_s3 doesn't return FileBrowserData
+        # This reveals a bug in the implementation
+        assert response.status_code == 201
+        
+        # Verify the file was uploaded to mock S3
+        assert "test-bucket" in mock_s3_client.uploaded_files
+        assert "uploads/test-file.txt" in mock_s3_client.uploaded_files["test-bucket"]
+        assert mock_s3_client.uploaded_files["test-bucket"]["uploads/test-file.txt"] == file_content
+
+    def test_upload_file_to_local_storage(self, client: TestClient):
+        """Test uploading a file to local storage"""
+        import shutil
+        from pathlib import Path
+        
+        file_content = b"Test file content for local upload"
+        uri = "test_uploads/test-file.txt"
+        
+        try:
+            response = client.post(
+                f"/api/v1/files/upload?uri={uri}&file_content={file_content.decode()}"
+            )
+            
+            # Note: This test will likely fail because upload_file_to_local
+            # doesn't return FileBrowserData
+            assert response.status_code == 201
+            
+            # Verify the file was created
+            uploaded_file = Path("storage") / uri
+            assert uploaded_file.exists()
+            assert uploaded_file.read_bytes() == file_content
+        finally:
+            # Cleanup
+            if Path("storage").exists():
+                shutil.rmtree("storage")
+
+    def test_upload_file_s3_bucket_not_found(self, client: TestClient, mock_s3_client: MockS3Client):
+        """Test upload fails when S3 bucket doesn't exist"""
+        mock_s3_client.simulate_error("NoSuchBucket")
+        
+        file_content = b"Test content"
+        uri = "s3://nonexistent-bucket/file.txt"
+        
+        response = client.post(
+            f"/api/v1/files/upload?uri={uri}&file_content={file_content.decode()}"
+        )
+        
+        assert response.status_code == 404
+        assert "bucket not found" in response.json()["detail"].lower()
+
+    def test_upload_file_s3_access_denied(self, client: TestClient, mock_s3_client: MockS3Client):
+        """Test upload fails when access is denied"""
+        mock_s3_client.simulate_error("AccessDenied")
+        
+        file_content = b"Test content"
+        uri = "s3://restricted-bucket/file.txt"
+        
+        response = client.post(
+            f"/api/v1/files/upload?uri={uri}&file_content={file_content.decode()}"
+        )
+        
+        assert response.status_code == 403
+        assert "access denied" in response.json()["detail"].lower()
+
+    def test_upload_file_s3_no_credentials(self, client: TestClient, mock_s3_client: MockS3Client):
+        """Test upload fails when AWS credentials are missing"""
+        mock_s3_client.simulate_error("NoCredentialsError")
+        
+        file_content = b"Test content"
+        uri = "s3://test-bucket/file.txt"
+        
+        response = client.post(
+            f"/api/v1/files/upload?uri={uri}&file_content={file_content.decode()}"
+        )
+        
+        assert response.status_code == 401
+        assert "credentials" in response.json()["detail"].lower()

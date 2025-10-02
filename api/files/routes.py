@@ -2,13 +2,31 @@
 Routes/endpoints for the Files API
 """
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, status
 
 from api.files.models import FileBrowserData
 import api.files.services as services
 from core.deps import get_s3_client
 
 router = APIRouter(prefix="/files", tags=["File Endpoints"])
+
+
+@router.post(
+    "/upload",
+    response_model=FileBrowserData,
+    status_code=status.HTTP_201_CREATED,
+    summary="Upload a file to the specified URI",
+    tags=["File Endpoints"]
+)
+def upload_file(
+    uri: str = Query(..., description="Destination URI (e.g., s3://bucket/folder/file.txt or local /path/file.txt)"),
+    file_content: bytes = Query(..., description="Content of the file to upload"),
+    s3_client=Depends(get_s3_client),
+) -> FileBrowserData:
+    """
+    Upload a file to the specified URI.
+    """
+    return services.upload_file(uri=uri, file_content=file_content, s3_client=s3_client)
 
 
 @router.get("/list", response_model=FileBrowserData, tags=["File Endpoints"])

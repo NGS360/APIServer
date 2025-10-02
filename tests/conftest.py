@@ -207,6 +207,7 @@ class MockS3Client:
         self.buckets = (
             {}
         )  # Store bucket data: {bucket_name: {prefix: {"files": [], "folders": []}}}
+        self.uploaded_files = {}  # Track uploaded files: {bucket: {key: body}}
         self.error_mode = None  # For simulating errors
 
     def setup_bucket(self, bucket: str, prefix: str, files: list, folders: list):
@@ -252,6 +253,29 @@ class MockS3Client:
             error_type: One of "NoSuchBucket", "AccessDenied", "NoCredentialsError"
         """
         self.error_mode = error_type
+
+    def put_object(self, Bucket: str, Key: str, Body: bytes):
+        """Mock S3 put_object operation"""
+        from botocore.exceptions import NoCredentialsError, ClientError
+        
+        # Check for simulated errors
+        if self.error_mode == "NoCredentialsError":
+            raise NoCredentialsError()
+        elif self.error_mode == "NoSuchBucket":
+            error_response = {
+                "Error": {"Code": "NoSuchBucket", "Message": "The specified bucket does not exist"}
+            }
+            raise ClientError(error_response, "PutObject")
+        elif self.error_mode == "AccessDenied":
+            error_response = {"Error": {"Code": "AccessDenied", "Message": "Access Denied"}}
+            raise ClientError(error_response, "PutObject")
+        
+        # Store the uploaded file
+        if Bucket not in self.uploaded_files:
+            self.uploaded_files[Bucket] = {}
+        self.uploaded_files[Bucket][Key] = Body
+        
+        return {"ETag": '"mock-etag"', "VersionId": "mock-version-id"}
 
 
 @pytest.fixture(name="session")
