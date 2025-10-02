@@ -160,15 +160,15 @@ def _list_local_storage(
     clean_path = directory_path.lstrip("/")
     full_path = (Path(storage_root) / clean_path).resolve()
     storage_root_resolved = Path(storage_root).resolve()
-    
+
     # Security check: ensure the resolved path is within storage_root
     try:
         full_path.relative_to(storage_root_resolved)
-    except ValueError:
+    except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Access denied: path escapes storage root",
-        )
+        ) from exc
 
     # Check if directory exists and is accessible
     if not full_path.exists():

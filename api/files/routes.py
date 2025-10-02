@@ -2,7 +2,7 @@
 Routes/endpoints for the Files API
 """
 
-from fastapi import APIRouter, Depends, File, Form, Query, UploadFile, status
+from fastapi import APIRouter, Depends, Query
 
 from api.files.models import FileBrowserData
 import api.files.services as services

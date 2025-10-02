@@ -3,7 +3,6 @@ Test /files endpoint
 """
 
 from datetime import datetime
-from io import BytesIO
 
 from fastapi.testclient import TestClient
 
@@ -89,11 +88,11 @@ class TestFileServices:
         # Setup test directory structure
         (tmp_path / "allowed").mkdir()
         (tmp_path / "allowed" / "file.txt").write_text("allowed file")
-        
+
         from api.files.services import _list_local_storage
         from fastapi import HTTPException
         import pytest
-        
+
         # Try to escape storage_root using ../
         with pytest.raises(HTTPException) as exc_info:
             _list_local_storage("../../etc", storage_root=str(tmp_path))

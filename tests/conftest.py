@@ -257,7 +257,7 @@ class MockS3Client:
     def put_object(self, Bucket: str, Key: str, Body: bytes):
         """Mock S3 put_object operation"""
         from botocore.exceptions import NoCredentialsError, ClientError
-        
+
         # Check for simulated errors
         if self.error_mode == "NoCredentialsError":
             raise NoCredentialsError()
@@ -269,12 +269,12 @@ class MockS3Client:
         elif self.error_mode == "AccessDenied":
             error_response = {"Error": {"Code": "AccessDenied", "Message": "Access Denied"}}
             raise ClientError(error_response, "PutObject")
-        
+
         # Store the uploaded file
         if Bucket not in self.uploaded_files:
             self.uploaded_files[Bucket] = {}
         self.uploaded_files[Bucket][Key] = Body
-        
+
         return {"ETag": '"mock-etag"', "VersionId": "mock-version-id"}
 
 
