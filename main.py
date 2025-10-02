@@ -12,6 +12,7 @@ from api.project.routes import router as project_router
 from api.runs.routes import router as runs_router
 from api.samples.routes import router as samples_router
 from api.search.routes import router as search_router
+from api.files.routes import router as files_router
 
 
 # Customize route id's
@@ -50,6 +51,7 @@ app.include_router(project_router, prefix=API_PREFIX)
 app.include_router(runs_router, prefix=API_PREFIX)
 app.include_router(samples_router, prefix=API_PREFIX)
 app.include_router(search_router, prefix=API_PREFIX)
+app.include_router(files_router, prefix=API_PREFIX)
 
 if __name__ == "__main__":
     # For debugging purposes
