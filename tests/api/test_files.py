@@ -10,7 +10,7 @@ from tests.conftest import MockS3Client
 class TestFileServices:
     """Test file services functions"""
 
-    def Xtest_parse_s3_path(self):
+    def test_parse_s3_path(self):
         """Test S3 path parsing"""
         from api.files.services import _parse_s3_path
 

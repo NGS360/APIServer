@@ -25,6 +25,14 @@ def _parse_s3_path(s3_path: str) -> tuple[str, str]:
     # Check for empty path after s3://
     if not path_without_scheme:
         raise ValueError("Invalid S3 path format. Bucket name is required")
+    
+    # Check for leading slash (s3:///)
+    if path_without_scheme.startswith("/"):
+        raise ValueError("Invalid S3 path format. Bucket name cannot start with /")
+    
+    # Check for double slashes anywhere in the path
+    if "//" in path_without_scheme:
+        raise ValueError("Invalid S3 path format. Path cannot contain double slashes")
 
     # Split into bucket and key
     if "/" in path_without_scheme:
@@ -32,10 +40,6 @@ def _parse_s3_path(s3_path: str) -> tuple[str, str]:
     else:
         bucket = path_without_scheme
         key = ""
-
-    # Validate bucket name is not empty
-    if not bucket:
-        raise ValueError("Invalid S3 path format. Bucket name cannot be empty")
 
     return bucket, key
 
