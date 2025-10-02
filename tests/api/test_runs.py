@@ -380,3 +380,32 @@ def test_update_run_status(client: TestClient, session: Session):
     update_data = {"run_status": "INVALID_STATUS"}
     response = client.put(f"/api/v1/runs/{run_barcode}", json=update_data)
     assert response.status_code == 422
+
+
+def test_upload_run_samplesheet(client: TestClient, session: Session, tmp_path: Path):
+    """Test that we can upload a samplesheet for a run"""
+
+    # Set the test run folder
+    run_folder = tmp_path
+
+    # Add a run to the database
+    new_run = SequencingRun(
+        id=uuid4(),
+        run_date=datetime.date(2019, 1, 10),
+        machine_id="MACHINE123",
+        run_number=1,
+        flowcell_id="FLOWCELL123",
+        experiment_name="Test Experiment",
+        run_folder_uri=run_folder.as_posix(),
+        status=RunStatus.READY,
+    )
+    session.add(new_run)
+    session.commit()
+
+    # Upload the samplesheet via the API
+    run_barcode = "190110_MACHINE123_0001_FLOWCELL123"
+
+    with open("tests/fixtures/190110_MACHINE123_0001_FLOWCELL123/SampleSheet.csv", "rb") as f:
+        files = {"file": ("SampleSheet.csv", f, "text/csv")}
+        response = client.post(f"/api/v1/runs/{run_barcode}/samplesheet", files=files)
+    assert response.status_code == 201
