@@ -54,7 +54,8 @@ class TestFileServices:
 
         from api.files.services import _list_local_storage
 
-        result = _list_local_storage(str(tmp_path))
+        # Pass "/" as directory_path and tmp_path as storage_root
+        result = _list_local_storage("/", storage_root=str(tmp_path))
 
         # Verify structure
         assert "folders" in result.model_dump()
@@ -82,6 +83,22 @@ class TestFileServices:
             assert file.size > 0
             assert isinstance(file.date, str)
             assert len(file.date) > 0  # Date string should not be empty
+
+    def test__list_local_storage_path_traversal_blocked(self, tmp_path):
+        """Test that path traversal attacks are blocked"""
+        # Setup test directory structure
+        (tmp_path / "allowed").mkdir()
+        (tmp_path / "allowed" / "file.txt").write_text("allowed file")
+        
+        from api.files.services import _list_local_storage
+        from fastapi import HTTPException
+        import pytest
+        
+        # Try to escape storage_root using ../
+        with pytest.raises(HTTPException) as exc_info:
+            _list_local_storage("../../etc", storage_root=str(tmp_path))
+        assert exc_info.value.status_code == 403
+        assert "path escapes storage root" in exc_info.value.detail
 
 
 class TestFileBrowserAPI:

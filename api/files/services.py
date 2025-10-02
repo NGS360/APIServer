@@ -155,11 +155,20 @@ def _list_local_storage(
     """
     List files and folders in local storage at the specified directory path.
     """
-    # Construct the full path, relative to storage_root
-    # if os.path.isabs(directory_path):
-    #    full_path = Path(directory_path)
-    # else:
-    full_path = Path(storage_root) / directory_path
+    # Construct the full path, ensuring it stays within storage_root
+    # Strip leading slashes to ensure directory_path is treated as relative
+    clean_path = directory_path.lstrip("/")
+    full_path = (Path(storage_root) / clean_path).resolve()
+    storage_root_resolved = Path(storage_root).resolve()
+    
+    # Security check: ensure the resolved path is within storage_root
+    try:
+        full_path.relative_to(storage_root_resolved)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied: path escapes storage root",
+        )
 
     # Check if directory exists and is accessible
     if not full_path.exists():
@@ -231,8 +240,20 @@ def upload_file_to_local(
     """
     Upload a file to local storage at the specified URI.
     """
-    # Construct the full path, relative to storage_root
-    full_path = Path(storage_root) / uri
+    # Construct the full path, ensuring it stays within storage_root
+    # Strip leading slashes to ensure uri is treated as relative
+    clean_uri = uri.lstrip("/")
+    full_path = (Path(storage_root) / clean_uri).resolve()
+    storage_root_resolved = Path(storage_root).resolve()
+    
+    # Security check: ensure the resolved path is within storage_root
+    try:
+        full_path.relative_to(storage_root_resolved)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied: path escapes storage root",
+        )
 
     # Ensure the parent directory exists
     try:
