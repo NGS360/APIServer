@@ -3,6 +3,7 @@ Test /files endpoint
 """
 
 from datetime import datetime
+from io import BytesIO
 
 from fastapi.testclient import TestClient
 
@@ -342,11 +343,11 @@ class TestFileBrowserAPI:
         uri = "s3://test-bucket/uploads/test-file.txt"
         
         response = client.post(
-            f"/api/v1/files/upload?uri={uri}&file_content={file_content.decode()}"
+            "/api/v1/files/upload",
+            data={"uri": uri},
+            files={"file": ("test-file.txt", BytesIO(file_content), "text/plain")}
         )
         
-        # Note: This test will likely fail because upload_file_to_s3 doesn't return FileBrowserData
-        # This reveals a bug in the implementation
         assert response.status_code == 201
         
         # Verify the file was uploaded to mock S3
@@ -364,11 +365,11 @@ class TestFileBrowserAPI:
         
         try:
             response = client.post(
-                f"/api/v1/files/upload?uri={uri}&file_content={file_content.decode()}"
+                "/api/v1/files/upload",
+                data={"uri": uri},
+                files={"file": ("test-file.txt", BytesIO(file_content), "text/plain")}
             )
             
-            # Note: This test will likely fail because upload_file_to_local
-            # doesn't return FileBrowserData
             assert response.status_code == 201
             
             # Verify the file was created
@@ -388,7 +389,9 @@ class TestFileBrowserAPI:
         uri = "s3://nonexistent-bucket/file.txt"
         
         response = client.post(
-            f"/api/v1/files/upload?uri={uri}&file_content={file_content.decode()}"
+            "/api/v1/files/upload",
+            data={"uri": uri},
+            files={"file": ("test.txt", BytesIO(file_content), "text/plain")}
         )
         
         assert response.status_code == 404
@@ -402,7 +405,9 @@ class TestFileBrowserAPI:
         uri = "s3://restricted-bucket/file.txt"
         
         response = client.post(
-            f"/api/v1/files/upload?uri={uri}&file_content={file_content.decode()}"
+            "/api/v1/files/upload",
+            data={"uri": uri},
+            files={"file": ("test.txt", BytesIO(file_content), "text/plain")}
         )
         
         assert response.status_code == 403
@@ -416,7 +421,9 @@ class TestFileBrowserAPI:
         uri = "s3://test-bucket/file.txt"
         
         response = client.post(
-            f"/api/v1/files/upload?uri={uri}&file_content={file_content.decode()}"
+            "/api/v1/files/upload",
+            data={"uri": uri},
+            files={"file": ("test.txt", BytesIO(file_content), "text/plain")}
         )
         
         assert response.status_code == 401

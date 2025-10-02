@@ -2,7 +2,7 @@
 Routes/endpoints for the Files API
 """
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, File, Form, Query, UploadFile, status
 
 from api.files.models import FileBrowserData
 import api.files.services as services
@@ -18,14 +18,17 @@ router = APIRouter(prefix="/files", tags=["File Endpoints"])
     summary="Upload a file to the specified URI",
     tags=["File Endpoints"]
 )
-def upload_file(
-    uri: str = Query(..., description="Destination URI (e.g., s3://bucket/folder/file.txt or local /path/file.txt)"),
-    file_content: bytes = Query(..., description="Content of the file to upload"),
+async def upload_file(
+    uri: str = Form(
+        ..., description="Destination URI (e.g., s3://bucket/folder/file.txt or local path/file.txt)"
+    ),
+    file: UploadFile = File(..., description="File to upload"),
     s3_client=Depends(get_s3_client),
 ) -> FileBrowserData:
     """
     Upload a file to the specified URI.
     """
+    file_content = await file.read()
     return services.upload_file(uri=uri, file_content=file_content, s3_client=s3_client)
 
 
