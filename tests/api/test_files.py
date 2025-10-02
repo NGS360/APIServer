@@ -1179,14 +1179,7 @@ class TestFileBrowserAPI:
 
     def test_s3_path_detection(self):
         """Test S3 path detection functionality"""
-        from api.files.services import _is_s3_path, _parse_s3_path
-
-        # Test S3 path detection
-        assert _is_s3_path("s3://bucket/key") is True
-        assert _is_s3_path("s3://bucket") is True
-        assert _is_s3_path("/local/path") is False
-        assert _is_s3_path("local/path") is False
-        assert _is_s3_path("") is False
+        from api.files.services import _parse_s3_path
 
         # Test S3 path parsing
         bucket, key = _parse_s3_path("s3://my-bucket/path/to/folder/")

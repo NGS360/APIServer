@@ -438,7 +438,7 @@ def browse_filesystem(
     and routes to the appropriate handler.
     """
     # Check if this is an S3 path
-    if _is_s3_path(directory_path):
+    if directory_path.startswith("s3://"):
         return browse_s3(directory_path)
 
     # Handle local filesystem
@@ -498,11 +498,6 @@ def _browse_local_filesystem(
     files.sort(key=lambda x: x.name.lower())
 
     return FileBrowserData(folders=folders, files=files)
-
-
-def _is_s3_path(path: str) -> bool:
-    """Check if a path is an S3 URI (s3://bucket/key)"""
-    return path.startswith("s3://")
 
 
 def _parse_s3_path(s3_path: str) -> tuple[str, str]:
