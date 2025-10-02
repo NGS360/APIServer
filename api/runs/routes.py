@@ -156,6 +156,19 @@ def update_run(
     )
 
 
+@router.get(
+    "/{run_barcode}/samplesheet",
+    response_model=IlluminaSampleSheetResponseModel,
+    status_code=status.HTTP_200_OK,
+    tags=["Run Endpoints"],
+)
+def get_run_samplesheet(session: SessionDep, run_barcode: str) -> IlluminaSampleSheetResponseModel:
+    """
+    Retrieve the sample sheet for a specific run.
+    """
+    return services.get_run_samplesheet(session=session, run_barcode=run_barcode)
+
+
 @router.post(
     "/{run_barcode}/samplesheet",
     response_model=IlluminaSampleSheetResponseModel,
@@ -174,19 +187,6 @@ def post_run_samplesheet(
         run_barcode=run_barcode,
         file=file,
     )
-
-
-@router.get(
-    "/{run_barcode}/samplesheet",
-    response_model=IlluminaSampleSheetResponseModel,
-    status_code=status.HTTP_200_OK,
-    tags=["Run Endpoints"],
-)
-def get_run_samplesheet(session: SessionDep, run_barcode: str) -> IlluminaSampleSheetResponseModel:
-    """
-    Retrieve the sample sheet for a specific run.
-    """
-    return services.get_run_samplesheet(session=session, run_barcode=run_barcode)
 
 
 @router.get(
