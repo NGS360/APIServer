@@ -1,7 +1,9 @@
 """
 Test /files endpoint
 """
+
 from datetime import datetime
+
 from fastapi.testclient import TestClient
 
 from tests.conftest import MockS3Client
@@ -21,7 +23,7 @@ class TestFileServices:
         assert _parse_s3_path("s3://my-bucket/prefix/") == ("my-bucket", "prefix/")
         assert _parse_s3_path("s3://my-bucket/prefix/subprefix/file.txt") == (
             "my-bucket",
-            "prefix/subprefix/file.txt"
+            "prefix/subprefix/file.txt",
         )
 
         # Invalid paths
@@ -31,7 +33,7 @@ class TestFileServices:
             "s3//my-bucket",
             "s3://",
             "s3:///",
-            "s3://my-bucket//prefix"
+            "s3://my-bucket//prefix",
         ]
         for path in invalid_paths:
             try:
@@ -39,7 +41,6 @@ class TestFileServices:
                 assert False, f"Expected ValueError for path: {path}"
             except ValueError:
                 pass  # Expected
-
 
     def test__list_local_storage(self, tmp_path):
         """Test listing local storage directory"""
@@ -92,17 +93,17 @@ class TestFileBrowserAPI:
             {
                 "Key": "a_folder/file_0.txt",
                 "LastModified": datetime(2024, 1, 1, 12, 0, 0),
-                "Size": 100
+                "Size": 100,
             },
             {
                 "Key": "a_folder/file_1.txt",
                 "LastModified": datetime(2024, 1, 2, 12, 0, 0),
-                "Size": 101
+                "Size": 101,
             },
             {
                 "Key": "a_folder/file_2.txt",
                 "LastModified": datetime(2024, 1, 3, 12, 0, 0),
-                "Size": 102
+                "Size": 102,
             },
         ]
         folders = ["a_folder/folder_0/", "a_folder/folder_1/"]
@@ -156,20 +157,18 @@ class TestFileBrowserAPI:
         assert len(data["folders"]) == 0
         assert len(data["files"]) == 0
 
-    def test_list_s3_files_only(
-        self, client: TestClient, mock_s3_client: MockS3Client
-    ):
+    def test_list_s3_files_only(self, client: TestClient, mock_s3_client: MockS3Client):
         """Test S3 bucket with only files, no folders"""
         files = [
             {
                 "Key": "file1.txt",
                 "LastModified": datetime(2024, 1, 1, 12, 0, 0),
-                "Size": 100
+                "Size": 100,
             },
             {
                 "Key": "file2.txt",
                 "LastModified": datetime(2024, 1, 2, 12, 0, 0),
-                "Size": 200
+                "Size": 200,
             },
         ]
         mock_s3_client.setup_bucket("test-bucket", "", files, [])
@@ -236,7 +235,7 @@ class TestFileBrowserAPI:
             {
                 "Key": "a/b/c/file.txt",
                 "LastModified": datetime(2024, 1, 1, 12, 0, 0),
-                "Size": 100
+                "Size": 100,
             },
         ]
         folders = ["a/b/c/subfolder/"]
@@ -251,25 +250,23 @@ class TestFileBrowserAPI:
         assert len(data["folders"]) == 1
         assert data["folders"][0]["name"] == "subfolder"
 
-    def test_list_s3_sorting(
-        self, client: TestClient, mock_s3_client: MockS3Client
-    ):
+    def test_list_s3_sorting(self, client: TestClient, mock_s3_client: MockS3Client):
         """Test that files and folders are sorted alphabetically"""
         files = [
             {
                 "Key": "prefix/zebra.txt",
                 "LastModified": datetime(2024, 1, 1, 12, 0, 0),
-                "Size": 100
+                "Size": 100,
             },
             {
                 "Key": "prefix/apple.txt",
                 "LastModified": datetime(2024, 1, 2, 12, 0, 0),
-                "Size": 200
+                "Size": 200,
             },
             {
                 "Key": "prefix/middle.txt",
                 "LastModified": datetime(2024, 1, 3, 12, 0, 0),
-                "Size": 300
+                "Size": 300,
             },
         ]
         folders = ["prefix/zoo/", "prefix/aardvark/", "prefix/middle/"]
@@ -286,3 +283,55 @@ class TestFileBrowserAPI:
 
         folder_names = [f["name"] for f in data["folders"]]
         assert folder_names == ["aardvark", "middle", "zoo"]
+
+    def test_list_local_storage(self, client: TestClient):
+        """Test local storage browsing via API"""
+        import shutil
+        from pathlib import Path
+
+        # Create storage directory structure in workspace
+        storage_dir = Path("storage/test_folder")
+        storage_dir.mkdir(parents=True, exist_ok=True)
+
+        try:
+            # Create test files and folders
+            (storage_dir / "subfolder1").mkdir(exist_ok=True)
+            (storage_dir / "subfolder2").mkdir(exist_ok=True)
+            (storage_dir / "file1.txt").write_text("Test content 1")
+            (storage_dir / "file2.txt").write_text("Test content 2")
+
+            # Call API endpoint
+            response = client.get("/api/v1/files/list?uri=test_folder")
+
+            assert response.status_code == 200
+            data = response.json()
+
+            # Verify structure
+            assert "folders" in data
+            assert "files" in data
+            assert isinstance(data["folders"], list)
+            assert isinstance(data["files"], list)
+
+            # Verify we have folders and files
+            assert len(data["folders"]) == 2
+            assert len(data["files"]) == 2
+
+            # Verify folder names
+            folder_names = [f["name"] for f in data["folders"]]
+            assert "subfolder1" in folder_names
+            assert "subfolder2" in folder_names
+
+            # Verify file names
+            file_names = [f["name"] for f in data["files"]]
+            assert "file1.txt" in file_names
+            assert "file2.txt" in file_names
+
+            # Verify files have size and date
+            for file in data["files"]:
+                assert file["size"] > 0
+                assert isinstance(file["date"], str)
+                assert len(file["date"]) > 0
+        finally:
+            # Cleanup: remove test storage directory
+            if Path("storage").exists():
+                shutil.rmtree("storage")

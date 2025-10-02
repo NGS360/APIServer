@@ -1,12 +1,15 @@
 """
 Services for the Files API
 """
+
 from fastapi import HTTPException, status
 from pathlib import Path
 from datetime import datetime
+
 try:
     import boto3
     from botocore.exceptions import NoCredentialsError, ClientError
+
     BOTO3_AVAILABLE = True
 except ImportError:
     BOTO3_AVAILABLE = False
@@ -25,11 +28,11 @@ def _parse_s3_path(s3_path: str) -> tuple[str, str]:
     # Check for empty path after s3://
     if not path_without_scheme:
         raise ValueError("Invalid S3 path format. Bucket name is required")
-    
+
     # Check for leading slash (s3:///)
     if path_without_scheme.startswith("/"):
         raise ValueError("Invalid S3 path format. Bucket name cannot start with /")
-    
+
     # Check for double slashes anywhere in the path
     if "//" in path_without_scheme:
         raise ValueError("Invalid S3 path format. Path cannot contain double slashes")
@@ -143,19 +146,19 @@ def _list_s3(s3_path: str, s3_client=None) -> FileBrowserData:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Unexpected error browsing S3: {str(exc)}",
-         ) from exc
+        ) from exc
 
 
 def _list_local_storage(
-        directory_path: str,
-        storage_root: str = "storage") -> FileBrowserData:
+    directory_path: str, storage_root: str = "storage"
+) -> FileBrowserData:
     """
     List files and folders in local storage at the specified directory path.
     """
     # Construct the full path, relative to storage_root
-    #if os.path.isabs(directory_path):
+    # if os.path.isabs(directory_path):
     #    full_path = Path(directory_path)
-    #else:
+    # else:
     full_path = Path(storage_root) / directory_path
 
     # Check if directory exists and is accessible
