@@ -152,7 +152,7 @@ def _list_local_storage(
     # remove the leading slash if present
     if directory_path.startswith("/"):
         directory_path = directory_path[1:]
-    
+
     # Check if path is absolute or relative
     path_obj = Path(directory_path)
     if path_obj.is_absolute() or path_obj.exists():
