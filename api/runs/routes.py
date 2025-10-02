@@ -14,7 +14,7 @@ GET    /api/v0/runs/[id]/metrics       Retrieve demux metrics from Stat.json
 """
 
 from typing import Literal
-from fastapi import APIRouter, Query, status
+from fastapi import APIRouter, Query, status, UploadFile, File
 from core.deps import SessionDep, OpenSearchDep
 from api.runs.models import (
     IlluminaMetricsResponseModel,
@@ -153,6 +153,26 @@ def update_run(
         session=session,
         run_barcode=run_barcode,
         run_status=update_request.run_status
+    )
+
+
+@router.post(
+    "/{run_barcode}/samplesheet",
+    response_model=IlluminaSampleSheetResponseModel,
+    status_code=status.HTTP_201_CREATED,
+    tags=["Run Endpoints"],)
+def post_run_samplesheet(
+    session: SessionDep,
+    run_barcode: str,
+    file: UploadFile = File(..., description="File to upload"),
+) -> IlluminaSampleSheetResponseModel:
+    """
+    Upload a samplesheet to a run.
+    """
+    return services.upload_samplesheet(
+        session=session,
+        run_barcode=run_barcode,
+        file=file,
     )
 
 
