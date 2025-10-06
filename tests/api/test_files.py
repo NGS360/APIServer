@@ -53,8 +53,8 @@ class TestFileServices:
 
         from api.files.services import _list_local_storage
 
-        # Pass "/" as directory_path and tmp_path as storage_root
-        result = _list_local_storage("/", storage_root=str(tmp_path))
+        # Pass tmp_path as both directory_path and storage_root
+        result = _list_local_storage(str(tmp_path), storage_root=str(tmp_path))
 
         # Verify structure
         assert "folders" in result.model_dump()
@@ -99,6 +99,30 @@ class TestFileServices:
         assert exc_info.value.status_code == 403
         assert "path escapes storage root" in exc_info.value.detail
 
+    def test__list_local_storage_absolute_paths(self, tmp_path):
+        """Test listing local storage with absolute paths"""
+        # Setup test directory structure
+        (tmp_path / "folder").mkdir()
+        (tmp_path / "folder/file.txt").write_text("test")
+
+        from api.files.services import _list_local_storage
+        from fastapi import HTTPException
+        import pytest
+
+        # Test with absolute paths - valid case
+        result = _list_local_storage(
+            str(tmp_path / "folder"),
+            storage_root=str(tmp_path)
+        )
+        assert len(result.files) == 1
+        assert result.files[0].name == "file.txt"
+
+        # Test with absolute paths - invalid case (path outside root)
+        with pytest.raises(HTTPException) as exc_info:
+            _list_local_storage("/etc", storage_root=str(tmp_path))
+        assert exc_info.value.status_code == 403
+        assert "path escapes storage root" in exc_info.value.detail
+
 
 class TestFileBrowserAPI:
     """Test file browser API endpoints"""
@@ -127,8 +151,8 @@ class TestFileBrowserAPI:
 
         mock_s3_client.setup_bucket("test-bucket", "a_folder/", files, folders)
 
-        # Make API call
-        response = client.get("/api/v1/files/list?uri=s3://test-bucket/a_folder/")
+        # Make API call with storage_root parameter
+        response = client.get("/api/v1/files/list?uri=s3://test-bucket/a_folder/&storage_root=s3://test-bucket/a_folder/")
 
         # Verify response
         assert response.status_code == 200
@@ -161,13 +185,25 @@ class TestFileBrowserAPI:
         assert file_sizes["file_1.txt"] == 101
         assert file_sizes["file_2.txt"] == 102
 
+    def test_list_s3_path_outside_root(self, client: TestClient, mock_s3_client: MockS3Client):
+        """Test S3 path that attempts to navigate outside storage root"""
+        # Try to list a different bucket than the storage root
+        response = client.get("/api/v1/files/list?uri=s3://other-bucket/&storage_root=s3://test-bucket/")
+        assert response.status_code == 403
+        assert "path is outside storage root bucket" in response.json()["detail"].lower()
+
+        # Try to list a path outside the storage root prefix
+        response = client.get("/api/v1/files/list?uri=s3://test-bucket/other/&storage_root=s3://test-bucket/restricted/")
+        assert response.status_code == 403
+        assert "path is outside storage root prefix" in response.json()["detail"].lower()
+
     def test_list_s3_empty_bucket(
         self, client: TestClient, mock_s3_client: MockS3Client
     ):
         """Test listing empty S3 bucket"""
         mock_s3_client.setup_bucket("test-bucket", "", [], [])
 
-        response = client.get("/api/v1/files/list?uri=s3://test-bucket/")
+        response = client.get("/api/v1/files/list?uri=s3://test-bucket/&storage_root=s3://test-bucket/")
 
         assert response.status_code == 200
         data = response.json()
@@ -190,7 +226,7 @@ class TestFileBrowserAPI:
         ]
         mock_s3_client.setup_bucket("test-bucket", "", files, [])
 
-        response = client.get("/api/v1/files/list?uri=s3://test-bucket/")
+        response = client.get("/api/v1/files/list?uri=s3://test-bucket/&storage_root=s3://test-bucket/")
 
         assert response.status_code == 200
         data = response.json()
@@ -204,7 +240,7 @@ class TestFileBrowserAPI:
         folders = ["folder1/", "folder2/"]
         mock_s3_client.setup_bucket("test-bucket", "", [], folders)
 
-        response = client.get("/api/v1/files/list?uri=s3://test-bucket/")
+        response = client.get("/api/v1/files/list?uri=s3://test-bucket/&storage_root=s3://test-bucket/")
 
         assert response.status_code == 200
         data = response.json()
@@ -217,7 +253,7 @@ class TestFileBrowserAPI:
         """Test error when S3 bucket doesn't exist"""
         mock_s3_client.simulate_error("NoSuchBucket")
 
-        response = client.get("/api/v1/files/list?uri=s3://nonexistent-bucket/")
+        response = client.get("/api/v1/files/list?uri=s3://nonexistent-bucket/&storage_root=s3://nonexistent-bucket/")
 
         assert response.status_code == 404
         assert "not found" in response.json()["detail"].lower()
@@ -228,7 +264,7 @@ class TestFileBrowserAPI:
         """Test error when access is denied to S3 bucket"""
         mock_s3_client.simulate_error("AccessDenied")
 
-        response = client.get("/api/v1/files/list?uri=s3://test-bucket/")
+        response = client.get("/api/v1/files/list?uri=s3://test-bucket/&storage_root=s3://test-bucket/")
 
         assert response.status_code == 403
         assert "access denied" in response.json()["detail"].lower()
@@ -239,7 +275,7 @@ class TestFileBrowserAPI:
         """Test error when AWS credentials are not configured"""
         mock_s3_client.simulate_error("NoCredentialsError")
 
-        response = client.get("/api/v1/files/list?uri=s3://test-bucket/")
+        response = client.get("/api/v1/files/list?uri=s3://test-bucket/&storage_root=s3://test-bucket/")
 
         assert response.status_code == 401
         assert "credentials" in response.json()["detail"].lower()
@@ -258,7 +294,7 @@ class TestFileBrowserAPI:
         folders = ["a/b/c/subfolder/"]
         mock_s3_client.setup_bucket("test-bucket", "a/b/c/", files, folders)
 
-        response = client.get("/api/v1/files/list?uri=s3://test-bucket/a/b/c/")
+        response = client.get("/api/v1/files/list?uri=s3://test-bucket/a/b/c/&storage_root=s3://test-bucket/a/")
 
         assert response.status_code == 200
         data = response.json()
@@ -289,7 +325,7 @@ class TestFileBrowserAPI:
         folders = ["prefix/zoo/", "prefix/aardvark/", "prefix/middle/"]
         mock_s3_client.setup_bucket("test-bucket", "prefix/", files, folders)
 
-        response = client.get("/api/v1/files/list?uri=s3://test-bucket/prefix/")
+        response = client.get("/api/v1/files/list?uri=s3://test-bucket/prefix/&storage_root=s3://test-bucket/prefix/")
 
         assert response.status_code == 200
         data = response.json()
@@ -317,8 +353,14 @@ class TestFileBrowserAPI:
             (storage_dir / "file1.txt").write_text("Test content 1")
             (storage_dir / "file2.txt").write_text("Test content 2")
 
-            # Call API endpoint
-            response = client.get("/api/v1/files/list?uri=test_folder")
+            # Call API endpoint with storage_root
+            response = client.get(
+                "/api/v1/files/list",
+                params={
+                    "uri": str(storage_dir),
+                    "storage_root": str(storage_dir)
+                }
+            )
 
             assert response.status_code == 200
             data = response.json()
@@ -348,6 +390,17 @@ class TestFileBrowserAPI:
                 assert file["size"] > 0
                 assert isinstance(file["date"], str)
                 assert len(file["date"]) > 0
+
+            # Test path traversal prevention
+            response = client.get(
+                "/api/v1/files/list",
+                params={
+                    "uri": str(storage_dir.parent),  # Try to access parent directory
+                    "storage_root": str(storage_dir)
+                }
+            )
+            assert response.status_code == 403
+            assert "path escapes storage root" in response.json()["detail"].lower()
         finally:
             # Cleanup: remove test storage directory
             if Path("storage").exists():
