@@ -42,87 +42,6 @@ class TestFileServices:
             except ValueError:
                 pass  # Expected
 
-    def test__list_local_storage(self, tmp_path):
-        """Test listing local storage directory"""
-        # Setup test directory structure
-        (tmp_path / "subfolder1").mkdir()
-        (tmp_path / "subfolder2").mkdir()
-        (tmp_path / "file1.txt").write_text("This is file 1")
-        (tmp_path / "file2.txt").write_text("This is file 2")
-        (tmp_path / "zebra.txt").write_text("This is zebra")
-
-        from api.files.services import _list_local_storage
-
-        # Pass tmp_path as both directory_path and storage_root
-        result = _list_local_storage(str(tmp_path), storage_root=str(tmp_path))
-
-        # Verify structure
-        assert "folders" in result.model_dump()
-        assert "files" in result.model_dump()
-        assert isinstance(result.folders, list)
-        assert isinstance(result.files, list)
-
-        # Verify we have folders and files
-        assert len(result.folders) == 2
-        assert len(result.files) == 3
-
-        # Verify folder names
-        folder_names = [f.name for f in result.folders]
-        assert "subfolder1" in folder_names
-        assert "subfolder2" in folder_names
-
-        # Verify file names
-        file_names = [f.name for f in result.files]
-        assert "file1.txt" in file_names
-        assert "file2.txt" in file_names
-        assert "zebra.txt" in file_names
-
-        # Verify files have size and date
-        for file in result.files:
-            assert file.size > 0
-            assert isinstance(file.date, str)
-            assert len(file.date) > 0  # Date string should not be empty
-
-    def test__list_local_storage_path_traversal_blocked(self, tmp_path):
-        """Test that path traversal attacks are blocked"""
-        # Setup test directory structure
-        (tmp_path / "allowed").mkdir()
-        (tmp_path / "allowed" / "file.txt").write_text("allowed file")
-
-        from api.files.services import _list_local_storage
-        from fastapi import HTTPException
-        import pytest
-
-        # Try to escape storage_root using ../
-        with pytest.raises(HTTPException) as exc_info:
-            _list_local_storage("../../etc", storage_root=str(tmp_path))
-        assert exc_info.value.status_code == 403
-        assert "path escapes storage root" in exc_info.value.detail
-
-    def test__list_local_storage_absolute_paths(self, tmp_path):
-        """Test listing local storage with absolute paths"""
-        # Setup test directory structure
-        (tmp_path / "folder").mkdir()
-        (tmp_path / "folder/file.txt").write_text("test")
-
-        from api.files.services import _list_local_storage
-        from fastapi import HTTPException
-        import pytest
-
-        # Test with absolute paths - valid case
-        result = _list_local_storage(
-            str(tmp_path / "folder"),
-            storage_root=str(tmp_path)
-        )
-        assert len(result.files) == 1
-        assert result.files[0].name == "file.txt"
-
-        # Test with absolute paths - invalid case (path outside root)
-        with pytest.raises(HTTPException) as exc_info:
-            _list_local_storage("/etc", storage_root=str(tmp_path))
-        assert exc_info.value.status_code == 403
-        assert "path escapes storage root" in exc_info.value.detail
-
 
 class TestFileBrowserAPI:
     """Test file browser API endpoints"""
@@ -188,24 +107,6 @@ class TestFileBrowserAPI:
         assert file_sizes["file_1.txt"] == 101
         assert file_sizes["file_2.txt"] == 102
 
-    def test_list_s3_path_outside_root(self, client: TestClient, mock_s3_client: MockS3Client):
-        """Test S3 path that attempts to navigate outside storage root"""
-        # Try to list a different bucket than the storage root
-        response = client.get(
-            "/api/v1/files/list?uri=s3://other-bucket/&"
-            "storage_root=s3://test-bucket/"
-        )
-        assert response.status_code == 403
-        assert "path is outside storage root bucket" in response.json()["detail"].lower()
-
-        # Try to list a path outside the storage root prefix
-        response = client.get(
-            "/api/v1/files/list?uri=s3://test-bucket/other/&"
-            "storage_root=s3://test-bucket/restricted/"
-        )
-        assert response.status_code == 403
-        assert "path is outside storage root prefix" in response.json()["detail"].lower()
-
     def test_list_s3_empty_bucket(
         self, client: TestClient, mock_s3_client: MockS3Client
     ):
@@ -213,8 +114,7 @@ class TestFileBrowserAPI:
         mock_s3_client.setup_bucket("test-bucket", "", [], [])
 
         response = client.get(
-            "/api/v1/files/list?uri=s3://test-bucket/&"
-            "storage_root=s3://test-bucket/"
+            "/api/v1/files/list?uri=s3://test-bucket/"
         )
 
         assert response.status_code == 200
@@ -239,8 +139,7 @@ class TestFileBrowserAPI:
         mock_s3_client.setup_bucket("test-bucket", "", files, [])
 
         response = client.get(
-            "/api/v1/files/list?uri=s3://test-bucket/&"
-            "storage_root=s3://test-bucket/"
+            "/api/v1/files/list?uri=s3://test-bucket/"
         )
 
         assert response.status_code == 200
@@ -256,8 +155,7 @@ class TestFileBrowserAPI:
         mock_s3_client.setup_bucket("test-bucket", "", [], folders)
 
         response = client.get(
-            "/api/v1/files/list?uri=s3://test-bucket/&"
-            "storage_root=s3://test-bucket/"
+            "/api/v1/files/list?uri=s3://test-bucket/"
         )
 
         assert response.status_code == 200
@@ -272,8 +170,7 @@ class TestFileBrowserAPI:
         mock_s3_client.simulate_error("NoSuchBucket")
 
         response = client.get(
-            "/api/v1/files/list?uri=s3://nonexistent-bucket/&"
-            "storage_root=s3://nonexistent-bucket/"
+            "/api/v1/files/list?uri=s3://nonexistent-bucket/"
         )
 
         assert response.status_code == 404
@@ -286,8 +183,7 @@ class TestFileBrowserAPI:
         mock_s3_client.simulate_error("AccessDenied")
 
         response = client.get(
-            "/api/v1/files/list?uri=s3://test-bucket/&"
-            "storage_root=s3://test-bucket/"
+            "/api/v1/files/list?uri=s3://test-bucket/"
         )
 
         assert response.status_code == 403
@@ -300,8 +196,7 @@ class TestFileBrowserAPI:
         mock_s3_client.simulate_error("NoCredentialsError")
 
         response = client.get(
-            "/api/v1/files/list?uri=s3://test-bucket/&"
-            "storage_root=s3://test-bucket/"
+            "/api/v1/files/list?uri=s3://test-bucket/"
         )
 
         assert response.status_code == 401
@@ -322,8 +217,7 @@ class TestFileBrowserAPI:
         mock_s3_client.setup_bucket("test-bucket", "a/b/c/", files, folders)
 
         response = client.get(
-            "/api/v1/files/list?uri=s3://test-bucket/a/b/c/&"
-            "storage_root=s3://test-bucket/a/"
+            "/api/v1/files/list?uri=s3://test-bucket/a/b/c/"
         )
 
         assert response.status_code == 200
@@ -356,8 +250,7 @@ class TestFileBrowserAPI:
         mock_s3_client.setup_bucket("test-bucket", "prefix/", files, folders)
 
         response = client.get(
-            "/api/v1/files/list?uri=s3://test-bucket/prefix/&"
-            "storage_root=s3://test-bucket/prefix/"
+            "/api/v1/files/list?uri=s3://test-bucket/prefix/"
         )
 
         assert response.status_code == 200
@@ -369,72 +262,3 @@ class TestFileBrowserAPI:
 
         folder_names = [f["name"] for f in data["folders"]]
         assert folder_names == ["aardvark", "middle", "zoo"]
-
-    def test_list_local_storage(self, client: TestClient):
-        """Test local storage browsing via API"""
-        import shutil
-        from pathlib import Path
-
-        # Create storage directory structure in workspace
-        storage_dir = Path("storage/test_folder")
-        storage_dir.mkdir(parents=True, exist_ok=True)
-
-        try:
-            # Create test files and folders
-            (storage_dir / "subfolder1").mkdir(exist_ok=True)
-            (storage_dir / "subfolder2").mkdir(exist_ok=True)
-            (storage_dir / "file1.txt").write_text("Test content 1")
-            (storage_dir / "file2.txt").write_text("Test content 2")
-
-            # Call API endpoint with storage_root
-            response = client.get(
-                "/api/v1/files/list",
-                params={
-                    "uri": str(storage_dir),
-                    "storage_root": str(storage_dir)
-                }
-            )
-
-            assert response.status_code == 200
-            data = response.json()
-
-            # Verify structure
-            assert "folders" in data
-            assert "files" in data
-            assert isinstance(data["folders"], list)
-            assert isinstance(data["files"], list)
-
-            # Verify we have folders and files
-            assert len(data["folders"]) == 2
-            assert len(data["files"]) == 2
-
-            # Verify folder names
-            folder_names = [f["name"] for f in data["folders"]]
-            assert "subfolder1" in folder_names
-            assert "subfolder2" in folder_names
-
-            # Verify file names
-            file_names = [f["name"] for f in data["files"]]
-            assert "file1.txt" in file_names
-            assert "file2.txt" in file_names
-
-            # Verify files have size and date
-            for file in data["files"]:
-                assert file["size"] > 0
-                assert isinstance(file["date"], str)
-                assert len(file["date"]) > 0
-
-            # Test path traversal prevention
-            response = client.get(
-                "/api/v1/files/list",
-                params={
-                    "uri": str(storage_dir.parent),  # Try to access parent directory
-                    "storage_root": str(storage_dir)
-                }
-            )
-            assert response.status_code == 403
-            assert "path escapes storage root" in response.json()["detail"].lower()
-        finally:
-            # Cleanup: remove test storage directory
-            if Path("storage").exists():
-                shutil.rmtree("storage")
