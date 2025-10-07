@@ -3,8 +3,6 @@ Services for the Files API
 """
 
 from fastapi import HTTPException, status
-from pathlib import Path
-from datetime import datetime
 
 try:
     import boto3
