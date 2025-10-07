@@ -280,6 +280,7 @@ class MockS3Client:
 
 @pytest.fixture(name="session")
 def session_fixture():
+    """Provide a fresh database session for each test"""
     engine = create_engine(
         "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
     )
@@ -308,6 +309,7 @@ def client_fixture(
     mock_opensearch_client: MockOpenSearchClient,
     mock_s3_client: MockS3Client,
 ):
+    """Provide a TestClient with dependencies overridden for testing"""
     def get_db_override():
         return session
 
