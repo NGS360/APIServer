@@ -50,7 +50,7 @@ def _parse_s3_path(s3_path: str) -> tuple[str, str]:
 def _list_s3(s3_path: str, storage_root: str, s3_client=None) -> FileBrowserData:
     """
     Browse S3 bucket/prefix and return structured data.
-    
+
     Args:
         s3_path: The S3 path to list
         storage_root: The storage root path (s3://) that acts as the boundary for navigation.
@@ -67,20 +67,19 @@ def _list_s3(s3_path: str, storage_root: str, s3_client=None) -> FileBrowserData
         # Parse both the request path and storage root
         bucket, prefix = _parse_s3_path(s3_path)
         root_bucket, root_prefix = _parse_s3_path(storage_root)
-        
+
         # Security check: ensure path is within storage root
         if bucket != root_bucket:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Access denied: path is outside storage root bucket",
             )
-        
+
         if root_prefix and not prefix.startswith(root_prefix):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Access denied: path is outside storage root prefix",
             )
-            
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -178,7 +177,7 @@ def _list_local_storage(
 ) -> FileBrowserData:
     """
     List files and folders in local storage at the specified directory path.
-    
+
     Args:
         directory_path: The path to list files from. Can be absolute or relative.
         storage_root: The absolute root directory that acts as the boundary for navigation.
@@ -244,7 +243,7 @@ def _list_local_storage(
 def list_files(uri: str, storage_root: str, s3_client=None) -> FileBrowserData:
     """
     List files and folders at the specified URI.
-    
+
     Args:
         uri: The URI to list files from. Can be an S3 URI (s3://) or a local path.
         storage_root: The root directory that acts as the boundary for navigation.
@@ -252,10 +251,10 @@ def list_files(uri: str, storage_root: str, s3_client=None) -> FileBrowserData:
                      For S3: s3:// URI (e.g., s3://bucket/prefix)
                      All access will be restricted to within this root.
         s3_client: Optional boto3 S3 client for S3 operations.
-    
+
     Returns:
         FileBrowserData containing the list of files and folders.
-    
+
     Security:
         - For local storage: No navigation above storage_root is allowed
         - For S3: No navigation outside storage_root bucket/prefix is allowed
