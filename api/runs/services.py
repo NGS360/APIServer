@@ -231,6 +231,14 @@ def get_run_samplesheet(session: Session, run_barcode: str):
             if sample_sheet['Data']:
                 sample_sheet_json['DataCols'] = list(sample_sheet['Data'][0].keys())
             sample_sheet_json['Data'] = sample_sheet['Data']
+        except OSError as e:
+            # Samplesheet not found, signal with 204 response
+            # Need to catch specific error for S3 
+            # where object doesn't exist
+            if e.backend_error.response['Error']['Code'] == 'NoSuchKey':
+                return Response(
+                    status_code=status.HTTP_204_NO_CONTENT,
+                )
         except FileNotFoundError:
             # Samplesheet not found, signal with 204 response
             return Response(
@@ -265,6 +273,14 @@ def get_run_metrics(session: Session, run_barcode: str) -> dict:
         try:
             with smart_open(metrics_path, 'r') as f:
                 metrics = json.load(f)
+        except OSError as e:
+            # Metrics file not found, signal with 204 response
+            # Need to catch specific error for S3 
+            # where object doesn't exist
+            if e.backend_error.response['Error']['Code'] == 'NoSuchKey':
+                return Response(
+                    status_code=status.HTTP_204_NO_CONTENT,
+                )
         except FileNotFoundError:
             # Metrics file not found, raise not found error
             return Response(

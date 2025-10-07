@@ -59,6 +59,15 @@ class Settings(BaseSettings):
     OPENSEARCH_USER: str | None = os.getenv("OPENSEARCH_USER")
     OPENSEARCH_PASSWORD: str | None = os.getenv("OPENSEARCH_PASSWORD")
 
+    # AWS Credentials
+    AWS_ACCESS_KEY_ID: str | None = os.getenv("AWS_ACCESS_KEY_ID")
+    AWS_SECRET_ACCESS_KEY: str | None = os.getenv("AWS_SECRET_ACCESS_KEY")
+    AWS_REGION: str | None = os.getenv("AWS_REGION")
+
+    # Bucket configurations
+    VITE_DATA_BUCKET_URI: str = os.getenv("VITE_DATA_BUCKET_URI", "s3://my-data-bucket/")
+    VITE_RESULTS_BUCKET_URI: str = os.getenv("VITE_RESULTS_BUCKET_URI", "s3://my-results-bucket/")
+
     # Read environment variables from .env file, if it exists
     model_config = SettingsConfigDict(env_file=".env")
 
