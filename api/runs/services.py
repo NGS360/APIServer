@@ -233,7 +233,7 @@ def get_run_samplesheet(session: Session, run_barcode: str):
             sample_sheet_json['Data'] = sample_sheet['Data']
         except OSError as e:
             # Samplesheet not found, signal with 204 response
-            # Need to catch specific error for S3 
+            # Need to catch specific error for S3
             # where object doesn't exist
             if e.backend_error.response['Error']['Code'] == 'NoSuchKey':
                 return Response(
@@ -275,7 +275,7 @@ def get_run_metrics(session: Session, run_barcode: str) -> dict:
                 metrics = json.load(f)
         except OSError as e:
             # Metrics file not found, signal with 204 response
-            # Need to catch specific error for S3 
+            # Need to catch specific error for S3
             # where object doesn't exist
             if e.backend_error.response['Error']['Code'] == 'NoSuchKey':
                 return Response(
