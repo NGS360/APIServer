@@ -14,7 +14,7 @@ GET    /api/v0/runs/[id]/metrics       Retrieve demux metrics from Stat.json
 """
 
 from typing import Literal
-from fastapi import APIRouter, Query, status
+from fastapi import APIRouter, Query, status, HTTPException
 from core.deps import SessionDep, OpenSearchDep
 from api.runs.models import (
     IlluminaMetricsResponseModel,
@@ -24,6 +24,7 @@ from api.runs.models import (
     SequencingRunsPublic,
     SequencingRunUpdateRequest,
     IlluminaSampleSheetResponseModel,
+    DemultiplexAnalysisAvailable
 )
 from api.runs import services
 
@@ -121,6 +122,37 @@ def search_runs(
         sort_order=sort_order,
     )
 
+
+@router.get(
+    "/demultiplex",
+    response_model=DemultiplexAnalysisAvailable,
+    status_code=status.HTTP_200_OK,
+    tags=["Run Endpoints"],
+)
+def get_multiplex_workflows(session: SessionDep) -> DemultiplexAnalysisAvailable:
+    """
+    Placeholder endpoint for getting available demultiplex workflows.
+    """
+    # TBD: How do we want to manage available demultiplexing workflows?
+    # This should be a list of available demultiplexing workflows in a database table
+    # and is dependent on how we support GA4GH WES API.
+
+    # return services.get_demultiplex_workflows(session=session)
+    return DemultiplexAnalysisAvailable(demux_analysis_name=["bcl2fastq", "cellranger"])
+
+
+@router.post(
+    "/demultiplex",
+    response_model=SequencingRunPublic,
+    status_code=status.HTTP_202_ACCEPTED,
+    tags=["Run Endpoints"],
+)
+def demultiplex_run(session: SessionDep, run_barcode: str) -> SequencingRunPublic:
+    """
+    Submit a demultiplex job for a specific run.
+    """
+    # return services.demultiplex_run(session=session, run_barcode=run_barcode)
+    return services.get_run(session=session, run_barcode=run_barcode)
 
 @router.get(
     "/{run_barcode}",

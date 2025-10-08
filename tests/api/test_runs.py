@@ -380,3 +380,37 @@ def test_update_run_status(client: TestClient, session: Session):
     update_data = {"run_status": "INVALID_STATUS"}
     response = client.put(f"/api/v1/runs/{run_barcode}", json=update_data)
     assert response.status_code == 422
+
+
+def test_get_demultiplex_workflows(client: TestClient, session: Session):
+    """Test that we can get the available demultiplex workflows"""
+    response = client.get("/api/v1/runs/demultiplex")
+    assert response.status_code == 200
+    data = response.json()
+    assert "demux_analysis_name" in data
+    assert isinstance(data["demux_analysis_name"], list)
+    assert "bcl2fastq" in data["demux_analysis_name"]
+    assert "cellranger" in data["demux_analysis_name"]
+
+
+def test_post_demultiplex_analysis(client: TestClient, session):
+    """Test that we can submit a demultiplex analysis request"""
+    # Add a run to the database
+    new_run = SequencingRun(
+        id=uuid4(),
+        run_date=datetime.date(2019, 1, 10),
+        machine_id="MACHINE123",
+        run_number=1,
+        flowcell_id="FLOWCELL123",
+        experiment_name="Test Experiment",
+        run_folder_uri="/dir/path/to/run",
+        status=RunStatus.READY,
+    )
+    session.add(new_run)
+    session.commit()
+
+    # Test submit a demultiplex analysis request
+    run_barcode = "190110_MACHINE123_0001_FLOWCELL123"
+    demux_data = {"demux_workflow": "bcl2fastq"}
+    response = client.post(f"/api/v1/runs/demultiplex?run_barcode={run_barcode}", json=demux_data)
+    assert response.status_code == 202
