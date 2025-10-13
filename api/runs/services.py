@@ -236,6 +236,20 @@ def get_run_samplesheet(session: Session, run_barcode: str):
             return Response(
                 status_code=status.HTTP_204_NO_CONTENT,
             )
+        except OSError as e:
+            # Need to catch specific error for S3
+            # where object doesn't exist and respond with 204
+            if e.backend_error.response['Error']['Code'] == 'NoSuchKey':
+                return Response(
+                    status_code=status.HTTP_204_NO_CONTENT,
+                )
+            # Need to catch specific error for S3
+            # where access is denied and respond with 403
+            if e.backend_error.response['Error']['Code'] == 'AccessDenied':
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Access denied when trying to read samplesheet."
+                ) from e
         except NoCredentialsError as e:
             error_type = f"{type(e).__module__}.{type(e).__name__}"
             raise HTTPException(
@@ -265,11 +279,32 @@ def get_run_metrics(session: Session, run_barcode: str) -> dict:
         try:
             with smart_open(metrics_path, 'r') as f:
                 metrics = json.load(f)
+
         except FileNotFoundError:
-            # Metrics file not found, raise not found error
+            # Samplesheet not found, signal with 204 response
             return Response(
                 status_code=status.HTTP_204_NO_CONTENT,
             )
+        except OSError as e:
+            # Need to catch specific error for S3
+            # where object doesn't exist and respond with 204
+            if e.backend_error.response['Error']['Code'] == 'NoSuchKey':
+                return Response(
+                    status_code=status.HTTP_204_NO_CONTENT,
+                )
+            # Need to catch specific error for S3
+            # where access is denied and respond with 403
+            if e.backend_error.response['Error']['Code'] == 'AccessDenied':
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Access denied when trying to read samplesheet."
+                ) from e
+        except NoCredentialsError as e:
+            error_type = f"{type(e).__module__}.{type(e).__name__}"
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Error accessing samplesheet: {error_type}: {str(e)}"
+            ) from e
     return IlluminaMetricsResponseModel(**metrics)
 
 
