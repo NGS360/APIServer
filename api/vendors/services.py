@@ -77,15 +77,14 @@ def get_vendor(session: SessionDep, vendor_id: str) -> VendorPublic:
 
 def update_vendor(
     session: SessionDep,
-    vendor_id: str,
     update_request: VendorPublic
 ) -> VendorPublic:
     """ Update a specific vendor """
     vendor = session.exec(
-        select(Vendor).where(Vendor.vendor_id == vendor_id)
+        select(Vendor).where(Vendor.vendor_id == update_request.vendor_id)
     ).first()
     if not vendor:
-        raise ValueError(f"Vendor with ID {vendor_id} not found")
+        raise ValueError(f"Vendor with ID {update_request.vendor_id} not found")
 
     # Update fields
     for key, value in update_request.model_dump().items():
