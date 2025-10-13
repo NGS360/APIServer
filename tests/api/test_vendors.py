@@ -45,6 +45,7 @@ def test_get_vendors(client):
     vendor_ids = [vendor["vendor_id"] for vendor in data["data"]]
     assert new_vendor.vendor_id in vendor_ids
 
+
 def test_get_vendor(client):
     """ Test retrieving a specific vendor """
     # First, add a vendor to ensure it exists in the database
