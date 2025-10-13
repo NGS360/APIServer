@@ -156,4 +156,38 @@ open htmlcov/index.html
 
 ### Docker Stack
 
-Use the stack as describe in docker-compose.yml to launch all components.
+Use the stack as described in docker-compose.yml to launch all components.
+
+#### Environment Variables for Docker
+
+The docker-compose.yml file uses environment variable substitution for AWS credentials. You have two options:
+
+**Option 1: Use a .env file (Recommended for development)**
+
+1. Copy the example file:
+   ```bash
+   cp .env.example .env
+   ```
+
+2. Edit `.env` and add your AWS credentials:
+   ```bash
+   AWS_ACCESS_KEY_ID=your_actual_access_key
+   AWS_SECRET_ACCESS_KEY=your_actual_secret_key
+   AWS_REGION=us-east-1
+   ```
+
+3. Launch the stack:
+   ```bash
+   docker-compose up
+   ```
+
+**Option 2: Export environment variables (Recommended for CI/CD)**
+
+```bash
+export AWS_ACCESS_KEY_ID=your_actual_access_key
+export AWS_SECRET_ACCESS_KEY=your_actual_secret_key
+export AWS_REGION=us-east-1
+docker-compose up
+```
+
+**Note:** If no environment variables are set, the docker-compose file will use default values (`admin`/`admin`) suitable for local OpenSearch development.
