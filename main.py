@@ -15,9 +15,11 @@ from api.samples.routes import router as samples_router
 from api.search.routes import router as search_router
 from api.vendors.routes import router as vendors_router
 
+
 # Customize route id's
 # Helpful for creating sensible names in the client
 def custom_generate_unique_id(route: APIRoute):
+    """ Generate unique route IDs based on route name """
     return f"{route.name}"  # these must be unique
 
 
