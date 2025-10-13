@@ -6,6 +6,7 @@ from core.deps import SessionDep
 from api.vendors.models import (
      Vendor,
      VendorCreate,
+     VendorUpdate,
      VendorPublic,
      VendorsPublic,
 )
@@ -75,19 +76,21 @@ def get_vendor(session: SessionDep, vendor_id: str) -> VendorPublic:
         raise ValueError(f"Vendor with ID {vendor_id} not found")
     return VendorPublic(**vendor.model_dump())
 
+
 def update_vendor(
     session: SessionDep,
-    update_request: VendorPublic
+    vendor_id: str,
+    update_request: VendorUpdate
 ) -> VendorPublic:
     """ Update a specific vendor """
     vendor = session.exec(
-        select(Vendor).where(Vendor.vendor_id == update_request.vendor_id)
+        select(Vendor).where(Vendor.vendor_id == vendor_id)
     ).first()
     if not vendor:
-        raise ValueError(f"Vendor with ID {update_request.vendor_id} not found")
+        raise ValueError(f"Vendor with ID {vendor_id} not found")
 
-    # Update fields
-    for key, value in update_request.model_dump().items():
+    # Update only the fields that are provided (not None)
+    for key, value in update_request.model_dump(exclude_unset=True).items():
         setattr(vendor, key, value)
 
     session.add(vendor)

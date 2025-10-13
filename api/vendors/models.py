@@ -37,6 +37,14 @@ class VendorPublic(SQLModel):
     bucket: str | None = None
 
 
+class VendorUpdate(SQLModel):
+    """
+    Represents the data that can be updated for a vendor
+    """
+    name: str | None = None
+    bucket: str | None = None
+
+
 class VendorsPublic(SQLModel):
     """
     Represents a paginated list of vendors

@@ -15,6 +15,7 @@ from core.deps import SessionDep
 from api.vendors.models import (
      Vendor,
      VendorCreate,
+     VendorUpdate,
      VendorPublic,
      VendorsPublic,
 )
@@ -85,16 +86,19 @@ def get_vendor(session: SessionDep, vendor_id: str):
 @router.put(
     "/{vendor_id}",
     response_model=VendorPublic,
+    status_code=status.HTTP_200_OK,
     tags=["Vendor Endpoints"],
 )
 def update_vendor(
     session: SessionDep,
-    update_request: VendorPublic
+    vendor_id: str,
+    update_request: VendorUpdate
 ):
     """
     Update information about a specific vendor.
     """
     return services.update_vendor(
         session=session,
+        vendor_id=vendor_id,
         update_request=update_request,
     )
