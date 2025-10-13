@@ -11,13 +11,12 @@ PUT    /api/v0/vendors/[id]            Update info about a vendor
 
 from typing import Literal
 from fastapi import APIRouter, Query, status
-from core.deps import SessionDep, OpenSearchDep
+from core.deps import SessionDep
 from api.vendors.models import (
      Vendor,
      VendorCreate,
-#     VendorPublic,
+     VendorPublic,
      VendorsPublic,
-#     VendorUpdateRequest,
 )
 from api.vendors import services
 
@@ -26,7 +25,7 @@ router = APIRouter(prefix="/vendors", tags=["Vendor Endpoints"])
 
 @router.post(
     "",
-    # response_model=VendorPublic,
+    response_model=VendorPublic,
     tags=["Vendor Endpoints"],
     status_code=status.HTTP_201_CREATED,
 )
@@ -72,7 +71,7 @@ def get_vendors(
 
 @router.get(
     "/{vendor_id}",
-    # response_model=VendorPublic,
+    response_model=VendorPublic,
     status_code=status.HTTP_200_OK,
     tags=["Vendor Endpoints"],
 )
@@ -80,26 +79,22 @@ def get_vendor(session: SessionDep, vendor_id: str):
     """
     Retrieve a specific vendor by ID.
     """
-    # return services.get_vendor(session=session, vendor_id=vendor_id)
-    pass
+    return services.get_vendor(session=session, vendor_id=vendor_id)
 
 
 @router.put(
     "/{vendor_id}",
-    # response_model=VendorPublic,
+    response_model=VendorPublic,
     tags=["Vendor Endpoints"],
 )
 def update_vendor(
     session: SessionDep,
-    vendor_id: str,
-    # update_request: VendorUpdateRequest,
+    update_request: VendorPublic
 ):
     """
     Update information about a specific vendor.
     """
-    # return services.update_vendor(
-    #     session=session,
-    #     vendor_id=vendor_id,
-    #     update_request=update_request,
-    # )
-    pass
+    return services.update_vendor(
+        session=session,
+        update_request=update_request,
+    )
