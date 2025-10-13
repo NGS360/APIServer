@@ -3,10 +3,10 @@ Routes/endpoints for the Vendors API
 
 HTTP   URI                             Action
 ----   ---                             ------
-GET    /api/v0/vendors                 Get list of vendors
-POST   /api/v0/vendors                 Add a vendor run
-GET    /api/v0/vendors/[id]            Retrieve info about a specific vendor
-PUT    /api/v0/vendors/[id]            Update info about a vendor
+GET    /api/v1/vendors                 Get list of vendors
+POST   /api/v1/vendors                 Add a vendor run
+GET    /api/v1/vendors/[id]            Retrieve info about a specific vendor
+PUT    /api/v1/vendors/[id]            Update info about a vendor
 """
 
 from typing import Literal
@@ -52,7 +52,7 @@ def get_vendors(
     session: SessionDep,
     page: int = Query(1, description="Page number (1-indexed)"),
     per_page: int = Query(20, description="Number of items per page"),
-    sort_by: str = Query("id", description="Field to sort by"),
+    sort_by: str = Query("vendor_id", description="Field to sort by"),
     sort_order: Literal["asc", "desc"] = Query(
         "asc", description="Sort order (asc or desc)"
     ),

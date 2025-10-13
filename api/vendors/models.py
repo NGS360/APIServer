@@ -36,16 +36,15 @@ class VendorPublic(SQLModel):
     name: str
     bucket: str | None = None
 
-    model_config = ConfigDict(from_attributes=True)
-
 
 class VendorsPublic(SQLModel):
     """
     Represents a paginated list of vendors
     """
-    vendors: list[VendorPublic]
-    total: int
-    page: int
+    data: list[VendorPublic]
+    total_items: int
+    total_pages: int
+    current_page: int
     per_page: int
-
-    model_config = ConfigDict(from_attributes=True)
+    has_next: bool
+    has_prev: bool

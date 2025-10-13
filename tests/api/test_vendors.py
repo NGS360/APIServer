@@ -1,0 +1,46 @@
+""" Test cases for vendor-related API endpoints """
+from api.vendors.models import VendorCreate
+
+
+def test_add_vendor(client):
+    """ Test adding a vendor """
+    new_vendor = VendorCreate(
+        vendor_id="vendor_a",
+        name="Vendor A",
+        bucket="s3://vendor-a-bucket"
+    )
+
+    response = client.post(
+        "/api/v1/vendors",
+        json=new_vendor.model_dump(),
+    )
+    assert response.status_code == 201
+    data = response.json()
+    assert data["vendor_id"] == new_vendor.vendor_id
+    assert data["name"] == new_vendor.name
+    assert data["bucket"] == new_vendor.bucket
+    assert "id" not in data  # Ensure internal ID is not exposed
+
+
+def test_get_vendors(client):
+    """ Test retrieving vendors """
+    # First, add a vendor to ensure there's at least one in the database
+    new_vendor = VendorCreate(
+        vendor_id="vendor_b",
+        name="Vendor B",
+        bucket="s3://vendor-b-bucket"
+    )
+    client.post("/api/v1/vendors", json=new_vendor.model_dump())
+
+    # Now, retrieve the list of vendors
+    response = client.get("/api/v1/vendors")
+    assert response.status_code == 200
+    data = response.json()
+
+    assert "data" in data
+    assert isinstance(data["data"], list)
+    assert len(data["data"]) >= 1  # At least one vendor should be present
+
+    # Check that the added vendor is in the list
+    vendor_ids = [vendor["vendor_id"] for vendor in data["data"]]
+    assert new_vendor.vendor_id in vendor_ids
