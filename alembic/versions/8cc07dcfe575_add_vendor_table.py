@@ -26,6 +26,7 @@ def upgrade() -> None:
     sa.Column('id', sa.Uuid(), nullable=False),
     sa.Column('vendor_id', sqlmodel.sql.sqltypes.AutoString(), nullable=False),
     sa.Column('name', sqlmodel.sql.sqltypes.AutoString(length=100), nullable=False),
+    sa.Column('description', sqlmodel.sql.sqltypes.AutoString(length=100), nullable=False),
     sa.Column('bucket', sqlmodel.sql.sqltypes.AutoString(length=100), nullable=True),
     sa.PrimaryKeyConstraint('id')
     )

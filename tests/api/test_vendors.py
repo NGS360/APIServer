@@ -7,6 +7,7 @@ def test_add_vendor(client):
     new_vendor = VendorCreate(
         vendor_id="vendor_a",
         name="Vendor A",
+        description="Description for Vendor A",
         bucket="s3://vendor-a-bucket"
     )
 
@@ -28,6 +29,7 @@ def test_get_vendors(client):
     new_vendor = VendorCreate(
         vendor_id="vendor_b",
         name="Vendor B",
+        description="Description for Vendor B",
         bucket="s3://vendor-b-bucket"
     )
     client.post("/api/v1/vendors", json=new_vendor.model_dump())
@@ -52,6 +54,7 @@ def test_get_vendor(client):
     new_vendor = VendorCreate(
         vendor_id="vendor_c",
         name="Vendor C",
+        description="Description for Vendor C",
         bucket="s3://vendor-c-bucket"
     )
     post_response = client.post("/api/v1/vendors", json=new_vendor.model_dump())
@@ -75,6 +78,7 @@ def test_update_vendor(client):
     new_vendor = VendorCreate(
         vendor_id="vendor_d",
         name="Vendor D",
+        description="Description for Vendor D",
         bucket="s3://vendor-d-bucket"
     )
     post_response = client.post("/api/v1/vendors", json=new_vendor.model_dump())
