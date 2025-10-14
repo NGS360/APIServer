@@ -11,6 +11,7 @@ from core.config import get_settings
 from api.samples.models import Sample, SampleAttribute
 from api.project.models import Project
 from api.runs.models import SequencingRun
+from api.vendors.models import Vendor
 
 # Import Base from your SQLModel setup
 #from core.db import Base
