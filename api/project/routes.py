@@ -80,6 +80,9 @@ def search_projects(
         "asc", description="Sort order (asc or desc)"
     ),
 ) -> ProjectsPublic:
+    """
+    Search projects by project_id or name.
+    """
     return services.search_projects(
         session=session,
         client=client,
