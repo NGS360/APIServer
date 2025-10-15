@@ -93,7 +93,7 @@ def test_add_sample_to_project(client: TestClient, session: Session):
     assert response.json()["sample_id"] == "Sample_1"
 
 
-def test_fail_to_add__sample_with_duplicate_attributes(
+def test_fail_to_add_sample_with_duplicate_attributes(
     client: TestClient, session: Session
 ):
     """
@@ -168,3 +168,52 @@ def test_fail_to_add_sample_to_nonexistent_project(
         "/api/v1/projects/non_existent_project/samples", json=sample_data
     )
     assert response.status_code == 404
+
+
+def test_add_samples_with_same_sampleid_to_different_projects(
+    client: TestClient, session: Session
+):
+    """
+    Test that we can add samples with the same sample_id to different projects
+    """
+    # Add two projects to the database
+    new_project_1 = Project(name="Test Project 1")
+    new_project_1.project_id = generate_project_id(session=session)
+    new_project_1.attributes = []
+    session.add(new_project_1)
+
+    new_project_2 = Project(name="Test Project 2")
+    new_project_2.project_id = generate_project_id(session=session)
+    new_project_2.attributes = []
+    session.add(new_project_2)
+
+    session.commit()
+
+    # Add a sample to the first project
+    sample_data = {
+        "sample_id": "Sample_1",
+        "attributes": [
+            {"key": "Tissue", "value": "Liver"},
+            {"key": "Condition", "value": "Healthy"},
+        ],
+    }
+
+    response = client.post(
+        f"/api/v1/projects/{new_project_1.project_id}/samples", json=sample_data
+    )
+    assert response.status_code == 201
+    assert response.json()["sample_id"] == "Sample_1"
+
+    # Add a sample with the same sample_id to the second project
+    sample_data = {
+        "sample_id": "Sample_1",
+        "attributes": [
+            {"key": "Tissue", "value": "Breast"},
+            {"key": "Condition", "value": "Healthy"},
+        ],
+    }
+    response = client.post(
+        f"/api/v1/projects/{new_project_2.project_id}/samples", json=sample_data
+    )
+    assert response.status_code == 201
+    assert response.json()["sample_id"] == "Sample_1"
