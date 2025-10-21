@@ -1,5 +1,5 @@
 from fastapi import HTTPException, status
-from typing import List, Literal
+from typing import Literal
 from pydantic import PositiveInt
 
 from sqlmodel import Session, select, func
@@ -141,7 +141,7 @@ def get_samples(
         )
         for sample in samples
     ]
-    
+
     # Collect all unique attribute keys across all samples for data_cols
     data_cols = None
     if samples:
