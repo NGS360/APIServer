@@ -54,6 +54,7 @@ class SamplePublic(SQLModel):
 
 class SamplesPublic(SQLModel):
     data: List[SamplePublic]
+    data_cols: list[str] | None = None
     total_items: int
     total_pages: int
     current_page: int
