@@ -87,7 +87,7 @@ def get_samples(
     per_page: PositiveInt,
     sort_by: str,
     sort_order: Literal["asc", "desc"],
-) -> List[Sample]:
+) -> SamplesPublic:
     """
     Get a paginated list of samples for a specific project.
 
@@ -100,7 +100,7 @@ def get_samples(
         sort_order: Sort direction ('asc' or 'desc')
 
     Returns:
-        List of Sample objects
+        SamplesPublic: Paginated list of samples for the project
     """
     # Get the total count of samples for the project
     total_count = session.exec(
@@ -141,8 +141,20 @@ def get_samples(
         )
         for sample in samples
     ]
+    
+    # Collect all unique attribute keys across all samples for data_cols
+    data_cols = None
+    if samples:
+        all_keys = set()
+        for sample in samples:
+            if sample.attributes:
+                for attr in sample.attributes:
+                    all_keys.add(attr.key)
+        data_cols = sorted(list(all_keys)) if all_keys else None
+
     return SamplesPublic(
         data=public_samples,
+        data_cols=data_cols,
         total_items=total_count,
         total_pages=total_pages,
         current_page=page,
