@@ -2,7 +2,7 @@ from sqlmodel import Session
 from fastapi.testclient import TestClient
 
 from api.project.models import Project
-from api.samples.models import Sample
+from api.samples.models import Sample, SampleAttribute
 from api.project.services import generate_project_id
 
 
