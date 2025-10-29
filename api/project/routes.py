@@ -4,6 +4,7 @@ Routes/endpoints for the Project API
 
 from typing import Literal
 from fastapi import APIRouter, Query, status
+from fastapi.responses import StreamingResponse
 from core.deps import SessionDep, OpenSearchDep
 from api.project.models import Project, ProjectCreate, ProjectPublic, ProjectsPublic
 from api.samples.models import SampleCreate, SamplePublic, SamplesPublic
@@ -159,4 +160,24 @@ def get_samples(
         per_page=per_page,
         sort_by=sort_by,
         sort_order=sort_order,
+    )
+
+
+@router.get(
+    "/{project_id}/samples/download",
+    response_class=StreamingResponse,
+    response_model=None,
+    status_code=status.HTTP_200_OK,
+    tags=["Sample Endpoints"],
+)
+def download_samples(
+    session: SessionDep,
+    project_id: str,
+) -> StreamingResponse:
+    """
+    Download all samples as a TSV for a given project.
+    """
+    return sample_services.download_samples_as_tsv(
+        session=session,
+        project_id=project_id,
     )

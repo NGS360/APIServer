@@ -1,9 +1,17 @@
-from fastapi import HTTPException, status
+"""
+Service functions for managing samples within projects.
+"""
 from typing import Literal
+from io import StringIO
+import csv
+
+from fastapi import HTTPException, status
+from fastapi.responses import StreamingResponse
 from pydantic import PositiveInt
 
 from sqlmodel import Session, select, func
 
+from opensearchpy import OpenSearch
 
 from api.samples.models import (
     Sample,
@@ -16,7 +24,6 @@ from api.project.models import Project
 from api.search.models import (
     SearchDocument,
 )
-from opensearchpy import OpenSearch
 from api.search.services import add_object_to_index
 
 
@@ -77,6 +84,64 @@ def add_sample_to_project(
         add_object_to_index(opensearch_client, search_doc, index="samples")
 
     return sample
+
+
+def download_samples_as_tsv(
+    session: Session,
+    project_id: str,
+) -> StreamingResponse:
+    """
+    Download samples for a specific project as a TSV file.
+
+    Args:
+        session: Database session
+        project_id: Project ID to filter samples by
+    Returns:
+        StreamingResponse: TSV file response containing samples
+    """
+
+    # Query samples for the project
+    samples = session.exec(
+        select(Sample).where(Sample.project_id == project_id)
+    ).all()
+
+    if not samples:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"No samples found for project {project_id}.",
+        )
+
+    # Collect all unique attribute keys across all samples for header
+    all_keys = set()
+    for sample in samples:
+        if sample.attributes:
+            for attr in sample.attributes:
+                all_keys.add(attr.key)
+    attribute_keys = sorted(list(all_keys))
+
+    # Create TSV in memory
+    output = StringIO()
+    writer = csv.writer(output, delimiter="\t")
+
+    # Write header
+    header = ["sample_id"] + attribute_keys
+    writer.writerow(header)
+
+    # Write sample rows
+    for sample in samples:
+        row = [sample.sample_id]
+        attr_dict = {attr.key: attr.value for attr in (sample.attributes or [])}
+        for key in attribute_keys:
+            row.append(attr_dict.get(key, ""))
+        writer.writerow(row)
+
+    output.seek(0)
+
+    return StreamingResponse(
+        output,
+        media_type="text/tab-separated-values",
+        headers={"Content-Disposition": f"attachment; filename=samples_{project_id}.tsv"},
+    )
 
 
 def get_samples(
