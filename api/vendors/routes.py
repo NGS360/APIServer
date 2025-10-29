@@ -10,7 +10,7 @@ PUT    /api/v1/vendors/[id]            Update info about a vendor
 """
 
 from typing import Literal
-from fastapi import APIRouter, Query, status
+from fastapi import APIRouter, Query, status, HTTPException
 from core.deps import SessionDep
 from api.vendors.models import (
      Vendor,
@@ -80,7 +80,10 @@ def get_vendor(session: SessionDep, vendor_id: str):
     """
     Retrieve a specific vendor by ID.
     """
-    return services.get_vendor(session=session, vendor_id=vendor_id)
+    try:
+        return services.get_vendor(session=session, vendor_id=vendor_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
 
 
 @router.put(
@@ -97,8 +100,26 @@ def update_vendor(
     """
     Update information about a specific vendor.
     """
-    return services.update_vendor(
-        session=session,
-        vendor_id=vendor_id,
-        update_request=update_request,
-    )
+    try:
+        return services.update_vendor(
+            session=session,
+            vendor_id=vendor_id,
+            update_request=update_request,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+
+
+@router.delete(
+    "/{vendor_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    tags=["Vendor Endpoints"],
+)
+def delete_vendor(session: SessionDep, vendor_id: str):
+    """
+    Delete a specific vendor by ID.
+    """
+    try:
+        services.delete_vendor(session=session, vendor_id=vendor_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
