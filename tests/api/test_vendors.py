@@ -26,6 +26,19 @@ def test_add_vendor(client: TestClient):
     assert data["bucket"] == new_vendor.bucket
     assert "id" not in data  # Ensure internal ID is not exposed
 
+    # Test adding the same vendor_id again should fail
+    new_vendor = VendorCreate(
+        vendor_id="vendor_a",
+        name="Vendor B",
+        description="Description for Vendor B",
+        bucket="s3://vendor-b-bucket"
+    )
+    response = client.post(
+        "/api/v1/vendors",
+        json=new_vendor.model_dump(),
+    )
+    assert response.status_code == 400
+
 
 def test_delete_vendor(client: TestClient, session: Session):
     """ Test deleting a vendor """

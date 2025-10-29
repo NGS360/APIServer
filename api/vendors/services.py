@@ -1,6 +1,7 @@
 """
 Services for managing vendors
 """
+from fastapi import HTTPException, status
 from sqlmodel import select, func
 from core.deps import SessionDep
 from api.vendors.models import (
@@ -18,10 +19,15 @@ def add_vendor(session: SessionDep, vendor_in: VendorCreate) -> VendorPublic:
     vendor = Vendor(**vendor_in.model_dump())
 
     # Add to the database
-    session.add(vendor)
-    session.commit()
-    session.refresh(vendor)
-
+    try:
+        session.add(vendor)
+        session.commit()
+        session.refresh(vendor)
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        ) from e
     # Return the created vendor
     return vendor
 
