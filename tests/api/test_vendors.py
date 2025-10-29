@@ -35,6 +35,7 @@ def test_add_vendor(client):
     )
     assert response.status_code == 400
 
+
 def test_get_vendors(client):
     """ Test retrieving vendors """
     # First, add a vendor to ensure there's at least one in the database
