@@ -324,6 +324,6 @@ def test_download_samples_tsv(client: TestClient, session: Session):
     assert response.headers["content-type"] == "text/tab-separated-values; charset=utf-8"
     content = response.content.decode("utf-8")
     lines = [line.strip() for line in content.strip().split("\n")]
-    assert lines[0] == "sample_id\tCondition\tTissue"
-    assert "Sample_1\tHealthy\tLiver" in lines
-    assert "Sample_2\tDisease\tHeart" in lines
+    assert lines[0] == "project_id\tsample_id\tCondition\tTissue"
+    assert f"{new_project.project_id}\tSample_1\tHealthy\tLiver" in lines
+    assert f"{new_project.project_id}\tSample_2\tDisease\tHeart" in lines

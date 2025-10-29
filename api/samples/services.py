@@ -124,12 +124,12 @@ def download_samples_as_tsv(
     writer = csv.writer(output, delimiter="\t")
 
     # Write header
-    header = ["sample_id"] + attribute_keys
+    header = ["project_id", "sample_id"] + attribute_keys
     writer.writerow(header)
 
     # Write sample rows
     for sample in samples:
-        row = [sample.sample_id]
+        row = [project_id, sample.sample_id]
         attr_dict = {attr.key: attr.value for attr in (sample.attributes or [])}
         for key in attribute_keys:
             row.append(attr_dict.get(key, ""))
@@ -140,7 +140,7 @@ def download_samples_as_tsv(
     return StreamingResponse(
         output,
         media_type="text/tab-separated-values",
-        headers={"Content-Disposition": f"attachment; filename=samples_{project_id}.tsv"},
+        headers={"Content-Disposition": f"attachment; filename={project_id}_samples.tsv"},
     )
 
 
