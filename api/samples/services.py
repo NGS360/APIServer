@@ -11,6 +11,7 @@ from api.samples.models import (
     SampleCreate,
     SamplePublic,
     SamplesPublic,
+    Attribute,
 )
 from api.project.models import Project
 from api.search.models import (
@@ -158,3 +159,58 @@ def get_sample_by_sample_id(session: Session, sample_id: str) -> Sample:
     Note: This is different from its internal "id".
     """
     return None
+
+
+def update_sample_in_project(
+        session: Session,
+        project_id: str,
+        sample_id: str,
+        attribute: Attribute,
+) -> SamplePublic:
+    """
+    Update an existing sample in a project.
+    """
+    # Fetch the sample
+    sample = session.exec(
+        select(Sample).where(
+            Sample.sample_id == sample_id,
+            Sample.project_id == project_id
+        )
+    ).first()
+
+    if not sample:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Sample {sample_id} in project {project_id} not found.",
+        )
+
+    # Check if the attribute exists
+    sample_attribute = session.exec(
+        select(SampleAttribute).where(
+            SampleAttribute.sample_id == sample.id,
+            SampleAttribute.key == attribute.key
+        )
+    ).first()
+
+    if sample_attribute:
+        # Update existing attribute
+        sample_attribute.value = attribute.value
+    else:
+        # Create new attribute
+        new_attribute = SampleAttribute(
+            sample_id=sample.id,
+            key=attribute.key,
+            value=attribute.value
+        )
+        session.add(new_attribute)
+
+    session.commit()
+    session.refresh(sample)
+
+    return SamplePublic(
+        sample_id=sample.sample_id,
+        project_id=sample.project_id,
+        attributes=[
+            Attribute(key=attr.key, value=attr.value) for attr in (sample.attributes or [])
+        ] if sample.attributes else []
+    )

@@ -6,7 +6,7 @@ from typing import Literal
 from fastapi import APIRouter, Query, status
 from core.deps import SessionDep, OpenSearchDep
 from api.project.models import Project, ProjectCreate, ProjectPublic, ProjectsPublic
-from api.samples.models import SampleCreate, SamplePublic, SamplesPublic
+from api.samples.models import SampleCreate, SamplePublic, SamplesPublic, Attribute
 from api.project import services
 from api.samples import services as sample_services
 
@@ -159,4 +159,26 @@ def get_samples(
         per_page=per_page,
         sort_by=sort_by,
         sort_order=sort_order,
+    )
+
+
+@router.put(
+    "/{project_id}/samples/{sample_id}",
+    response_model=SamplePublic,
+    tags=["Sample Endpoints"],
+)
+def update_sample_in_project(
+    session: SessionDep,
+    project_id: str,
+    sample_id: str,
+    attribute: Attribute,
+) -> SamplePublic:
+    """
+    Update an existing sample in a project.
+    """
+    return sample_services.update_sample_in_project(
+        session=session,
+        project_id=project_id,
+        sample_id=sample_id,
+        attribute=attribute,
     )
