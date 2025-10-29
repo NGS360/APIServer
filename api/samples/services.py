@@ -14,6 +14,7 @@ from sqlmodel import Session, select, func
 from opensearchpy import OpenSearch
 
 from api.samples.models import (
+    Attribute,
     Sample,
     SampleAttribute,
     SampleCreate,
@@ -235,3 +236,130 @@ def get_sample_by_sample_id(session: Session, sample_id: str) -> Sample:
     Note: This is different from its internal "id".
     """
     return None
+
+
+def upload_samples_from_tsv(
+    session: Session,
+    opensearch_client: OpenSearch,
+    project_id: str,
+    tsv_content: str,
+) -> SamplesPublic:
+    """
+    Upload samples to a specific project from a TSV file content.
+
+    Args:
+        session: Database session
+        opensearch_client: OpenSearch client for indexing
+        project_id: Project ID to associate samples with
+        tsv_content: Content of the TSV file as a string
+    Returns:
+        SamplesPublic: List of created samples
+    """
+    # Check if project exists
+    project = session.exec(
+        select(Project).where(Project.project_id == project_id)
+    ).first()
+    if not project:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Project {project_id} not found.",
+        )
+
+    # Parse TSV content
+    # If tsv_content is bytes, decode it
+    if isinstance(tsv_content, bytes):
+        tsv_content = tsv_content.decode("utf-8")
+    
+    tsv_io = StringIO(tsv_content)
+    reader = csv.DictReader(tsv_io, delimiter="\t")
+    
+    # Validate header
+    if not reader.fieldnames:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="TSV file is empty or has no header.",
+        )
+    
+    # Expected columns: project_id, sample_id, and any number of attribute columns
+    if "project_id" not in reader.fieldnames or "sample_id" not in reader.fieldnames:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="TSV file must contain 'project_id' and 'sample_id' columns.",
+        )
+    
+    # Get attribute column names (all columns except project_id and sample_id)
+    attribute_keys = [
+        col for col in reader.fieldnames 
+        if col not in ["project_id", "sample_id"]
+    ]
+    
+    # Create samples from TSV rows
+    created_samples = []
+    for row in reader:
+        # Validate project_id matches
+        row_project_id = row.get("project_id", "").strip()
+        if row_project_id != project_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    f"Row project_id '{row_project_id}' does not match "
+                    f"URL project_id '{project_id}'."
+                ),
+            )
+        
+        sample_id = row.get("sample_id", "").strip()
+        if not sample_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Each row must have a non-empty sample_id.",
+            )
+        
+        # Build attributes from remaining columns
+        attributes = []
+        for key in attribute_keys:
+            value = row.get(key, "").strip()
+            if value:  # Only add non-empty attributes
+                attributes.append(Attribute(key=key, value=value))
+        
+        # Create sample using existing service function
+        sample_in = SampleCreate(
+            sample_id=sample_id,
+            attributes=attributes if attributes else None,
+        )
+        
+        sample = add_sample_to_project(
+            session=session,
+            opensearch_client=opensearch_client,
+            project_id=project_id,
+            sample_in=sample_in,
+        )
+        created_samples.append(sample)
+    
+    # Convert to SamplePublic format
+    public_samples = [
+        SamplePublic(
+            sample_id=sample.sample_id,
+            project_id=sample.project_id,
+            attributes=sample.attributes,
+        )
+        for sample in created_samples
+    ]
+    
+    # Collect all unique attribute keys for data_cols
+    all_keys = set()
+    for sample in created_samples:
+        if sample.attributes:
+            for attr in sample.attributes:
+                all_keys.add(attr.key)
+    data_cols = sorted(list(all_keys)) if all_keys else None
+    
+    return SamplesPublic(
+        data=public_samples,
+        data_cols=data_cols,
+        total_items=len(public_samples),
+        total_pages=1,
+        current_page=1,
+        per_page=len(public_samples),
+        has_next=False,
+        has_prev=False,
+    )

@@ -3,7 +3,7 @@ Routes/endpoints for the Project API
 """
 
 from typing import Literal
-from fastapi import APIRouter, Query, status
+from fastapi import APIRouter, Query, status, UploadFile, File
 from fastapi.responses import StreamingResponse
 from core.deps import SessionDep, OpenSearchDep
 from api.project.models import Project, ProjectCreate, ProjectPublic, ProjectsPublic
@@ -180,4 +180,31 @@ def download_samples(
     return sample_services.download_samples_as_tsv(
         session=session,
         project_id=project_id,
+    )
+
+
+@router.post(
+    "/{project_id}/samples/upload",
+    response_model=SamplesPublic,
+    tags=["Sample Endpoints"],
+    status_code=status.HTTP_201_CREATED,
+)
+async def upload_samples_to_project(
+    session: SessionDep,
+    opensearch_client: OpenSearchDep,
+    project_id: str,
+    file: UploadFile = File(...),
+) -> SamplesPublic:
+    """
+    Upload samples from a TSV file to a specific project.
+    """
+    # Read file content
+    content = await file.read()
+    tsv_content = content.decode("utf-8")
+    
+    return sample_services.upload_samples_from_tsv(
+        session=session,
+        opensearch_client=opensearch_client,
+        project_id=project_id,
+        tsv_content=tsv_content,
     )

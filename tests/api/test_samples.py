@@ -327,3 +327,36 @@ def test_download_samples_tsv(client: TestClient, session: Session):
     assert lines[0] == "project_id\tsample_id\tCondition\tTissue"
     assert f"{new_project.project_id}\tSample_1\tHealthy\tLiver" in lines
     assert f"{new_project.project_id}\tSample_2\tDisease\tHeart" in lines
+
+
+def test_upload_samples_tsv(client: TestClient, session: Session):
+    """
+    Test that we can upload samples via a TSV file
+    """
+    # Add a project to the database
+    new_project = Project(name="Test Project")
+    new_project.project_id = generate_project_id(session=session)
+    new_project.attributes = []
+    session.add(new_project)
+    session.commit()
+
+    # Create TSV content
+    tsv_content = (
+        "project_id\tsample_id\tTissue\tCondition\n"
+        f"{new_project.project_id}\tSample_1\tLiver\tHealthy\n"
+        f"{new_project.project_id}\tSample_2\tHeart\tDisease\n"
+    )
+
+    # Upload samples via TSV
+    response = client.post(
+        f"/api/v1/projects/{new_project.project_id}/samples/upload",
+        files={"file": ("samples.tsv", tsv_content, "text/tab-separated-values")},
+    )
+    assert response.status_code == 201
+    response_data = response.json()
+    assert len(response_data["data"]) == 2
+
+    # Verify that samples were added correctly
+    sample_ids = {sample["sample_id"] for sample in response_data["data"]}
+    assert "Sample_1" in sample_ids
+    assert "Sample_2" in sample_ids
