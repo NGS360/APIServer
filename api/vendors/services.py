@@ -32,18 +32,6 @@ def add_vendor(session: SessionDep, vendor_in: VendorCreate) -> VendorPublic:
     return vendor
 
 
-def delete_vendor(session: SessionDep, vendor_id: str) -> None:
-    """ Delete a specific vendor """
-    vendor = session.exec(
-        select(Vendor).where(Vendor.vendor_id == vendor_id)
-    ).first()
-    if not vendor:
-        raise ValueError(f"Vendor with ID {vendor_id} not found")
-
-    session.delete(vendor)
-    session.commit()
-
-
 def get_vendors(
     session: SessionDep,
     page: int,
