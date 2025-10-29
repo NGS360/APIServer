@@ -289,7 +289,7 @@ def upload_samples_from_tsv(
 
     # Get attribute column names (all columns except project_id and sample_id)
     attribute_keys = [
-        col for col in reader.fieldnames 
+        col for col in reader.fieldnames
         if col not in ["project_id", "sample_id"]
     ]
 
