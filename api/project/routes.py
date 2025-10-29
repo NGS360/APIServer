@@ -201,7 +201,7 @@ async def upload_samples_to_project(
     # Read file content
     content = await file.read()
     tsv_content = content.decode("utf-8")
-    
+
     return sample_services.upload_samples_from_tsv(
         session=session,
         opensearch_client=opensearch_client,
