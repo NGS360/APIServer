@@ -5,7 +5,6 @@ from sqlmodel import Session
 from api.vendors.models import VendorCreate, Vendor
 
 
-
 def test_add_vendor(client):
     """ Test adding a vendor """
     new_vendor = VendorCreate(
