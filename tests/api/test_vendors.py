@@ -33,7 +33,7 @@ def test_add_vendor(client):
         "/api/v1/vendors",
         json=new_vendor.model_dump(),
     )
-    assert response.status_code == 400
+    assert response.status_code == 409
 
 
 def test_get_vendors(client):

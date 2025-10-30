@@ -3,6 +3,7 @@ Services for managing vendors
 """
 from fastapi import HTTPException, status
 from sqlmodel import select, func
+from sqlalchemy.exc import IntegrityError
 from core.deps import SessionDep
 from api.vendors.models import (
      Vendor,
@@ -23,6 +24,12 @@ def add_vendor(session: SessionDep, vendor_in: VendorCreate) -> VendorPublic:
         session.add(vendor)
         session.commit()
         session.refresh(vendor)
+    except IntegrityError as e:
+        session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,  # More appropriate status code
+            detail=f"Vendor with ID '{vendor_in.vendor_id}' already exists",
+        ) from e
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
