@@ -86,7 +86,7 @@ def get_vendor(session: SessionDep, vendor_id: str) -> VendorPublic:
         select(Vendor).where(Vendor.vendor_id == vendor_id)
     ).first()
     if not vendor:
-        raise ValueError(f"Vendor with ID {vendor_id} not found")
+        raise HTTPException(status_code=404, detail=f"Vendor with ID {vendor_id} not found")
     return VendorPublic(**vendor.model_dump())
 
 
@@ -100,7 +100,7 @@ def update_vendor(
         select(Vendor).where(Vendor.vendor_id == vendor_id)
     ).first()
     if not vendor:
-        raise ValueError(f"Vendor with ID {vendor_id} not found")
+        raise HTTPException(status_code=404, detail=f"Vendor with ID {vendor_id} not found")
 
     # Update only the fields that are provided (not None)
     for key, value in update_request.model_dump(exclude_unset=True).items():
@@ -111,3 +111,15 @@ def update_vendor(
     session.refresh(vendor)
 
     return VendorPublic(**vendor.model_dump())
+
+
+def delete_vendor(session: SessionDep, vendor_id: str) -> None:
+    """ Delete a specific vendor """
+    vendor = session.exec(
+        select(Vendor).where(Vendor.vendor_id == vendor_id)
+    ).first()
+    if not vendor:
+        raise HTTPException(status_code=404, detail=f"Vendor with ID {vendor_id} not found")
+
+    session.delete(vendor)
+    session.commit()
