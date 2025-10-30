@@ -1,7 +1,9 @@
 """
 Services for managing vendors
 """
+from fastapi import HTTPException, status
 from sqlmodel import select, func
+from sqlalchemy.exc import IntegrityError
 from core.deps import SessionDep
 from api.vendors.models import (
      Vendor,
@@ -18,10 +20,21 @@ def add_vendor(session: SessionDep, vendor_in: VendorCreate) -> VendorPublic:
     vendor = Vendor(**vendor_in.model_dump())
 
     # Add to the database
-    session.add(vendor)
-    session.commit()
-    session.refresh(vendor)
-
+    try:
+        session.add(vendor)
+        session.commit()
+        session.refresh(vendor)
+    except IntegrityError as e:
+        session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,  # More appropriate status code
+            detail=f"Vendor with ID '{vendor_in.vendor_id}' already exists",
+        ) from e
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        ) from e
     # Return the created vendor
     return vendor
 
@@ -73,7 +86,7 @@ def get_vendor(session: SessionDep, vendor_id: str) -> VendorPublic:
         select(Vendor).where(Vendor.vendor_id == vendor_id)
     ).first()
     if not vendor:
-        raise ValueError(f"Vendor with ID {vendor_id} not found")
+        raise HTTPException(status_code=404, detail=f"Vendor with ID {vendor_id} not found")
     return VendorPublic(**vendor.model_dump())
 
 
@@ -87,7 +100,7 @@ def update_vendor(
         select(Vendor).where(Vendor.vendor_id == vendor_id)
     ).first()
     if not vendor:
-        raise ValueError(f"Vendor with ID {vendor_id} not found")
+        raise HTTPException(status_code=404, detail=f"Vendor with ID {vendor_id} not found")
 
     # Update only the fields that are provided (not None)
     for key, value in update_request.model_dump(exclude_unset=True).items():
@@ -98,3 +111,15 @@ def update_vendor(
     session.refresh(vendor)
 
     return VendorPublic(**vendor.model_dump())
+
+
+def delete_vendor(session: SessionDep, vendor_id: str) -> None:
+    """ Delete a specific vendor """
+    vendor = session.exec(
+        select(Vendor).where(Vendor.vendor_id == vendor_id)
+    ).first()
+    if not vendor:
+        raise HTTPException(status_code=404, detail=f"Vendor with ID {vendor_id} not found")
+
+    session.delete(vendor)
+    session.commit()
