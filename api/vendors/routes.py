@@ -102,3 +102,15 @@ def update_vendor(
         vendor_id=vendor_id,
         update_request=update_request,
     )
+
+
+@router.delete(
+    "/{vendor_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    tags=["Vendor Endpoints"],
+)
+def delete_vendor(session: SessionDep, vendor_id: str):
+    """
+    Delete a specific vendor by ID.
+    """
+    return services.delete_vendor(session=session, vendor_id=vendor_id)

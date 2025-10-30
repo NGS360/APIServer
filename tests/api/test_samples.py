@@ -156,7 +156,7 @@ def test_add_sample_to_project(client: TestClient, session: Session):
     assert response.json()["sample_id"] == "Sample_1"
 
 
-def test_fail_to_add_sample_with_duplicate_attributes(
+def test_fail_to_add__sample_with_duplicate_attributes(
     client: TestClient, session: Session
 ):
     """
@@ -280,6 +280,45 @@ def test_add_samples_with_same_sampleid_to_different_projects(
     )
     assert response.status_code == 201
     assert response.json()["sample_id"] == "Sample_1"
+
+
+def test_update_sample_attribute(client: TestClient, session: Session):
+    """
+    Test that we can update a sample attribute
+    """
+    # Add a project to the database
+    new_project = Project(name="Test Project")
+    new_project.project_id = generate_project_id(session=session)
+    new_project.attributes = []
+    session.add(new_project)
+    session.commit()
+
+    # Add a sample to the project
+    sample_data = {
+        "sample_id": "Sample_1",
+        "attributes": [
+            {"key": "Tissue", "value": "Liver"},
+            {"key": "Condition", "value": "Healthy"},
+        ],
+    }
+
+    response = client.post(
+        f"/api/v1/projects/{new_project.project_id}/samples", json=sample_data
+    )
+    assert response.status_code == 201
+    assert response.json()["sample_id"] == "Sample_1"
+
+    # Update an attribute
+    update_data = {"key": "Condition", "value": "Diseased"}
+    response = client.put(
+        f"/api/v1/projects/{new_project.project_id}/samples/Sample_1",
+        json=update_data,
+    )
+    assert response.status_code == 200
+    assert any(
+        attr["key"] == "Condition" and attr["value"] == "Diseased"
+        for attr in response.json()["attributes"]
+    )
 
 
 def test_download_samples_tsv(client: TestClient, session: Session):
