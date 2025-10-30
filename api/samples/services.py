@@ -20,7 +20,6 @@ from api.samples.models import (
     SampleCreate,
     SamplePublic,
     SamplesPublic,
-    Attribute,
 )
 from api.project.models import Project
 from api.search.models import (
