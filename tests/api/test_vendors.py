@@ -34,6 +34,8 @@ def test_add_vendor(client):
         json=new_vendor.model_dump(),
     )
     assert response.status_code == 409
+    # This detail message is displaye to user in UI so it needs to stay consistent.
+    assert response.json()["detail"] == "Vendor with ID 'vendor_a' already exists"
 
 
 def test_get_vendors(client):
