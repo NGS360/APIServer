@@ -222,24 +222,6 @@ def test_search_runs(client: TestClient):
     }
 
 
-def test_search_runs_paging(client: TestClient, opensearch_client: OpenSearch):
-    """
-    Test that pagination works on the data returned by the runs search
-    endpoint.
-    """
-    # TODO: Test once /api/v1/search post is implemented
-    pass
-
-
-def test_search_runs_sorting(client: TestClient, opensearch_client: OpenSearch):
-    """
-    Test that sorting works on the data returned by the runs search
-    endpoint, even across pagination.
-    """
-    # TODO: Test once /api/v1/search post is implemented
-    pass
-
-
 def test_search(client: TestClient, opensearch_client: OpenSearch):
     """
     Test unified search endpoint for search bar that
