@@ -209,7 +209,7 @@ def test_search_runs(client: TestClient):
     url = "/api/v1/runs/search"
 
     # Test No runs, this also ensure we are using the test db
-    response = client.get(f"{url}", params={"query": "AI"})
+    response = client.get(url, params={"query": "AI"})
     assert response.status_code == 200
     assert response.json() == {
         "data": [],
