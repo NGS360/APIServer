@@ -99,7 +99,7 @@ def get_runs(
 )
 def search_runs(
     session: SessionDep,
-    client: OpenSearchDep,
+    opensearch_client: OpenSearchDep,
     query: str = Query(description="Search query string"),
     page: int = Query(1, description="Page number (1-indexed)"),
     per_page: int = Query(20, description="Number of items per page"),
@@ -115,7 +115,7 @@ def search_runs(
     '''
     return services.search_runs(
         session=session,
-        client=client,
+        client=opensearch_client,
         query=query,
         page=page,
         per_page=per_page,
