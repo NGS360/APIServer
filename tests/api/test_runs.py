@@ -443,3 +443,32 @@ def test_post_demultiplex_analysis(client: TestClient, session):
     demux_data = {"demux_workflow": "bcl2fastq"}
     response = client.post(f"/api/v1/runs/demultiplex?run_barcode={run_barcode}", json=demux_data)
     assert response.status_code == 202
+
+
+def test_search_runs(client: TestClient):
+    """
+    Run search that returns a SequencingRunsPublic model
+    with sorting and pagination for rendering the table
+    on the illumin_runs page.
+
+    This is equivalent to the get runs endpoint, except that
+    the searching and pagination is handled by OpenSearch, rather
+    than handling pagination from the database.
+    """
+    # Define the url
+    # this can be changed if it replaces the
+    # /api/v1/runs endpoint.
+    url = "/api/v1/runs/search"
+
+    # Test No runs, this also ensure we are using the test db
+    response = client.get(url, params={"query": "AI"})
+    assert response.status_code == 200
+    assert response.json() == {
+        "data": [],
+        "total_items": 0,
+        "total_pages": 0,
+        "current_page": 1,
+        "per_page": 20,
+        "has_next": False,
+        "has_prev": False,
+    }
