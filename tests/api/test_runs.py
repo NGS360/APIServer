@@ -455,20 +455,44 @@ def test_search_runs(client: TestClient):
     the searching and pagination is handled by OpenSearch, rather
     than handling pagination from the database.
     """
-    # Define the url
-    # this can be changed if it replaces the
-    # /api/v1/runs endpoint.
-    url = "/api/v1/runs/search"
+    # Add a run to the database
+    new_run = {
+        "run_date": "2019-01-10",
+        "machine_id": "MACHINE123",
+        "run_number": 1,
+        "flowcell_id": "FLOWCELL123",
+        "experiment_name": "Test Experiment AI",
+        "run_folder_uri": "s3://bucket/path/to/run",
+        "status": RunStatus.READY,
+    }
+    response = client.post("/api/v1/runs", json=new_run)
+    assert response.status_code == 201
 
-    # Test No runs, this also ensure we are using the test db
-    response = client.get(url, params={"query": "AI"})
+    # Test
+    url = "/api/v1/runs/search"
+    query_string = "query=AI&page=1&per_page=20&sort_by=barcode&sort_order=desc"
+    response = client.get(f"{url}?{query_string}")
+
     assert response.status_code == 200
     assert response.json() == {
-        "data": [],
-        "total_items": 0,
-        "total_pages": 0,
+        "data": [
+            {
+                "barcode": "190110_MACHINE123_0001_FLOWCELL123",
+                "run_date": "2019-01-10",
+                "machine_id": "MACHINE123",
+                "run_number": 1,
+                "flowcell_id": "FLOWCELL123",
+                "experiment_name": "Test Experiment AI",
+                "run_folder_uri": "s3://bucket/path/to/run",
+                "status": "Ready",
+                "run_time": None,
+            }
+        ],
+        "total_items": 1,
+        "total_pages": 1,
         "current_page": 1,
         "per_page": 20,
         "has_next": False,
         "has_prev": False,
     }
+
