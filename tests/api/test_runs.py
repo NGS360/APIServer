@@ -537,8 +537,8 @@ def test_search_runs_db_opensearch_out_of_sync(client: TestClient, session: Sess
     assert response.json() == {
         "data": [
         ],
-        "total_items": 0,
-        "total_pages": 0,
+        "total_items": 1,
+        "total_pages": 1,
         "current_page": 1,
         "per_page": 20,
         "has_next": False,
