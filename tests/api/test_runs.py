@@ -9,7 +9,7 @@ from uuid import uuid4
 
 from botocore.exceptions import NoCredentialsError
 from fastapi.testclient import TestClient
-from sqlmodel import Session
+from sqlmodel import Session, select
 
 from api.runs.models import SequencingRun, RunStatus
 
@@ -496,3 +496,53 @@ def test_search_runs(client: TestClient):
         "has_prev": False,
     }
 
+
+def test_search_runs_db_opensearch_out_of_sync(client: TestClient, session: Session):
+    """
+    Test when the database and OpenSearch are out of sync.  OpenSearch will return
+    a run that does not exist in the database.  Make sure the API handles this gracefully.
+    """
+    # Add a run
+    new_run = {
+        "run_date": "2019-01-10",
+        "machine_id": "MACHINE123",
+        "run_number": 1,
+        "flowcell_id": "FLOWCELL123",
+        "experiment_name": "Test Experiment AI",
+        "run_folder_uri": "s3://bucket/path/to/run",
+        "status": RunStatus.READY,
+    }
+    response = client.post("/api/v1/runs", json=new_run)
+    assert response.status_code == 201
+    response_data = response.json()
+    barcode = response_data["barcode"]
+
+    # Flush to ensure data is written to the database
+    session.flush()
+
+    # Now delete from database to simulate out of sync
+    run = session.exec(
+        select(SequencingRun).where(
+            SequencingRun.flowcell_id == 'FLOWCELL123',
+        )
+    ).first()
+    session.delete(run)
+    session.commit()
+
+    # Test
+    # OpenSearch will return the run, but the database will not have it
+    url = "/api/v1/runs/search"
+    query_string = "query=AI&page=1&per_page=20&sort_by=barcode&sort_order=desc"
+    response = client.get(f"{url}?{query_string}")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "data": [
+        ],
+        "total_items": 0,
+        "total_pages": 0,
+        "current_page": 1,
+        "per_page": 20,
+        "has_next": False,
+        "has_prev": False,
+    }
