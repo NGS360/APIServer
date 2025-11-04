@@ -7,4 +7,6 @@ client = TestClient(app)
 def test_read_main(client: TestClient):
     response = client.get("/")
     assert response.status_code == 200
-    assert response.json() == {"message": "Welcome to the NGS360 API! Visit /docs for API documentation."}
+    assert response.json() == {
+        "message": "Welcome to the NGS360 API! Visit /docs for API documentation."
+    }

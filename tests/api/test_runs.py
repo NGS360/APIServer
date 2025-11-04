@@ -514,8 +514,6 @@ def test_search_runs_db_opensearch_out_of_sync(client: TestClient, session: Sess
     }
     response = client.post("/api/v1/runs", json=new_run)
     assert response.status_code == 201
-    response_data = response.json()
-    barcode = response_data["barcode"]
 
     # Flush to ensure data is written to the database
     session.flush()
