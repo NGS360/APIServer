@@ -163,6 +163,11 @@ def search_runs(
 
         response = client.search(index="illumina_runs", body=search_body)
 
+        # Total Items and Pages needs to be calculated from OpenSearch response
+        # or else pagination info will be incorrect for clients
+        total_items = response["hits"]["total"]["value"]
+        total_pages = (total_items + per_page - 1) // per_page  # Ceiling division
+
         # Unpack search results into ProjectPublic model
         results = []
         for hit in response["hits"]["hits"]:
@@ -170,9 +175,6 @@ def search_runs(
             run = get_run(session=session, run_barcode=source.get("barcode"))
             if run:
                 results.append(SequencingRunPublic.model_validate(run))
-
-        total_items = len(results)  # response["hits"]["total"]["value"]
-        total_pages = (total_items + per_page - 1) // per_page  # Ceiling division
 
         return SequencingRunsPublic(
             data=results,
