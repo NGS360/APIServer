@@ -42,7 +42,7 @@ app.add_middleware(
 # Create a simple health check endpoint
 @app.get("/", tags=["index"])
 def root():
-    return {"message": "Welcome to the NGS360 API!"}
+    return {"message": "Welcome to the NGS360 API! Visit /docs for API documentation."}
 
 
 # REST routers

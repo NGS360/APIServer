@@ -67,15 +67,9 @@ class MockOpenSearchClient:
             if not search_term:  # Empty search or match_all
                 should_include = True
             else:
-                # Search in name field
-                if matches_query(doc_body.get("name", ""), search_term):
-                    should_include = True
-
-                # Search in attributes
-                for attr in doc_body.get("attributes", []):
-                    if matches_query(attr.get("key", ""), search_term) or matches_query(
-                        attr.get("value", ""), search_term
-                    ):
+                # Search across ALL fields in the document (since they are already __searchable__)
+                for field_name, field_value in doc_body.items():
+                    if field_value and matches_query(str(field_value), search_term):
                         should_include = True
                         break
 

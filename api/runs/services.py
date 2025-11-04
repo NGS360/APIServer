@@ -162,15 +162,17 @@ def search_runs(
     try:
 
         response = client.search(index="illumina_runs", body=search_body)
-        total_items = response["hits"]["total"]["value"]
-        total_pages = (total_items + per_page - 1) // per_page  # Ceiling division
 
         # Unpack search results into ProjectPublic model
         results = []
         for hit in response["hits"]["hits"]:
             source = hit["_source"]
             run = get_run(session=session, run_barcode=source.get("barcode"))
-            results.append(SequencingRunPublic.model_validate(run))
+            if run:
+                results.append(SequencingRunPublic.model_validate(run))
+
+        total_items = len(results)  # response["hits"]["total"]["value"]
+        total_pages = (total_items + per_page - 1) // per_page  # Ceiling division
 
         return SequencingRunsPublic(
             data=results,

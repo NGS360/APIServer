@@ -3,14 +3,15 @@ Routes/endpoints for the Runs API
 
 HTTP   URI                             Action
 ----   ---                             ------
-GET    /api/v0/runs                    Retrieve a list of sequencing runs
-POST   /api/v0/runs                    Create/Add a sequencing run
-GET    /api/v0/runs/[id]               Retrieve info about a specific run
-PUT    /api/v0/runs/[id]               Update a Run State
-GET    /api/v0/runs/[id]/sample_sheet  Retrieve the sample sheet for the run
-POST   /api/v0/runs/[id]/samples       Post new samples after demux
-POST   /api/v0/runs/[id]/demultiplex   Demultiplex a run
-GET    /api/v0/runs/[id]/metrics       Retrieve demux metrics from Stat.json
+GET    /api/v1/runs                    Retrieve a list of sequencing runs
+POST   /api/v1/runs                    Create/Add a sequencing run
+GET    /api/v1/runs/search             Search sequencing runs
+GET    /api/v1/runs/[id]               Retrieve info about a specific run
+PUT    /api/v1/runs/[id]               Update a Run State
+GET    /api/v1/runs/[id]/sample_sheet  Retrieve the sample sheet for the run
+POST   /api/v1/runs/[id]/samples       Post new samples after demux
+POST   /api/v1/runs/[id]/demultiplex   Demultiplex a run
+GET    /api/v1/runs/[id]/metrics       Retrieve demux metrics from Stat.json
 """
 
 from typing import Literal
@@ -98,7 +99,7 @@ def get_runs(
 )
 def search_runs(
     session: SessionDep,
-    client: OpenSearchDep,
+    opensearch_client: OpenSearchDep,
     query: str = Query(description="Search query string"),
     page: int = Query(1, description="Page number (1-indexed)"),
     per_page: int = Query(20, description="Number of items per page"),
@@ -114,7 +115,7 @@ def search_runs(
     '''
     return services.search_runs(
         session=session,
-        client=client,
+        client=opensearch_client,
         query=query,
         page=page,
         per_page=per_page,
