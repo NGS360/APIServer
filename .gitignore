@@ -19,3 +19,7 @@ wheels/
 # Local computer files
 *.DS_Store
 .vscode
+# Elastic Beanstalk Files
+.elasticbeanstalk/*
+!.elasticbeanstalk/*.cfg.yml
+!.elasticbeanstalk/*.global.yml
