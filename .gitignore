@@ -15,6 +15,7 @@ wheels/
 # Keys and secrets
 .env
 *.env
+.env.*
 
 # Local computer files
 *.DS_Store
