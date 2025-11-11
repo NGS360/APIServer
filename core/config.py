@@ -5,9 +5,46 @@ Add constants, secrets, env variables here
 
 from functools import lru_cache
 import os
+import json
 from urllib.parse import urlparse, urlunparse
 from pydantic import computed_field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+import boto3
+from botocore.exceptions import ClientError
+
+
+def get_secret(secret_name: str, region_name: str = "us-east-1") -> dict:
+    """
+    Retrieve secret from AWS Secrets Manager
+    
+    Args:
+        secret_name: Name of the secret in Secrets Manager
+        region_name: AWS region where secret is stored
+        
+    Returns:
+        dict: Parsed secret value
+        
+    Raises:
+        ClientError: If secret cannot be retrieved
+    """
+    session = boto3.session.Session()
+    client = session.client(
+        service_name='secretsmanager',
+        region_name=region_name
+    )
+    
+    try:
+        get_secret_value_response = client.get_secret_value(
+            SecretId=secret_name
+        )
+    except ClientError as e:
+        # Log the error and re-raise
+        print(f"Error retrieving secret {secret_name}: {e}")
+        raise
+    
+    # Parse and return the secret
+    secret = get_secret_value_response['SecretString']
+    return json.loads(secret)
 
 
 # Define settings class for univeral access
@@ -16,42 +53,22 @@ class Settings(BaseSettings):
     client_origin: str | None = os.getenv("client_origin")
 
     # SQLAlchemy - Create db connection string
-    SQLALCHEMY_DATABASE_URI: str = os.getenv("SQLALCHEMY_DATABASE_URI", "sqlite://")
-
     @computed_field
     @property
-    def SQLALCHEMY_DATABASE_URI_MASKED_PASSWORD(self) -> str:
-        """
-        def mask_password_in_uri(uri: str, mask: str = "*****") -> str:
-
-        Mask the password in a SQLAlchemy database URI.
-
-        Args:
-            uri (str): The database URI (e.g. "postgresql://user:password@host/dbname").
-            mask (str): The string to replace the password with.
-
-        Returns:
-            str: The URI with the password masked.
-        """
-        uri = self.SQLALCHEMY_DATABASE_URI
-        mask = "*****"
-
-        parsed = urlparse(uri)
-
-        if parsed.password is None:
-            return uri  # Nothing to mask
-
-        # Rebuild the netloc with the password masked
-        userinfo = parsed.username or ""
-        if userinfo:
-            userinfo += f":{mask}"
-        netloc = f"{userinfo}@{parsed.hostname}"
-        if parsed.port:
-            netloc += f":{parsed.port}"
-
-        # Rebuild the full URI with masked password
-        masked = parsed._replace(netloc=netloc)
-        return urlunparse(masked)
+    def SQLALCHEMY_DATABASE_URI(self) -> str:
+        """Build database URI from secret"""
+        # 1. Return the db credentials if available as environment variable
+        env_uri = os.getenv("SQLALCHEMY_DATABASE_URI")
+        if env_uri:
+            return env_uri
+        # 2. Read db credentials from AWS Secrets
+        try:
+            secret = get_secret(self.DB_SECRET_NAME, self.AWS_REGION)
+            return secret['SQLALCHEMY_DATABASE_URI']
+        except Exception as e:
+            print(f"Failed to retrieve database credentials: {e}")
+            # 3. Fall back to sqllite in-memory
+            return "sqlite://"
 
     # ElasticSearch Configuration
     OPENSEARCH_HOST: str | None = os.getenv("OPENSEARCH_HOST")
