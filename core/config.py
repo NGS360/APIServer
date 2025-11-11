@@ -16,14 +16,14 @@ from botocore.exceptions import ClientError
 def get_secret(secret_name: str, region_name: str) -> dict:
     """
     Retrieve secret from AWS Secrets Manager
-    
+
     Args:
         secret_name: Name of the secret in Secrets Manager
         region_name: AWS region where secret is stored
-        
+
     Returns:
         dict: Parsed secret value
-        
+
     Raises:
         ClientError: If secret cannot be retrieved
     """
@@ -32,7 +32,7 @@ def get_secret(secret_name: str, region_name: str) -> dict:
         service_name='secretsmanager',
         region_name=region_name
     )
-    
+
     try:
         get_secret_value_response = client.get_secret_value(
             SecretId=secret_name
@@ -41,7 +41,7 @@ def get_secret(secret_name: str, region_name: str) -> dict:
         # Log the error and re-raise
         print(f"Error retrieving secret {secret_name}: {e}")
         raise
-    
+
     # Parse and return the secret
     secret = get_secret_value_response['SecretString']
     return json.loads(secret)
