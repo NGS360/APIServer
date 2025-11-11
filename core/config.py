@@ -13,7 +13,7 @@ import boto3
 from botocore.exceptions import ClientError
 
 
-def get_secret(secret_name: str, region_name: str = "us-east-1") -> dict:
+def get_secret(secret_name: str, region_name: str) -> dict:
     """
     Retrieve secret from AWS Secrets Manager
     
@@ -63,7 +63,8 @@ class Settings(BaseSettings):
             return env_uri
         # 2. Read db credentials from AWS Secrets
         try:
-            secret = get_secret(self.DB_SECRET_NAME, self.AWS_REGION)
+            db_secret = os.getenv('DB_SECRET_NAME')
+            secret = get_secret(db_secret, os.getenv("AWS_REGION", 'us-east-1'))
             return secret['SQLALCHEMY_DATABASE_URI']
         except Exception as e:
             print(f"Failed to retrieve database credentials: {e}")
