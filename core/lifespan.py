@@ -19,12 +19,16 @@ async def lifespan(app: FastAPI):
 
     # Print configuration settings (mask sensitive info)
     logger.info("Configuration Settings:")
+
+    # Log computed fields first (they don't appear in vars())
+    logger.info(
+        "  %s: %s",
+        "SQLALCHEMY_DATABASE_URI",
+        get_settings().SQLALCHEMY_DATABASE_URI_MASKED_PASSWORD,
+    )
+
     for key, value in vars(get_settings()).items():
-        if "SQLALCHEMY_DATABASE_URI" in key:
-            logger.info(
-                "  %s: %s", key, get_settings().SQLALCHEMY_DATABASE_URI_MASKED_PASSWORD
-            )
-        elif ("PASSWORD" in key or "SECRET" in key) and value is not None:
+        if ("PASSWORD" in key or "SECRET" in key) and value is not None:
             logger.info("  %s: %s", key, "*****")
         else:
             logger.info("  %s: %s", key, value)
