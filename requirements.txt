@@ -11,7 +11,7 @@ anyio==4.11.0
     #   httpx
     #   starlette
     #   watchfiles
-boto3==1.40.69
+boto3==1.41.2
     # via ngs360-server (pyproject.toml)
 botocore==1.40.69
     # via
