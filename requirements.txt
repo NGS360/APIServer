@@ -2,7 +2,7 @@
 #    uv pip compile pyproject.toml -o requirements.txt
 alembic==1.17.1
     # via ngs360-server (pyproject.toml)
-annotated-doc==0.0.3
+annotated-doc==0.0.4
     # via fastapi
 annotated-types==0.7.0
     # via pydantic
