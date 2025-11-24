@@ -142,7 +142,7 @@ s3transfer==0.14.0
     # via boto3
 sample-sheet==0.13.0
     # via ngs360-server (pyproject.toml)
-sentry-sdk==2.43.0
+sentry-sdk==2.45.0
     # via fastapi-cloud-cli
 shellingham==1.5.4
     # via typer
