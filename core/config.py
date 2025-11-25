@@ -6,11 +6,19 @@ Add constants, secrets, env variables here
 from functools import lru_cache
 import os
 import json
+from pathlib import Path
 from urllib.parse import urlparse, urlunparse
-from pydantic import computed_field
+from pydantic import computed_field, PrivateAttr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 import boto3
 from botocore.exceptions import ClientError
+from dotenv import load_dotenv
+
+# Load .env file into os.environ so os.getenv() works correctly
+# This must happen before Settings class is instantiated
+env_path = Path(__file__).parent.parent / ".env"
+if env_path.exists():
+    load_dotenv(env_path)
 
 
 def get_secret(secret_name: str, region_name: str) -> dict:
@@ -53,7 +61,8 @@ class Settings(BaseSettings):
     client_origin: str | None = os.getenv("client_origin")
 
     # Cache for AWS Secrets Manager to avoid multiple API calls
-    _secret_cache: dict | None = None
+    # Note: Must use PrivateAttr for Pydantic v2 private attributes
+    _secret_cache: dict | None = PrivateAttr(default=None)
 
     def _get_config_value(
         self,
@@ -172,7 +181,12 @@ class Settings(BaseSettings):
     VITE_RESULTS_BUCKET_URI: str = os.getenv("VITE_RESULTS_BUCKET_URI", "s3://my-results-bucket/")
 
     # Read environment variables from .env file, if it exists
-    model_config = SettingsConfigDict(env_file=".env")
+    # extra='ignore' prevents validation errors from extra env vars
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        extra='ignore',
+        case_sensitive=False
+    )
 
 
 # Export settings
