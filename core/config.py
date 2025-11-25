@@ -15,7 +15,7 @@ from botocore.exceptions import ClientError
 
 def get_secret(secret_name: str, region_name: str) -> dict:
     """
-    Retrieve secret from AWS Secrets Manager
+    Retrieve secrets from AWS Secrets Manager
 
     Args:
         secret_name: Name of the secret in Secrets Manager
@@ -32,7 +32,6 @@ def get_secret(secret_name: str, region_name: str) -> dict:
         service_name='secretsmanager',
         region_name=region_name
     )
-
     try:
         get_secret_value_response = client.get_secret_value(
             SecretId=secret_name
@@ -41,10 +40,11 @@ def get_secret(secret_name: str, region_name: str) -> dict:
         # Log the error and re-raise
         print(f"Error retrieving secret {secret_name}: {e}")
         raise
-
     # Parse and return the secret
     secret = get_secret_value_response['SecretString']
-    return json.loads(secret)
+    return json.loads(
+        secret.replace('\n', '')
+    )
 
 
 # Define settings class for univeral access
@@ -52,24 +52,56 @@ class Settings(BaseSettings):
     # Computed or constant values
     client_origin: str | None = os.getenv("client_origin")
 
+    # Cache for AWS Secrets Manager to avoid multiple API calls
+    _secret_cache: dict | None = None
+
+    def _get_config_value(
+        self,
+        env_var_name: str,
+        secret_key_name: str | None = None,
+        default: str | None = None
+    ) -> str | None:
+        """
+        Get configuration value from environment variable or AWS Secrets Manager (with caching).
+
+        Args:
+            env_var_name: Environment variable name to check first
+            secret_key_name: Key name in AWS Secrets (defaults to env_var_name if not provided)
+            default: Default value to return if not found in env or secrets
+
+        Returns:
+            Configuration value, or default value if not found
+        """
+        # 1. Check environment variable first
+        env_value = os.getenv(env_var_name)
+        if env_value:
+            return env_value
+
+        # 2. Try to get from AWS Secrets Manager with caching
+        if secret_key_name is None:
+            secret_key_name = env_var_name
+
+        try:
+            # Use cached secret if available
+            if self._secret_cache is None:
+                env_secret = os.getenv('ENV_SECRETS')
+                self._secret_cache = get_secret(env_secret, os.getenv("AWS_REGION", 'us-east-1'))
+
+            secret_value = self._secret_cache.get(secret_key_name)
+            if secret_value is not None:
+                return secret_value
+        except Exception as e:
+            print(f"Failed to retrieve {env_var_name} from secrets: {e}")
+
+        # 3. Return default value if provided
+        return default
+
     # SQLAlchemy - Create db connection string
     @computed_field
     @property
     def SQLALCHEMY_DATABASE_URI(self) -> str:
-        """Build database URI from secret"""
-        # 1. Return the db credentials if available as environment variable
-        env_uri = os.getenv("SQLALCHEMY_DATABASE_URI")
-        if env_uri:
-            return env_uri
-        # 2. Read db credentials from AWS Secrets
-        try:
-            db_secret = os.getenv('DB_SECRET_NAME')
-            secret = get_secret(db_secret, os.getenv("AWS_REGION", 'us-east-1'))
-            return secret['SQLALCHEMY_DATABASE_URI']
-        except Exception as e:
-            print(f"Failed to retrieve database credentials: {e}")
-            # 3. Fall back to sqllite in-memory
-            return "sqlite://"
+        """Build database URI from env or secrets, defaults to sqlite://"""
+        return self._get_config_value("SQLALCHEMY_DATABASE_URI", default="sqlite://")
 
     @computed_field
     @property
@@ -105,10 +137,30 @@ class Settings(BaseSettings):
         return urlunparse(masked)
 
     # ElasticSearch Configuration
-    OPENSEARCH_HOST: str | None = os.getenv("OPENSEARCH_HOST")
-    OPENSEARCH_PORT: str | None = os.getenv("OPENSEARCH_PORT")
-    OPENSEARCH_USER: str | None = os.getenv("OPENSEARCH_USER")
-    OPENSEARCH_PASSWORD: str | None = os.getenv("OPENSEARCH_PASSWORD")
+    @computed_field
+    @property
+    def OPENSEARCH_HOST(self) -> str | None:
+        """Get OpenSearch host from env or secrets"""
+        return self._get_config_value("OPENSEARCH_HOST")
+
+    @computed_field
+    @property
+    def OPENSEARCH_PORT(self) -> str | None:
+        """Get OpenSearch post from env or secrets"""
+        return self._get_config_value("OPENSEARCH_PORT")
+
+    @computed_field
+    @property
+    def OPENSEARCH_USER(self) -> str | None:
+        """Get OpenSearch user from env or secrets"""
+        return self._get_config_value("OPENSEARCH_USER")
+
+    @computed_field
+    @property
+    def OPENSEARCH_PASSWORD(self) -> str | None:
+        """Get OpenSearch password from env or secrets"""
+        # Note: Secret key is 'OPENSEARCH_PASS' not 'OPENSEARCH_PASSWORD'
+        return self._get_config_value("OPENSEARCH_PASSWORD")
 
     # AWS Credentials
     AWS_ACCESS_KEY_ID: str | None = os.getenv("AWS_ACCESS_KEY_ID")
