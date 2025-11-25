@@ -35,7 +35,7 @@ def get_opensearch_client():
             ],
             http_compress=True,  # enables gzip compression for request bodies
             http_auth=auth,
-            # use_ssl = True,
+            use_ssl = True,
             # verify_certs = True,
             # ssl_assert_hostname = False,
             # ssl_show_warn = False,
