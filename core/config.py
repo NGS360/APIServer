@@ -51,7 +51,7 @@ def get_secret(secret_name: str, region_name: str) -> dict:
 class Settings(BaseSettings):
     # Computed or constant values
     client_origin: str | None = os.getenv("client_origin")
-    
+
     # Cache for AWS Secrets Manager to avoid multiple API calls
     _secret_cache: dict | None = None
 
