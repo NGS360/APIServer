@@ -191,3 +191,27 @@ docker-compose up
 ```
 
 **Note:** If no environment variables are set, the docker-compose file will use default values (`admin`/`admin`) suitable for local OpenSearch development.
+
+#### OpenSearch SSL Configuration
+
+The application supports different OpenSearch configurations for development and production:
+
+**Local Development (Docker Compose)**
+- Uses HTTP (no SSL) with security plugin disabled
+- Set in `docker-compose.yml`:
+  ```yaml
+  - OPENSEARCH_USE_SSL=false
+  - OPENSEARCH_VERIFY_CERTS=false
+  ```
+
+**Production (AWS OpenSearch Service)**
+- Uses HTTPS with SSL/TLS enabled
+- Configure in your production `.env` file or secrets manager:
+  ```bash
+  OPENSEARCH_USE_SSL=true
+  OPENSEARCH_VERIFY_CERTS=true
+  OPENSEARCH_USER=your_username
+  OPENSEARCH_PASSWORD=your_password
+  ```
+
+These settings are controlled by environment variables and can be adjusted per environment without code changes.

@@ -39,6 +39,8 @@ services:
       # Open search
       - OPENSEARCH_HOST=opensearch
       - OPENSEARCH_PORT=9200
+      - OPENSEARCH_USE_SSL=false
+      - OPENSEARCH_VERIFY_CERTS=false
       - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID:-admin}
       - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY:-admin}
       - AWS_REGION=${AWS_REGION:-us-east-1}
