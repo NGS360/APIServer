@@ -23,7 +23,7 @@ from api.runs.models import (
     SequencingRunPublic,
     SequencingRunsPublic,
 )
-from api.search.services import add_object_to_index
+from api.search.services import add_object_to_index, delete_index
 from api.search.models import (
     SearchDocument,
 )
@@ -188,6 +188,22 @@ def search_runs(
 
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e)) from e
+
+
+def reindex_runs(
+    session: Session,
+    client: OpenSearch
+):
+    """
+    Index all runs in database with OpenSearch
+    """
+    delete_index(client, "illumina_runs")
+    runs = session.exec(
+        select(SequencingRun)
+    ).all()
+    for run in runs:
+        search_doc = SearchDocument(id=run.barcode, body=run)
+        add_object_to_index(client, search_doc, "illumina_runs")
 
 
 def get_run_samplesheet(session: Session, run_barcode: str):
