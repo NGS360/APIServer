@@ -173,6 +173,19 @@ def get_sample_by_sample_id(session: Session, sample_id: str) -> Sample:
     return None
 
 
+def reindex_samples(session: Session, client: OpenSearch):
+    """
+    Index all samples in database with OpenSearch
+    """
+    client.indices.delete(index="samples", ignore=[400, 404])
+    samples = session.exec(
+        select(Sample)
+    ).all()
+    for sample in samples:
+        search_doc = SearchDocument(id=str(sample.id), body=sample)
+        add_object_to_index(client, search_doc, index="samples")
+
+
 def update_sample_in_project(
         session: Session,
         project_id: str,
