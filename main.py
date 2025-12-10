@@ -45,6 +45,11 @@ def root():
     return {"message": "Welcome to the NGS360 API! Visit /docs for API documentation."}
 
 
+@app.get("/api/health", tags=["health"])
+def health_check():
+    return {"status": "ok", "message": "NGS360 API is running."}
+
+
 # REST routers
 # Add each api/feature folder here
 API_PREFIX = "/api/v1"
