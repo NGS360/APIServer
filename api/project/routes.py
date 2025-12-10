@@ -60,6 +60,10 @@ def get_projects(
         sort_order=sort_order,
     )
 
+###############################################################################
+# Projects Endpoints /api/v1/projects/search
+###############################################################################
+
 
 @router.get(
     "/search",
@@ -93,6 +97,21 @@ def search_projects(
         sort_order=sort_order,
     )
 
+
+@router.post(
+    "/search",
+    status_code=status.HTTP_201_CREATED,
+    tags=["Project Endpoints"],
+)
+def reindex_projects(
+    session: SessionDep,
+    client: OpenSearchDep,
+):
+    """
+    Reindex projects in database with OpenSearch
+    """
+    services.reindex_projects(session, client)
+    return 'OK'
 
 ###############################################################################
 # Project Endpoints /api/v1/projects/{project_id}
