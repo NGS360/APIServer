@@ -19,7 +19,7 @@ from api.project.models import (
     ProjectsPublic,
 )
 from api.search.models import SearchDocument
-from api.search.services import add_object_to_index
+from api.search.services import add_object_to_index, delete_index
 
 
 def generate_project_id(*, session: Session) -> str:
