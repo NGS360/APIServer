@@ -39,4 +39,4 @@ def reindex_samples(
     Reindex samples in database with OpenSearch
     """
     services.reindex_samples(session, client)
-    return 'OK'  
+    return 'OK'
