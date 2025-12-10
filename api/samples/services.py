@@ -18,7 +18,7 @@ from api.search.models import (
     SearchDocument,
 )
 from opensearchpy import OpenSearch
-from api.search.services import add_object_to_index
+from api.search.services import add_object_to_index, delete_index
 
 
 def add_sample_to_project(
@@ -177,7 +177,8 @@ def reindex_samples(session: Session, client: OpenSearch):
     """
     Index all samples in database with OpenSearch
     """
-    client.indices.delete(index="samples", ignore=[400, 404])
+    
+    delete_index(client, "samples")
     samples = session.exec(
         select(Sample)
     ).all()
