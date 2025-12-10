@@ -19,7 +19,7 @@ from api.project.models import (
     ProjectsPublic,
 )
 from api.search.models import SearchDocument
-from api.search.services import add_object_to_index
+from api.search.services import add_object_to_index, delete_index
 
 
 def generate_project_id(*, session: Session) -> str:
@@ -209,3 +209,19 @@ def search_projects(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e)
         )
+
+
+def reindex_projects(
+    session: Session,
+    client: OpenSearch
+):
+    """
+    Index all projects in database with OpenSearch
+    """
+    delete_index(client, "projects")
+    projects = session.exec(
+        select(Project)
+    ).all()
+    for project in projects:
+        search_doc = SearchDocument(id=project.project_id, body=project)
+        add_object_to_index(client, search_doc, index="projects")
