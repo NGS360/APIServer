@@ -31,6 +31,10 @@ from api.runs import services
 
 router = APIRouter(prefix="/runs", tags=["Run Endpoints"])
 
+###############################################################################
+# Runs Endpoints /api/v1/runs/
+###############################################################################
+
 
 @router.post(
     "",
@@ -90,6 +94,10 @@ def get_runs(
         sort_order=sort_order,
     )
 
+###############################################################################
+# Runs Endpoints /api/v1/runs/search
+###############################################################################
+
 
 @router.get(
     "/search",
@@ -122,6 +130,26 @@ def search_runs(
         sort_by=sort_by,
         sort_order=sort_order,
     )
+
+
+@router.post(
+    "/search",
+    status_code=status.HTTP_201_CREATED,
+    tags=["Run Endpoints"],
+)
+def reindex_runs(
+    session: SessionDep,
+    client: OpenSearchDep,
+):
+    """
+    Reindex runs in database with OpenSearch
+    """
+    services.reindex_runs(session, client)
+    return 'OK'
+
+###############################################################################
+# Runs Endpoints /api/v1/runs/demultiplex
+###############################################################################
 
 
 @router.get(

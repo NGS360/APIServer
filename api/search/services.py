@@ -34,6 +34,17 @@ def add_object_to_index(
     client.indices.refresh(index=index)
 
 
+def delete_index(client: OpenSearch, index: str) -> None:
+    """
+    Delete an OpenSearch index.
+    """
+    if client is None:
+        logger.warning("OpenSearch client is not available.")
+        return
+
+    client.indices.delete(index=index, ignore=[400, 404])
+
+
 def search(
     client: OpenSearch, session: Session, query: str, n_results: int = 5
 ) -> SearchResponse:
