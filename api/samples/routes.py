@@ -3,10 +3,10 @@ Routes/endpoints for the Samples API
 """
 
 # from typing import Literal
-from fastapi import APIRouter  # Query, status
-# from core.deps import SessionDep, OpenSearchDep
+from fastapi import APIRouter, status  # Query
+from core.deps import SessionDep, OpenSearchDep
 # from api.samples.models import Sample, SampleCreate, SamplePublic, SamplesPublic
-# import api.samples.services as services
+import api.samples.services as services
 
 router = APIRouter(prefix="/samples", tags=["Sample Endpoints"])
 
@@ -39,5 +39,4 @@ def reindex_samples(
     Reindex samples in database with OpenSearch
     """
     services.reindex_samples(session, client)
-    return 'OK'
-  
+    return 'OK'  
