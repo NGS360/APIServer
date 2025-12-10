@@ -177,7 +177,6 @@ def reindex_samples(session: Session, client: OpenSearch):
     """
     Index all samples in database with OpenSearch
     """
-    
     delete_index(client, "samples")
     samples = session.exec(
         select(Sample)
