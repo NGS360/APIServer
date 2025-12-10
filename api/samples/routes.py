@@ -24,3 +24,20 @@ router = APIRouter(prefix="/samples", tags=["Sample Endpoints"])
 #    session=session,
 #    sample_id=sample_id
 #  )
+
+
+@router.post(
+    "/search",
+    status_code=status.HTTP_201_CREATED,
+    tags=["Sample Endpoints"],
+)
+def reindex_samples(
+    session: SessionDep,
+    client: OpenSearchDep,
+):
+    """
+    Reindex samples in database with OpenSearch
+    """
+    services.reindex_samples(session, client)
+    return 'OK'
+  
