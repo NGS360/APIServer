@@ -193,6 +193,7 @@ class Settings(BaseSettings):
     # Bucket configurations
     VITE_DATA_BUCKET_URI: str = os.getenv("VITE_DATA_BUCKET_URI", "s3://my-data-bucket/")
     VITE_RESULTS_BUCKET_URI: str = os.getenv("VITE_RESULTS_BUCKET_URI", "s3://my-results-bucket/")
+    TOOL_CONFIGS_BUCKET_URI: str = os.getenv("TOOL_CONFIGS_BUCKET_URI", "s3://my-tool-configs-bucket/")
 
     # Read environment variables from .env file, if it exists
     # extra='ignore' prevents validation errors from extra env vars
