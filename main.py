@@ -5,10 +5,10 @@ Main entrypoint for the FastAPI server
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.routing import APIRoute
-## For testing
+# BEGIN: For testing
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
-##
+## END: For testing
 from core.lifespan import lifespan
 from core.config import get_settings
 
@@ -65,14 +65,14 @@ app.include_router(samples_router, prefix=API_PREFIX)
 app.include_router(search_router, prefix=API_PREFIX)
 app.include_router(vendors_router, prefix=API_PREFIX)
 
-# For testing: Serve static files (e.g., frontend)
+# BEGIN: For testing: Serve static files (e.g., frontend)
 app.mount("/assets", StaticFiles(directory="static/assets"), name="assets")
 
 
 @app.get("/{full_path:path}")
 async def serve_spa(full_path: str):
     return FileResponse("static/index.html")
-#
+# END: For testing
 
 if __name__ == "__main__":
     # For debugging purposes
