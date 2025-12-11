@@ -45,6 +45,11 @@ def root():
     return {"message": "Welcome to the NGS360 API! Visit /docs for API documentation."}
 
 
+@app.get("/api/health", tags=["health"])
+def health_check():
+    return {"status": "ok", "message": "NGS360 API is running."}
+
+
 # REST routers
 # Add each api/feature folder here
 API_PREFIX = "/api/v1"
@@ -55,6 +60,7 @@ app.include_router(runs_router, prefix=API_PREFIX)
 app.include_router(samples_router, prefix=API_PREFIX)
 app.include_router(search_router, prefix=API_PREFIX)
 app.include_router(vendors_router, prefix=API_PREFIX)
+
 
 if __name__ == "__main__":
     # For debugging purposes
