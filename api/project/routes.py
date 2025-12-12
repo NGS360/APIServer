@@ -5,7 +5,7 @@ Routes/endpoints for the Project API
 from typing import Literal
 from fastapi import APIRouter, Query, status
 from core.deps import SessionDep, OpenSearchDep
-from api.project.models import Project, ProjectCreate, ProjectPublic, ProjectsPublic
+from api.project.models import ProjectCreate, ProjectPublic, ProjectsPublic
 from api.samples.models import SampleCreate, SamplePublic, SamplesPublic, Attribute
 from api.project import services
 from api.samples import services as sample_services

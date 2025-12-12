@@ -51,6 +51,7 @@ class ProjectPublic(SQLModel):
     results_folder_uri: str | None
     attributes: List[Attribute] | None
 
+
 class ProjectsPublic(SQLModel):
     data: List[ProjectPublic]
     total_items: int

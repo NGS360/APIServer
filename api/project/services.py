@@ -3,7 +3,7 @@ Services for the Project API
 """
 
 from datetime import datetime
-from typing import List, Literal
+from typing import Literal
 from fastapi import HTTPException, status
 from pydantic import PositiveInt
 from pytz import timezone
