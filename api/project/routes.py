@@ -25,7 +25,7 @@ router = APIRouter(prefix="/projects")
 )
 def create_project(
     session: SessionDep, opensearch_client: OpenSearchDep, project_in: ProjectCreate
-) -> Project:
+) -> ProjectPublic:
     """
     Create a new project with optional attributes.
     """

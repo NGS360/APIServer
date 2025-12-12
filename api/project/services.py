@@ -51,7 +51,7 @@ def generate_project_id(*, session: Session) -> str:
 
 def create_project(
     *, session: Session, project_in: ProjectCreate, opensearch_client: OpenSearch = None
-) -> Project:
+) -> ProjectPublic:
     """
     Create a new project with optional attributes.
     """
@@ -94,7 +94,13 @@ def create_project(
         search_doc = SearchDocument(id=project.project_id, body=project)
         add_object_to_index(opensearch_client, search_doc, index="projects")
 
-    return project
+    return ProjectPublic(
+        project_id=project.project_id,
+        name=project.name,
+        data_folder_uri=f"{get_settings().DATA_BUCKET_URI}/{project.project_id}/",
+        results_folder_uri=f"{get_settings().RESULTS_BUCKET_URI}/{project.project_id}/",
+        attributes=project.attributes,
+    )
 
 
 def get_projects(
@@ -104,7 +110,7 @@ def get_projects(
     per_page: PositiveInt,
     sort_by: str,
     sort_order: Literal["asc", "desc"],
-) -> List[Project]:
+) -> ProjectsPublic:
     """
     Returns all projects from the database along
     with pagination information.
@@ -132,6 +138,8 @@ def get_projects(
         ProjectPublic(
             project_id=project.project_id,
             name=project.name,
+            data_folder_uri=f"{get_settings().DATA_BUCKET_URI}/{project.project_id}/",
+            results_folder_uri=f"{get_settings().RESULTS_BUCKET_URI}/{project.project_id}/",
             attributes=project.attributes,
         )
         for project in projects
@@ -163,9 +171,13 @@ def get_project_by_project_id(session: Session, project_id: str) -> ProjectPubli
             detail=f"Project {project_id} not found.",
         )
 
-    project.data_folder_uri = f"{get_settings().DATA_BUCKET_URI}/{project_id}/"
-    project.results_folder_uri = f"{get_settings().RESULTS_BUCKET_URI}/{project_id}/"
-    return project
+    return ProjectPublic(
+        project_id=project.project_id,
+        name=project.name,
+        data_folder_uri=f"{get_settings().DATA_BUCKET_URI}/{project.project_id}/",
+        results_folder_uri=f"{get_settings().RESULTS_BUCKET_URI}/{project.project_id}/",
+        attributes=project.attributes,
+    )
 
 
 def search_projects(
