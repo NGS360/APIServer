@@ -177,8 +177,8 @@ class Settings(BaseSettings):
     AWS_REGION: str | None = os.getenv("AWS_REGION")
 
     # Bucket configurations
-    VITE_DATA_BUCKET_URI: str = os.getenv("VITE_DATA_BUCKET_URI", "s3://my-data-bucket/")
-    VITE_RESULTS_BUCKET_URI: str = os.getenv("VITE_RESULTS_BUCKET_URI", "s3://my-results-bucket/")
+    DATA_BUCKET_URI: str = os.getenv("DATA_BUCKET_URI", "s3://my-data-bucket")
+    RESULTS_BUCKET_URI: str = os.getenv("RESULTS_BUCKET_URI", "s3://my-results-bucket")
 
     # Read environment variables from .env file, if it exists
     # extra='ignore' prevents validation errors from extra env vars

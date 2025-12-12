@@ -10,8 +10,8 @@ from api.project.models import Project, ProjectAttribute
 from api.project.services import generate_project_id
 
 
-def test_get_projects(client: TestClient, session: Session):
-    """Test that we can get all projects"""
+def test_get_projects_with_no_data(client: TestClient, session: Session):
+    """Test that we can get projects when there is no data"""
     # Test No projects, this also ensure we are using the test db
     response = client.get("/api/v1/projects")
     assert response.status_code == 200
@@ -25,10 +25,9 @@ def test_get_projects(client: TestClient, session: Session):
         "has_prev": False,
     }
 
-    # Get a session for testing
-    # session_generator = get_test_session()
-    # session = next(session_generator)
-    # try:
+
+def test_get_projects_with_data(client: TestClient, session: Session):
+    """Test that we can get projects"""
     # Add a project
     new_project = Project(name="AI Research")
     new_project.project_id = generate_project_id(session=session)
@@ -55,6 +54,9 @@ def test_get_projects(client: TestClient, session: Session):
     # Verify project details
     project = response_json["data"][0]
     assert project["name"] == "AI Research"
+
+    assert project["data_folder_uri"] == f"s3://my-data-bucket/{new_project.project_id}/"
+    assert project["results_folder_uri"] == f"s3://my-results-bucket/{new_project.project_id}/"
 
     # Check attributes (they're a list of objects with key/value pairs)
     attribute_dict = {attr["key"]: attr["value"] for attr in project["attributes"]}
