@@ -9,6 +9,7 @@ from pydantic import PositiveInt
 from pytz import timezone
 from sqlmodel import Session, func, select
 from opensearchpy import OpenSearch
+from core.config import get_settings
 
 from core.utils import define_search_body
 from api.project.models import (
@@ -162,6 +163,8 @@ def get_project_by_project_id(session: Session, project_id: str) -> ProjectPubli
             detail=f"Project {project_id} not found.",
         )
 
+    project.data_folder_uri = f"{get_settings().DATA_BUCKET_URI}/{project_id}/"
+    project.results_folder_uri = f"{get_settings().RESULTS_BUCKET_URI}/{project_id}/"
     return project
 
 

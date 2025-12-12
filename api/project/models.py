@@ -48,7 +48,8 @@ class ProjectPublic(SQLModel):
     project_id: str
     name: str | None
     attributes: List[Attribute] | None
-
+    data_folder_uri: str | None
+    results_folder_uri: str | None
 
 class ProjectsPublic(SQLModel):
     data: List[ProjectPublic]
