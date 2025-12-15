@@ -184,8 +184,9 @@ class Settings(BaseSettings):
     # extra='ignore' prevents validation errors from extra env vars
     model_config = SettingsConfigDict(
         env_file=".env",
-        extra='ignore',
-        case_sensitive=False
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra="ignore",
     )
 
 
