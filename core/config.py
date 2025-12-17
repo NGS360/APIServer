@@ -7,7 +7,6 @@ from functools import lru_cache
 import os
 import json
 from pathlib import Path
-from urllib.parse import urlparse, urlunparse
 from pydantic import computed_field, PrivateAttr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 import boto3
@@ -44,9 +43,9 @@ def get_secret(secret_name: str, region_name: str) -> dict:
         get_secret_value_response = client.get_secret_value(
             SecretId=secret_name
         )
-    except ClientError as e:
+    except ClientError:  # as e:
         # Log the error and re-raise
-        print(f"Error retrieving secret {secret_name}: {e}")
+        # print(f"Error retrieving secret {secret_name}: {e}")
         raise
     # Parse and return the secret
     secret = get_secret_value_response['SecretString']
@@ -99,8 +98,8 @@ class Settings(BaseSettings):
             secret_value = self._secret_cache.get(secret_key_name)
             if secret_value is not None:
                 return secret_value
-        except Exception as e:
-            print(f"Failed to retrieve {env_var_name} from secrets: {e}")
+        except Exception:
+            pass
 
         # 3. Return default value if provided
         return default
@@ -111,39 +110,6 @@ class Settings(BaseSettings):
     def SQLALCHEMY_DATABASE_URI(self) -> str:
         """Build database URI from env or secrets, defaults to sqlite://"""
         return self._get_config_value("SQLALCHEMY_DATABASE_URI", default="sqlite://")
-
-    @computed_field
-    @property
-    def SQLALCHEMY_DATABASE_URI_MASKED_PASSWORD(self) -> str:
-        """
-        def mask_password_in_uri(uri: str, mask: str = "*****") -> str:
-        Mask the password in a SQLAlchemy database URI.
-
-        Args:
-            uri (str): The database URI (e.g. "postgresql://user:password@host/dbname").
-            mask (str): The string to replace the password with.
-        Returns:
-            str: The URI with the password masked.
-        """
-        uri = self.SQLALCHEMY_DATABASE_URI
-        mask = "*****"
-
-        parsed = urlparse(uri)
-
-        if parsed.password is None:
-            return uri  # Nothing to mask
-
-        # Rebuild the netloc with the password masked
-        userinfo = parsed.username or ""
-        if userinfo:
-            userinfo += f":{mask}"
-        netloc = f"{userinfo}@{parsed.hostname}"
-        if parsed.port:
-            netloc += f":{parsed.port}"
-
-        # Rebuild the full URI with masked password
-        masked = parsed._replace(netloc=netloc)
-        return urlunparse(masked)
 
     # ElasticSearch Configuration
     @computed_field
