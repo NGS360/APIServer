@@ -100,7 +100,8 @@ class Settings(BaseSettings):
             if secret_value is not None:
                 return secret_value
         except Exception as e:
-            print(f"Failed to retrieve {env_var_name} from secrets: {e}")
+            #print(f"Failed to retrieve {env_var_name} from secrets: {e}")
+            pass
 
         # 3. Return default value if provided
         return default
@@ -111,39 +112,6 @@ class Settings(BaseSettings):
     def SQLALCHEMY_DATABASE_URI(self) -> str:
         """Build database URI from env or secrets, defaults to sqlite://"""
         return self._get_config_value("SQLALCHEMY_DATABASE_URI", default="sqlite://")
-
-    @computed_field
-    @property
-    def SQLALCHEMY_DATABASE_URI_MASKED_PASSWORD(self) -> str:
-        """
-        def mask_password_in_uri(uri: str, mask: str = "*****") -> str:
-        Mask the password in a SQLAlchemy database URI.
-
-        Args:
-            uri (str): The database URI (e.g. "postgresql://user:password@host/dbname").
-            mask (str): The string to replace the password with.
-        Returns:
-            str: The URI with the password masked.
-        """
-        uri = self.SQLALCHEMY_DATABASE_URI
-        mask = "*****"
-
-        parsed = urlparse(uri)
-
-        if parsed.password is None:
-            return uri  # Nothing to mask
-
-        # Rebuild the netloc with the password masked
-        userinfo = parsed.username or ""
-        if userinfo:
-            userinfo += f":{mask}"
-        netloc = f"{userinfo}@{parsed.hostname}"
-        if parsed.port:
-            netloc += f":{parsed.port}"
-
-        # Rebuild the full URI with masked password
-        masked = parsed._replace(netloc=netloc)
-        return urlunparse(masked)
 
     # ElasticSearch Configuration
     @computed_field

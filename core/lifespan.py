@@ -32,7 +32,7 @@ async def lifespan(app: FastAPI):
 
     # Log computed fields first (they don't appear in vars())
     computed_fields = {
-        "SQLALCHEMY_DATABASE_URI": settings.SQLALCHEMY_DATABASE_URI_MASKED_PASSWORD,
+        "SQLALCHEMY_DATABASE_URI": settings.SQLALCHEMY_DATABASE_URI,
         "OPENSEARCH_HOST": settings.OPENSEARCH_HOST,
         "OPENSEARCH_PORT": settings.OPENSEARCH_PORT,
         "OPENSEARCH_USER": settings.OPENSEARCH_USER,
