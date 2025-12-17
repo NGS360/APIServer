@@ -16,9 +16,8 @@ down-rm:
 drop-db:
 	docker volume rm apiserver_db_data
 
-# Run FASTAPI in dev mode
-run-dev:
-	fastapi dev main.py
+run:
+	uv run fastapi dev main.py
 
 # Unit Tests
 lint:
