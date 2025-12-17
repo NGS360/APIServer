@@ -45,7 +45,7 @@ def get_secret(secret_name: str, region_name: str) -> dict:
         )
     except ClientError as e:
         # Log the error and re-raise
-        print(f"Error retrieving secret {secret_name}: {e}")
+        # print(f"Error retrieving secret {secret_name}: {e}")
         raise
     # Parse and return the secret
     secret = get_secret_value_response['SecretString']
