@@ -7,7 +7,6 @@ from functools import lru_cache
 import os
 import json
 from pathlib import Path
-from urllib.parse import urlparse, urlunparse
 from pydantic import computed_field, PrivateAttr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 import boto3
@@ -99,8 +98,7 @@ class Settings(BaseSettings):
             secret_value = self._secret_cache.get(secret_key_name)
             if secret_value is not None:
                 return secret_value
-        except Exception as e:
-            #print(f"Failed to retrieve {env_var_name} from secrets: {e}")
+        except Exception:
             pass
 
         # 3. Return default value if provided
