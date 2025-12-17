@@ -25,6 +25,11 @@ async def lifespan(app: FastAPI):
         """Log a setting, masking sensitive values like passwords and secrets"""
         if ("PASSWORD" in key or "SECRET" in key) and value is not None:
             logger.info("  %s: %s", key, "*****")
+        elif "SQLALCHEMY_DATABASE_URI" in key and value is not None:
+            # Mask password in database URI if present
+            import re
+            masked_value = re.sub(r"://(.*?):(.*?)@", r"://\1:*****@", value)
+            logger.info("  %s: %s", key, masked_value)
         else:
             logger.info("  %s: %s", key, value)
 
@@ -37,6 +42,8 @@ async def lifespan(app: FastAPI):
         "OPENSEARCH_PORT": settings.OPENSEARCH_PORT,
         "OPENSEARCH_USER": settings.OPENSEARCH_USER,
         "OPENSEARCH_PASSWORD": settings.OPENSEARCH_PASSWORD,
+        "OPENSEARCH_USE_SSL": settings.OPENSEARCH_USE_SSL,
+        "OPENSEARCH_VERIFY_CERTS": settings.OPENSEARCH_VERIFY_CERTS,
     }
 
     for key, value in computed_fields.items():
