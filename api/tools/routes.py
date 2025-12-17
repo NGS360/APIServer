@@ -17,7 +17,7 @@ def list_available_tools(
 ) -> list[str]:
     """
     List all available tool configurations from S3.
-    
+
     Returns a list of tool IDs (config filenames without extensions).
     """
     return services.list_tool_configs(s3_client=s3_client)
@@ -30,10 +30,10 @@ def get_tool_config(
 ) -> ToolConfig:
     """
     Retrieve a specific tool configuration.
-    
+
     Args:
         tool_id: The tool identifier (filename without extension)
-    
+
     Returns:
         Complete tool configuration
     """

@@ -14,63 +14,63 @@ from core.config import get_settings
 def _get_tool_configs_s3_location() -> tuple[str, str]:
     """
     Get the S3 bucket and prefix for tool configurations.
-    
+
     Returns:
         Tuple of (bucket, prefix) where prefix includes the full path with subfolders
     """
     settings = get_settings()
     tool_configs_uri = settings.TOOL_CONFIGS_BUCKET_URI
-    
+
     # Ensure URI ends with /
     if not tool_configs_uri.endswith("/"):
         tool_configs_uri += "/"
-    
+
     # Parse S3 URI to get bucket and prefix
     s3_path = tool_configs_uri.replace("s3://", "")
     bucket = s3_path.split("/")[0]
     prefix = "/".join(s3_path.split("/")[1:])
-    
+
     return bucket, prefix
 
 
 def list_tool_configs(s3_client=None) -> list[str]:
     """
     List available tool configuration files from S3.
-    
+
     Returns:
         List of tool config filenames (without .yaml extension)
     """
     bucket, prefix = _get_tool_configs_s3_location()
-    
+
     try:
         if s3_client is None:
             s3_client = boto3.client("s3")
-        
+
         # List objects in the bucket/prefix
         paginator = s3_client.get_paginator("list_objects_v2")
         page_iterator = paginator.paginate(Bucket=bucket, Prefix=prefix)
-        
+
         tool_configs = []
-        
+
         for page in page_iterator:
             for obj in page.get("Contents", []):
                 key = obj["Key"]
-                
+
                 # Skip if this is just the prefix itself
                 if key == prefix:
                     continue
-                
+
                 # Get filename from the key
                 filename = key[len(prefix):] if prefix else key
-                
+
                 # Only include .yaml or .yml files
                 if filename.endswith((".yaml", ".yml")):
                     # Remove extension and add to list
                     tool_id = filename.rsplit(".", 1)[0]
                     tool_configs.append(tool_id)
-        
+
         return sorted(tool_configs)
-    
+
     except NoCredentialsError as exc:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -103,20 +103,20 @@ def list_tool_configs(s3_client=None) -> list[str]:
 def get_tool_config(tool_id: str, s3_client=None) -> ToolConfig:
     """
     Retrieve a specific tool configuration from S3.
-    
+
     Args:
         tool_id: The tool identifier (filename without extension)
         s3_client: Optional boto3 S3 client
-    
+
     Returns:
         ToolConfig object
     """
     bucket, prefix = _get_tool_configs_s3_location()
-    
+
     try:
         if s3_client is None:
             s3_client = boto3.client("s3")
-        
+
         # Try both .yaml and .yml extensions
         key = None
         for ext in [".yaml", ".yml"]:
@@ -133,19 +133,19 @@ def get_tool_config(tool_id: str, s3_client=None) -> ToolConfig:
                     continue  # Try next extension
                 else:
                     raise  # Re-raise other errors
-        
+
         if key is None:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Tool config '{tool_id}' not found",
             )
-        
+
         # Parse YAML
         config_data = yaml.safe_load(yaml_content)
-        
+
         # Validate and return as ToolConfig model
         return ToolConfig(**config_data)
-    
+
     except HTTPException:
         raise
     except NoCredentialsError as exc:

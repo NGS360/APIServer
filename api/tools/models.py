@@ -17,7 +17,7 @@ class ToolConfigInput(BaseModel):
     required: bool = False
     default: Optional[Any] = None
     options: Optional[List[str]] = None
-    
+
     @model_validator(mode='after')
     def validate_enum_has_options(self):
         if self.type == InputType.ENUM and not self.options:
