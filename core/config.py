@@ -140,8 +140,8 @@ class Settings(BaseSettings):
     @computed_field
     @property
     def OPENSEARCH_USE_SSL(self) -> bool:
-        """Get OpenSearch SSL setting from env or secrets (defaults to False for local dev)"""
-        value = self._get_config_value("OPENSEARCH_USE_SSL", default="false")
+        """Get OpenSearch use SSL flag from env or secrets"""
+        value = self._get_config_value("OPENSEARCH_USE_SSL", default="true")
         return value.lower() in ("true", "1", "yes")
 
     @computed_field
