@@ -137,6 +137,20 @@ class Settings(BaseSettings):
         # Note: Secret key is 'OPENSEARCH_PASS' not 'OPENSEARCH_PASSWORD'
         return self._get_config_value("OPENSEARCH_PASSWORD")
 
+    @computed_field
+    @property
+    def OPENSEARCH_USE_SSL(self) -> bool:
+        """Get OpenSearch use SSL flag from env or secrets"""
+        use_ssl = self._get_config_value("OPENSEARCH_USE_SSL", default="true")
+        return use_ssl.lower() in ("true", "1", "yes")
+
+    @computed_field
+    @property
+    def OPENSEARCH_VERIFY_CERTS(self) -> bool:
+        """Get OpenSearch certificate verification setting from env or secrets (defaults to False)"""
+        value = self._get_config_value("OPENSEARCH_VERIFY_CERTS", default="false")
+        return value.lower() in ("true", "1", "yes")
+
     # AWS Credentials
     AWS_ACCESS_KEY_ID: str | None = os.getenv("AWS_ACCESS_KEY_ID")
     AWS_SECRET_ACCESS_KEY: str | None = os.getenv("AWS_SECRET_ACCESS_KEY")
