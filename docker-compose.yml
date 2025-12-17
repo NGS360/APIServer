@@ -10,9 +10,6 @@ services:
       - 8080:8080
     environment:
       - VITE_API_URL=http://localhost:3000/
-      - VITE_DATA_BUCKET_URI=${VITE_DATA_BUCKET_URI:-s3://my-data-bucket/}
-      - VITE_RESULTS_BUCKET_URI=${VITE_RESULTS_BUCKET_URI:-s3://my-results-bucket/}
-      - TOOL_CONFIGS_BUCKET_URI=${TOOL_CONFIGS_BUCKET_URI:-s3://my-tool-configs-bucket/}
     volumes: # this allows live reloading of the frontend code
       - ../frontend-ui:/app
       - /app/node_modules

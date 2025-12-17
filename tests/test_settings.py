@@ -215,8 +215,8 @@ class TestSettings:
     def test_settings_bucket_uris(self, monkeypatch):
         """Test bucket URI configuration"""
         # Arrange: Set custom bucket URIs
-        monkeypatch.setenv('VITE_DATA_BUCKET_URI', 's3://custom-data-bucket/')
-        monkeypatch.setenv('VITE_RESULTS_BUCKET_URI', 's3://custom-results-bucket/')
+        monkeypatch.setenv('DATA_BUCKET_URI', 's3://custom-data-bucket')
+        monkeypatch.setenv('RESULTS_BUCKET_URI', 's3://custom-results-bucket')
 
         # Clear the lru_cache
         get_settings.cache_clear()
@@ -225,14 +225,14 @@ class TestSettings:
         settings = get_settings()
 
         # Assert
-        assert settings.VITE_DATA_BUCKET_URI == 's3://custom-data-bucket/'
-        assert settings.VITE_RESULTS_BUCKET_URI == 's3://custom-results-bucket/'
+        assert settings.DATA_BUCKET_URI == 's3://custom-data-bucket'
+        assert settings.RESULTS_BUCKET_URI == 's3://custom-results-bucket/
 
     def test_settings_bucket_uris_defaults(self, monkeypatch):
         """Test bucket URIs use defaults when not set"""
         # Arrange: Clear bucket URI env vars
-        monkeypatch.delenv('VITE_DATA_BUCKET_URI', raising=False)
-        monkeypatch.delenv('VITE_RESULTS_BUCKET_URI', raising=False)
+        monkeypatch.delenv('DATA_BUCKET_URI', raising=False)
+        monkeypatch.delenv('RESULTS_BUCKET_URI', raising=False)
 
         # Clear the lru_cache
         get_settings.cache_clear()
@@ -241,8 +241,8 @@ class TestSettings:
         settings = get_settings()
 
         # Assert: Should use defaults
-        assert settings.VITE_DATA_BUCKET_URI == 's3://my-data-bucket/'
-        assert settings.VITE_RESULTS_BUCKET_URI == 's3://my-results-bucket/'
+        assert settings.DATA_BUCKET_URI == 's3://my-data-bucket'
+        assert settings.RESULTS_BUCKET_URI == 's3://my-results-bucket'
 
     @patch('core.config.get_secret')
     def test_settings_secret_cache(self, mock_get_secret, monkeypatch):
