@@ -226,7 +226,7 @@ class TestSettings:
 
         # Assert
         assert settings.DATA_BUCKET_URI == 's3://custom-data-bucket'
-        assert settings.RESULTS_BUCKET_URI == 's3://custom-results-bucket/
+        assert settings.RESULTS_BUCKET_URI == 's3://custom-results-bucket'
 
     def test_settings_bucket_uris_defaults(self, monkeypatch):
         """Test bucket URIs use defaults when not set"""
