@@ -12,6 +12,7 @@ services:
       - VITE_API_URL=http://localhost:3000/
       - VITE_DATA_BUCKET_URI=${VITE_DATA_BUCKET_URI:-s3://my-data-bucket/}
       - VITE_RESULTS_BUCKET_URI=${VITE_RESULTS_BUCKET_URI:-s3://my-results-bucket/}
+      - TOOL_CONFIGS_BUCKET_URI=${TOOL_CONFIGS_BUCKET_URI:-s3://my-tool-configs-bucket/}
     volumes: # this allows live reloading of the frontend code
       - ../frontend-ui:/app
       - /app/node_modules
@@ -39,9 +40,12 @@ services:
       # Open search
       - OPENSEARCH_HOST=opensearch
       - OPENSEARCH_PORT=9200
+      - OPENSEARCH_USE_SSL=false
+      - OPENSEARCH_VERIFY_CERTS=false
       - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID:-admin}
       - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY:-admin}
       - AWS_REGION=${AWS_REGION:-us-east-1}
+      - TOOL_CONFIGS_BUCKET_URI=${TOOL_CONFIGS_BUCKET_URI:-s3://my-tool-configs-bucket/}
     volumes: # this allows live reloading of the backend code
       - ${PWD}:/app
  

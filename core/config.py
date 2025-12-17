@@ -171,14 +171,29 @@ class Settings(BaseSettings):
         # Note: Secret key is 'OPENSEARCH_PASS' not 'OPENSEARCH_PASSWORD'
         return self._get_config_value("OPENSEARCH_PASSWORD")
 
+    @computed_field
+    @property
+    def OPENSEARCH_USE_SSL(self) -> bool:
+        """Get OpenSearch SSL setting from env or secrets (defaults to False for local dev)"""
+        value = self._get_config_value("OPENSEARCH_USE_SSL", default="false")
+        return value.lower() in ("true", "1", "yes")
+
+    @computed_field
+    @property
+    def OPENSEARCH_VERIFY_CERTS(self) -> bool:
+        """Get OpenSearch certificate verification setting from env or secrets (defaults to False)"""
+        value = self._get_config_value("OPENSEARCH_VERIFY_CERTS", default="false")
+        return value.lower() in ("true", "1", "yes")
+
     # AWS Credentials
     AWS_ACCESS_KEY_ID: str | None = os.getenv("AWS_ACCESS_KEY_ID")
     AWS_SECRET_ACCESS_KEY: str | None = os.getenv("AWS_SECRET_ACCESS_KEY")
     AWS_REGION: str | None = os.getenv("AWS_REGION")
 
     # Bucket configurations
-    DATA_BUCKET_URI: str = os.getenv("DATA_BUCKET_URI", "s3://my-data-bucket")
-    RESULTS_BUCKET_URI: str = os.getenv("RESULTS_BUCKET_URI", "s3://my-results-bucket")
+    VITE_DATA_BUCKET_URI: str = os.getenv("VITE_DATA_BUCKET_URI", "s3://my-data-bucket/")
+    VITE_RESULTS_BUCKET_URI: str = os.getenv("VITE_RESULTS_BUCKET_URI", "s3://my-results-bucket/")
+    TOOL_CONFIGS_BUCKET_URI: str = os.getenv("TOOL_CONFIGS_BUCKET_URI", "s3://my-tool-configs-bucket/")
 
     # Read environment variables from .env file, if it exists
     # extra='ignore' prevents validation errors from extra env vars
