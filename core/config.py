@@ -141,8 +141,8 @@ class Settings(BaseSettings):
     @property
     def OPENSEARCH_USE_SSL(self) -> bool:
         """Get OpenSearch use SSL flag from env or secrets"""
-        use_ssl = self._get_config_value("OPENSEARCH_USE_SSL", default="true")
-        return use_ssl.lower() in ("true", "1", "yes")
+        value = self._get_config_value("OPENSEARCH_USE_SSL", default="true")
+        return value.lower() in ("true", "1", "yes")
 
     @computed_field
     @property
@@ -157,8 +157,10 @@ class Settings(BaseSettings):
     AWS_REGION: str | None = os.getenv("AWS_REGION")
 
     # Bucket configurations
-    VITE_DATA_BUCKET_URI: str = os.getenv("VITE_DATA_BUCKET_URI", "s3://my-data-bucket/")
-    VITE_RESULTS_BUCKET_URI: str = os.getenv("VITE_RESULTS_BUCKET_URI", "s3://my-results-bucket/")
+    DATA_BUCKET_URI: str = os.getenv("DATA_BUCKET_URI", "s3://my-data-bucket")
+    RESULTS_BUCKET_URI: str = os.getenv("RESULTS_BUCKET_URI", "s3://my-results-bucket")
+    TOOL_CONFIGS_BUCKET_URI: str = os.getenv(
+        "TOOL_CONFIGS_BUCKET_URI", "s3://my-tool-configs-bucket")
 
     # Read environment variables from .env file, if it exists
     # extra='ignore' prevents validation errors from extra env vars

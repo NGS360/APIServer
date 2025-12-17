@@ -47,6 +47,8 @@ class ProjectCreate(SQLModel):
 class ProjectPublic(SQLModel):
     project_id: str
     name: str | None
+    data_folder_uri: str | None
+    results_folder_uri: str | None
     attributes: List[Attribute] | None
 
 
