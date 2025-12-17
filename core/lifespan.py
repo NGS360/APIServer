@@ -66,9 +66,3 @@ async def lifespan(app: FastAPI):
     finally:
         # Shutdown
         logger.info("In lifespan...shutting down")
-        # Destroy database
-        # logger.info(
-        #   "Dropping database tables, %s",
-        #   get_settings().SQLALCHEMY_DATABASE_URI_MASKED_PASSWORD
-        # )
-        # drop_tables()
