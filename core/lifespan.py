@@ -36,17 +36,17 @@ async def lifespan(app: FastAPI):
     settings = get_settings()
 
     # Log computed fields first (they don't appear in vars())
-    computed_fields = {
-        "SQLALCHEMY_DATABASE_URI": settings.SQLALCHEMY_DATABASE_URI,
-        "OPENSEARCH_HOST": settings.OPENSEARCH_HOST,
-        "OPENSEARCH_PORT": settings.OPENSEARCH_PORT,
-        "OPENSEARCH_USER": settings.OPENSEARCH_USER,
-        "OPENSEARCH_PASSWORD": settings.OPENSEARCH_PASSWORD,
-        "OPENSEARCH_USE_SSL": settings.OPENSEARCH_USE_SSL,
-        "OPENSEARCH_VERIFY_CERTS": settings.OPENSEARCH_VERIFY_CERTS,
-    }
-
-    for key, value in computed_fields.items():
+    computed_fields = [
+        "SQLALCHEMY_DATABASE_URI",
+        "OPENSEARCH_HOST",
+        "OPENSEARCH_PORT",
+        "OPENSEARCH_USER",
+        "OPENSEARCH_PASSWORD",
+        "OPENSEARCH_USE_SSL",
+        "OPENSEARCH_VERIFY_CERTS"
+    ]
+    for key in computed_fields:
+        value = getattr(settings, key)
         _log_setting(key, value)
 
     # Log remaining settings
