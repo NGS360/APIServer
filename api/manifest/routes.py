@@ -4,6 +4,7 @@ Routes/endpoints for the Manifest API
 
 from fastapi import APIRouter, Depends, Query, Response, status, UploadFile, File
 from api.manifest import services
+from api.manifest.models import ManifestUploadResponse
 from core.deps import get_s3_client
 
 
@@ -43,7 +44,7 @@ def get_latest_manifest(
 
 @router.post(
     "",
-    response_model=dict,
+    response_model=ManifestUploadResponse,
     status_code=status.HTTP_201_CREATED,
     tags=["Manifest Endpoints"],
 )
@@ -53,7 +54,7 @@ def upload_manifest(
     ),
     file: UploadFile = File(..., description="Manifest CSV file to upload"),
     s3_client=Depends(get_s3_client),
-) -> dict:
+) -> ManifestUploadResponse:
     """
     Upload a manifest CSV file to the specified S3 path.
 
@@ -62,7 +63,7 @@ def upload_manifest(
         file: The manifest CSV file to upload
 
     Returns:
-        Dictionary with the uploaded file path and status
+        ManifestUploadResponse with the uploaded file path and status
     """
     result = services.upload_manifest_file(s3_path, file, s3_client)
     return result

@@ -5,6 +5,7 @@ Services for the Manifest API
 from fastapi import HTTPException, status, UploadFile
 import boto3
 from botocore.exceptions import NoCredentialsError, ClientError
+from api.manifest.models import ManifestUploadResponse
 
 
 def _parse_s3_path(s3_path: str) -> tuple[str, str]:
@@ -119,7 +120,7 @@ def get_latest_manifest_file(s3_path: str, s3_client=None) -> str | None:
         ) from exc
 
 
-def upload_manifest_file(s3_path: str, file: UploadFile, s3_client=None) -> dict:
+def upload_manifest_file(s3_path: str, file: UploadFile, s3_client=None) -> ManifestUploadResponse:
     """
     Upload a manifest CSV file to S3.
 
@@ -129,7 +130,7 @@ def upload_manifest_file(s3_path: str, file: UploadFile, s3_client=None) -> dict
         s3_client: Optional boto3 S3 client
 
     Returns:
-        Dictionary with the uploaded file path and status
+        ManifestUploadResponse with the uploaded file path and status
     """
     try:
         # Validate file type
@@ -167,12 +168,12 @@ def upload_manifest_file(s3_path: str, file: UploadFile, s3_client=None) -> dict
         # Construct the full S3 path for the response
         uploaded_path = f"s3://{bucket}/{key}"
 
-        return {
-            "status": "success",
-            "message": "Manifest file uploaded successfully",
-            "path": uploaded_path,
-            "filename": file.filename
-        }
+        return ManifestUploadResponse(
+            status="success",
+            message="Manifest file uploaded successfully",
+            path=uploaded_path,
+            filename=file.filename
+        )
 
     except HTTPException:
         # Re-raise HTTPException without catching it
