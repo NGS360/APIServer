@@ -6,8 +6,14 @@ from core.config import get_secret, Settings
 
 def test_get_secret_does_not_exist():
     ''' Get that secret does not exist '''
+    with patch('boto3.session.Session') as mock_session:
+        mock_client = MagicMock()
+        mock_client.get_secret_value.side_effect = Exception("Secret not found")
+        mock_session.return_value.client.return_value = mock_client
+
     secret_arn = "My_test_secret"
     region_name = "us-east-1"
+
     secret = get_secret(secret_arn, region_name)
     assert secret is None
 
