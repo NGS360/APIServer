@@ -410,3 +410,224 @@ class TestManifestAPI:
 
         # Verify 422 Unprocessable Entity
         assert response.status_code == 422
+
+
+class TestManifestUpload:
+    """Test manifest upload endpoint"""
+
+    def test_upload_manifest_to_directory(
+        self, client: TestClient, mock_s3_client: MockS3Client
+    ):
+        """Test uploading a manifest to a directory path (ending with /)"""
+        import io
+
+        # Create a test CSV file
+        csv_content = b"Sample_ID,Sample_Name,Project\nS001,Sample1,ProjectA\nS002,Sample2,ProjectB"
+        file = io.BytesIO(csv_content)
+
+        # Upload manifest to directory path
+        files = {"file": ("test_manifest.csv", file, "text/csv")}
+        response = client.post(
+            "/api/v1/manifest?s3_path=s3://test-bucket/manifests/",
+            files=files
+        )
+
+        # Verify successful upload
+        assert response.status_code == 201
+        data = response.json()
+        assert data["status"] == "success"
+        assert data["message"] == "Manifest file uploaded successfully"
+        assert data["path"] == "s3://test-bucket/manifests/test_manifest.csv"
+        assert data["filename"] == "test_manifest.csv"
+
+        # Verify file was uploaded to correct location in mock S3
+        assert "test-bucket" in mock_s3_client.uploaded_files
+        assert "manifests/test_manifest.csv" in mock_s3_client.uploaded_files["test-bucket"]
+        assert mock_s3_client.uploaded_files["test-bucket"]["manifests/test_manifest.csv"] == csv_content
+
+    def test_upload_manifest_to_file_path(
+        self, client: TestClient, mock_s3_client: MockS3Client
+    ):
+        """Test uploading a manifest with a specific file path"""
+        import io
+
+        # Create a test CSV file
+        csv_content = b"Sample_ID,Sample_Name\nS001,Sample1"
+        file = io.BytesIO(csv_content)
+
+        # Upload manifest with specific filename in path
+        files = {"file": ("uploaded.csv", file, "text/csv")}
+        response = client.post(
+            "/api/v1/manifest?s3_path=s3://test-bucket/manifests/custom_name.csv",
+            files=files
+        )
+
+        # Verify successful upload
+        assert response.status_code == 201
+        data = response.json()
+        assert data["path"] == "s3://test-bucket/manifests/custom_name.csv"
+        assert data["filename"] == "uploaded.csv"
+
+        # Verify file was uploaded with the path-specified name
+        assert "manifests/custom_name.csv" in mock_s3_client.uploaded_files["test-bucket"]
+
+    def test_upload_manifest_to_directory_without_trailing_slash(
+        self, client: TestClient, mock_s3_client: MockS3Client
+    ):
+        """Test uploading to a directory path without trailing slash"""
+        import io
+
+        # Create a test CSV file
+        csv_content = b"Sample_ID\nS001"
+        file = io.BytesIO(csv_content)
+
+        # Upload manifest to directory path without trailing /
+        files = {"file": ("manifest.csv", file, "text/csv")}
+        response = client.post(
+            "/api/v1/manifest?s3_path=s3://test-bucket/vendor",
+            files=files
+        )
+
+        # Verify successful upload
+        assert response.status_code == 201
+        data = response.json()
+        assert data["path"] == "s3://test-bucket/vendor/manifest.csv"
+
+        # Verify correct key was used
+        assert "vendor/manifest.csv" in mock_s3_client.uploaded_files["test-bucket"]
+
+    def test_upload_manifest_to_root_bucket(
+        self, client: TestClient, mock_s3_client: MockS3Client
+    ):
+        """Test uploading a manifest to the root of a bucket"""
+        import io
+
+        # Create a test CSV file
+        csv_content = b"Sample_ID\nS001"
+        file = io.BytesIO(csv_content)
+
+        # Upload to bucket root
+        files = {"file": ("root_manifest.csv", file, "text/csv")}
+        response = client.post(
+            "/api/v1/manifest?s3_path=s3://test-bucket/",
+            files=files
+        )
+
+        # Verify successful upload
+        assert response.status_code == 201
+        data = response.json()
+        assert data["path"] == "s3://test-bucket/root_manifest.csv"
+        assert "root_manifest.csv" in mock_s3_client.uploaded_files["test-bucket"]
+
+    def test_upload_manifest_non_csv_file(
+        self, client: TestClient, mock_s3_client: MockS3Client
+    ):
+        """Test that non-CSV files are rejected"""
+        import io
+
+        # Create a test text file
+        file = io.BytesIO(b"This is not a CSV file")
+
+        # Try to upload non-CSV file
+        files = {"file": ("manifest.txt", file, "text/plain")}
+        response = client.post(
+            "/api/v1/manifest?s3_path=s3://test-bucket/manifests/",
+            files=files
+        )
+
+        # Verify rejection
+        assert response.status_code == 400
+        assert "Only CSV files are allowed" in response.json()["detail"]
+
+    def test_upload_manifest_bucket_not_found(
+        self, client: TestClient, mock_s3_client: MockS3Client
+    ):
+        """Test upload fails when bucket doesn't exist"""
+        import io
+
+        mock_s3_client.simulate_error("NoSuchBucket")
+
+        csv_content = b"Sample_ID\nS001"
+        file = io.BytesIO(csv_content)
+
+        files = {"file": ("manifest.csv", file, "text/csv")}
+        response = client.post(
+            "/api/v1/manifest?s3_path=s3://nonexistent-bucket/manifests/",
+            files=files
+        )
+
+        # Verify 404 error
+        assert response.status_code == 404
+        assert "bucket not found" in response.json()["detail"].lower()
+
+    def test_upload_manifest_access_denied(
+        self, client: TestClient, mock_s3_client: MockS3Client
+    ):
+        """Test upload fails when access is denied"""
+        import io
+
+        mock_s3_client.simulate_error("AccessDenied")
+
+        csv_content = b"Sample_ID\nS001"
+        file = io.BytesIO(csv_content)
+
+        files = {"file": ("manifest.csv", file, "text/csv")}
+        response = client.post(
+            "/api/v1/manifest?s3_path=s3://test-bucket/manifests/",
+            files=files
+        )
+
+        # Verify 403 error
+        assert response.status_code == 403
+        assert "Access denied" in response.json()["detail"]
+
+    def test_upload_manifest_no_credentials(
+        self, client: TestClient, mock_s3_client: MockS3Client
+    ):
+        """Test upload fails when AWS credentials are missing"""
+        import io
+
+        mock_s3_client.simulate_error("NoCredentialsError")
+
+        csv_content = b"Sample_ID\nS001"
+        file = io.BytesIO(csv_content)
+
+        files = {"file": ("manifest.csv", file, "text/csv")}
+        response = client.post(
+            "/api/v1/manifest?s3_path=s3://test-bucket/manifests/",
+            files=files
+        )
+
+        # Verify 401 error
+        assert response.status_code == 401
+        assert "credentials" in response.json()["detail"].lower()
+
+    def test_upload_manifest_invalid_s3_path(
+        self, client: TestClient, mock_s3_client: MockS3Client
+    ):
+        """Test upload fails with invalid S3 path format"""
+        import io
+
+        csv_content = b"Sample_ID\nS001"
+        file = io.BytesIO(csv_content)
+
+        files = {"file": ("manifest.csv", file, "text/csv")}
+        response = client.post(
+            "/api/v1/manifest?s3_path=http://bucket/path",
+            files=files
+        )
+
+        # Verify 400 error
+        assert response.status_code == 400
+        assert "Invalid S3 path format" in response.json()["detail"]
+
+    def test_upload_manifest_missing_file(
+        self, client: TestClient, mock_s3_client: MockS3Client
+    ):
+        """Test that request without file fails"""
+        response = client.post(
+            "/api/v1/manifest?s3_path=s3://test-bucket/manifests/"
+        )
+
+        # Verify 422 error (missing required field)
+        assert response.status_code == 422

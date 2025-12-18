@@ -264,7 +264,7 @@ class MockS3Client:
         """
         self.error_mode = error_type
 
-    def put_object(self, Bucket: str, Key: str, Body: bytes):
+    def put_object(self, Bucket: str, Key: str, Body: bytes, **kwargs):
         """Mock S3 put_object operation"""
         from botocore.exceptions import NoCredentialsError, ClientError
 

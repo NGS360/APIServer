@@ -2,7 +2,7 @@
 Services for the Manifest API
 """
 
-from fastapi import HTTPException, status
+from fastapi import HTTPException, status, UploadFile
 import boto3
 from botocore.exceptions import NoCredentialsError, ClientError
 
@@ -116,4 +116,96 @@ def get_latest_manifest_file(s3_path: str, s3_client=None) -> str | None:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Unexpected error searching for manifest: {str(exc)}",
+        ) from exc
+
+
+def upload_manifest_file(s3_path: str, file: UploadFile, s3_client=None) -> dict:
+    """
+    Upload a manifest CSV file to S3.
+
+    Args:
+        s3_path: The S3 path where the file should be uploaded (e.g., "s3://bucket-name/path/to/manifest.csv")
+        file: The uploaded file object
+        s3_client: Optional boto3 S3 client
+
+    Returns:
+        Dictionary with the uploaded file path and status
+    """
+    try:
+        # Validate file type
+        if not file.filename or not file.filename.lower().endswith('.csv'):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Only CSV files are allowed for manifest uploads"
+            )
+
+        # Parse the S3 path
+        bucket, key = _parse_s3_path(s3_path)
+
+        # If the key ends with '/' or is empty, append the filename
+        if key.endswith('/') or not key:
+            key = f"{key}{file.filename}"
+        # If key doesn't end with .csv, assume it's a directory and append filename
+        elif not key.lower().endswith('.csv'):
+            key = f"{key}/{file.filename}"
+
+        # Initialize S3 client (use provided or create new)
+        if s3_client is None:
+            s3_client = boto3.client("s3")
+
+        # Read file content
+        content = file.file.read()
+
+        # Upload the file to S3
+        s3_client.put_object(
+            Bucket=bucket,
+            Key=key,
+            Body=content,
+            ContentType='text/csv'
+        )
+
+        # Construct the full S3 path for the response
+        uploaded_path = f"s3://{bucket}/{key}"
+
+        return {
+            "status": "success",
+            "message": "Manifest file uploaded successfully",
+            "path": uploaded_path,
+            "filename": file.filename
+        }
+
+    except HTTPException:
+        # Re-raise HTTPException without catching it
+        raise
+    except NoCredentialsError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="AWS credentials not found. Please configure AWS credentials.",
+        ) from exc
+    except ClientError as exc:
+        error_code = exc.response["Error"]["Code"]
+        if error_code == "NoSuchBucket":
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"S3 bucket not found: {bucket}",
+            ) from exc
+        elif error_code == "AccessDenied":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Access denied to S3 bucket: {bucket}",
+            ) from exc
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"S3 error: {exc.response['Error']['Message']}",
+            ) from exc
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        ) from e
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Unexpected error uploading manifest: {str(exc)}",
         ) from exc
