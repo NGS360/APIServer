@@ -8,6 +8,7 @@ from sqlmodel import Session
 
 from api.project.models import Project, ProjectAttribute
 from api.project.services import generate_project_id
+from core.config import get_settings
 
 
 def test_get_projects_with_no_data(client: TestClient, session: Session):
@@ -55,8 +56,15 @@ def test_get_projects_with_data(client: TestClient, session: Session):
     project = response_json["data"][0]
     assert project["name"] == "AI Research"
 
-    assert project["data_folder_uri"] == f"s3://my-data-bucket/{new_project.project_id}/"
-    assert project["results_folder_uri"] == f"s3://my-results-bucket/{new_project.project_id}/"
+    settings = get_settings()
+    assert (
+        project["data_folder_uri"]
+        == f"{settings.DATA_BUCKET_URI}/{new_project.project_id}/"
+    )
+    assert (
+        project["results_folder_uri"]
+        == f"{settings.RESULTS_BUCKET_URI}/{new_project.project_id}/"
+    )
 
     # Check attributes (they're a list of objects with key/value pairs)
     attribute_dict = {attr["key"]: attr["value"] for attr in project["attributes"]}

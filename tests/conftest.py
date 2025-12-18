@@ -105,7 +105,7 @@ class MockOpenSearchClient:
         # Apply pagination
         from_param = body.get("from", 0)
         size_param = body.get("size", 10)
-        paginated_hits = hits[from_param: from_param + size_param]
+        paginated_hits = hits[from_param : from_param + size_param]
 
         return {"hits": {"total": {"value": len(hits)}, "hits": paginated_hits}}
 
@@ -175,23 +175,39 @@ class MockS3Paginator:
 
         # Get bucket data
         bucket_data = self.client.buckets.get(self.bucket, {})
-        prefix_data = bucket_data.get(self.prefix, {"files": [], "folders": []})
 
-        # Build response page
-        page = {}
+        # If delimiter is provided, return hierarchical listing (folders + files at this level)
+        if self.delimiter:
+            prefix_data = bucket_data.get(self.prefix, {"files": [], "folders": []})
 
-        # Add CommonPrefixes (folders)
-        if prefix_data["folders"]:
-            page["CommonPrefixes"] = [
-                {"Prefix": folder} for folder in prefix_data["folders"]
-            ]
+            # Build response page
+            page = {}
 
-        # Add Contents (files)
-        if prefix_data["files"]:
-            page["Contents"] = prefix_data["files"]
+            # Add CommonPrefixes (folders)
+            if prefix_data["folders"]:
+                page["CommonPrefixes"] = [
+                    {"Prefix": folder} for folder in prefix_data["folders"]
+                ]
 
-        # Return single page (simplified for testing)
-        yield page
+            # Add Contents (files)
+            if prefix_data["files"]:
+                page["Contents"] = prefix_data["files"]
+
+            # Return single page (simplified for testing)
+            yield page
+        else:
+            # No delimiter means recursive listing - return ALL files under prefix
+            all_files = []
+            for prefix_key, data in bucket_data.items():
+                if prefix_key.startswith(self.prefix):
+                    all_files.extend(data.get("files", []))
+
+            # Build response page with all files
+            page = {}
+            if all_files:
+                page["Contents"] = all_files
+
+            yield page
 
 
 class MockS3Client:
@@ -231,7 +247,7 @@ class MockS3Client:
                 def __init__(self, client):
                     self.client = client
 
-                def paginate(self, Bucket: str, Prefix: str, Delimiter: str):
+                def paginate(self, Bucket: str, Prefix: str, Delimiter: str = None):
                     paginator = MockS3Paginator(self.client, Bucket, Prefix, Delimiter)
                     return paginator.paginate()
 
@@ -257,11 +273,16 @@ class MockS3Client:
             raise NoCredentialsError()
         elif self.error_mode == "NoSuchBucket":
             error_response = {
-                "Error": {"Code": "NoSuchBucket", "Message": "The specified bucket does not exist"}
+                "Error": {
+                    "Code": "NoSuchBucket",
+                    "Message": "The specified bucket does not exist",
+                }
             }
             raise ClientError(error_response, "PutObject")
         elif self.error_mode == "AccessDenied":
-            error_response = {"Error": {"Code": "AccessDenied", "Message": "Access Denied"}}
+            error_response = {
+                "Error": {"Code": "AccessDenied", "Message": "Access Denied"}
+            }
             raise ClientError(error_response, "PutObject")
 
         # Store the uploaded file
@@ -304,6 +325,7 @@ def client_fixture(
     mock_s3_client: MockS3Client,
 ):
     """Provide a TestClient with dependencies overridden for testing"""
+
     def get_db_override():
         return session
 
