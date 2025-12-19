@@ -4,7 +4,7 @@ Routes/endpoints for the Manifest API
 
 from fastapi import APIRouter, Depends, Query, Response, status, UploadFile, File
 from api.manifest import services
-from api.manifest.models import ManifestUploadResponse
+from api.manifest.models import ManifestUploadResponse, ManifestValidationResponse
 from core.deps import get_s3_client
 
 
@@ -66,4 +66,32 @@ def upload_manifest(
         ManifestUploadResponse with the uploaded file path and status
     """
     result = services.upload_manifest_file(s3_path, file, s3_client)
+    return result
+
+
+@router.post(
+    "/validate",
+    response_model=ManifestValidationResponse,
+    tags=["Manifest Endpoints"],
+)
+def validate_manifest(
+    s3_path: str = Query(..., description="S3 path to the manifest CSV file to validate"),
+    valid: bool = Query(True, description="Mock validation result for testing (True=valid, False=invalid)"),
+) -> ManifestValidationResponse:
+    """
+    Validate a manifest CSV file from S3.
+
+    Checks the manifest file for:
+    - Required fields
+    - Data format compliance
+    - Value constraints
+
+    Args:
+        s3_path: S3 path to the manifest CSV file to validate
+        valid: Mock parameter to simulate valid or invalid responses for testing
+
+    Returns:
+        ManifestValidationResponse with validation status and any errors found
+    """
+    result = services.validate_manifest_file(s3_path, valid)
     return result

@@ -631,3 +631,127 @@ class TestManifestUpload:
 
         # Verify 422 error (missing required field)
         assert response.status_code == 422
+
+
+class TestManifestValidation:
+    """Test manifest validation endpoint"""
+
+    def test_validate_manifest_valid(self, client: TestClient):
+        """Test validation endpoint with valid manifest (mock)"""
+        response = client.post(
+            "/api/v1/manifest/validate?s3_path=s3://test-bucket/manifest.csv&valid=true"
+        )
+
+        # Verify successful response
+        assert response.status_code == 200
+        
+        data = response.json()
+        
+        # Verify structure
+        assert "valid" in data
+        assert "message" in data
+        assert "error" in data
+        assert "warning" in data
+        
+        # Verify valid response
+        assert data["valid"] is True
+        assert isinstance(data["message"], dict)
+        assert isinstance(data["error"], dict)
+        assert isinstance(data["warning"], dict)
+        
+        # Valid response should have empty errors
+        assert len(data["error"]) == 0
+        
+        # Should have manifest version message
+        assert "ManifestVersion" in data["message"]
+
+    def test_validate_manifest_invalid(self, client: TestClient):
+        """Test validation endpoint with invalid manifest (mock)"""
+        response = client.post(
+            "/api/v1/manifest/validate?s3_path=s3://test-bucket/manifest.csv&valid=false"
+        )
+
+        # Verify successful response
+        assert response.status_code == 200
+        
+        data = response.json()
+        
+        # Verify structure
+        assert "valid" in data
+        assert "message" in data
+        assert "error" in data
+        assert "warning" in data
+        
+        # Verify invalid response
+        assert data["valid"] is False
+        assert isinstance(data["message"], dict)
+        assert isinstance(data["error"], dict)
+        assert isinstance(data["warning"], dict)
+        
+        # Invalid response should have errors
+        assert len(data["error"]) > 0
+        
+        # Verify expected error categories exist
+        assert "InvalidFilePath" in data["error"]
+        assert "MissingRequiredField" in data["error"]
+        assert "InvalidDataFormat" in data["error"]
+        
+        # Verify error messages are lists of strings
+        assert isinstance(data["error"]["InvalidFilePath"], list)
+        assert len(data["error"]["InvalidFilePath"]) > 0
+        assert all(isinstance(msg, str) for msg in data["error"]["InvalidFilePath"])
+        
+        # Verify warnings structure
+        assert "DuplicateSample" in data["warning"]
+        assert isinstance(data["warning"]["DuplicateSample"], list)
+        
+        # Verify message has expected keys
+        assert "ManifestVersion" in data["message"]
+        assert "ExtraFields" in data["message"]
+
+    def test_validate_manifest_default_valid(self, client: TestClient):
+        """Test validation endpoint defaults to valid=true"""
+        response = client.post(
+            "/api/v1/manifest/validate?s3_path=s3://test-bucket/manifest.csv"
+        )
+
+        # Verify successful response
+        assert response.status_code == 200
+        
+        data = response.json()
+        
+        # Default should be valid
+        assert data["valid"] is True
+
+    def test_validate_manifest_missing_s3_path(self, client: TestClient):
+        """Test validation endpoint fails without s3_path"""
+        response = client.post("/api/v1/manifest/validate")
+
+        # Verify 422 error (missing required parameter)
+        assert response.status_code == 422
+
+    def test_validate_manifest_response_structure(self, client: TestClient):
+        """Test that both valid and invalid responses match expected structure"""
+        # Test valid response
+        valid_response = client.post(
+            "/api/v1/manifest/validate?s3_path=s3://test-bucket/manifest.csv&valid=true"
+        )
+        valid_data = valid_response.json()
+        
+        # Test invalid response
+        invalid_response = client.post(
+            "/api/v1/manifest/validate?s3_path=s3://test-bucket/manifest.csv&valid=false"
+        )
+        invalid_data = invalid_response.json()
+        
+        # Both should have the same keys
+        assert set(valid_data.keys()) == set(invalid_data.keys())
+        assert set(valid_data.keys()) == {"valid", "message", "error", "warning"}
+        
+        # Both should have dict types for message, error, warning
+        for data in [valid_data, invalid_data]:
+            assert isinstance(data["message"], dict)
+            assert isinstance(data["error"], dict)
+            assert isinstance(data["warning"], dict)
+            assert isinstance(data["valid"], bool)
+

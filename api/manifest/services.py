@@ -5,7 +5,7 @@ Services for the Manifest API
 from fastapi import HTTPException, status, UploadFile
 import boto3
 from botocore.exceptions import NoCredentialsError, ClientError
-from api.manifest.models import ManifestUploadResponse
+from api.manifest.models import ManifestUploadResponse, ManifestValidationResponse
 
 
 def _parse_s3_path(s3_path: str) -> tuple[str, str]:
@@ -210,3 +210,56 @@ def upload_manifest_file(s3_path: str, file: UploadFile, s3_client=None) -> Mani
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Unexpected error uploading manifest: {str(exc)}",
         ) from exc
+
+
+def validate_manifest_file(s3_path: str, valid: bool = True) -> ManifestValidationResponse:
+    """
+    Validate a manifest CSV file from S3.
+    
+    Args:
+        s3_path: S3 path to the manifest CSV file to validate
+        valid: Mock parameter to simulate valid or invalid responses for testing
+        
+    Returns:
+        ManifestValidationResponse with validation status and any errors found
+    """
+    # Placeholder for validation logic
+    # The actual validation logic would go here
+    
+    if not valid:
+        # Return mock validation errors for testing
+        return ManifestValidationResponse(
+            valid=False,
+            message={
+                "ManifestVersion": "Validated against manifest version: DTS12.1",
+                "ExtraFields": "See extra fields (info only): ['VHYB', 'VLANE', 'VBARCODE']"
+            },
+            error={
+                "InvalidFilePath": [
+                    "Unable to find file s3://example/example_1.clipped.fastq.gz described in row 182, check that file exists and is accessible",
+                    "Unable to find file s3://example/example_2.clipped.fastq.gz described in row 183, check that file exists and is accessible"
+                ],
+                "MissingRequiredField": [
+                    "Row 45 is missing required field 'SAMPLE_ID'",
+                    "Row 67 is missing required field 'FILE_PATH'"
+                ],
+                "InvalidDataFormat": [
+                    "Row 92: Invalid date format in field 'RUN_DATE', expected YYYY-MM-DD"
+                ]
+            },
+            warning={
+                "DuplicateSample": [
+                    "Sample 'ABC-123' appears multiple times in rows 10, 25, 42"
+                ]
+            }
+        )
+    
+    return ManifestValidationResponse(
+        valid=True,
+        message={
+            "ManifestVersion": "Validated against manifest version: DTS12.1"
+        },
+        error={},
+        warning={}
+    )
+
