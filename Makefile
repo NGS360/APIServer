@@ -24,7 +24,7 @@ lint:
 	flake8 .
 
 test:
-	pytest -xv --cov
+	uv run pytest -xv --cov
 	coverage html
 
 # Alembic migration commands
