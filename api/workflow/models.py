@@ -24,16 +24,16 @@ class WorkflowAttribute(SQLModel, table=True):
 class Workflow(SQLModel, table=True):
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     name: str
-    definition_zip: bytes
+    definition_uri: str
     engine: str
-    engine_id: str
-    engine_version: str
+    engine_id: str | None
+    engine_version: str | None
     attributes: List[WorkflowAttribute] | None = Relationship(back_populates="workflow")
 
 
 class WorkflowCreate(SQLModel):
     name: str
-    definition_zip: bytes
+    definition_uri: str
     engine: str
     attributes: List[Attribute] | None = None
 

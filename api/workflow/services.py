@@ -10,7 +10,11 @@ from api.workflow.models import WorkflowCreate, Workflow, WorkflowAttribute
 def create_workflow(session: Session, workflow_in: WorkflowCreate) -> Workflow:
     ''' Register a workflow with optional attributes '''
     # Create initial workflow
-    workflow = Workflow(workflow_in.model_dump())
+    workflow = Workflow(
+        name=workflow_in.name,
+        definition_uri=workflow_in.definition_uri,
+        engine=workflow_in.engine,
+    )
 
     session.add(workflow)
     session.flush()

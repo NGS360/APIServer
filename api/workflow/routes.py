@@ -24,7 +24,11 @@ def create_workflow(session: SessionDep, workflow_in: WorkflowCreate) -> Workflo
     Create a new workflow with optional attributes.
     """
     workflow = services.create_workflow(session=session, workflow_in=workflow_in)
-    return WorkflowPublic.model_validate(workflow)
+    return WorkflowPublic(
+        id=str(workflow.id),
+        name=workflow.name,
+        attributes=workflow.attributes
+    )
 
 
 @router.get("", response_model=WorkflowPublic, tags=["Workflow Endpoints"])
