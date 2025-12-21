@@ -16,7 +16,7 @@ class WorkflowAttribute(SQLModel, table=True):
     workflow_id: uuid.UUID = Field(foreign_key="workflow.id")
     key: str
     value: str
-    
+
     # Add the back-reference relationship
     workflow: "Workflow" = Relationship(back_populates="attributes")
 
