@@ -1,7 +1,11 @@
+import os
 import pytest
+
 from fastapi.testclient import TestClient
 from sqlmodel import Session, create_engine, SQLModel
 from sqlmodel.pool import StaticPool
+
+from core.config import get_settings
 from core.deps import get_db, get_opensearch_client, get_s3_client
 from main import app
 
@@ -270,6 +274,44 @@ class MockS3Client:
         self.uploaded_files[Bucket][Key] = Body
 
         return {"ETag": '"mock-etag"', "VersionId": "mock-version-id"}
+
+
+@pytest.fixture(scope="session", autouse=True)
+def isolate_test_environment():
+    """Isolate tests from production environment variables"""
+    # Clear the lru_cache for settings
+    get_settings.cache_clear()
+
+    # Store original env vars
+    original_env = os.environ.copy()
+
+    # Set test-specific environment variables
+    os.environ["SQLALCHEMY_DATABASE_URI"] = "sqlite://"  # In-memory DB
+    os.environ["OPENSEARCH_HOST"] = "localhost"
+    os.environ["OPENSEARCH_PORT"] = "9200"
+    os.environ["DATA_BUCKET_URI"] = "s3://test-data-bucket"
+    os.environ["RESULTS_BUCKET_URI"] = "s3://test-results-bucket"
+    os.environ["TOOL_CONFIGS_BUCKET_URI"] = "s3://test-tool-configs-bucket"
+
+    # Remove AWS credentials to prevent real AWS calls
+    os.environ.pop("AWS_ACCESS_KEY_ID", None)
+    os.environ.pop("AWS_SECRET_ACCESS_KEY", None)
+    os.environ.pop("ENV_SECRETS", None)  # Prevent Secrets Manager lookup
+
+    yield
+
+    # Restore original environment
+    os.environ.clear()
+    os.environ.update(original_env)
+    get_settings.cache_clear()
+
+
+@pytest.fixture(autouse=True)
+def reset_settings_cache():
+    """Clear settings cache before each test"""
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
 
 
 @pytest.fixture(name="session")
