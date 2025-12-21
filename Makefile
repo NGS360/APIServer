@@ -25,7 +25,7 @@ lint:
 
 test:
 	uv run pytest -xv --cov
-	coverage html
+	uv run coverage html
 
 # Alembic migration commands
 migrate-upgrade:
