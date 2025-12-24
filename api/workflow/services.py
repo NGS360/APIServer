@@ -1,8 +1,9 @@
 """
 Workflow Service
 """
+from uuid import UUID
 from fastapi import HTTPException, status
-from sqlmodel import Session
+from sqlmodel import Session, select
 
 from api.workflow.models import WorkflowCreate, Workflow, WorkflowAttribute
 
@@ -46,4 +47,42 @@ def create_workflow(session: Session, workflow_in: WorkflowCreate) -> Workflow:
     session.commit()
     session.refresh(workflow)
 
+    return workflow
+
+
+def get_workflows(
+    session: Session,
+    page: int = 1,
+    per_page: int = 20,
+    sort_by: str = "name",
+    sort_order: str = "asc",
+) -> list[Workflow]:
+    ''' Returns a paginated list of workflows '''
+    valid_sort_fields = {"workflow_id": Workflow.id, "name": Workflow.name}
+    if sort_by not in valid_sort_fields:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid sort_by field '{sort_by}'. Valid fields are: {', '.join(valid_sort_fields.keys())}.",
+        )
+
+    sort_column = valid_sort_fields[sort_by]
+    if sort_order == "desc":
+        sort_column = sort_column.desc()
+
+    offset = (page - 1) * per_page
+
+    workflows = session.query(Workflow).order_by(sort_column).offset(offset).limit(per_page).all()
+    return workflows
+
+
+def get_workflow_by_workflow_id(session: Session, workflow_id: str) -> Workflow:
+    ''' Returns a single workflow by its workflow_id '''
+    workflow = session.exec(
+        select(Workflow).where(Workflow.id == UUID(workflow_id))
+    ).first()
+    if not workflow:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Workflow with workflow_id '{workflow_id}' not found.",
+        )
     return workflow

@@ -31,7 +31,7 @@ def create_workflow(session: SessionDep, workflow_in: WorkflowCreate) -> Workflo
     )
 
 
-@router.get("", response_model=WorkflowPublic, tags=["Workflow Endpoints"])
+@router.get("", response_model=List[WorkflowPublic], tags=["Workflow Endpoints"])
 def get_workflows(
     session: SessionDep,
     page: int = Query(1, description="Page number (1-indexed)"),
@@ -44,13 +44,24 @@ def get_workflows(
     """
     Returns a paginated list of workflows.
     """
-    return services.get_workflows(
+    workflows = services.get_workflows(
         session=session,
         page=page,
         per_page=per_page,
         sort_by=sort_by,
         sort_order=sort_order,
     )
+
+    public_workflows = []
+    for workflow in workflows:
+        public_workflows.append(
+            WorkflowPublic(
+                id=str(workflow.id),
+                name=workflow.name,
+                attributes=workflow.attributes
+            )
+        )
+    return public_workflows
 
 
 @router.get(
@@ -61,6 +72,11 @@ def get_workflow_by_workflow_id(session: SessionDep, workflow_id: str) -> Workfl
     Returns a single workflow by its workflow_id.
     Note: This is different from its internal "id".
     """
-    return services.get_workflow_by_workflow_id(
+    workflow = services.get_workflow_by_workflow_id(
         session=session, workflow_id=workflow_id
+    )
+    return WorkflowPublic(
+        id=str(workflow.id),
+        name=workflow.name,
+        attributes=workflow.attributes
     )
