@@ -62,7 +62,8 @@ def get_workflows(
     if sort_by not in valid_sort_fields:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid sort_by field '{sort_by}'. Valid fields are: {', '.join(valid_sort_fields.keys())}.",
+            detail=f"Invalid sort_by field '{sort_by}'. "
+                   f"Valid fields are: {', '.join(valid_sort_fields.keys())}.",
         )
 
     sort_column = valid_sort_fields[sort_by]

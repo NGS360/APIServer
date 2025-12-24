@@ -1,6 +1,7 @@
 from fastapi.testclient import TestClient
 from sqlmodel import Session
-from api.workflow.models import Workflow, WorkflowAttribute, WorkflowPublic
+from api.workflow.models import Workflow, WorkflowAttribute
+
 
 def test_get_workflows(client: TestClient, session: Session):
     """Test retrieving a list of workflows"""
