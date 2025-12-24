@@ -12,6 +12,7 @@ from api.samples.models import Sample, SampleAttribute
 from api.project.models import Project
 from api.runs.models import SequencingRun
 from api.vendors.models import Vendor
+from api.workflow.models import Workflow, WorkflowAttribute
 
 # Import Base from your SQLModel setup
 #from core.db import Base
