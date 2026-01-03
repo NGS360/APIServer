@@ -41,4 +41,6 @@ class WorkflowCreate(SQLModel):
 class WorkflowPublic(SQLModel):
     id: str
     name: str
+    engine: str | None
+    engine_id: str | None
     attributes: List[Attribute] | None
