@@ -27,6 +27,8 @@ def create_workflow(session: SessionDep, workflow_in: WorkflowCreate) -> Workflo
     return WorkflowPublic(
         id=str(workflow.id),
         name=workflow.name,
+        engine=workflow.engine,
+        engine_id=workflow.engine_id,
         attributes=workflow.attributes
     )
 
@@ -58,6 +60,8 @@ def get_workflows(
             WorkflowPublic(
                 id=str(workflow.id),
                 name=workflow.name,
+                engine=workflow.engine,
+                engine_id=workflow.engine_id,
                 attributes=workflow.attributes
             )
         )
@@ -78,5 +82,7 @@ def get_workflow_by_workflow_id(session: SessionDep, workflow_id: str) -> Workfl
     return WorkflowPublic(
         id=str(workflow.id),
         name=workflow.name,
+        engine=workflow.engine,
+        engine_id=workflow.engine_id,
         attributes=workflow.attributes
     )
