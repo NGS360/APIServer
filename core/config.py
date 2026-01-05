@@ -20,7 +20,7 @@ if env_path.exists():
     load_dotenv(env_path)
 
 
-def get_secret(secret_name: str, region_name: str) -> dict:
+def get_secret(secret_name: str, region_name: str) -> dict | None:
     """
     Retrieve secrets from AWS Secrets Manager
 
@@ -29,10 +29,7 @@ def get_secret(secret_name: str, region_name: str) -> dict:
         region_name: AWS region where secret is stored
 
     Returns:
-        dict: Parsed secret value
-
-    Raises:
-        ClientError: If secret cannot be retrieved
+        dict: Parsed secret value or None if secret cannot be retrieved
     """
     session = boto3.session.Session()
     client = session.client(
@@ -40,17 +37,15 @@ def get_secret(secret_name: str, region_name: str) -> dict:
         region_name=region_name
     )
     try:
-        get_secret_value_response = client.get_secret_value(
+        secret_value_response = client.get_secret_value(
             SecretId=secret_name
         )
-    except ClientError:  # as e:
-        # Log the error and re-raise
-        # print(f"Error retrieving secret {secret_name}: {e}")
-        raise
+    except ClientError:
+        return None
     # Parse and return the secret
-    secret = get_secret_value_response['SecretString']
+    secret = secret_value_response['SecretString'].replace('\n', '')
     return json.loads(
-        secret.replace('\n', '')
+        secret
     )
 
 
@@ -66,7 +61,6 @@ class Settings(BaseSettings):
     def _get_config_value(
         self,
         env_var_name: str,
-        secret_key_name: str | None = None,
         default: str | None = None
     ) -> str | None:
         """
@@ -86,20 +80,17 @@ class Settings(BaseSettings):
             return env_value
 
         # 2. Try to get from AWS Secrets Manager with caching
-        if secret_key_name is None:
-            secret_key_name = env_var_name
-
-        try:
-            # Use cached secret if available
-            if self._secret_cache is None:
-                env_secret = os.getenv('ENV_SECRETS')
-                self._secret_cache = get_secret(env_secret, os.getenv("AWS_REGION", 'us-east-1'))
-
-            secret_value = self._secret_cache.get(secret_key_name)
+        # Use cached secret if available
+        if self._secret_cache is None:
+            env_secret = os.getenv('ENV_SECRETS')
+            if env_secret:
+                self._secret_cache = get_secret(env_secret,
+                                                os.getenv("AWS_REGION",
+                                                          'us-east-1'))
+        if self._secret_cache:
+            secret_value = self._secret_cache.get(env_var_name)
             if secret_value is not None:
                 return secret_value
-        except Exception:
-            pass
 
         # 3. Return default value if provided
         return default

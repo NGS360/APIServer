@@ -55,8 +55,8 @@ def test_get_projects_with_data(client: TestClient, session: Session):
     project = response_json["data"][0]
     assert project["name"] == "AI Research"
 
-    assert project["data_folder_uri"] == f"s3://my-data-bucket/{new_project.project_id}/"
-    assert project["results_folder_uri"] == f"s3://my-results-bucket/{new_project.project_id}/"
+    assert project["data_folder_uri"] == f"s3://test-data-bucket/{new_project.project_id}/"
+    assert project["results_folder_uri"] == f"s3://test-results-bucket/{new_project.project_id}/"
 
     # Check attributes (they're a list of objects with key/value pairs)
     attribute_dict = {attr["key"]: attr["value"] for attr in project["attributes"]}
