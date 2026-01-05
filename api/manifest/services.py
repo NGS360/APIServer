@@ -120,12 +120,15 @@ def get_latest_manifest_file(s3_path: str, s3_client=None) -> str | None:
         ) from exc
 
 
-def upload_manifest_file(s3_path: str, file: UploadFile, s3_client=None) -> ManifestUploadResponse:
+def upload_manifest_file(
+    s3_path: str, file: UploadFile, s3_client=None
+) -> ManifestUploadResponse:
     """
     Upload a manifest CSV file to S3.
 
     Args:
-        s3_path: The S3 path where the file should be uploaded (e.g., "s3://bucket-name/path/to/manifest.csv")
+        s3_path: The S3 path where the file should be uploaded
+        (e.g., "s3://bucket-name/path/to/manifest.csv")
         file: The uploaded file object
         s3_client: Optional boto3 S3 client
 
@@ -212,32 +215,43 @@ def upload_manifest_file(s3_path: str, file: UploadFile, s3_client=None) -> Mani
         ) from exc
 
 
-def validate_manifest_file(s3_path: str, valid: bool = True) -> ManifestValidationResponse:
+def validate_manifest_file(
+    s3_path: str, valid: bool = True
+) -> ManifestValidationResponse:
     """
     Validate a manifest CSV file from S3.
-    
+
     Args:
         s3_path: S3 path to the manifest CSV file to validate
         valid: Mock parameter to simulate valid or invalid responses for testing
-        
+
     Returns:
         ManifestValidationResponse with validation status and any errors found
     """
     # Placeholder for validation logic
     # The actual validation logic would go here
-    
+
     if not valid:
         # Return mock validation errors for testing
         return ManifestValidationResponse(
             valid=False,
             message={
                 "ManifestVersion": "Validated against manifest version: DTS12.1",
-                "ExtraFields": "See extra fields (info only): ['VHYB', 'VLANE', 'VBARCODE']"
+                "ExtraFields": (
+                    "See extra fields (info only): "
+                    "['VHYB', 'VLANE', 'VBARCODE']"
+                )
             },
             error={
                 "InvalidFilePath": [
-                    "Unable to find file s3://example/example_1.clipped.fastq.gz described in row 182, check that file exists and is accessible",
-                    "Unable to find file s3://example/example_2.clipped.fastq.gz described in row 183, check that file exists and is accessible"
+                    (
+                        "Unable to find file s3://example/example_1.clipped.fastq.gz "
+                        "described in row 182, check that file exists and is accessible"
+                    ),
+                    (
+                        "Unable to find file s3://example/example_2.clipped.fastq.gz "
+                        "described in row 183, check that file exists and is accessible"
+                    )
                 ],
                 "MissingRequiredField": [
                     "Row 45 is missing required field 'SAMPLE_ID'",
@@ -253,7 +267,7 @@ def validate_manifest_file(s3_path: str, valid: bool = True) -> ManifestValidati
                 ]
             }
         )
-    
+
     return ManifestValidationResponse(
         valid=True,
         message={
@@ -262,4 +276,3 @@ def validate_manifest_file(s3_path: str, valid: bool = True) -> ManifestValidati
         error={},
         warning={}
     )
-

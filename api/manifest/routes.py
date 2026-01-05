@@ -59,7 +59,8 @@ def upload_manifest(
     Upload a manifest CSV file to the specified S3 path.
 
     Args:
-        s3_path: S3 path where the file should be uploaded (e.g., "s3://bucket-name/path/to/manifest.csv")
+        s3_path: S3 path where the file should be uploaded
+            (e.g., "s3://bucket-name/path/to/manifest.csv")
         file: The manifest CSV file to upload
 
     Returns:
@@ -75,8 +76,13 @@ def upload_manifest(
     tags=["Manifest Endpoints"],
 )
 def validate_manifest(
-    s3_path: str = Query(..., description="S3 path to the manifest CSV file to validate"),
-    valid: bool = Query(True, description="Mock validation result for testing (True=valid, False=invalid)"),
+    s3_path: str = Query(
+        ..., description="S3 path to the manifest CSV file to validate"
+    ),
+    valid: bool = Query(
+        True,
+        description="Mock validation result for testing (True=valid, False=invalid)"
+    ),
 ) -> ManifestValidationResponse:
     """
     Validate a manifest CSV file from S3.

@@ -72,7 +72,9 @@ def get_workflows(
 
     offset = (page - 1) * per_page
 
-    workflows = session.exec(select(Workflow).order_by(sort_column).offset(offset).limit(per_page)).all()
+    workflows = session.exec(
+        select(Workflow).order_by(sort_column).offset(offset).limit(per_page)
+    ).all()
     return workflows
 
 
