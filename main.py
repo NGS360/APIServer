@@ -64,6 +64,8 @@ app.include_router(samples_router, prefix=API_PREFIX)
 app.include_router(search_router, prefix=API_PREFIX)
 app.include_router(tools_router, prefix=API_PREFIX)
 app.include_router(vendors_router, prefix=API_PREFIX)
+app.include_router(manifest_router, prefix=API_PREFIX)
+app.include_router(workflow_router, prefix=API_PREFIX)
 
 
 if __name__ == "__main__":
