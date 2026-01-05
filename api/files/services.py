@@ -171,7 +171,7 @@ def download_file(s3_path: str, s3_client=None) -> tuple[bytes, str, str]:
     try:
         # Parse S3 path
         bucket, key = _parse_s3_path(s3_path)
-        
+ 
         if not key:
             raise ValueError("S3 path must include a file key, not just a bucket")
 
@@ -181,16 +181,16 @@ def download_file(s3_path: str, s3_client=None) -> tuple[bytes, str, str]:
 
         # Get the object from S3
         response = s3_client.get_object(Bucket=bucket, Key=key)
-        
+ 
         # Read the file content
         file_content = response['Body'].read()
-        
+ 
         # Get content type from S3 metadata, default to binary
         content_type = response.get('ContentType', 'application/octet-stream')
-        
+ 
         # Extract filename from the key (last part of the path)
         filename = key.split('/')[-1]
-        
+ 
         return file_content, content_type, filename
 
     except NoCredentialsError as exc:
