@@ -8,7 +8,6 @@ from sqlmodel import Session
 
 from api.project.models import Project, ProjectAttribute
 from api.project.services import generate_project_id
-from core.config import get_settings
 
 
 def test_get_projects_with_no_data(client: TestClient, session: Session):
