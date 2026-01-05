@@ -43,7 +43,7 @@ def download_file(
     Download a file from S3.
 
     Returns the file as a streaming download with appropriate content type and filename.
- 
+
     Args:
         path: Full S3 URI to the file (e.g., s3://bucket/folder/file.txt)
 
