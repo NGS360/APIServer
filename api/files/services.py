@@ -171,7 +171,7 @@ def download_file(s3_path: str, s3_client=None) -> tuple[bytes, str, str]:
     try:
         # Parse S3 path
         bucket, key = _parse_s3_path(s3_path)
- 
+
         if not key:
             raise ValueError("S3 path must include a file key, not just a bucket")
 
