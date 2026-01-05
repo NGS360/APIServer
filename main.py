@@ -15,6 +15,7 @@ from api.samples.routes import router as samples_router
 from api.search.routes import router as search_router
 from api.tools.routes import router as tools_router
 from api.vendors.routes import router as vendors_router
+from api.workflow.routes import router as workflow_router
 from api.manifest.routes import router as manifest_router
 
 
@@ -63,7 +64,6 @@ app.include_router(samples_router, prefix=API_PREFIX)
 app.include_router(search_router, prefix=API_PREFIX)
 app.include_router(tools_router, prefix=API_PREFIX)
 app.include_router(vendors_router, prefix=API_PREFIX)
-app.include_router(manifest_router, prefix=API_PREFIX)
 
 
 if __name__ == "__main__":
