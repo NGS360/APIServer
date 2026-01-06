@@ -268,6 +268,57 @@ class MockS3Client:
         """
         self.error_mode = error_type
 
+    def get_object(self, Bucket: str, Key: str, **kwargs):
+        """Mock S3 get_object operation"""
+        from botocore.exceptions import NoCredentialsError, ClientError
+
+        # Check for simulated errors
+        if self.error_mode == "NoCredentialsError":
+            raise NoCredentialsError()
+        elif self.error_mode == "NoSuchBucket":
+            error_response = {
+                "Error": {
+                    "Code": "NoSuchBucket",
+                    "Message": "The specified bucket does not exist",
+                }
+            }
+            raise ClientError(error_response, "GetObject")
+        elif self.error_mode == "AccessDenied":
+            error_response = {
+                "Error": {"Code": "AccessDenied", "Message": "Access Denied"}
+            }
+            raise ClientError(error_response, "GetObject")
+
+        # Check if file exists in uploaded files
+        if Bucket in self.uploaded_files and Key in self.uploaded_files[Bucket]:
+            body = self.uploaded_files[Bucket][Key]
+            
+            # Create a mock response with a Body attribute that has a read() method
+            class MockBody:
+                def __init__(self, content):
+                    self.content = content
+                
+                def read(self):
+                    return self.content
+                
+                def decode(self, encoding='utf-8'):
+                    return self.content.decode(encoding) if isinstance(self.content, bytes) else self.content
+            
+            return {
+                "Body": MockBody(body),
+                "ContentType": "application/octet-stream",
+                "ContentLength": len(body) if body else 0,
+            }
+        
+        # File not found
+        error_response = {
+            "Error": {
+                "Code": "NoSuchKey",
+                "Message": "The specified key does not exist.",
+            }
+        }
+        raise ClientError(error_response, "GetObject")
+
     def put_object(self, Bucket: str, Key: str, Body: bytes, **kwargs):
         """Mock S3 put_object operation"""
         from botocore.exceptions import NoCredentialsError, ClientError
