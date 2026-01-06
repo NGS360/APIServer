@@ -292,24 +292,26 @@ class MockS3Client:
         # Check if file exists in uploaded files
         if Bucket in self.uploaded_files and Key in self.uploaded_files[Bucket]:
             body = self.uploaded_files[Bucket][Key]
-            
-            # Create a mock response with a Body attribute that has a read() method
+
+            # Create a mock response with Body attribute and read() method
             class MockBody:
                 def __init__(self, content):
                     self.content = content
-                
+
                 def read(self):
                     return self.content
-                
+
                 def decode(self, encoding='utf-8'):
-                    return self.content.decode(encoding) if isinstance(self.content, bytes) else self.content
-            
+                    if isinstance(self.content, bytes):
+                        return self.content.decode(encoding)
+                    return self.content
+
             return {
                 "Body": MockBody(body),
                 "ContentType": "application/octet-stream",
                 "ContentLength": len(body) if body else 0,
             }
-        
+
         # File not found
         error_response = {
             "Error": {

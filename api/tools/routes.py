@@ -4,7 +4,7 @@ Routes/endpoints for the Tools API
 
 from fastapi import APIRouter, Depends
 
-from api.tools.models import ToolConfig
+from api.tools.models import ToolConfig, ToolSubmitBody
 from api.tools import services
 from core.deps import get_s3_client
 
@@ -38,3 +38,19 @@ def get_tool_config(
         Complete tool configuration
     """
     return services.get_tool_config(tool_id=tool_id, s3_client=s3_client)
+
+
+@router.post(
+    "/{tool_id}/submit",
+    response_model=dict,
+    tags=["Tool Endpoints"],
+)
+def submit_job(tool_body: ToolSubmitBody, s3_client=Depends(get_s3_client)) -> dict:
+    """
+    Submit a job for the specified tool.
+    Args:
+        tool_body: The tool execution request containing tool_id, run_barcode, and inputs
+    Returns:
+        A dictionary containing job submission details.
+    """
+    return services.submit_job(tool_body, s3_client=s3_client)

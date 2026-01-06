@@ -159,7 +159,7 @@ aws_batch:
         assert data["version"] == 1
         assert data["tool_id"] == "cellranger-mkfastq"
         assert data["tool_name"] == "CellRanger mkfastq"
-        
+
         # Verify aws_batch section is present and correct
         assert "aws_batch" in data
         assert data["aws_batch"] is not None
@@ -168,7 +168,7 @@ aws_batch:
         assert aws_batch["job_definition"] == "ngs360-cellranger:11"
         assert aws_batch["job_queue"] == "cellRangerJobQueue-2fe9b27d39b85fa"
         assert aws_batch["command"] == "mkfastq.sh"
-        
+
         # Verify environment variables
         assert "environment" in aws_batch
         assert len(aws_batch["environment"]) == 3
@@ -276,7 +276,9 @@ inputs: [
         assert response.status_code == 422
         assert "yaml" in response.json()["detail"].lower()
 
-    def test_list_tools_s3_error_no_credentials(self, client: TestClient, mock_s3_client: MockS3Client):
+    def test_list_tools_s3_error_no_credentials(
+        self, client: TestClient, mock_s3_client: MockS3Client
+    ):
         """Test list tools when AWS credentials are missing"""
         mock_s3_client.simulate_error("NoCredentialsError")
 
@@ -284,7 +286,9 @@ inputs: [
         assert response.status_code == 401
         assert "credentials" in response.json()["detail"].lower()
 
-    def test_list_tools_s3_error_no_bucket(self, client: TestClient, mock_s3_client: MockS3Client):
+    def test_list_tools_s3_error_no_bucket(
+        self, client: TestClient, mock_s3_client: MockS3Client
+    ):
         """Test list tools when S3 bucket doesn't exist"""
         mock_s3_client.simulate_error("NoSuchBucket")
 
@@ -292,7 +296,9 @@ inputs: [
         assert response.status_code == 404
         assert "bucket" in response.json()["detail"].lower()
 
-    def test_list_tools_s3_error_access_denied(self, client: TestClient, mock_s3_client: MockS3Client):
+    def test_list_tools_s3_error_access_denied(
+        self, client: TestClient, mock_s3_client: MockS3Client
+    ):
         """Test list tools when access is denied"""
         mock_s3_client.simulate_error("AccessDenied")
 
@@ -326,7 +332,7 @@ class TestToolConfigModels:
                 type=InputType.ENUM,
                 required=True,
             )
-        
+
         # Verify the error mentions options
         assert "options" in str(exc_info.value).lower()
 
@@ -412,7 +418,7 @@ class TestToolConfigModels:
             AwsBatchEnvironment(name="VAR1", value="value1"),
             AwsBatchEnvironment(name="VAR2", value="value2"),
         ]
-        
+
         aws_config = AwsBatchConfig(
             job_name="test-job",
             job_definition="test-def:1",
@@ -420,7 +426,7 @@ class TestToolConfigModels:
             command="run.sh",
             environment=env_vars,
         )
-        
+
         assert len(aws_config.environment) == 2
         assert aws_config.environment[0].name == "VAR1"
         assert aws_config.environment[1].value == "value2"
@@ -454,7 +460,7 @@ class TestToolConfigModels:
                 ],
             ),
         )
-        
+
         assert tool_config.version == 1
         assert tool_config.tool_id == "test-tool"
         assert tool_config.aws_batch is not None
@@ -481,7 +487,511 @@ class TestToolConfigModels:
             help="Help text",
             tags=[ToolConfigTag(name="test")],
         )
-        
+
         assert tool_config.version == 1
         assert tool_config.tool_id == "test-tool"
         assert tool_config.aws_batch is None
+
+
+class TestSubmitJobEndpoint:
+    """Test the submit job endpoint and related services"""
+
+    def test_submit_job_success(
+        self, client: TestClient, mock_s3_client: MockS3Client, monkeypatch
+    ):
+        """Test successful job submission"""
+        # Setup tool config with aws_batch
+        tool_config_yaml = """
+version: 1
+tool_id: cellranger-mkfastq
+tool_name: CellRanger mkfastq
+tool_description: Demultiplex Illumina run with CellRanger
+inputs:
+  - name: s3_run_folder_path
+    desc: S3 Run Folder Path
+    type: String
+    required: true
+  - name: barcode_mismatches
+    desc: Barcode Mismatches
+    type: Integer
+    default: 1
+  - name: user
+    desc: User
+    type: String
+    required: true
+help: Run cellranger mkfastq on an Illumina run
+tags:
+  - name: illumina_run
+aws_batch:
+  job_name: cellranger-mkfastq-{{ s3_run_folder_path.split('/')[-1] }}
+  job_definition: ngs360-cellranger:11
+  job_queue: cellRangerJobQueue-2fe9b27d39b85fa
+  command: mkfastq.sh
+  environment:
+    - name: S3_RUNFOLDER_PATH
+      value: "{{ s3_run_folder_path }}"
+    - name: MKFASTQ_OPTS
+      value: --barcode-mismatches={{ barcode_mismatches }}
+    - name: USER
+      value: "{{ user }}"
+"""
+        mock_s3_client.put_object(
+            Bucket="test-tool-configs-bucket",
+            Key="cellranger-mkfastq.yaml",
+            Body=tool_config_yaml.encode("utf-8"),
+        )
+
+        # Mock boto3 batch client
+        mock_batch_response = {
+            "jobId": "test-job-123",
+            "jobName": "cellranger-mkfastq-test-run",
+        }
+
+        class MockBatchClient:
+            def submit_job(self, **kwargs):
+                return mock_batch_response
+
+        def mock_boto3_client(service_name, region_name=None):
+            if service_name == "batch":
+                return MockBatchClient()
+            return None
+
+        monkeypatch.setattr("boto3.client", mock_boto3_client)
+
+        # Submit job
+        request_body = {
+            "tool_id": "cellranger-mkfastq",
+            "run_barcode": "190110_MACHINE123_0001_FLOWCELL123",
+            "inputs": {
+                "s3_run_folder_path": "s3://bucket/test-run",
+                "barcode_mismatches": 1,
+                "user": "testuser",
+            },
+        }
+
+        response = client.post(
+            "/api/v1/tools/cellranger-mkfastq/submit", json=request_body
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["jobId"] == "test-job-123"
+        assert data["jobName"] == "cellranger-mkfastq-test-run"
+        assert "jobCommand" in data
+        assert data["jobCommand"] == "mkfastq.sh"
+
+    def test_submit_job_with_jinja_expressions(
+        self, client: TestClient, mock_s3_client: MockS3Client, monkeypatch
+    ):
+        """Test job submission with Jinja2 expressions in template"""
+        tool_config_yaml = """
+version: 1
+tool_id: test-tool
+tool_name: Test Tool
+tool_description: Test tool with Jinja expressions
+inputs:
+  - name: s3_path
+    desc: S3 Path
+    type: String
+    required: true
+  - name: max_reads
+    desc: Max Reads
+    type: Integer
+    default: 1000
+help: Test tool
+tags:
+  - name: test
+aws_batch:
+  job_name: test-{{ s3_path.split('/')[-1] }}-{{ max_reads }}
+  job_definition: test-def:1
+  job_queue: test-queue
+  command: run.sh {{ max_reads }}
+  environment:
+    - name: S3_PATH
+      value: "{{ s3_path }}"
+    - name: MAX_READS
+      value: "{{ max_reads }}"
+"""
+        mock_s3_client.put_object(
+            Bucket="test-tool-configs-bucket",
+            Key="test-tool.yaml",
+            Body=tool_config_yaml.encode("utf-8"),
+        )
+
+        # Mock batch client
+        captured_submit_args = {}
+
+        class MockBatchClient:
+            def submit_job(self, **kwargs):
+                captured_submit_args.update(kwargs)
+                return {"jobId": "job-456", "jobName": kwargs["jobName"]}
+
+        def mock_boto3_client(service_name, region_name=None):
+            if service_name == "batch":
+                return MockBatchClient()
+            return None
+
+        monkeypatch.setattr("boto3.client", mock_boto3_client)
+
+        request_body = {
+            "tool_id": "test-tool",
+            "run_barcode": "test-run-123",
+            "inputs": {
+                "s3_path": "s3://bucket/folder/subfolder/file.txt",
+                "max_reads": 5000,
+            },
+        }
+
+        response = client.post("/api/v1/tools/test-tool/submit", json=request_body)
+
+        assert response.status_code == 200
+        data = response.json()
+
+        # Verify Jinja2 expression was evaluated correctly
+        assert data["jobName"] == "test-file.txt-5000"
+        assert data["jobCommand"] == "run.sh 5000"
+
+        # Verify container overrides
+        assert "containerOverrides" in captured_submit_args
+        overrides = captured_submit_args["containerOverrides"]
+        assert overrides["command"] == ["run.sh", "5000"]
+        assert len(overrides["environment"]) == 2
+        env_dict = {e["name"]: e["value"] for e in overrides["environment"]}
+        assert env_dict["S3_PATH"] == "s3://bucket/folder/subfolder/file.txt"
+        assert env_dict["MAX_READS"] == "5000"
+
+    def test_submit_job_tool_not_found(
+        self, client: TestClient, mock_s3_client: MockS3Client
+    ):
+        """Test job submission when tool config doesn't exist"""
+        request_body = {
+            "tool_id": "non-existent-tool",
+            "run_barcode": "test-run",
+            "inputs": {"param": "value"},
+        }
+
+        response = client.post(
+            "/api/v1/tools/non-existent-tool/submit", json=request_body
+        )
+
+        assert response.status_code == 404
+        data = response.json()
+        assert "not found" in data["detail"].lower()
+
+    def test_submit_job_no_aws_batch_config(
+        self, client: TestClient, mock_s3_client: MockS3Client
+    ):
+        """Test job submission when tool has no AWS Batch configuration"""
+        tool_config_yaml = """
+version: 1
+tool_id: no-batch-tool
+tool_name: No Batch Tool
+tool_description: Tool without AWS Batch config
+inputs:
+  - name: input1
+    desc: Input 1
+    type: String
+    required: true
+help: Help text
+tags:
+  - name: test
+"""
+        mock_s3_client.put_object(
+            Bucket="test-tool-configs-bucket",
+            Key="no-batch-tool.yaml",
+            Body=tool_config_yaml.encode("utf-8"),
+        )
+
+        request_body = {
+            "tool_id": "no-batch-tool",
+            "run_barcode": "test-run",
+            "inputs": {"input1": "value1"},
+        }
+
+        response = client.post("/api/v1/tools/no-batch-tool/submit", json=request_body)
+
+        assert response.status_code == 400
+        data = response.json()
+        assert "not configured for AWS Batch" in data["detail"]
+
+    def test_submit_job_batch_client_error(
+        self, client: TestClient, mock_s3_client: MockS3Client, monkeypatch
+    ):
+        """Test job submission when AWS Batch client raises an error"""
+        tool_config_yaml = """
+version: 1
+tool_id: batch-error-tool
+tool_name: Batch Error Tool
+tool_description: Tool that will cause batch error
+inputs:
+  - name: input1
+    desc: Input 1
+    type: String
+    required: true
+help: Help text
+tags:
+  - name: test
+aws_batch:
+  job_name: test-job
+  job_definition: test-def:1
+  job_queue: test-queue
+  command: run.sh
+"""
+        mock_s3_client.put_object(
+            Bucket="test-tool-configs-bucket",
+            Key="batch-error-tool.yaml",
+            Body=tool_config_yaml.encode("utf-8"),
+        )
+
+        # Mock batch client that raises error
+        from botocore.exceptions import ClientError
+
+        class MockBatchClient:
+            def submit_job(self, **kwargs):
+                raise ClientError(
+                    {
+                        "Error": {
+                            "Code": "InvalidParameterValueException",
+                            "Message": "Invalid job definition",
+                        }
+                    },
+                    "SubmitJob",
+                )
+
+        def mock_boto3_client(service_name, region_name=None):
+            if service_name == "batch":
+                return MockBatchClient()
+            return None
+
+        monkeypatch.setattr("boto3.client", mock_boto3_client)
+
+        request_body = {
+            "tool_id": "batch-error-tool",
+            "run_barcode": "test-run",
+            "inputs": {"input1": "value1"},
+        }
+
+        response = client.post(
+            "/api/v1/tools/batch-error-tool/submit", json=request_body
+        )
+
+        assert response.status_code == 500
+        data = response.json()
+        assert "Failed to submit job" in data["detail"]
+
+    def test_submit_job_with_empty_environment(
+        self, client: TestClient, mock_s3_client: MockS3Client, monkeypatch
+    ):
+        """Test job submission with no environment variables"""
+        tool_config_yaml = """
+version: 1
+tool_id: no-env-tool
+tool_name: No Environment Tool
+tool_description: Tool with no environment vars
+inputs:
+  - name: input1
+    desc: Input 1
+    type: String
+    required: true
+help: Help text
+tags:
+  - name: test
+aws_batch:
+  job_name: no-env-job
+  job_definition: test-def:1
+  job_queue: test-queue
+  command: run.sh
+"""
+        mock_s3_client.put_object(
+            Bucket="test-tool-configs-bucket",
+            Key="no-env-tool.yaml",
+            Body=tool_config_yaml.encode("utf-8"),
+        )
+
+        captured_submit_args = {}
+
+        class MockBatchClient:
+            def submit_job(self, **kwargs):
+                captured_submit_args.update(kwargs)
+                return {"jobId": "job-789", "jobName": kwargs["jobName"]}
+
+        def mock_boto3_client(service_name, region_name=None):
+            if service_name == "batch":
+                return MockBatchClient()
+            return None
+
+        monkeypatch.setattr("boto3.client", mock_boto3_client)
+
+        request_body = {
+            "tool_id": "no-env-tool",
+            "run_barcode": "test-run",
+            "inputs": {"input1": "value1"},
+        }
+
+        response = client.post("/api/v1/tools/no-env-tool/submit", json=request_body)
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["jobId"] == "job-789"
+
+        # Verify environment is empty list
+        overrides = captured_submit_args["containerOverrides"]
+        assert overrides["environment"] == []
+
+    def test_submit_job_invalid_request_body(self, client: TestClient):
+        """Test job submission with invalid request body"""
+        # Missing required field 'inputs'
+        invalid_body = {
+            "tool_id": "test-tool",
+            "run_barcode": "test-run",
+        }
+
+        response = client.post("/api/v1/tools/test-tool/submit", json=invalid_body)
+
+        assert response.status_code == 422  # Validation error
+
+    def test_submit_job_with_complex_inputs(
+        self, client: TestClient, mock_s3_client: MockS3Client, monkeypatch
+    ):
+        """Test job submission with various input types"""
+        tool_config_yaml = """
+version: 1
+tool_id: complex-tool
+tool_name: Complex Tool
+tool_description: Tool with complex inputs
+inputs:
+  - name: string_input
+    desc: String Input
+    type: String
+    required: true
+  - name: int_input
+    desc: Integer Input
+    type: Integer
+    required: true
+  - name: bool_input
+    desc: Boolean Input
+    type: Boolean
+    required: false
+  - name: enum_input
+    desc: Enum Input
+    type: Enum
+    options:
+      - option1
+      - option2
+    required: true
+help: Help text
+tags:
+  - name: test
+aws_batch:
+  job_name: complex-{{ string_input }}-{{ int_input }}
+  job_definition: test-def:1
+  job_queue: test-queue
+  command: run.sh
+  environment:
+    - name: STRING_VAL
+      value: "{{ string_input }}"
+    - name: INT_VAL
+      value: "{{ int_input }}"
+    - name: BOOL_VAL
+      value: "{{ bool_input }}"
+    - name: ENUM_VAL
+      value: "{{ enum_input }}"
+"""
+        mock_s3_client.put_object(
+            Bucket="test-tool-configs-bucket",
+            Key="complex-tool.yaml",
+            Body=tool_config_yaml.encode("utf-8"),
+        )
+
+        captured_submit_args = {}
+
+        class MockBatchClient:
+            def submit_job(self, **kwargs):
+                captured_submit_args.update(kwargs)
+                return {"jobId": "job-complex", "jobName": kwargs["jobName"]}
+
+        def mock_boto3_client(service_name, region_name=None):
+            if service_name == "batch":
+                return MockBatchClient()
+            return None
+
+        monkeypatch.setattr("boto3.client", mock_boto3_client)
+
+        request_body = {
+            "tool_id": "complex-tool",
+            "run_barcode": "test-run",
+            "inputs": {
+                "string_input": "test_string",
+                "int_input": 42,
+                "bool_input": True,
+                "enum_input": "option2",
+            },
+        }
+
+        response = client.post("/api/v1/tools/complex-tool/submit", json=request_body)
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["jobName"] == "complex-test_string-42"
+
+        # Verify environment variables have correct values
+        overrides = captured_submit_args["containerOverrides"]
+        env_dict = {e["name"]: e["value"] for e in overrides["environment"]}
+        assert env_dict["STRING_VAL"] == "test_string"
+        assert env_dict["INT_VAL"] == "42"
+        assert env_dict["BOOL_VAL"] == "True"
+        assert env_dict["ENUM_VAL"] == "option2"
+
+
+class TestInterpolateFunction:
+    """Test the interpolate helper function"""
+
+    def test_interpolate_simple_substitution(self):
+        """Test simple variable substitution"""
+        from api.tools.services import interpolate
+
+        template = "Hello {{ name }}"
+        inputs = {"name": "World"}
+        result = interpolate(template, inputs)
+        assert result == "Hello World"
+
+    def test_interpolate_multiple_variables(self):
+        """Test multiple variable substitution"""
+        from api.tools.services import interpolate
+
+        template = "{{ greeting }} {{ name }}, you are {{ age }} years old"
+        inputs = {"greeting": "Hello", "name": "Alice", "age": 30}
+        result = interpolate(template, inputs)
+        assert result == "Hello Alice, you are 30 years old"
+
+    def test_interpolate_with_expression(self):
+        """Test Jinja2 expressions"""
+        from api.tools.services import interpolate
+
+        template = "Last part: {{ path.split('/')[-1] }}"
+        inputs = {"path": "s3://bucket/folder/file.txt"}
+        result = interpolate(template, inputs)
+        assert result == "Last part: file.txt"
+
+    def test_interpolate_strips_whitespace(self):
+        """Test that result is stripped of leading/trailing whitespace"""
+        from api.tools.services import interpolate
+
+        template = "  {{ value }}  "
+        inputs = {"value": "test"}
+        result = interpolate(template, inputs)
+        assert result == "test"  # Whitespace stripped from rendered output
+
+    def test_interpolate_with_missing_variable(self):
+        """Test behavior when variable is missing"""
+        from api.tools.services import interpolate
+
+        template = "Hello {{ missing_var }}"
+        inputs = {"name": "World"}
+
+        # Jinja2 by default renders undefined variables as empty strings
+        # in sandboxed mode
+        result = interpolate(template, inputs)
+        # The sandboxed environment should handle missing variables
+        # gracefully
+        assert "Hello" in result
