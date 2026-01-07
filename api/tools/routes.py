@@ -23,6 +23,22 @@ def list_available_tools(
     return services.list_tool_configs(s3_client=s3_client)
 
 
+@router.post(
+    "/submit",
+    response_model=dict,
+    tags=["Tool Endpoints"],
+)
+def submit_job(tool_body: ToolSubmitBody, s3_client=Depends(get_s3_client)) -> dict:
+    """
+    Submit a job for the specified tool.
+    Args:
+        tool_body: The tool execution request containing tool_id, run_barcode, and inputs
+    Returns:
+        A dictionary containing job submission details.
+    """
+    return services.submit_job(tool_body=tool_body, s3_client=s3_client)
+
+
 @router.get("/{tool_id}", response_model=ToolConfig, tags=["Tool Endpoints"])
 def get_tool_config(
     tool_id: str,
@@ -38,19 +54,3 @@ def get_tool_config(
         Complete tool configuration
     """
     return services.get_tool_config(tool_id=tool_id, s3_client=s3_client)
-
-
-@router.post(
-    "/{tool_id}/submit",
-    response_model=dict,
-    tags=["Tool Endpoints"],
-)
-def submit_job(tool_body: ToolSubmitBody, s3_client=Depends(get_s3_client)) -> dict:
-    """
-    Submit a job for the specified tool.
-    Args:
-        tool_body: The tool execution request containing tool_id, run_barcode, and inputs
-    Returns:
-        A dictionary containing job submission details.
-    """
-    return services.submit_job(tool_body, s3_client=s3_client)
