@@ -25,5 +25,14 @@ def get_opensearch_client() -> Generator[OpenSearch, None, None]:
     yield client
 
 
+def get_s3_client():
+    """Get S3 client for dependency injection"""
+    try:
+        import boto3
+        return boto3.client("s3")
+    except ImportError:
+        raise RuntimeError("boto3 is not available. Install it to use S3 features.")
+
+
 SessionDep: TypeAlias = Annotated[Session, Depends(get_db)]
 OpenSearchDep: TypeAlias = Annotated[OpenSearch, Depends(get_opensearch_client)]

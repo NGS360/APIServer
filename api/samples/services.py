@@ -1,5 +1,5 @@
 from fastapi import HTTPException, status
-from typing import List, Literal
+from typing import Literal
 from pydantic import PositiveInt
 
 from sqlmodel import Session, select, func
@@ -11,13 +11,14 @@ from api.samples.models import (
     SampleCreate,
     SamplePublic,
     SamplesPublic,
+    Attribute,
 )
 from api.project.models import Project
 from api.search.models import (
     SearchDocument,
 )
 from opensearchpy import OpenSearch
-from api.search.services import add_object_to_index
+from api.search.services import add_object_to_index, delete_index
 
 
 def add_sample_to_project(
@@ -87,7 +88,7 @@ def get_samples(
     per_page: PositiveInt,
     sort_by: str,
     sort_order: Literal["asc", "desc"],
-) -> List[Sample]:
+) -> SamplesPublic:
     """
     Get a paginated list of samples for a specific project.
 
@@ -100,7 +101,7 @@ def get_samples(
         sort_order: Sort direction ('asc' or 'desc')
 
     Returns:
-        List of Sample objects
+        SamplesPublic: Paginated list of samples for the project
     """
     # Get the total count of samples for the project
     total_count = session.exec(
@@ -141,8 +142,20 @@ def get_samples(
         )
         for sample in samples
     ]
+
+    # Collect all unique attribute keys across all samples for data_cols
+    data_cols = None
+    if samples:
+        all_keys = set()
+        for sample in samples:
+            if sample.attributes:
+                for attr in sample.attributes:
+                    all_keys.add(attr.key)
+        data_cols = sorted(list(all_keys)) if all_keys else None
+
     return SamplesPublic(
         data=public_samples,
+        data_cols=data_cols,
         total_items=total_count,
         total_pages=total_pages,
         current_page=page,
@@ -158,3 +171,71 @@ def get_sample_by_sample_id(session: Session, sample_id: str) -> Sample:
     Note: This is different from its internal "id".
     """
     return None
+
+
+def reindex_samples(session: Session, client: OpenSearch):
+    """
+    Index all samples in database with OpenSearch
+    """
+    delete_index(client, "samples")
+    samples = session.exec(
+        select(Sample)
+    ).all()
+    for sample in samples:
+        search_doc = SearchDocument(id=str(sample.id), body=sample)
+        add_object_to_index(client, search_doc, index="samples")
+
+
+def update_sample_in_project(
+        session: Session,
+        project_id: str,
+        sample_id: str,
+        attribute: Attribute,
+) -> SamplePublic:
+    """
+    Update an existing sample in a project.
+    """
+    # Fetch the sample
+    sample = session.exec(
+        select(Sample).where(
+            Sample.sample_id == sample_id,
+            Sample.project_id == project_id
+        )
+    ).first()
+
+    if not sample:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Sample {sample_id} in project {project_id} not found.",
+        )
+
+    # Check if the attribute exists
+    sample_attribute = session.exec(
+        select(SampleAttribute).where(
+            SampleAttribute.sample_id == sample.id,
+            SampleAttribute.key == attribute.key
+        )
+    ).first()
+
+    if sample_attribute:
+        # Update existing attribute
+        sample_attribute.value = attribute.value
+    else:
+        # Create new attribute
+        new_attribute = SampleAttribute(
+            sample_id=sample.id,
+            key=attribute.key,
+            value=attribute.value
+        )
+        session.add(new_attribute)
+
+    session.commit()
+    session.refresh(sample)
+
+    return SamplePublic(
+        sample_id=sample.sample_id,
+        project_id=sample.project_id,
+        attributes=[
+            Attribute(key=attr.key, value=attr.value) for attr in (sample.attributes or [])
+        ] if sample.attributes else []
+    )

@@ -193,53 +193,6 @@ def test_search_projects_sorting(client: TestClient):
     assert response_json["data"][0]["name"] == "Test project 3"
 
 
-def test_search_runs(client: TestClient):
-    """
-    Run search that returns a SequencingRunsPublic model
-    with sorting and pagination for rendering the table
-    on the illumin_runs page.
-
-    This is equivalent to the get runs endpoint, except that
-    the searching and pagination is handled by OpenSearch, rather
-    than handling pagination from the database.
-    """
-    # Define the url
-    # this can be changed if it replaces the
-    # /api/v1/runs endpoint.
-    url = "/api/v1/runs/search"
-
-    # Test No runs, this also ensure we are using the test db
-    response = client.get(f"{url}", params={"query": "AI"})
-    assert response.status_code == 200
-    assert response.json() == {
-        "data": [],
-        "total_items": 0,
-        "total_pages": 0,
-        "current_page": 1,
-        "per_page": 20,
-        "has_next": False,
-        "has_prev": False,
-    }
-
-
-def test_search_runs_paging(client: TestClient, opensearch_client: OpenSearch):
-    """
-    Test that pagination works on the data returned by the runs search
-    endpoint.
-    """
-    # TODO: Test once /api/v1/search post is implemented
-    pass
-
-
-def test_search_runs_sorting(client: TestClient, opensearch_client: OpenSearch):
-    """
-    Test that sorting works on the data returned by the runs search
-    endpoint, even across pagination.
-    """
-    # TODO: Test once /api/v1/search post is implemented
-    pass
-
-
 def test_search(client: TestClient, opensearch_client: OpenSearch):
     """
     Test unified search endpoint for search bar that

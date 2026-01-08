@@ -16,17 +16,16 @@ down-rm:
 drop-db:
 	docker volume rm apiserver_db_data
 
-# Run FASTAPI in dev mode
-run-dev:
-	fastapi dev main.py
+run:
+	uv run fastapi dev main.py
 
 # Unit Tests
 lint:
 	flake8 .
 
 test:
-	pytest -xv --cov
-	coverage html
+	uv run pytest -xv --cov
+	uv run coverage html
 
 # Alembic migration commands
 migrate-upgrade:

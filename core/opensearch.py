@@ -35,8 +35,8 @@ def get_opensearch_client():
             ],
             http_compress=True,  # enables gzip compression for request bodies
             http_auth=auth,
-            # use_ssl = True,
-            # verify_certs = True,
+            use_ssl=get_settings().OPENSEARCH_USE_SSL,
+            verify_certs=get_settings().OPENSEARCH_VERIFY_CERTS,
             # ssl_assert_hostname = False,
             # ssl_show_warn = False,
             # ca_certs = ca_certs_path

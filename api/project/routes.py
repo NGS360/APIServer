@@ -5,8 +5,8 @@ Routes/endpoints for the Project API
 from typing import Literal
 from fastapi import APIRouter, Query, status
 from core.deps import SessionDep, OpenSearchDep
-from api.project.models import Project, ProjectCreate, ProjectPublic, ProjectsPublic
-from api.samples.models import SampleCreate, SamplePublic, SamplesPublic
+from api.project.models import ProjectCreate, ProjectPublic, ProjectsPublic
+from api.samples.models import SampleCreate, SamplePublic, SamplesPublic, Attribute
 from api.project import services
 from api.samples import services as sample_services
 
@@ -25,7 +25,7 @@ router = APIRouter(prefix="/projects")
 )
 def create_project(
     session: SessionDep, opensearch_client: OpenSearchDep, project_in: ProjectCreate
-) -> Project:
+) -> ProjectPublic:
     """
     Create a new project with optional attributes.
     """
@@ -60,6 +60,10 @@ def get_projects(
         sort_order=sort_order,
     )
 
+###############################################################################
+# Projects Endpoints /api/v1/projects/search
+###############################################################################
+
 
 @router.get(
     "/search",
@@ -80,6 +84,9 @@ def search_projects(
         "asc", description="Sort order (asc or desc)"
     ),
 ) -> ProjectsPublic:
+    """
+    Search projects by project_id or name.
+    """
     return services.search_projects(
         session=session,
         client=client,
@@ -90,6 +97,21 @@ def search_projects(
         sort_order=sort_order,
     )
 
+
+@router.post(
+    "/search",
+    status_code=status.HTTP_201_CREATED,
+    tags=["Project Endpoints"],
+)
+def reindex_projects(
+    session: SessionDep,
+    client: OpenSearchDep,
+):
+    """
+    Reindex projects in database with OpenSearch
+    """
+    services.reindex_projects(session, client)
+    return 'OK'
 
 ###############################################################################
 # Project Endpoints /api/v1/projects/{project_id}
@@ -156,4 +178,26 @@ def get_samples(
         per_page=per_page,
         sort_by=sort_by,
         sort_order=sort_order,
+    )
+
+
+@router.put(
+    "/{project_id}/samples/{sample_id}",
+    response_model=SamplePublic,
+    tags=["Sample Endpoints"],
+)
+def update_sample_in_project(
+    session: SessionDep,
+    project_id: str,
+    sample_id: str,
+    attribute: Attribute,
+) -> SamplePublic:
+    """
+    Update an existing sample in a project.
+    """
+    return sample_services.update_sample_in_project(
+        session=session,
+        project_id=project_id,
+        sample_id=sample_id,
+        attribute=attribute,
     )

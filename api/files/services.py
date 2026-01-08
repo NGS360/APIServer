@@ -1,7 +1,6 @@
 """
-Services for managing files.
+Services for the Files API
 """
-
 import hashlib
 import secrets
 import string
@@ -265,94 +264,6 @@ def delete_file(session: Session, file_id: str, storage_root: str = "storage") -
     return True
 
 
-def list_files(
-    session: Session,
-    filters: FileFilters | None = None,
-    page: PositiveInt = 1,
-    per_page: PositiveInt = 20,
-    sort_by: str = "upload_date",
-    sort_order: str = "desc",
-) -> FilesPublic:
-    """List files with filtering and pagination"""
-
-    # Build query
-    query = select(File)
-
-    # Apply filters
-    if filters:
-        if filters.entity_type:
-            query = query.where(File.entity_type == filters.entity_type)
-        if filters.entity_id:
-            query = query.where(File.entity_id == filters.entity_id)
-        if filters.file_type:
-            query = query.where(File.file_type == filters.file_type)
-        if filters.mime_type:
-            query = query.where(File.mime_type == filters.mime_type)
-        if filters.created_by:
-            query = query.where(File.created_by == filters.created_by)
-        if filters.is_public is not None:
-            query = query.where(File.is_public == filters.is_public)
-        if filters.is_archived is not None:
-            query = query.where(File.is_archived == filters.is_archived)
-        if filters.search_query:
-            search_term = f"%{filters.search_query}%"
-            query = query.where(
-                (File.filename.ilike(search_term))
-                | (File.description.ilike(search_term))
-            )
-
-    # Get total count
-    total_count = session.exec(select(func.count()).select_from(query.subquery())).one()
-
-    # Calculate pagination
-    total_pages = (total_count + per_page - 1) // per_page
-
-    # Apply sorting
-    sort_field = getattr(File, sort_by, File.upload_date)
-    if sort_order == "desc":
-        query = query.order_by(sort_field.desc())
-    else:
-        query = query.order_by(sort_field.asc())
-
-    # Apply pagination
-    query = query.offset((page - 1) * per_page).limit(per_page)
-
-    # Execute query
-    files = session.exec(query).all()
-
-    # Convert to public models
-    public_files = [
-        FilePublic(
-            file_id=file.file_id,
-            filename=file.filename,
-            original_filename=file.original_filename,
-            file_size=file.file_size,
-            mime_type=file.mime_type,
-            description=file.description,
-            file_type=file.file_type,
-            upload_date=file.upload_date,
-            created_by=file.created_by,
-            entity_type=file.entity_type,
-            entity_id=file.entity_id,
-            is_public=file.is_public,
-            is_archived=file.is_archived,
-            storage_backend=file.storage_backend,
-            checksum=file.checksum,
-        )
-        for file in files
-    ]
-
-    return FilesPublic(
-        data=public_files,
-        total_items=total_count,
-        total_pages=total_pages,
-        current_page=page,
-        per_page=per_page,
-        has_next=page < total_pages,
-        has_prev=page > 1,
-    )
-
-
 def get_file_content(
     session: Session, file_id: str, storage_root: str = "storage"
 ) -> bytes:
@@ -512,6 +423,14 @@ def _parse_s3_path(s3_path: str) -> tuple[str, str]:
     if not path_without_scheme:
         raise ValueError("Invalid S3 path format. Bucket name is required")
 
+    # Check for leading slash (s3:///)
+    if path_without_scheme.startswith("/"):
+        raise ValueError("Invalid S3 path format. Bucket name cannot start with /")
+
+    # Check for double slashes anywhere in the path
+    if "//" in path_without_scheme:
+        raise ValueError("Invalid S3 path format. Path cannot contain double slashes")
+
     # Split into bucket and key
     if "/" in path_without_scheme:
         bucket, key = path_without_scheme.split("/", 1)
@@ -519,15 +438,17 @@ def _parse_s3_path(s3_path: str) -> tuple[str, str]:
         bucket = path_without_scheme
         key = ""
 
-    # Validate bucket name is not empty
-    if not bucket:
-        raise ValueError("Invalid S3 path format. Bucket name cannot be empty")
-
     return bucket, key
 
 
-def browse_s3(s3_path: str) -> FileBrowserData:
-    """Browse S3 bucket/prefix and return structured data"""
+def _list_s3(s3_path: str, s3_client=None) -> FileBrowserData:
+    """
+    Browse S3 bucket/prefix and return structured data.
+
+    Args:
+        s3_path: The S3 path to list
+        s3_client: Optional boto3 S3 client
+    """
     if not BOTO3_AVAILABLE:
         raise HTTPException(
             status_code=status.HTTP_501_NOT_IMPLEMENTED,
@@ -535,16 +456,12 @@ def browse_s3(s3_path: str) -> FileBrowserData:
         )
 
     try:
+        # Parse both the request path and storage root
         bucket, prefix = _parse_s3_path(s3_path)
-    except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e),
-        ) from e
 
-    try:
-        # Initialize S3 client
-        s3_client = boto3.client("s3")
+        # Initialize S3 client (use provided or create new)
+        if s3_client is None:
+            s3_client = boto3.client("s3")
 
         # List objects with the given prefix
         paginator = s3_client.get_paginator("list_objects_v2")
@@ -598,33 +515,33 @@ def browse_s3(s3_path: str) -> FileBrowserData:
 
         return FileBrowserData(folders=folders, files=files)
 
-    except NoCredentialsError:
+    except NoCredentialsError as exc:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="AWS credentials not found. Please configure AWS credentials.",
-        )
-    except ClientError as e:
-        error_code = e.response["Error"]["Code"]
+        ) from exc
+    except ClientError as exc:
+        error_code = exc.response["Error"]["Code"]
         if error_code == "NoSuchBucket":
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"S3 bucket not found: {bucket}",
-            )
+            ) from exc
         elif error_code == "AccessDenied":
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=f"Access denied to S3 bucket: {bucket}",
-            )
+            ) from exc
         else:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"S3 error: {e.response['Error']['Message']}",
-            )
-    except Exception as e:
+                detail=f"S3 error: {exc.response['Error']['Message']}",
+            ) from exc
+    except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Unexpected error browsing S3: {str(e)}",
-        )
+            detail=f"Unexpected error browsing S3: {str(exc)}",
+        ) from exc
 
 
 def list_files_as_browser_data(
@@ -656,3 +573,117 @@ def list_files_as_browser_data(
 
     # No folders for database files
     return FileBrowserData(folders=[], files=browser_files)
+
+
+def download_file(s3_path: str, s3_client=None) -> tuple[bytes, str, str]:
+    """
+    Download a file from S3.
+
+    Args:
+        s3_path: The S3 URI of the file to download (e.g., s3://bucket/path/file.txt)
+        s3_client: Optional boto3 S3 client
+
+    Returns:
+        Tuple of (file_content, content_type, filename)
+
+    Raises:
+        HTTPException: If file doesn't exist, access denied, or other errors
+    """
+    if not BOTO3_AVAILABLE:
+        raise HTTPException(
+            status_code=status.HTTP_501_NOT_IMPLEMENTED,
+            detail="S3 support not available. Install boto3 to enable S3 downloads.",
+        )
+
+    try:
+        # Parse S3 path
+        bucket, key = _parse_s3_path(s3_path)
+
+        if not key:
+            raise ValueError("S3 path must include a file key, not just a bucket")
+
+        # Initialize S3 client if not provided
+        if s3_client is None:
+            s3_client = boto3.client("s3")
+
+        # Get the object from S3
+        response = s3_client.get_object(Bucket=bucket, Key=key)
+
+        # Read the file content
+        file_content = response['Body'].read()
+
+        # Get content type from S3 metadata, default to binary
+        content_type = response.get('ContentType', 'application/octet-stream')
+
+        # Extract filename from the key (last part of the path)
+        filename = key.split('/')[-1]
+
+        return file_content, content_type, filename
+
+    except NoCredentialsError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="AWS credentials not found. Please configure AWS credentials.",
+        ) from exc
+    except ClientError as exc:
+        error_code = exc.response["Error"]["Code"]
+        if error_code == "NoSuchKey":
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"File not found: {s3_path}",
+            ) from exc
+        elif error_code == "NoSuchBucket":
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"S3 bucket not found: {bucket}",
+            ) from exc
+        elif error_code == "AccessDenied":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Access denied to S3 object: {s3_path}",
+            ) from exc
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"S3 error: {exc.response['Error']['Message']}",
+            ) from exc
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        ) from e
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Unexpected error downloading from S3: {str(exc)}",
+        ) from exc
+
+
+def list_files(uri: str, s3_client=None) -> FileBrowserData:
+    """
+    List files and folders at the specified URI.
+
+    Args:
+        uri: The URI to list files from. Can be an S3 URI (s3://).
+        s3_client: Optional boto3 S3 client for S3 operations.
+
+    Returns:
+        FileBrowserData containing the list of files and folders.
+
+    Security:
+        - For S3: No navigation outside uri is allowed
+    """
+    if not uri.startswith("s3://"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Storage root must be an S3 URI (s3://) for S3 paths",
+        )
+
+    try:
+        return _list_s3(uri, s3_client=s3_client)
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        ) from e
+

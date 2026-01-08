@@ -1,8 +1,11 @@
 """
 Routes/endpoints for the Files API
 """
-
 from typing import Optional
+import io
+
+from fastapi import APIRouter, Depends, Query
+from fastapi.responses import StreamingResponse
 from fastapi import (
     APIRouter,
     Query,
@@ -12,8 +15,8 @@ from fastapi import (
     File as FastAPIFile,
     Form,
 )
-from fastapi.responses import StreamingResponse
-from core.deps import SessionDep
+
+from core.deps import get_s3_client, SessionDep
 from api.files.models import (
     FileCreate,
     FileUpdate,
@@ -24,7 +27,7 @@ from api.files.models import (
     EntityType,
     FileBrowserData,
 )
-import api.files.services as services
+from api.files import services
 
 router = APIRouter(prefix="/files", tags=["Files"])
 
@@ -73,50 +76,6 @@ def create_file(
         file_content = content.file.read()
 
     return services.create_file(session, file_in, file_content)
-
-
-@router.get(
-    "",
-    response_model=PaginatedFileResponse,
-    summary="List files with filtering and pagination",
-)
-def list_files(
-    session: SessionDep,
-    page: int = Query(1, ge=1, description="Page number (1-indexed)"),
-    per_page: int = Query(20, ge=1, le=100, description="Number of items per page"),
-    entity_type: Optional[EntityType] = Query(
-        None, description="Filter by entity type"
-    ),
-    entity_id: Optional[str] = Query(None, description="Filter by entity ID"),
-    file_type: Optional[FileType] = Query(None, description="Filter by file type"),
-    search: Optional[str] = Query(
-        None, description="Search in filename and description"
-    ),
-    is_public: Optional[bool] = Query(
-        None, description="Filter by public/private status"
-    ),
-    created_by: Optional[str] = Query(None, description="Filter by creator"),
-) -> PaginatedFileResponse:
-    """
-    Get a paginated list of files with optional filtering.
-
-    Supports filtering by:
-    - Entity type and ID (project or run)
-    - File type (fastq, bam, vcf, etc.)
-    - Public/private status
-    - Creator
-    - Text search in filename and description
-    """
-    filters = FileFilters(
-        entity_type=entity_type,
-        entity_id=entity_id,
-        file_type=file_type,
-        search_query=search,
-        is_public=is_public,
-        created_by=created_by,
-    )
-
-    return services.list_files(session, filters, page, per_page)
 
 
 @router.get(
@@ -251,38 +210,6 @@ def delete_file(session: SessionDep, file_id: str) -> None:
         ) from exc
 
 
-@router.get("/{file_id}/content", summary="Download file content")
-def download_file(session: SessionDep, file_id: str):
-    """
-    Download the content of a file.
-
-    - **file_id**: The unique file identifier
-    """
-    try:
-        # Get file metadata
-        file_record = services.get_file(session, file_id)
-
-        # Get file content
-        content = services.get_file_content(session, file_id)
-
-        # Create streaming response
-        def generate():
-            yield content
-
-        return StreamingResponse(
-            generate(),
-            media_type=file_record.mime_type or "application/octet-stream",
-            headers={
-                "Content-Disposition": f"attachment; filename={file_record.filename}"
-            },
-        )
-    except Exception as exc:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"File with id {file_id} not found or content not available",
-        ) from exc
-
-
 @router.post(
     "/{file_id}/content", response_model=FilePublic, summary="Upload file content"
 )
@@ -344,3 +271,54 @@ def get_file_count_for_entity(
     """
     count = services.get_file_count_for_entity(session, entity_type, entity_id)
     return {"entity_type": entity_type, "entity_id": entity_id, "file_count": count}
+
+
+@router.get("/list", response_model=FileBrowserData, tags=["File Endpoints"])
+def list_files(
+    uri: str = Query(
+        ...,
+        description="URI to list (e.g., s3://bucket/folder/)"
+    ),
+    s3_client=Depends(get_s3_client),
+) -> FileBrowserData:
+    """
+    Browse files and folders at the specified URI.
+
+    For S3:
+    - Full s3:// URI is required
+    - No navigation outside the initial uri is allowed
+    """
+    return services.list_files(uri=uri, s3_client=s3_client)
+
+
+@router.get("/download", tags=["File Endpoints"])
+def download_file(
+    path: str = Query(
+        ...,
+        description="S3 URI of the file to download (e.g., s3://bucket/path/file.txt)"
+    ),
+    s3_client=Depends(get_s3_client),
+) -> StreamingResponse:
+    """
+    Download a file from S3.
+
+    Returns the file as a streaming download with appropriate content type and filename.
+
+    Args:
+        path: Full S3 URI to the file (e.g., s3://bucket/folder/file.txt)
+
+    Returns:
+        StreamingResponse with the file content
+    """
+    file_content, content_type, filename = services.download_file(
+        s3_path=path, s3_client=s3_client
+    )
+
+    # Create a streaming response with the file content
+    return StreamingResponse(
+        io.BytesIO(file_content),
+        media_type=content_type,
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"'
+        }
+    )

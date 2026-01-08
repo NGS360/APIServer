@@ -15,7 +15,12 @@ wheels/
 # Keys and secrets
 .env
 *.env
+.env.*
 
 # Local computer files
 *.DS_Store
 .vscode
+# Elastic Beanstalk Files
+.elasticbeanstalk/*
+!.elasticbeanstalk/*.cfg.yml
+!.elasticbeanstalk/*.global.yml

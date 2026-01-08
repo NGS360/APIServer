@@ -257,3 +257,9 @@ class IlluminaMetricsResponseModel(SQLModel):
     ReadInfosForLanes: list[ReadInfosForLane] | None = None
     ConversionResults: list[ConversionResult] | None = None
     UnknownBarcodes: list[UnknownBarcode] | None = None
+
+
+class DemultiplexAnalysisAvailable(SQLModel):
+    demux_analysis_name: list[str] | None = None
+
+    model_config = ConfigDict(extra="forbid")

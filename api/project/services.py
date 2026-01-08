@@ -3,12 +3,13 @@ Services for the Project API
 """
 
 from datetime import datetime
-from typing import List, Literal
+from typing import Literal
 from fastapi import HTTPException, status
 from pydantic import PositiveInt
 from pytz import timezone
 from sqlmodel import Session, func, select
 from opensearchpy import OpenSearch
+from core.config import get_settings
 
 from core.utils import define_search_body
 from api.project.models import (
@@ -19,7 +20,7 @@ from api.project.models import (
     ProjectsPublic,
 )
 from api.search.models import SearchDocument
-from api.search.services import add_object_to_index
+from api.search.services import add_object_to_index, delete_index
 
 
 def generate_project_id(*, session: Session) -> str:
@@ -50,7 +51,7 @@ def generate_project_id(*, session: Session) -> str:
 
 def create_project(
     *, session: Session, project_in: ProjectCreate, opensearch_client: OpenSearch = None
-) -> Project:
+) -> ProjectPublic:
     """
     Create a new project with optional attributes.
     """
@@ -93,7 +94,13 @@ def create_project(
         search_doc = SearchDocument(id=project.project_id, body=project)
         add_object_to_index(opensearch_client, search_doc, index="projects")
 
-    return project
+    return ProjectPublic(
+        project_id=project.project_id,
+        name=project.name,
+        data_folder_uri=f"{get_settings().DATA_BUCKET_URI}/{project.project_id}/",
+        results_folder_uri=f"{get_settings().RESULTS_BUCKET_URI}/{project.project_id}/",
+        attributes=project.attributes,
+    )
 
 
 def get_projects(
@@ -103,7 +110,7 @@ def get_projects(
     per_page: PositiveInt,
     sort_by: str,
     sort_order: Literal["asc", "desc"],
-) -> List[Project]:
+) -> ProjectsPublic:
     """
     Returns all projects from the database along
     with pagination information.
@@ -131,6 +138,8 @@ def get_projects(
         ProjectPublic(
             project_id=project.project_id,
             name=project.name,
+            data_folder_uri=f"{get_settings().DATA_BUCKET_URI}/{project.project_id}/",
+            results_folder_uri=f"{get_settings().RESULTS_BUCKET_URI}/{project.project_id}/",
             attributes=project.attributes,
         )
         for project in projects
@@ -162,7 +171,13 @@ def get_project_by_project_id(session: Session, project_id: str) -> ProjectPubli
             detail=f"Project {project_id} not found.",
         )
 
-    return project
+    return ProjectPublic(
+        project_id=project.project_id,
+        name=project.name,
+        data_folder_uri=f"{get_settings().DATA_BUCKET_URI}/{project.project_id}/",
+        results_folder_uri=f"{get_settings().RESULTS_BUCKET_URI}/{project.project_id}/",
+        attributes=project.attributes,
+    )
 
 
 def search_projects(
@@ -209,3 +224,19 @@ def search_projects(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e)
         )
+
+
+def reindex_projects(
+    session: Session,
+    client: OpenSearch
+):
+    """
+    Index all projects in database with OpenSearch
+    """
+    delete_index(client, "projects")
+    projects = session.exec(
+        select(Project)
+    ).all()
+    for project in projects:
+        search_doc = SearchDocument(id=project.project_id, body=project)
+        add_object_to_index(client, search_doc, index="projects")

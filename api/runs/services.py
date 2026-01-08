@@ -6,7 +6,7 @@ from typing import List, Literal
 from sqlmodel import select, Session, func
 from pydantic import PositiveInt
 from opensearchpy import OpenSearch
-from fastapi import HTTPException, Response, status
+from fastapi import HTTPException, Response, status, UploadFile
 from smart_open import open as smart_open
 from botocore.exceptions import NoCredentialsError
 
@@ -23,7 +23,7 @@ from api.runs.models import (
     SequencingRunPublic,
     SequencingRunsPublic,
 )
-from api.search.services import add_object_to_index
+from api.search.services import add_object_to_index, delete_index
 from api.search.models import (
     SearchDocument,
 )
@@ -162,6 +162,9 @@ def search_runs(
     try:
 
         response = client.search(index="illumina_runs", body=search_body)
+
+        # Total Items and Pages needs to be calculated from OpenSearch response
+        # or else pagination info will be incorrect for clients
         total_items = response["hits"]["total"]["value"]
         total_pages = (total_items + per_page - 1) // per_page  # Ceiling division
 
@@ -170,7 +173,8 @@ def search_runs(
         for hit in response["hits"]["hits"]:
             source = hit["_source"]
             run = get_run(session=session, run_barcode=source.get("barcode"))
-            results.append(SequencingRunPublic.model_validate(run))
+            if run:
+                results.append(SequencingRunPublic.model_validate(run))
 
         return SequencingRunsPublic(
             data=results,
@@ -184,6 +188,22 @@ def search_runs(
 
     except Exception as e:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e)) from e
+
+
+def reindex_runs(
+    session: Session,
+    client: OpenSearch
+):
+    """
+    Index all runs in database with OpenSearch
+    """
+    delete_index(client, "illumina_runs")
+    runs = session.exec(
+        select(SequencingRun)
+    ).all()
+    for run in runs:
+        search_doc = SearchDocument(id=run.barcode, body=run)
+        add_object_to_index(client, search_doc, "illumina_runs")
 
 
 def get_run_samplesheet(session: Session, run_barcode: str):
@@ -236,6 +256,20 @@ def get_run_samplesheet(session: Session, run_barcode: str):
             return Response(
                 status_code=status.HTTP_204_NO_CONTENT,
             )
+        except OSError as e:
+            # Need to catch specific error for S3
+            # where object doesn't exist and respond with 204
+            if e.backend_error.response['Error']['Code'] == 'NoSuchKey':
+                return Response(
+                    status_code=status.HTTP_204_NO_CONTENT,
+                )
+            # Need to catch specific error for S3
+            # where access is denied and respond with 403
+            if e.backend_error.response['Error']['Code'] == 'AccessDenied':
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Access denied when trying to read samplesheet."
+                ) from e
         except NoCredentialsError as e:
             error_type = f"{type(e).__module__}.{type(e).__name__}"
             raise HTTPException(
@@ -265,11 +299,32 @@ def get_run_metrics(session: Session, run_barcode: str) -> dict:
         try:
             with smart_open(metrics_path, 'r') as f:
                 metrics = json.load(f)
+
         except FileNotFoundError:
-            # Metrics file not found, raise not found error
+            # Samplesheet not found, signal with 204 response
             return Response(
                 status_code=status.HTTP_204_NO_CONTENT,
             )
+        except OSError as e:
+            # Need to catch specific error for S3
+            # where object doesn't exist and respond with 204
+            if e.backend_error.response['Error']['Code'] == 'NoSuchKey':
+                return Response(
+                    status_code=status.HTTP_204_NO_CONTENT,
+                )
+            # Need to catch specific error for S3
+            # where access is denied and respond with 403
+            if e.backend_error.response['Error']['Code'] == 'AccessDenied':
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Access denied when trying to read samplesheet."
+                ) from e
+        except NoCredentialsError as e:
+            error_type = f"{type(e).__module__}.{type(e).__name__}"
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Error accessing samplesheet: {error_type}: {str(e)}"
+            ) from e
     return IlluminaMetricsResponseModel(**metrics)
 
 
@@ -301,3 +356,58 @@ def update_run(session: Session, run_barcode: str, run_status: RunStatus) -> Seq
         run_time=run.run_time,
         barcode=run.barcode,
     )
+
+
+def upload_samplesheet(
+    session: Session, run_barcode: str, file: UploadFile
+) -> IlluminaSampleSheetResponseModel:
+    """
+    Upload a new samplesheet for a specific run.
+    """
+    run = get_run(session=session, run_barcode=run_barcode)
+    if run is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Run with barcode {run_barcode} not found"
+        )
+
+    if not run.run_folder_uri:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Run folder URI is not set. Cannot upload samplesheet."
+        )
+
+    # Define the path to upload the samplesheet
+    samplesheet_path = f"{run.run_folder_uri}/SampleSheet.csv"
+
+    try:
+        # Upload the file using smart_open
+        with smart_open(samplesheet_path, 'wb') as out_file:
+            content = file.file.read()
+            out_file.write(content)
+    except NoCredentialsError as e:
+        error_type = f"{type(e).__module__}.{type(e).__name__}"
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error uploading samplesheet: {error_type}: {str(e)}"
+        ) from e
+
+    # After successful upload, read back the samplesheet to return its content
+    try:
+        sample_sheet = IlluminaSampleSheet(samplesheet_path)
+        sample_sheet = sample_sheet.to_json()
+        sample_sheet = json.loads(sample_sheet)
+        sample_sheet_json = {
+            'Summary': sample_sheet.get('Summary', {}),
+            'Header': sample_sheet.get('Header', {}),
+            'Reads': sample_sheet.get('Reads', []),
+            'Settings': sample_sheet.get('Settings', {}),
+            'DataCols': list(sample_sheet['Data'][0].keys()) if sample_sheet.get('Data') else [],
+            'Data': sample_sheet.get('Data', [])
+        }
+        return IlluminaSampleSheetResponseModel(**sample_sheet_json)
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error reading back uploaded samplesheet: {type(e).__name__}: {str(e)}"
+        ) from e

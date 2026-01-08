@@ -1,8 +1,12 @@
+import os
 import pytest
+
 from fastapi.testclient import TestClient
 from sqlmodel import Session, create_engine, SQLModel
 from sqlmodel.pool import StaticPool
-from core.deps import get_db, get_opensearch_client
+
+from core.config import get_settings
+from core.deps import get_db, get_opensearch_client, get_s3_client
 from main import app
 
 
@@ -67,15 +71,9 @@ class MockOpenSearchClient:
             if not search_term:  # Empty search or match_all
                 should_include = True
             else:
-                # Search in name field
-                if matches_query(doc_body.get("name", ""), search_term):
-                    should_include = True
-
-                # Search in attributes
-                for attr in doc_body.get("attributes", []):
-                    if matches_query(attr.get("key", ""), search_term) or matches_query(
-                        attr.get("value", ""), search_term
-                    ):
+                # Search across ALL fields in the document (since they are already __searchable__)
+                for field_name, field_value in doc_body.items():
+                    if field_value and matches_query(str(field_value), search_term):
                         should_include = True
                         break
 
@@ -143,8 +141,182 @@ class MockIndices:
         return {"_shards": {"total": 1, "successful": 1, "failed": 0}}
 
 
+class MockS3Paginator:
+    """Mock S3 paginator for list_objects_v2"""
+
+    def __init__(self, client, bucket: str, prefix: str, delimiter: str):
+        self.client = client
+        self.bucket = bucket
+        self.prefix = prefix
+        self.delimiter = delimiter
+
+    def paginate(self, **kwargs):
+        """Return mock page iterator"""
+        # Check if client is in error mode
+        if self.client.error_mode:
+            error_type = self.client.error_mode
+            if error_type == "NoSuchBucket":
+                from botocore.exceptions import ClientError
+
+                error_response = {
+                    "Error": {
+                        "Code": "NoSuchBucket",
+                        "Message": "The specified bucket does not exist",
+                    }
+                }
+                raise ClientError(error_response, "ListObjectsV2")
+            elif error_type == "AccessDenied":
+                from botocore.exceptions import ClientError
+
+                raise ClientError(
+                    {"Error": {"Code": "AccessDenied", "Message": "Access Denied"}},
+                    "ListObjectsV2",
+                )
+            elif error_type == "NoCredentialsError":
+                from botocore.exceptions import NoCredentialsError
+
+                raise NoCredentialsError()
+
+        # Get bucket data
+        bucket_data = self.client.buckets.get(self.bucket, {})
+        prefix_data = bucket_data.get(self.prefix, {"files": [], "folders": []})
+
+        # Build response page
+        page = {}
+
+        # Add CommonPrefixes (folders)
+        if prefix_data["folders"]:
+            page["CommonPrefixes"] = [
+                {"Prefix": folder} for folder in prefix_data["folders"]
+            ]
+
+        # Add Contents (files)
+        if prefix_data["files"]:
+            page["Contents"] = prefix_data["files"]
+
+        # Return single page (simplified for testing)
+        yield page
+
+
+class MockS3Client:
+    """Mock S3 client for testing"""
+
+    def __init__(self):
+        self.buckets = (
+            {}
+        )  # Store bucket data: {bucket_name: {prefix: {"files": [], "folders": []}}}
+        self.uploaded_files = {}  # Track uploaded files: {bucket: {key: body}}
+        self.error_mode = None  # For simulating errors
+
+    def setup_bucket(self, bucket: str, prefix: str, files: list, folders: list):
+        """
+        Setup mock data for a bucket/prefix
+
+        Args:
+            bucket: S3 bucket name
+            prefix: S3 prefix/path
+            files: List of file dicts with Keys, LastModified, Size
+            folders: List of folder prefixes (strings ending with /)
+        """
+        if bucket not in self.buckets:
+            self.buckets[bucket] = {}
+
+        self.buckets[bucket][prefix] = {"files": files, "folders": folders}
+
+    def get_paginator(self, operation: str):
+        """Return a mock paginator"""
+        if operation == "list_objects_v2":
+            # Return a factory function that creates paginator with params
+            def create_paginator(Bucket: str, Prefix: str, Delimiter: str):
+                return MockS3Paginator(self, Bucket, Prefix, Delimiter)
+
+            # Return object with paginate method
+            class PaginatorFactory:
+                def __init__(self, client):
+                    self.client = client
+
+                def paginate(self, Bucket: str, Prefix: str, Delimiter: str):
+                    paginator = MockS3Paginator(self.client, Bucket, Prefix, Delimiter)
+                    return paginator.paginate()
+
+            return PaginatorFactory(self)
+
+        raise NotImplementedError(f"Paginator for {operation} not implemented")
+
+    def simulate_error(self, error_type: str):
+        """
+        Configure client to raise specific errors
+
+        Args:
+            error_type: One of "NoSuchBucket", "AccessDenied", "NoCredentialsError"
+        """
+        self.error_mode = error_type
+
+    def put_object(self, Bucket: str, Key: str, Body: bytes):
+        """Mock S3 put_object operation"""
+        from botocore.exceptions import NoCredentialsError, ClientError
+
+        # Check for simulated errors
+        if self.error_mode == "NoCredentialsError":
+            raise NoCredentialsError()
+        elif self.error_mode == "NoSuchBucket":
+            error_response = {
+                "Error": {"Code": "NoSuchBucket", "Message": "The specified bucket does not exist"}
+            }
+            raise ClientError(error_response, "PutObject")
+        elif self.error_mode == "AccessDenied":
+            error_response = {"Error": {"Code": "AccessDenied", "Message": "Access Denied"}}
+            raise ClientError(error_response, "PutObject")
+
+        # Store the uploaded file
+        if Bucket not in self.uploaded_files:
+            self.uploaded_files[Bucket] = {}
+        self.uploaded_files[Bucket][Key] = Body
+
+        return {"ETag": '"mock-etag"', "VersionId": "mock-version-id"}
+
+
+@pytest.fixture(scope="session", autouse=True)
+def isolate_test_environment():
+    """Isolate tests from production environment variables"""
+    # Clear the lru_cache for settings
+    get_settings.cache_clear()
+
+    # Store original env vars
+    original_env = os.environ.copy()
+
+    # Set test-specific environment variables
+    os.environ["SQLALCHEMY_DATABASE_URI"] = "sqlite://"  # In-memory DB
+    os.environ["OPENSEARCH_HOST"] = "localhost"
+    os.environ["OPENSEARCH_PORT"] = "9200"
+    os.environ["DATA_BUCKET_URI"] = "s3://test-data-bucket"
+    os.environ["RESULTS_BUCKET_URI"] = "s3://test-results-bucket"
+    os.environ["TOOL_CONFIGS_BUCKET_URI"] = "s3://test-tool-configs-bucket"
+
+    # Remove AWS credentials to prevent real AWS calls
+    os.environ.pop("AWS_ACCESS_KEY_ID", None)
+    os.environ.pop("AWS_SECRET_ACCESS_KEY", None)
+    os.environ.pop("ENV_SECRETS", None)  # Prevent Secrets Manager lookup
+
+    yield
+
+    # Restore original environment
+    os.environ.clear()
+    os.environ.update(original_env)
+    get_settings.cache_clear()
+
+
+@pytest.fixture(autouse=True)
+def reset_settings_cache():
+    """Clear settings cache before each test"""
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
+
+
 @pytest.fixture(name="session")
 def session_fixture():
+    """Provide a fresh database session for each test"""
     engine = create_engine(
         "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
     )
@@ -161,16 +333,31 @@ def mock_opensearch_client_fixture():
     return MockOpenSearchClient()
 
 
+@pytest.fixture(name="mock_s3_client")
+def mock_s3_client_fixture():
+    """Provide a mock S3 client for testing"""
+    return MockS3Client()
+
+
 @pytest.fixture(name="client")
-def client_fixture(session: Session, mock_opensearch_client: MockOpenSearchClient):
+def client_fixture(
+    session: Session,
+    mock_opensearch_client: MockOpenSearchClient,
+    mock_s3_client: MockS3Client,
+):
+    """Provide a TestClient with dependencies overridden for testing"""
     def get_db_override():
         return session
 
     def get_opensearch_client_override():
         return mock_opensearch_client
 
+    def get_s3_client_override():
+        return mock_s3_client
+
     app.dependency_overrides[get_db] = get_db_override
     app.dependency_overrides[get_opensearch_client] = get_opensearch_client_override
+    app.dependency_overrides[get_s3_client] = get_s3_client_override
 
     client = TestClient(app)
     yield client

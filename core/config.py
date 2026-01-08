@@ -5,9 +5,48 @@ Add constants, secrets, env variables here
 
 from functools import lru_cache
 import os
-from urllib.parse import urlparse, urlunparse
-from pydantic import computed_field
+import json
+from pathlib import Path
+from pydantic import computed_field, PrivateAttr
 from pydantic_settings import BaseSettings, SettingsConfigDict
+import boto3
+from botocore.exceptions import ClientError
+from dotenv import load_dotenv
+
+# Load .env file into os.environ so os.getenv() works correctly
+# This must happen before Settings class is instantiated
+env_path = Path(__file__).parent.parent / ".env"
+if env_path.exists():
+    load_dotenv(env_path)
+
+
+def get_secret(secret_name: str, region_name: str) -> dict | None:
+    """
+    Retrieve secrets from AWS Secrets Manager
+
+    Args:
+        secret_name: Name of the secret in Secrets Manager
+        region_name: AWS region where secret is stored
+
+    Returns:
+        dict: Parsed secret value or None if secret cannot be retrieved
+    """
+    session = boto3.session.Session()
+    client = session.client(
+        service_name='secretsmanager',
+        region_name=region_name
+    )
+    try:
+        secret_value_response = client.get_secret_value(
+            SecretId=secret_name
+        )
+    except ClientError:
+        return None
+    # Parse and return the secret
+    secret = secret_value_response['SecretString'].replace('\n', '')
+    return json.loads(
+        secret
+    )
 
 
 # Define settings class for univeral access
@@ -15,52 +54,113 @@ class Settings(BaseSettings):
     # Computed or constant values
     client_origin: str | None = os.getenv("client_origin")
 
+    # Cache for AWS Secrets Manager to avoid multiple API calls
+    # Note: Must use PrivateAttr for Pydantic v2 private attributes
+    _secret_cache: dict | None = PrivateAttr(default=None)
+
+    def _get_config_value(
+        self,
+        env_var_name: str,
+        default: str | None = None
+    ) -> str | None:
+        """
+        Get configuration value from environment variable or AWS Secrets Manager (with caching).
+
+        Args:
+            env_var_name: Environment variable name to check first
+            secret_key_name: Key name in AWS Secrets (defaults to env_var_name if not provided)
+            default: Default value to return if not found in env or secrets
+
+        Returns:
+            Configuration value, or default value if not found
+        """
+        # 1. Check environment variable first
+        env_value = os.getenv(env_var_name)
+        if env_value:
+            return env_value
+
+        # 2. Try to get from AWS Secrets Manager with caching
+        # Use cached secret if available
+        if self._secret_cache is None:
+            env_secret = os.getenv('ENV_SECRETS')
+            if env_secret:
+                self._secret_cache = get_secret(env_secret,
+                                                os.getenv("AWS_REGION",
+                                                          'us-east-1'))
+        if self._secret_cache:
+            secret_value = self._secret_cache.get(env_var_name)
+            if secret_value is not None:
+                return secret_value
+
+        # 3. Return default value if provided
+        return default
+
     # SQLAlchemy - Create db connection string
-    SQLALCHEMY_DATABASE_URI: str = os.getenv("SQLALCHEMY_DATABASE_URI", "sqlite://")
+    @computed_field
+    @property
+    def SQLALCHEMY_DATABASE_URI(self) -> str:
+        """Build database URI from env or secrets, defaults to sqlite://"""
+        return self._get_config_value("SQLALCHEMY_DATABASE_URI", default="sqlite://")
+
+    # ElasticSearch Configuration
+    @computed_field
+    @property
+    def OPENSEARCH_HOST(self) -> str | None:
+        """Get OpenSearch host from env or secrets"""
+        return self._get_config_value("OPENSEARCH_HOST")
 
     @computed_field
     @property
-    def SQLALCHEMY_DATABASE_URI_MASKED_PASSWORD(self) -> str:
-        """
-        def mask_password_in_uri(uri: str, mask: str = "*****") -> str:
+    def OPENSEARCH_PORT(self) -> str | None:
+        """Get OpenSearch post from env or secrets"""
+        return self._get_config_value("OPENSEARCH_PORT")
 
-        Mask the password in a SQLAlchemy database URI.
+    @computed_field
+    @property
+    def OPENSEARCH_USER(self) -> str | None:
+        """Get OpenSearch user from env or secrets"""
+        return self._get_config_value("OPENSEARCH_USER")
 
-        Args:
-            uri (str): The database URI (e.g. "postgresql://user:password@host/dbname").
-            mask (str): The string to replace the password with.
+    @computed_field
+    @property
+    def OPENSEARCH_PASSWORD(self) -> str | None:
+        """Get OpenSearch password from env or secrets"""
+        # Note: Secret key is 'OPENSEARCH_PASS' not 'OPENSEARCH_PASSWORD'
+        return self._get_config_value("OPENSEARCH_PASSWORD")
 
-        Returns:
-            str: The URI with the password masked.
-        """
-        uri = self.SQLALCHEMY_DATABASE_URI
-        mask = "*****"
+    @computed_field
+    @property
+    def OPENSEARCH_USE_SSL(self) -> bool:
+        """Get OpenSearch use SSL flag from env or secrets"""
+        value = self._get_config_value("OPENSEARCH_USE_SSL", default="true")
+        return value.lower() in ("true", "1", "yes")
 
-        parsed = urlparse(uri)
+    @computed_field
+    @property
+    def OPENSEARCH_VERIFY_CERTS(self) -> bool:
+        """Get OpenSearch certificate verification setting from env or secrets (defaults to False)"""
+        value = self._get_config_value("OPENSEARCH_VERIFY_CERTS", default="false")
+        return value.lower() in ("true", "1", "yes")
 
-        if parsed.password is None:
-            return uri  # Nothing to mask
+    # AWS Credentials
+    AWS_ACCESS_KEY_ID: str | None = os.getenv("AWS_ACCESS_KEY_ID")
+    AWS_SECRET_ACCESS_KEY: str | None = os.getenv("AWS_SECRET_ACCESS_KEY")
+    AWS_REGION: str | None = os.getenv("AWS_REGION")
 
-        # Rebuild the netloc with the password masked
-        userinfo = parsed.username or ""
-        if userinfo:
-            userinfo += f":{mask}"
-        netloc = f"{userinfo}@{parsed.hostname}"
-        if parsed.port:
-            netloc += f":{parsed.port}"
-
-        # Rebuild the full URI with masked password
-        masked = parsed._replace(netloc=netloc)
-        return urlunparse(masked)
-
-    # ElasticSearch Configuration
-    OPENSEARCH_HOST: str | None = os.getenv("OPENSEARCH_HOST")
-    OPENSEARCH_PORT: str | None = os.getenv("OPENSEARCH_PORT")
-    OPENSEARCH_USER: str | None = os.getenv("OPENSEARCH_USER")
-    OPENSEARCH_PASSWORD: str | None = os.getenv("OPENSEARCH_PASSWORD")
+    # Bucket configurations
+    DATA_BUCKET_URI: str = os.getenv("DATA_BUCKET_URI", "s3://my-data-bucket")
+    RESULTS_BUCKET_URI: str = os.getenv("RESULTS_BUCKET_URI", "s3://my-results-bucket")
+    TOOL_CONFIGS_BUCKET_URI: str = os.getenv(
+        "TOOL_CONFIGS_BUCKET_URI", "s3://my-tool-configs-bucket")
 
     # Read environment variables from .env file, if it exists
-    model_config = SettingsConfigDict(env_file=".env")
+    # extra='ignore' prevents validation errors from extra env vars
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra="ignore",
+    )
 
 
 # Export settings

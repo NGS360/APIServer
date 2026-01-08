@@ -19,15 +19,39 @@ async def lifespan(app: FastAPI):
 
     # Print configuration settings (mask sensitive info)
     logger.info("Configuration Settings:")
-    for key, value in vars(get_settings()).items():
-        if "SQLALCHEMY_DATABASE_URI" in key:
-            logger.info(
-                "  %s: %s", key, get_settings().SQLALCHEMY_DATABASE_URI_MASKED_PASSWORD
-            )
-        elif ("PASSWORD" in key or "SECRET" in key) and value is not None:
+
+    # Helper function to log settings with sensitive value masking
+    def _log_setting(key: str, value):
+        """Log a setting, masking sensitive values like passwords and secrets"""
+        if ("PASSWORD" in key or "SECRET" in key) and value is not None:
             logger.info("  %s: %s", key, "*****")
+        elif "SQLALCHEMY_DATABASE_URI" in key and value is not None:
+            # Mask password in database URI if present
+            import re
+            masked_value = re.sub(r"://(.*?):(.*?)@", r"://\1:*****@", value)
+            logger.info("  %s: %s", key, masked_value)
         else:
             logger.info("  %s: %s", key, value)
+
+    settings = get_settings()
+
+    # Log computed fields first (they don't appear in vars())
+    computed_fields = [
+        "SQLALCHEMY_DATABASE_URI",
+        "OPENSEARCH_HOST",
+        "OPENSEARCH_PORT",
+        "OPENSEARCH_USER",
+        "OPENSEARCH_PASSWORD",
+        "OPENSEARCH_USE_SSL",
+        "OPENSEARCH_VERIFY_CERTS"
+    ]
+    for key in computed_fields:
+        value = getattr(settings, key)
+        _log_setting(key, value)
+
+    # Log remaining settings
+    for key, value in vars(settings).items():
+        _log_setting(key, value)
 
     # Initialize database (if not done already)
     # try:
@@ -49,9 +73,3 @@ async def lifespan(app: FastAPI):
     finally:
         # Shutdown
         logger.info("In lifespan...shutting down")
-        # Destroy database
-        # logger.info(
-        #   "Dropping database tables, %s",
-        #   get_settings().SQLALCHEMY_DATABASE_URI_MASKED_PASSWORD
-        # )
-        # drop_tables()
