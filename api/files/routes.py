@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, Query
 from fastapi.responses import StreamingResponse
 import io
 
-from api.files.models import FileBrowserData
+from api.files.models import FileBrowserData, FileBrowserFile
 from api.files import services
 from core.deps import get_s3_client
 
@@ -62,3 +62,19 @@ def download_file(
             "Content-Disposition": f'attachment; filename="{filename}"'
         }
     )
+
+@router.post("/upload", response_model=FileBrowserFile, tags=["File Endpoints"])
+def upload_file(
+    project_id: str = Query(
+        ...,
+        description="ID of the project to upload the file to"
+    ),
+    name: str = Query(
+        ...,
+        description="Name of the file to be stored"
+    ),
+    content: UploadFile = FastAPIFile(...)
+):
+    """
+    Upload file endpoint placeholder.
+    """
