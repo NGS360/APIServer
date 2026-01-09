@@ -1,7 +1,7 @@
 """
 Services for the Files API
 """
-import datetime
+from datetime import datetime, timezone
 import logging
 from fastapi import HTTPException, status
 from sqlmodel import Session
@@ -52,6 +52,8 @@ def _upload_to_s3(
         if s3_client is None:
             s3_client = boto3.client("s3")
 
+        # NOTE: Depending on how the bucket is configured, you might need to
+        # set ServerSideEncryption
         s3_client.put_object(
             Bucket=bucket,
             Key=key,
@@ -59,8 +61,9 @@ def _upload_to_s3(
             ContentType=mime_type,
             Metadata={
                 "uploaded-by": "ngs360-api",
-                "upload-timestamp": datetime.utcnow().isoformat(),
+                "upload-timestamp": datetime.now(timezone.utc).isoformat()  # datetime.utcnow().isoformat(),
             },
+            ServerSideEncryption="AES256",
         )
 
         logging.info(f"Successfully uploaded file to S3: {s3_uri}")
@@ -74,17 +77,25 @@ def _upload_to_s3(
         ) from exc
     except ClientError as exc:
         error_code = exc.response["Error"]["Code"]
+        message = exc.response["Error"]["Message"]
+
         if error_code == "NoSuchBucket":
+            logging.error(f"S3 bucket not found in URI: {s3_uri}")
+            logging.error(f"S3 ClientError ({error_code}): {message}")
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"S3 bucket not found in URI: {s3_uri}",
             ) from exc
         elif error_code == "AccessDenied":
+            logging.error(f"Access denied to S3 bucket in URI: {s3_uri}")
+            logging.error(f"S3 ClientError ({error_code}): {message}")
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=f"Access denied to S3 bucket: {s3_uri}",
             ) from exc
         else:
+            logging.error(f"S3 ClientError ({error_code}): {message}")
+            logging.error(f"S3 ClientError details: {exc.response['Error']}")
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"S3 error: {exc.response['Error']['Message']}",

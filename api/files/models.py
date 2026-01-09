@@ -1,7 +1,7 @@
 """
 Models for the Files API
 """
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 import hashlib
 import uuid
@@ -41,7 +41,7 @@ class File(SQLModel, table=True):
 
     # Metadata
     description: str | None = Field(default=None, max_length=1024)
-    upload_date: datetime = Field(default_factory=datetime.utcnow)
+    upload_date: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     created_by: str | None = Field(default=None, max_length=100)  # User identifier
 
     # Polymorphic associations

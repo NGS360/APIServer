@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, Query, status, Form, UploadFile, File as
 from fastapi.responses import StreamingResponse
 import io
 
-from api.files.models import FileBrowserData, FileBrowserFile, FileBrowserFolder, FilePublic, EntityType, FileCreate
+from api.files.models import FileBrowserData, FilePublic, EntityType, FileCreate
 from api.files import services
 from core.deps import get_s3_client, SessionDep
 
