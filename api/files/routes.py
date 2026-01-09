@@ -48,9 +48,13 @@ def create_file(
     is_public: bool = Form(False),
     created_by: Optional[str] = Form(None),
     content: Optional[UploadFile] = FastAPIFile(None),
+    s3_client=Depends(get_s3_client),
 ) -> FilePublic:
     """
     Create a new file record with optional file content upload.
+
+    Storage backend (S3 vs Local) is automatically determined based on
+    configuration and entity type.
 
     - **filename**: Name of the file
     - **description**: Optional description of the file
@@ -75,7 +79,7 @@ def create_file(
     if content and content.filename:
         file_content = content.file.read()
 
-    return services.create_file(session, file_in, file_content)
+    return services.create_file(session, file_in, file_content, s3_client=s3_client)
 
 
 @router.get(
@@ -190,14 +194,16 @@ def update_file(
 @router.delete(
     "/{file_id}", status_code=status.HTTP_204_NO_CONTENT, summary="Delete file"
 )
-def delete_file(session: SessionDep, file_id: str) -> None:
+def delete_file(
+    session: SessionDep, file_id: str, s3_client=Depends(get_s3_client)
+) -> None:
     """
-    Delete a file and its content.
+    Delete a file and its content from storage (local or S3).
 
     - **file_id**: The unique file identifier
     """
     try:
-        success = services.delete_file(session, file_id)
+        success = services.delete_file(session, file_id, s3_client=s3_client)
         if not success:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -214,17 +220,24 @@ def delete_file(session: SessionDep, file_id: str) -> None:
     "/{file_id}/content", response_model=FilePublic, summary="Upload file content"
 )
 def upload_file_content(
-    session: SessionDep, file_id: str, content: UploadFile = FastAPIFile(...)
+    session: SessionDep,
+    file_id: str,
+    content: UploadFile = FastAPIFile(...),
+    s3_client=Depends(get_s3_client),
 ) -> FilePublic:
     """
     Upload content for an existing file record.
+    
+    Updates file in appropriate storage backend (S3 or local).
 
     - **file_id**: The unique file identifier
     - **content**: The file content to upload
     """
     try:
         file_content = content.file.read()
-        return services.update_file_content(session, file_id, file_content)
+        return services.update_file_content(
+            session, file_id, file_content, s3_client=s3_client
+        )
     except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

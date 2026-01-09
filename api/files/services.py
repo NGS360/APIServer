@@ -70,6 +70,110 @@ def get_mime_type(filename: str) -> str:
     return mime_type or "application/octet-stream"
 
 
+def determine_storage_backend(
+    entity_type: EntityType, entity_id: str
+) -> tuple[StorageBackend, str]:
+    """
+    Determine storage backend and base URI from configuration and entity type.
+    
+    Args:
+        entity_type: The entity type (PROJECT or RUN)
+        entity_id: The entity identifier
+        
+    Returns:
+        Tuple of (StorageBackend, base_uri)
+    """
+    from core.config import get_settings
+    
+    settings = get_settings()
+    
+    # Check if S3 is configured based on entity type
+    if entity_type == EntityType.PROJECT:
+        if settings.DATA_BUCKET_URI.startswith("s3://"):
+            return StorageBackend.S3, settings.DATA_BUCKET_URI
+    elif entity_type == EntityType.RUN:
+        if settings.RESULTS_BUCKET_URI.startswith("s3://"):
+            return StorageBackend.S3, settings.RESULTS_BUCKET_URI
+    
+    # Fallback to local storage
+    return StorageBackend.LOCAL, "storage"
+
+
+def _upload_to_s3(
+    file_content: bytes, s3_uri: str, mime_type: str, s3_client=None
+) -> bool:
+    """
+    Upload file content to S3.
+    
+    Args:
+        file_content: File bytes to upload
+        s3_uri: Full S3 URI (s3://bucket/key)
+        mime_type: Content type for S3 metadata
+        s3_client: Optional boto3 S3 client
+        
+    Returns:
+        True if successful
+        
+    Raises:
+        HTTPException: If upload fails
+    """
+    if not BOTO3_AVAILABLE:
+        raise HTTPException(
+            status_code=status.HTTP_501_NOT_IMPLEMENTED,
+            detail="boto3 not available for S3 uploads. Install boto3 to enable S3 storage.",
+        )
+    
+    try:
+        bucket, key = _parse_s3_path(s3_uri)
+        
+        if s3_client is None:
+            s3_client = boto3.client("s3")
+        
+        s3_client.put_object(
+            Bucket=bucket,
+            Key=key,
+            Body=file_content,
+            ContentType=mime_type,
+            Metadata={
+                "uploaded-by": "ngs360-api",
+                "upload-timestamp": datetime.utcnow().isoformat(),
+            },
+        )
+        
+        logging.info(f"Successfully uploaded file to S3: {s3_uri}")
+        return True
+        
+    except NoCredentialsError as exc:
+        logging.error(f"AWS credentials not configured: {exc}")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="AWS credentials not found. Please configure AWS credentials.",
+        ) from exc
+    except ClientError as exc:
+        error_code = exc.response["Error"]["Code"]
+        if error_code == "NoSuchBucket":
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"S3 bucket not found in URI: {s3_uri}",
+            ) from exc
+        elif error_code == "AccessDenied":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Access denied to S3 bucket: {s3_uri}",
+            ) from exc
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"S3 error: {exc.response['Error']['Message']}",
+            ) from exc
+    except Exception as exc:
+        logging.error(f"Failed to upload to S3: {exc}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Unexpected error uploading to S3: {str(exc)}",
+        ) from exc
+
+
 def _is_valid_storage_path(path: str) -> bool:
     """Validate storage path format"""
     # Allow S3 paths, local paths, network paths
@@ -124,8 +228,14 @@ def create_file(
     file_create: FileCreate,
     file_content: bytes | None = None,
     storage_root: str = "storage",
+    s3_client=None,
 ) -> File:
-    """Create a new file record and optionally store content"""
+    """
+    Create a new file record and store content to appropriate backend.
+    
+    Automatically determines storage backend (S3 vs Local) based on
+    configuration and entity type.
+    """
 
     # Generate unique file ID
     file_id = generate_file_id()
@@ -133,13 +243,26 @@ def create_file(
     # Use original_filename if provided, otherwise use filename
     original_filename = file_create.original_filename or file_create.filename
 
-    # Generate file path
-    file_path = generate_file_path(
+    # Determine storage backend automatically from configuration
+    storage_backend, base_uri = determine_storage_backend(
+        file_create.entity_type, file_create.entity_id
+    )
+
+    # Generate file path structure
+    relative_file_path = generate_file_path(
         file_create.entity_type,
         file_create.entity_id,
         file_create.file_type,
         f"{file_id}_{file_create.filename}",
     )
+
+    # Construct full storage path based on backend
+    if storage_backend == StorageBackend.S3:
+        # S3 URI: s3://bucket/entity_type/entity_id/file_type/year/month/filename
+        storage_path = f"{base_uri.rstrip('/')}/{relative_file_path}"
+    else:
+        # Local filesystem: relative path
+        storage_path = relative_file_path
 
     # Calculate file metadata if content is provided
     file_size = len(file_content) if file_content else None
@@ -151,7 +274,7 @@ def create_file(
         file_id=file_id,
         filename=file_create.filename,
         original_filename=original_filename,
-        file_path=file_path,
+        file_path=storage_path,
         file_size=file_size,
         mime_type=mime_type,
         checksum=checksum,
@@ -161,18 +284,28 @@ def create_file(
         entity_type=file_create.entity_type,
         entity_id=file_create.entity_id,
         is_public=file_create.is_public,
-        storage_backend=StorageBackend.LOCAL,
+        storage_backend=storage_backend,
     )
 
-    # Store file content if provided
+    # Store file content based on backend
     if file_content:
-        # 1. Save to standard database storage location
-        full_path = Path(storage_root) / file_path
-        full_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(full_path, "wb") as f:
-            f.write(file_content)
+        if storage_backend == StorageBackend.S3:
+            # Upload to S3
+            _upload_to_s3(file_content, storage_path, mime_type, s3_client)
+            logging.info(
+                f"File {file_id} uploaded to S3: {storage_path}"
+            )
+        else:
+            # Write to local filesystem
+            full_path = Path(storage_root) / relative_file_path
+            full_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(full_path, "wb") as f:
+                f.write(file_content)
+            logging.info(
+                f"File {file_id} saved to local storage: {full_path}"
+            )
 
-        # 2. SPECIAL HANDLING: If samplesheet for run, also save to run folder
+        # SPECIAL HANDLING: If samplesheet for run, also save to run folder
         if (
             file_create.file_type == FileType.SAMPLESHEET
             and file_create.entity_type == EntityType.RUN
@@ -184,10 +317,12 @@ def create_file(
             if dual_storage_success:
                 status_note = "[Dual-stored to run folder]"
             else:
-                status_note = "[Database-only storage - run folder write failed]"
+                status_note = "[Database-only - run folder write failed]"
 
             if file_record.description:
-                file_record.description = f"{file_record.description} {status_note}"
+                file_record.description = (
+                    f"{file_record.description} {status_note}"
+                )
             else:
                 file_record.description = status_note
 
@@ -241,21 +376,41 @@ def update_file(session: Session, file_id: str, file_update: FileUpdate) -> File
     return file_record
 
 
-def delete_file(session: Session, file_id: str, storage_root: str = "storage") -> bool:
-    """Delete a file record and its content"""
+def delete_file(
+    session: Session,
+    file_id: str,
+    storage_root: str = "storage",
+    s3_client=None,
+) -> bool:
+    """Delete a file record and its content from storage (local or S3)"""
     file_record = get_file(session, file_id)
 
-    # Delete physical file if it exists
-    full_path = Path(storage_root) / file_record.file_path
-    if full_path.exists():
-        full_path.unlink()
-
-        # Try to remove empty directories
+    # Delete physical file based on storage backend
+    if file_record.storage_backend == StorageBackend.S3:
+        # Delete from S3
         try:
-            full_path.parent.rmdir()
-        except OSError:
-            # Directory not empty, that's fine
-            pass
+            bucket, key = _parse_s3_path(file_record.file_path)
+            if s3_client is None:
+                s3_client = boto3.client("s3")
+            s3_client.delete_object(Bucket=bucket, Key=key)
+            logging.info(f"Deleted file from S3: {file_record.file_path}")
+        except Exception as e:
+            logging.warning(
+                f"Failed to delete S3 object {file_record.file_path}: {e}"
+            )
+            # Continue with database deletion even if S3 delete fails
+    else:
+        # Delete from local filesystem
+        full_path = Path(storage_root) / file_record.file_path
+        if full_path.exists():
+            full_path.unlink()
+
+            # Try to remove empty directories
+            try:
+                full_path.parent.rmdir()
+            except OSError:
+                # Directory not empty, that's fine
+                pass
 
     # Delete from database
     session.delete(file_record)
@@ -265,20 +420,40 @@ def delete_file(session: Session, file_id: str, storage_root: str = "storage") -
 
 
 def get_file_content(
-    session: Session, file_id: str, storage_root: str = "storage"
+    session: Session,
+    file_id: str,
+    storage_root: str = "storage",
+    s3_client=None,
 ) -> bytes:
-    """Get file content from storage"""
+    """Get file content from storage (local or S3)"""
     file_record = get_file(session, file_id)
 
-    full_path = Path(storage_root) / file_record.file_path
-    if not full_path.exists():
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"File content not found at {file_record.file_path}",
-        )
+    if file_record.storage_backend == StorageBackend.S3:
+        # Download from S3
+        try:
+            file_content, _, _ = download_file(
+                file_record.file_path, s3_client
+            )
+            return file_content
+        except HTTPException:
+            raise
+        except Exception as e:
+            logging.error(f"Error downloading from S3: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Error retrieving file from S3: {str(e)}",
+            ) from e
+    else:
+        # Read from local filesystem
+        full_path = Path(storage_root) / file_record.file_path
+        if not full_path.exists():
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"File content not found at {file_record.file_path}",
+            )
 
-    with open(full_path, "rb") as f:
-        return f.read()
+        with open(full_path, "rb") as f:
+            return f.read()
 
 
 def list_files_for_entity(
@@ -313,9 +488,13 @@ def get_file_count_for_entity(
 
 
 def update_file_content(
-    session: Session, file_id: str, content: bytes, storage_root: str = "storage"
+    session: Session,
+    file_id: str,
+    content: bytes,
+    storage_root: str = "storage",
+    s3_client=None,
 ) -> File:
-    """Update file content"""
+    """Update file content (local or S3)"""
     # Get the file record
     file_record = get_file(session, file_id)
 
@@ -323,10 +502,20 @@ def update_file_content(
     file_size = len(content)
     checksum = calculate_file_checksum(content)
 
-    # Write content to storage
-    storage_path = Path(storage_root) / file_record.file_path
-    storage_path.parent.mkdir(parents=True, exist_ok=True)
-    storage_path.write_bytes(content)
+    # Write content to appropriate storage backend
+    if file_record.storage_backend == StorageBackend.S3:
+        # Upload to S3
+        mime_type = get_mime_type(file_record.filename)
+        _upload_to_s3(content, file_record.file_path, mime_type, s3_client)
+        logging.info(f"Updated file content in S3: {file_record.file_path}")
+    else:
+        # Write to local filesystem
+        storage_path = Path(storage_root) / file_record.file_path
+        storage_path.parent.mkdir(parents=True, exist_ok=True)
+        storage_path.write_bytes(content)
+        logging.info(
+            f"Updated file content in local storage: {storage_path}"
+        )
 
     # Update file record
     file_record.file_size = file_size
@@ -345,12 +534,12 @@ def browse_filesystem(
     """
     Browse filesystem directory and return structured data.
 
-    Automatically detects if the path is S3 (s3://bucket/key) or local filesystem
-    and routes to the appropriate handler.
+    Automatically detects if the path is S3 (s3://bucket/key) or local
+    filesystem and routes to the appropriate handler.
     """
     # Check if this is an S3 path
     if directory_path.startswith("s3://"):
-        return browse_s3(directory_path)
+        return _list_s3(directory_path)
 
     # Handle local filesystem
     return _browse_local_filesystem(directory_path, storage_root)
