@@ -1,7 +1,8 @@
 """
 Services for the Files API
 """
-
+import datetime
+import logging
 from fastapi import HTTPException, status
 from sqlmodel import Session
 from pathlib import Path
@@ -16,17 +17,100 @@ except ImportError:
 
 from api.files.models import (
     FileBrowserData, FileBrowserFile, FileBrowserFolder, FileCreate, File,
+    EntityType,
     StorageBackend
 )
 
 
+def _upload_to_s3(
+    file_content: bytes, s3_uri: str, mime_type: str, s3_client=None
+) -> bool:
+    """
+    Upload file content to S3.
+
+    Args:
+        file_content: File bytes to upload
+        s3_uri: Full S3 URI (s3://bucket/key)
+        mime_type: Content type for S3 metadata
+        s3_client: Optional boto3 S3 client
+
+    Returns:
+        True if successful
+
+    Raises:
+        HTTPException: If upload fails
+    """
+    if not BOTO3_AVAILABLE:
+        raise HTTPException(
+            status_code=status.HTTP_501_NOT_IMPLEMENTED,
+            detail="boto3 not available for S3 uploads. Install boto3 to enable S3 storage.",
+        )
+
+    try:
+        bucket, key = _parse_s3_path(s3_uri)
+
+        if s3_client is None:
+            s3_client = boto3.client("s3")
+
+        s3_client.put_object(
+            Bucket=bucket,
+            Key=key,
+            Body=file_content,
+            ContentType=mime_type,
+            Metadata={
+                "uploaded-by": "ngs360-api",
+                "upload-timestamp": datetime.utcnow().isoformat(),
+            },
+        )
+
+        logging.info(f"Successfully uploaded file to S3: {s3_uri}")
+        return True
+
+    except NoCredentialsError as exc:
+        logging.error(f"AWS credentials not configured: {exc}")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="AWS credentials not found. Please configure AWS credentials.",
+        ) from exc
+    except ClientError as exc:
+        error_code = exc.response["Error"]["Code"]
+        if error_code == "NoSuchBucket":
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"S3 bucket not found in URI: {s3_uri}",
+            ) from exc
+        elif error_code == "AccessDenied":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Access denied to S3 bucket: {s3_uri}",
+            ) from exc
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"S3 error: {exc.response['Error']['Message']}",
+            ) from exc
+    except Exception as exc:
+        logging.error(f"Failed to upload to S3: {exc}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Unexpected error uploading to S3: {str(exc)}",
+        ) from exc
+
+
 def create_file(
     session: Session,
+    s3_client,
     file_create: FileCreate,
     file_content: bytes | None = None,
-    storage_root: str = "storage",
 ) -> File:
-    """Create a new file record and optionally store content"""
+    """
+    Create a new file record and store content to appropriate backend.
+    Args:
+        session: Database session
+        s3_client: boto3 S3 client for S3 operations
+        file_create: FileCreate model with file metadata
+        file_content: Optional file content bytes to store
+    """
 
     # Generate unique file ID
     file_id = File.generate_file_id()
@@ -34,12 +118,22 @@ def create_file(
     # Use original_filename if provided, otherwise use filename
     original_filename = file_create.original_filename or file_create.filename
 
-    # Generate file path
-    file_path = File.generate_file_path(
+    # Determine storage backend automatically from configuration
+    from core.config import get_settings
+    settings = get_settings()
+    storage_backend = settings.STORAGE_BACKEND
+    base_uri = settings.STORAGE_ROOT_PATH
+
+    # Generate file path structure
+    relative_file_path = File.generate_file_path(
         file_create.entity_type,
         file_create.entity_id,
         f"{file_id}_{file_create.filename}",
     )
+
+    # S3 URI: s3://bucket/entity_type/entity_id/year/month/filename
+    # Local: /base/path/entity_type/entity_id/year/month/filename
+    storage_path = f"{base_uri.rstrip('/')}/{relative_file_path}"
 
     # Calculate file metadata if content is provided
     file_size = len(file_content) if file_content else None
@@ -51,7 +145,7 @@ def create_file(
         file_id=file_id,
         filename=file_create.filename,
         original_filename=original_filename,
-        file_path=file_path,
+        file_path=storage_path,
         file_size=file_size,
         mime_type=mime_type,
         checksum=checksum,
@@ -60,35 +154,26 @@ def create_file(
         entity_type=file_create.entity_type,
         entity_id=file_create.entity_id,
         is_public=file_create.is_public,
-        storage_backend=StorageBackend.S3,
+        storage_backend=storage_backend,
     )
 
-    # Store file content if provided
+    # Store file content based on backend
     if file_content:
-        # 1. Save to standard database storage location
-        full_path = Path(storage_root) / file_path
-        full_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(full_path, "wb") as f:
-            f.write(file_content)
-
-        # 2. SPECIAL HANDLING: If samplesheet for run, also save to run folder
-        if (
-            file_create.file_type == FileType.SAMPLESHEET
-            and file_create.entity_type == EntityType.RUN
-        ):
-            dual_storage_success = _save_samplesheet_to_run_folder(
-                session, file_create.entity_id, file_content
+        if storage_backend == StorageBackend.S3:
+            # Upload to S3
+            _upload_to_s3(file_content, storage_path, mime_type, s3_client)
+            logging.info(
+                f"File {file_id} uploaded to S3: {storage_path}"
             )
-            # Add note to description about dual storage status
-            if dual_storage_success:
-                status_note = "[Dual-stored to run folder]"
-            else:
-                status_note = "[Database-only storage - run folder write failed]"
-
-            if file_record.description:
-                file_record.description = f"{file_record.description} {status_note}"
-            else:
-                file_record.description = status_note
+        else:
+            # Write to local filesystem
+            full_path = Path(storage_path)
+            full_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(full_path, "wb") as f:
+                f.write(file_content)
+            logging.info(
+                f"File {file_id} saved to local storage: {full_path}"
+            )
 
     # Save to database
     session.add(file_record)

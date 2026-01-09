@@ -153,6 +153,10 @@ class Settings(BaseSettings):
     TOOL_CONFIGS_BUCKET_URI: str = os.getenv(
         "TOOL_CONFIGS_BUCKET_URI", "s3://my-tool-configs-bucket")
 
+    # Options are from api.files.models.StorageBackend
+    STORAGE_BACKEND: str = os.getenv("STORAGE_BACKEND", "s3")
+    STORAGE_ROOT_PATH: str = os.getenv("STORAGE_URI", "s3://my-storage-bucket")
+
     # Read environment variables from .env file, if it exists
     # extra='ignore' prevents validation errors from extra env vars
     model_config = SettingsConfigDict(

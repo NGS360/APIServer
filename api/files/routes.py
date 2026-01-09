@@ -29,6 +29,7 @@ def create_file(
     is_public: bool = Form(False),
     created_by: Optional[str] = Form(None),
     content: Optional[UploadFile] = FastAPIFile(None),
+    s3_client=Depends(get_s3_client),
 ) -> FilePublic:
     """
     Create a new file record with optional file content upload.
@@ -54,7 +55,7 @@ def create_file(
     if content and content.filename:
         file_content = content.file.read()
 
-    return services.create_file(session, file_in, file_content)
+    return services.create_file(session, s3_client, file_in, file_content)
 
 
 @router.get("/list", response_model=FileBrowserData, tags=["File Endpoints"])
