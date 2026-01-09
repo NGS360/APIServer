@@ -3,6 +3,8 @@ Services for the Files API
 """
 
 from fastapi import HTTPException, status
+from sqlmodel import Session
+from pathlib import Path
 
 try:
     import boto3
@@ -12,7 +14,88 @@ try:
 except ImportError:
     BOTO3_AVAILABLE = False
 
-from api.files.models import FileBrowserData, FileBrowserFile, FileBrowserFolder
+from api.files.models import (
+    FileBrowserData, FileBrowserFile, FileBrowserFolder, FileCreate, File,
+    StorageBackend
+)
+
+
+def create_file(
+    session: Session,
+    file_create: FileCreate,
+    file_content: bytes | None = None,
+    storage_root: str = "storage",
+) -> File:
+    """Create a new file record and optionally store content"""
+
+    # Generate unique file ID
+    file_id = File.generate_file_id()
+
+    # Use original_filename if provided, otherwise use filename
+    original_filename = file_create.original_filename or file_create.filename
+
+    # Generate file path
+    file_path = File.generate_file_path(
+        file_create.entity_type,
+        file_create.entity_id,
+        f"{file_id}_{file_create.filename}",
+    )
+
+    # Calculate file metadata if content is provided
+    file_size = len(file_content) if file_content else None
+    checksum = File.calculate_file_checksum(file_content) if file_content else None
+    mime_type = File.get_mime_type(file_create.filename)
+
+    # Create file record
+    file_record = File(
+        file_id=file_id,
+        filename=file_create.filename,
+        original_filename=original_filename,
+        file_path=file_path,
+        file_size=file_size,
+        mime_type=mime_type,
+        checksum=checksum,
+        description=file_create.description,
+        created_by=file_create.created_by,
+        entity_type=file_create.entity_type,
+        entity_id=file_create.entity_id,
+        is_public=file_create.is_public,
+        storage_backend=StorageBackend.S3,
+    )
+
+    # Store file content if provided
+    if file_content:
+        # 1. Save to standard database storage location
+        full_path = Path(storage_root) / file_path
+        full_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(full_path, "wb") as f:
+            f.write(file_content)
+
+        # 2. SPECIAL HANDLING: If samplesheet for run, also save to run folder
+        if (
+            file_create.file_type == FileType.SAMPLESHEET
+            and file_create.entity_type == EntityType.RUN
+        ):
+            dual_storage_success = _save_samplesheet_to_run_folder(
+                session, file_create.entity_id, file_content
+            )
+            # Add note to description about dual storage status
+            if dual_storage_success:
+                status_note = "[Dual-stored to run folder]"
+            else:
+                status_note = "[Database-only storage - run folder write failed]"
+
+            if file_record.description:
+                file_record.description = f"{file_record.description} {status_note}"
+            else:
+                file_record.description = status_note
+
+    # Save to database
+    session.add(file_record)
+    session.commit()
+    session.refresh(file_record)
+
+    return file_record
 
 
 def _parse_s3_path(s3_path: str) -> tuple[str, str]:

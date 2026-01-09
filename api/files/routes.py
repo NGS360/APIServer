@@ -2,15 +2,59 @@
 Routes/endpoints for the Files API
 """
 
-from fastapi import APIRouter, Depends, Query
+from typing import Optional
+from fastapi import APIRouter, Depends, Query, status, Form, UploadFile, File as FastAPIFile
 from fastapi.responses import StreamingResponse
 import io
 
-from api.files.models import FileBrowserData, FileBrowserFile
+from api.files.models import FileBrowserData, FileBrowserFile, FileBrowserFolder, FilePublic, EntityType, FileCreate
 from api.files import services
-from core.deps import get_s3_client
+from core.deps import get_s3_client, SessionDep
 
 router = APIRouter(prefix="/files", tags=["File Endpoints"])
+
+
+@router.post(
+    "",
+    response_model=FilePublic,
+    status_code=status.HTTP_201_CREATED,
+    summary="Create a new file record",
+)
+def create_file(
+    session: SessionDep,
+    filename: str = Form(...),
+    entity_type: EntityType = Form(...),
+    entity_id: str = Form(...),
+    description: Optional[str] = Form(None),
+    is_public: bool = Form(False),
+    created_by: Optional[str] = Form(None),
+    content: Optional[UploadFile] = FastAPIFile(None),
+) -> FilePublic:
+    """
+    Create a new file record with optional file content upload.
+    - **filename**: Name of the file
+    - **description**: Optional description of the file
+    - **file_type**: Type of file (fastq, bam, vcf, etc.)
+    - **entity_type**: Whether this file belongs to a project or run
+    - **entity_id**: ID of the project or run this file belongs to
+    - **is_public**: Whether the file is publicly accessible
+    - **created_by**: User who created the file
+    """
+    # Create FileCreate object from form data
+    file_in = FileCreate(
+        filename=filename,
+        description=description,
+        entity_type=entity_type,
+        entity_id=entity_id,
+        is_public=is_public,
+        created_by=created_by,
+    )
+
+    file_content = None
+    if content and content.filename:
+        file_content = content.file.read()
+
+    return services.create_file(session, file_in, file_content)
 
 
 @router.get("/list", response_model=FileBrowserData, tags=["File Endpoints"])
@@ -62,19 +106,3 @@ def download_file(
             "Content-Disposition": f'attachment; filename="{filename}"'
         }
     )
-
-@router.post("/upload", response_model=FileBrowserFile, tags=["File Endpoints"])
-def upload_file(
-    project_id: str = Query(
-        ...,
-        description="ID of the project to upload the file to"
-    ),
-    name: str = Query(
-        ...,
-        description="Name of the file to be stored"
-    ),
-    content: UploadFile = FastAPIFile(...)
-):
-    """
-    Upload file endpoint placeholder.
-    """
