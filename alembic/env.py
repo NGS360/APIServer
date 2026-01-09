@@ -8,6 +8,7 @@ from alembic import context
 from core.config import get_settings
 
 # Import all models here so that they are registered with SQLModel metadata
+from api.files.models import File
 from api.samples.models import Sample, SampleAttribute
 from api.project.models import Project
 from api.runs.models import SequencingRun
