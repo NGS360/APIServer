@@ -8,9 +8,10 @@ from alembic import context
 from core.config import get_settings
 
 # Import all models here so that they are registered with SQLModel metadata
-from api.samples.models import Sample, SampleAttribute
+from api.files.models import File
 from api.project.models import Project
 from api.runs.models import SequencingRun
+from api.samples.models import Sample, SampleAttribute
 from api.vendors.models import Vendor
 from api.workflow.models import Workflow, WorkflowAttribute
 
@@ -32,6 +33,7 @@ if config.config_file_name is not None:
 # target_metadata = mymodel.Base.metadata
 # target_metadata = None
 target_metadata = SQLModel.metadata
+
 
 # other values from the config, defined by the needs of env.py,
 # can be acquired:

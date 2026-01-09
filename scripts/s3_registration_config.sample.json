@@ -1,0 +1,20 @@
+{
+  "buckets": [
+    {
+      "name": "my-ngs-data-bucket",
+      "prefix": "projects/",
+      "entity_patterns": {
+        "project": "projects/([^/]+)",
+        "run": "runs/([^/]+)"
+      }
+    },
+    {
+      "name": "my-sequencing-runs-bucket",
+      "prefix": "sequencing_runs/",
+      "entity_patterns": {
+        "run": "sequencing_runs/([^/]+)"
+      }
+    }
+  ],
+  "dry_run": true
+}

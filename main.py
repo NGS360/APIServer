@@ -13,9 +13,13 @@ from api.project.routes import router as project_router
 from api.runs.routes import router as runs_router
 from api.samples.routes import router as samples_router
 from api.search.routes import router as search_router
+<<<<<<< HEAD
+from api.files.routes import router as files_router
+=======
 from api.tools.routes import router as tools_router
 from api.vendors.routes import router as vendors_router
 from api.workflow.routes import router as workflow_router
+>>>>>>> main
 
 
 # Customize route id's
