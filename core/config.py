@@ -142,17 +142,6 @@ class Settings(BaseSettings):
         value = self._get_config_value("OPENSEARCH_VERIFY_CERTS", default="false")
         return value.lower() in ("true", "1", "yes")
 
-    # AWS Credentials
-    AWS_ACCESS_KEY_ID: str | None = os.getenv("AWS_ACCESS_KEY_ID")
-    AWS_SECRET_ACCESS_KEY: str | None = os.getenv("AWS_SECRET_ACCESS_KEY")
-    AWS_REGION: str | None = os.getenv("AWS_REGION")
-
-    # Bucket configurations
-    DATA_BUCKET_URI: str = os.getenv("DATA_BUCKET_URI", "s3://my-data-bucket")
-    RESULTS_BUCKET_URI: str = os.getenv("RESULTS_BUCKET_URI", "s3://my-results-bucket")
-    TOOL_CONFIGS_BUCKET_URI: str = os.getenv(
-        "TOOL_CONFIGS_BUCKET_URI", "s3://my-tool-configs-bucket")
-
     # Read environment variables from .env file, if it exists
     # extra='ignore' prevents validation errors from extra env vars
     model_config = SettingsConfigDict(

@@ -343,6 +343,32 @@ def session_fixture():
     )
     SQLModel.metadata.create_all(engine)
     with Session(engine) as session:
+        # Seed test settings
+        from api.settings.models import Setting
+        test_settings = [
+            Setting(
+                key="DATA_BUCKET_URI",
+                value="s3://test-data-bucket",
+                name="Data Bucket URI",
+                description="Test data bucket"
+            ),
+            Setting(
+                key="RESULTS_BUCKET_URI",
+                value="s3://test-results-bucket",
+                name="Results Bucket URI",
+                description="Test results bucket"
+            ),
+            Setting(
+                key="TOOL_CONFIGS_BUCKET_URI",
+                value="s3://test-tool-configs-bucket",
+                name="Tool Configs Bucket URI",
+                description="Test tool configs bucket"
+            ),
+        ]
+        for setting in test_settings:
+            session.add(setting)
+        session.commit()
+
         yield session
     SQLModel.metadata.drop_all(engine)
     engine.dispose()
