@@ -9,7 +9,7 @@ from pydantic import PositiveInt
 from pytz import timezone
 from sqlmodel import Session, func, select
 from opensearchpy import OpenSearch
-from core.config import get_settings
+from api.settings.services import get_setting_value
 
 from core.utils import define_search_body
 from api.project.models import (
@@ -94,11 +94,14 @@ def create_project(
         search_doc = SearchDocument(id=project.project_id, body=project)
         add_object_to_index(opensearch_client, search_doc, index="projects")
 
+    data_bucket = get_setting_value(session, "DATA_BUCKET_URI")
+    results_bucket = get_setting_value(session, "RESULTS_BUCKET_URI")
+
     return ProjectPublic(
         project_id=project.project_id,
         name=project.name,
-        data_folder_uri=f"{get_settings().DATA_BUCKET_URI}/{project.project_id}/",
-        results_folder_uri=f"{get_settings().RESULTS_BUCKET_URI}/{project.project_id}/",
+        data_folder_uri=f"{data_bucket}/{project.project_id}/",
+        results_folder_uri=f"{results_bucket}/{project.project_id}/",
         attributes=project.attributes,
     )
 
@@ -133,13 +136,16 @@ def get_projects(
         .offset((page - 1) * per_page)
     ).all()
 
+    data_bucket = get_setting_value(session, "DATA_BUCKET_URI")
+    results_bucket = get_setting_value(session, "RESULTS_BUCKET_URI")
+
     # Map to public project
     public_projects = [
         ProjectPublic(
             project_id=project.project_id,
             name=project.name,
-            data_folder_uri=f"{get_settings().DATA_BUCKET_URI}/{project.project_id}/",
-            results_folder_uri=f"{get_settings().RESULTS_BUCKET_URI}/{project.project_id}/",
+            data_folder_uri=f"{data_bucket}/{project.project_id}/",
+            results_folder_uri=f"{results_bucket}/{project.project_id}/",
             attributes=project.attributes,
         )
         for project in projects
@@ -171,11 +177,14 @@ def get_project_by_project_id(session: Session, project_id: str) -> ProjectPubli
             detail=f"Project {project_id} not found.",
         )
 
+    data_bucket = get_setting_value(session, "DATA_BUCKET_URI")
+    results_bucket = get_setting_value(session, "RESULTS_BUCKET_URI")
+
     return ProjectPublic(
         project_id=project.project_id,
         name=project.name,
-        data_folder_uri=f"{get_settings().DATA_BUCKET_URI}/{project.project_id}/",
-        results_folder_uri=f"{get_settings().RESULTS_BUCKET_URI}/{project.project_id}/",
+        data_folder_uri=f"{data_bucket}/{project.project_id}/",
+        results_folder_uri=f"{results_bucket}/{project.project_id}/",
         attributes=project.attributes,
     )
 

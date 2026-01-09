@@ -6,20 +6,26 @@ from fastapi import HTTPException, status
 import yaml
 import boto3
 from botocore.exceptions import NoCredentialsError, ClientError
+from sqlmodel import Session
 
 from api.tools.models import ToolConfig
-from core.config import get_settings
+from api.settings.services import get_setting_value
 
 
-def _get_tool_configs_s3_location() -> tuple[str, str]:
+def _get_tool_configs_s3_location(session: Session) -> tuple[str, str]:
     """
     Get the S3 bucket and prefix for tool configurations.
+
+    Args:
+        session: Database session
 
     Returns:
         Tuple of (bucket, prefix) where prefix includes the full path with subfolders
     """
-    settings = get_settings()
-    tool_configs_uri = settings.TOOL_CONFIGS_BUCKET_URI
+    tool_configs_uri = get_setting_value(
+        session,
+        "TOOL_CONFIGS_BUCKET_URI"
+    )
 
     # Ensure URI ends with /
     if not tool_configs_uri.endswith("/"):
@@ -33,14 +39,18 @@ def _get_tool_configs_s3_location() -> tuple[str, str]:
     return bucket, prefix
 
 
-def list_tool_configs(s3_client=None) -> list[str]:
+def list_tool_configs(session: Session, s3_client=None) -> list[str]:
     """
     List available tool configuration files from S3.
+
+    Args:
+        session: Database session
+        s3_client: Optional boto3 S3 client
 
     Returns:
         List of tool config filenames (without .yaml extension)
     """
-    bucket, prefix = _get_tool_configs_s3_location()
+    bucket, prefix = _get_tool_configs_s3_location(session)
 
     try:
         if s3_client is None:
@@ -100,18 +110,19 @@ def list_tool_configs(s3_client=None) -> list[str]:
         ) from exc
 
 
-def get_tool_config(tool_id: str, s3_client=None) -> ToolConfig:
+def get_tool_config(session: Session, tool_id: str, s3_client=None) -> ToolConfig:
     """
     Retrieve a specific tool configuration from S3.
 
     Args:
+        session: Database session
         tool_id: The tool identifier (filename without extension)
         s3_client: Optional boto3 S3 client
 
     Returns:
         ToolConfig object
     """
-    bucket, prefix = _get_tool_configs_s3_location()
+    bucket, prefix = _get_tool_configs_s3_location(session)
 
     try:
         if s3_client is None:

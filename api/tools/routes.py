@@ -6,13 +6,14 @@ from fastapi import APIRouter, Depends
 
 from api.tools.models import ToolConfig
 from api.tools import services
-from core.deps import get_s3_client
+from core.deps import get_s3_client, SessionDep
 
 router = APIRouter(prefix="/tools", tags=["Tool Endpoints"])
 
 
 @router.get("/", response_model=list[str], tags=["Tool Endpoints"])
 def list_available_tools(
+    session: SessionDep,
     s3_client=Depends(get_s3_client),
 ) -> list[str]:
     """
@@ -20,12 +21,13 @@ def list_available_tools(
 
     Returns a list of tool IDs (config filenames without extensions).
     """
-    return services.list_tool_configs(s3_client=s3_client)
+    return services.list_tool_configs(session=session, s3_client=s3_client)
 
 
 @router.get("/{tool_id}", response_model=ToolConfig, tags=["Tool Endpoints"])
 def get_tool_config(
     tool_id: str,
+    session: SessionDep,
     s3_client=Depends(get_s3_client),
 ) -> ToolConfig:
     """
@@ -37,4 +39,4 @@ def get_tool_config(
     Returns:
         Complete tool configuration
     """
-    return services.get_tool_config(tool_id=tool_id, s3_client=s3_client)
+    return services.get_tool_config(session=session, tool_id=tool_id, s3_client=s3_client)

@@ -18,8 +18,12 @@ class Setting(SQLModel, table=True):
     name: str = Field(max_length=255, nullable=False)
     description: str | None = Field(default=None)
     tags: list[dict[str, str]] | None = Field(default=None, sa_column=Column(JSON))
-    created_at: datetime | None = Field(default=None, sa_column_kwargs={"server_default": text("CURRENT_TIMESTAMP")})
-    updated_at: datetime | None = Field(default=None, sa_column_kwargs={"onupdate": text("CURRENT_TIMESTAMP")})
+    created_at: datetime | None = Field(
+        default=None, sa_column_kwargs={"server_default": text("CURRENT_TIMESTAMP")}
+    )
+    updated_at: datetime | None = Field(
+        default=None, sa_column_kwargs={"onupdate": text("CURRENT_TIMESTAMP")}
+    )
 
     model_config = ConfigDict(from_attributes=True)
 
