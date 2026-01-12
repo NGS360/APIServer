@@ -1,12 +1,12 @@
 """
 Models for the Runs API
 """
-from typing import Optional
+from typing import List, Optional, Any, Dict
 import uuid
 from datetime import datetime, date
 from enum import Enum
 from sqlmodel import SQLModel, Field
-from pydantic import ConfigDict, computed_field, field_validator
+from pydantic import ConfigDict, computed_field, field_validator, BaseModel, model_validator
 
 
 class RunStatus(str, Enum):
@@ -259,7 +259,57 @@ class IlluminaMetricsResponseModel(SQLModel):
     UnknownBarcodes: list[UnknownBarcode] | None = None
 
 
-class DemultiplexAnalysisAvailable(SQLModel):
-    demux_analysis_name: list[str] | None = None
+class InputType(str, Enum):
+    ENUM = "Enum"
+    STRING = "String"
+    INTEGER = "Integer"
+    BOOLEAN = "Boolean"
 
-    model_config = ConfigDict(extra="forbid")
+
+class DemuxWorkflowConfigInput(BaseModel):
+    name: str
+    desc: str
+    type: InputType
+    required: bool = False
+    default: Optional[Any] = None
+    options: Optional[List[str]] = None
+
+    @model_validator(mode='after')
+    def validate_enum_has_options(self):
+        if self.type == InputType.ENUM and not self.options:
+            raise ValueError("Input type 'Enum' must have options defined")
+        return self
+
+
+class DemuxWorkflowTag(BaseModel):
+    name: str
+
+
+class AwsBatchEnvironment(BaseModel):
+    name: str
+    value: str
+
+
+class AwsBatchConfig(BaseModel):
+    job_name: str
+    job_definition: str
+    job_queue: str
+    command: str
+    environment: Optional[List[AwsBatchEnvironment]] = None
+
+
+class DemuxWorkflowConfig(BaseModel):
+    version: int
+    workflow_id: str
+    workflow_name: str
+    workflow_description: str
+    inputs: List[DemuxWorkflowConfigInput]
+    help: str
+    tags: List[DemuxWorkflowTag]
+    aws_batch: Optional[AwsBatchConfig] = None
+
+
+class DemuxWorkflowSubmitBody(BaseModel):
+    workflow_id: str
+    run_barcode: str
+    inputs: Dict[str, Any]
