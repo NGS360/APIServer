@@ -89,6 +89,15 @@ def upgrade() -> None:
             'tags': [
                 {'key': 'category', 'value': 'aws credentials'}
             ]
+        },
+        {
+            'key': 'MANIFEST_VALIDATION_LAMBDA',
+            'value': '',
+            'name': 'Manifest Validation Lambda',
+            'description': 'ARN for the AWS Lambda function used to validate manifest files',
+            'tags': [
+                {'key': 'category', 'value': 'vendor settings'}
+            ]
         }
     ])
 
@@ -97,5 +106,5 @@ def downgrade() -> None:
     """Downgrade schema."""
     # Delete the seeded settings
     op.execute(
-        "DELETE FROM setting WHERE key IN ('DATA_BUCKET_URI', 'RESULTS_BUCKET_URI', 'TOOL_CONFIGS_BUCKET_URI', 'AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'AWS_REGION')"
+        "DELETE FROM setting WHERE `key` IN ('DATA_BUCKET_URI', 'RESULTS_BUCKET_URI', 'TOOL_CONFIGS_BUCKET_URI', 'AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'AWS_REGION', 'MANIFEST_VALIDATION_LAMBDA')"
     )

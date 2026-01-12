@@ -6,6 +6,7 @@ from fastapi import HTTPException, status, UploadFile
 import boto3
 from botocore.exceptions import NoCredentialsError, ClientError
 from api.manifest.models import ManifestUploadResponse, ManifestValidationResponse
+from api.settings.services import get_setting_value
 
 
 def _parse_s3_path(s3_path: str) -> tuple[str, str]:
@@ -230,6 +231,12 @@ def validate_manifest_file(
     """
     # Placeholder for validation logic
     # The actual validation logic would go here
+
+    # Call to lambda function for validation (placeholder)
+    lambda_function_name = get_setting_value("MANIFEST_VALIDATION_LAMBDA")
+    
+    # Placeholder for invoking the lambda function
+    # response = invoke_lambda(lambda_function_name, payload={"s3_path": s3_path})
 
     if not valid:
         # Return mock validation errors for testing

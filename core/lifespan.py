@@ -30,6 +30,7 @@ def sync_env_to_settings():
         "AWS_ACCESS_KEY_ID",
         "AWS_SECRET_ACCESS_KEY",
         "AWS_REGION",
+        "MANIFEST_VALIDATION_LAMBDA"
     ]
 
     with Session(engine) as session:
