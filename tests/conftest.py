@@ -365,7 +365,7 @@ def isolate_test_environment():
     os.environ["OPENSEARCH_PORT"] = "9200"
     os.environ["DATA_BUCKET_URI"] = "s3://test-data-bucket"
     os.environ["RESULTS_BUCKET_URI"] = "s3://test-results-bucket"
-    os.environ["TOOL_CONFIGS_BUCKET_URI"] = "s3://test-tool-configs-bucket"
+    os.environ["DEMUX_WORKFLOW_CONFIGS_BUCKET_URI"] = "s3://test-tool-configs-bucket"
 
     # Remove AWS credentials to prevent real AWS calls
     os.environ.pop("AWS_ACCESS_KEY_ID", None)
@@ -412,10 +412,10 @@ def session_fixture():
                 description="Test results bucket"
             ),
             Setting(
-                key="TOOL_CONFIGS_BUCKET_URI",
+                key="DEMUX_WORKFLOW_CONFIGS_BUCKET_URI",
                 value="s3://test-tool-configs-bucket",
-                name="Tool Configs Bucket URI",
-                description="Test tool configs bucket"
+                name="Demux Workflow Configs Bucket URI",
+                description="Test demux workflow configs bucket"
             ),
         ]
         for setting in test_settings:

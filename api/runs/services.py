@@ -438,7 +438,7 @@ def _get_demux_workflow_configs_s3_location(session: Session) -> tuple[str, str]
     """
     workflow_configs_uri = get_setting_value(
         session,
-        "TOOL_CONFIGS_BUCKET_URI"
+        "DEMUX_WORKFLOW_CONFIGS_BUCKET_URI"
     )
 
     # Ensure URI ends with /

@@ -54,10 +54,10 @@ def upgrade() -> None:
             ]
         },
         {
-            'key': 'TOOL_CONFIGS_BUCKET_URI',
+            'key': 'DEMUX_WORKFLOW_CONFIGS_BUCKET_URI',
             'value': '',
-            'name': 'Tool Configs Bucket URI',
-            'description': 'S3 bucket URI for storing tool configuration files',
+            'name': 'Demux Workflow Configs Bucket URI',
+            'description': 'S3 bucket URI for storing demux workflow configuration files',
             'tags': [
                 {'key': 'category', 'value': 'run settings'},
                 {'key': 'type', 'value': 'aws-s3'}
@@ -106,5 +106,5 @@ def downgrade() -> None:
     """Downgrade schema."""
     # Delete the seeded settings
     op.execute(
-        "DELETE FROM setting WHERE `key` IN ('DATA_BUCKET_URI', 'RESULTS_BUCKET_URI', 'TOOL_CONFIGS_BUCKET_URI', 'AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'AWS_REGION', 'MANIFEST_VALIDATION_LAMBDA')"
+        "DELETE FROM setting WHERE `key` IN ('DATA_BUCKET_URI', 'RESULTS_BUCKET_URI', 'DEMUX_WORKFLOW_CONFIGS_BUCKET_URI', 'AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'AWS_REGION', 'MANIFEST_VALIDATION_LAMBDA')"
     )
