@@ -25,6 +25,8 @@ def create_file(
     filename: str = Form(...),
     entity_type: EntityType = Form(...),
     entity_id: str = Form(...),
+    relative_path: Optional[str] = Form(None),
+    overwrite: bool = Form(False),
     description: Optional[str] = Form(None),
     is_public: bool = Form(False),
     created_by: Optional[str] = Form(None),
@@ -38,8 +40,23 @@ def create_file(
     - **file_type**: Type of file (fastq, bam, vcf, etc.)
     - **entity_type**: Whether this file belongs to a project or run
     - **entity_id**: ID of the project or run this file belongs to
+    - **relative_path**: Optional subdirectory path within the entity folder
+                         (e.g., "raw_data/sample1" or "results/qc")
+    - **overwrite**: If True, replace existing file with same name/location (default: False)
     - **is_public**: Whether the file is publicly accessible
     - **created_by**: User who created the file
+
+    Returns:
+        FilePublic with metadata including the assigned file_id
+
+    Raises:
+        409 Conflict: If file already exists and overwrite=False
+
+    Examples:
+        - File at entity root: relative_path=None
+          => s3://bucket/project/P-20260109-0001/abc123_file.txt
+        - File in subdirectory: relative_path="raw_data/sample1"
+          => s3://bucket/project/P-20260109-0001/raw_data/sample1/abc123_file.txt
     """
     # Create FileCreate object from form data
     file_in = FileCreate(
@@ -49,6 +66,8 @@ def create_file(
         entity_id=entity_id,
         is_public=is_public,
         created_by=created_by,
+        relative_path=relative_path,
+        overwrite=overwrite,
     )
 
     file_content = None

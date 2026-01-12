@@ -235,7 +235,7 @@ def reindex_projects(
     """
     delete_index(client, "projects")
     projects = session.exec(
-        select(Project)
+        select(Project).order_by(Project.project_id)
     ).all()
     for project in projects:
         search_doc = SearchDocument(id=project.project_id, body=project)

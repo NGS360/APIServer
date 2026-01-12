@@ -4,7 +4,7 @@ Services for the Files API
 from datetime import datetime, timezone
 import logging
 from fastapi import HTTPException, status
-from sqlmodel import Session
+from sqlmodel import Session, select
 from pathlib import Path
 
 try:
@@ -116,18 +116,72 @@ def create_file(
 ) -> File:
     """
     Create a new file record and store content to appropriate backend.
+
     Args:
         session: Database session
         s3_client: boto3 S3 client for S3 operations
         file_create: FileCreate model with file metadata
         file_content: Optional file content bytes to store
+
+    Returns:
+        Created File object
     """
+    # Use original_filename if provided, otherwise use filename
+    original_filename = file_create.original_filename or file_create.filename
+
+    # Validate and sanitize relative_path (security check)
+    try:
+        relative_path = File.validate_relative_path(file_create.relative_path)
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid relative_path: {str(e)}"
+        )
+
+    # Validate that the entity exists
+    _validate_entity_exists(session, file_create.entity_type, file_create.entity_id)
+
+    existing_file = _check_duplicate_file(
+        session,
+        file_create.entity_type,
+        file_create.entity_id,
+        file_create.filename,
+        relative_path
+    )
+    
+    if existing_file:
+        if not file_create.overwrite:
+            # File exists and overwrite not allowed - return error
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "error": "File already exists",
+                    "message": (
+                        f"A file named '{file_create.filename}' already exists at this location. "
+                        f"Use overwrite=true to replace it."
+                    ),
+                    "existing_file_id": existing_file.file_id,
+                    "existing_file_path": existing_file.file_path,
+                    "existing_upload_date": existing_file.upload_date.isoformat(),
+                }
+            )
+        else:
+            # Overwrite requested: archive the old file
+            logging.info(
+                f"Overwriting file: archiving {existing_file.file_id} "
+                f"({file_create.filename}) and creating new version"
+            )
+            existing_file.is_archived = True
+            existing_file.description = (
+                f"{existing_file.description or ''} "
+                f"[REPLACED on {datetime.now(timezone.utc).isoformat()} "
+                f"by {file_create.created_by or 'unknown'}]"
+            )
+            session.add(existing_file)
+            session.flush()  # Commit the archive before creating new file
 
     # Generate unique file ID
     file_id = File.generate_file_id()
-
-    # Use original_filename if provided, otherwise use filename
-    original_filename = file_create.original_filename or file_create.filename
 
     # Determine storage backend automatically from configuration
     from core.config import get_settings
@@ -136,14 +190,15 @@ def create_file(
     base_uri = settings.STORAGE_ROOT_PATH
 
     # Generate file path structure
+    # Path: {entity_type}/{entity_id}/{relative_path}/{file_id}_{filename}
     relative_file_path = File.generate_file_path(
         file_create.entity_type,
         file_create.entity_id,
         f"{file_id}_{file_create.filename}",
+        relative_path=relative_path,
     )
 
-    # S3 URI: s3://bucket/entity_type/entity_id/year/month/filename
-    # Local: /base/path/entity_type/entity_id/year/month/filename
+    # Full storage path (S3 URI or local path)
     storage_path = f"{base_uri.rstrip('/')}/{relative_file_path}"
 
     # Calculate file metadata if content is provided
@@ -166,6 +221,7 @@ def create_file(
         entity_id=file_create.entity_id,
         is_public=file_create.is_public,
         storage_backend=storage_backend,
+        relative_path=relative_path,
     )
 
     # Store file content based on backend
@@ -192,6 +248,91 @@ def create_file(
     session.refresh(file_record)
 
     return file_record
+
+
+def _check_duplicate_file(
+    session: Session,
+    entity_type: EntityType,
+    entity_id: str,
+    filename: str,
+    relative_path: str | None,
+) -> File | None:
+    """
+    Check if a file with the same name already exists at the same location.
+
+    Args:
+        session: Database session
+        entity_type: Type of entity (project or run)
+        entity_id: ID of the entity
+        filename: Name of the file to check
+        relative_path: Subdirectory path (or None for root)
+
+    Returns:
+        Existing File object if found, None otherwise
+
+    Note:
+        Only considers non-archived files as potential duplicates.
+        Archived files represent historical versions.
+    """
+    # Build query to find exact match
+    query = select(File).where(
+        File.entity_type == entity_type,
+        File.entity_id == entity_id,
+        File.filename == filename,
+        File.is_archived == False,  # Only active files count as duplicates
+    )
+
+    # Handle NULL vs empty string for relative_path
+    if relative_path is None or relative_path == "":
+        query = query.where(
+            (File.relative_path == None) | (File.relative_path == "")
+        )
+    else:
+        query = query.where(File.relative_path == relative_path)
+
+    existing_file = session.exec(query).first()
+
+    return existing_file
+
+
+def _validate_entity_exists(
+    session: Session,
+    entity_type: EntityType,
+    entity_id: str
+) -> None:
+    """
+    Validate that the parent entity (Project or Run) exists.
+
+    Args:
+        session: Database session
+        entity_type: Type of entity
+        entity_id: ID of entity
+
+    Raises:
+        HTTPException: If entity not found
+    """
+    if entity_type == EntityType.PROJECT:
+        from api.project.models import Project
+        project = session.exec(
+            select(Project).where(Project.project_id == entity_id)
+        ).first()
+
+        if not project:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Project not found: {entity_id}"
+            )
+
+    elif entity_type == EntityType.RUN:
+        from api.runs.models import SequencingRun
+        from api.runs.services import get_run
+
+        run = get_run(session, entity_id)
+        if not run:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Run not found: {entity_id}"
+            )
 
 
 def _parse_s3_path(s3_path: str) -> tuple[str, str]:
