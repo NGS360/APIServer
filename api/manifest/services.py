@@ -7,6 +7,8 @@ import boto3
 from botocore.exceptions import NoCredentialsError, ClientError
 from api.manifest.models import ManifestUploadResponse, ManifestValidationResponse
 from api.settings.services import get_setting_value
+from core.deps import SessionDep
+from core.logger import logger
 
 
 def _parse_s3_path(s3_path: str) -> tuple[str, str]:
@@ -217,12 +219,14 @@ def upload_manifest_file(
 
 
 def validate_manifest_file(
+    session: SessionDep,
     s3_path: str, valid: bool = True
 ) -> ManifestValidationResponse:
     """
     Validate a manifest CSV file from S3.
 
     Args:
+        session: Database session
         s3_path: S3 path to the manifest CSV file to validate
         valid: Mock parameter to simulate valid or invalid responses for testing
 
@@ -233,8 +237,9 @@ def validate_manifest_file(
     # The actual validation logic would go here
 
     # Call to lambda function for validation (placeholder)
-    lambda_function_name = get_setting_value("MANIFEST_VALIDATION_LAMBDA")
-    
+    lambda_function_name = get_setting_value(session, "MANIFEST_VALIDATION_LAMBDA")
+    logger.info(f"Invoking Lambda function: {lambda_function_name} for manifest validation")
+
     # Placeholder for invoking the lambda function
     # response = invoke_lambda(lambda_function_name, payload={"s3_path": s3_path})
 
