@@ -570,7 +570,7 @@ aws_batch:
         }
 
         response = client.post(
-            "/api/v1/tools/cellranger-mkfastq/submit", json=request_body
+            "/api/v1/tools/submit", json=request_body
         )
 
         assert response.status_code == 200
@@ -642,7 +642,7 @@ aws_batch:
             },
         }
 
-        response = client.post("/api/v1/tools/test-tool/submit", json=request_body)
+        response = client.post("/api/v1/tools/submit", json=request_body)
 
         assert response.status_code == 200
         data = response.json()
@@ -671,7 +671,7 @@ aws_batch:
         }
 
         response = client.post(
-            "/api/v1/tools/non-existent-tool/submit", json=request_body
+            "/api/v1/tools/submit", json=request_body
         )
 
         assert response.status_code == 404
@@ -708,7 +708,7 @@ tags:
             "inputs": {"input1": "value1"},
         }
 
-        response = client.post("/api/v1/tools/no-batch-tool/submit", json=request_body)
+        response = client.post("/api/v1/tools/submit", json=request_body)
 
         assert response.status_code == 400
         data = response.json()
@@ -772,7 +772,7 @@ aws_batch:
         }
 
         response = client.post(
-            "/api/v1/tools/batch-error-tool/submit", json=request_body
+            "/api/v1/tools/submit", json=request_body
         )
 
         assert response.status_code == 500
@@ -828,7 +828,7 @@ aws_batch:
             "inputs": {"input1": "value1"},
         }
 
-        response = client.post("/api/v1/tools/no-env-tool/submit", json=request_body)
+        response = client.post("/api/v1/tools/submit", json=request_body)
 
         assert response.status_code == 200
         data = response.json()
@@ -846,7 +846,7 @@ aws_batch:
             "run_barcode": "test-run",
         }
 
-        response = client.post("/api/v1/tools/test-tool/submit", json=invalid_body)
+        response = client.post("/api/v1/tools/submit", json=invalid_body)
 
         assert response.status_code == 422  # Validation error
 
@@ -928,7 +928,7 @@ aws_batch:
             },
         }
 
-        response = client.post("/api/v1/tools/complex-tool/submit", json=request_body)
+        response = client.post("/api/v1/tools/submit", json=request_body)
 
         assert response.status_code == 200
         data = response.json()

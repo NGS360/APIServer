@@ -29,15 +29,21 @@ def list_available_tools(
     response_model=dict,
     tags=["Tool Endpoints"],
 )
-def submit_job(tool_body: ToolSubmitBody, s3_client=Depends(get_s3_client)) -> dict:
+def submit_job(
+    session: SessionDep,
+    tool_body: ToolSubmitBody,
+    s3_client=Depends(get_s3_client),
+) -> dict:
     """
     Submit a job for the specified tool.
     Args:
+        session: Database session
         tool_body: The tool execution request containing tool_id, run_barcode, and inputs
+        s3_client: S3 client for accessing tool configs
     Returns:
         A dictionary containing job submission details.
     """
-    return services.submit_job(tool_body=tool_body, s3_client=s3_client)
+    return services.submit_job(session=session, tool_body=tool_body, s3_client=s3_client)
 
 
 @router.get("/{tool_id}", response_model=ToolConfig, tags=["Tool Endpoints"])

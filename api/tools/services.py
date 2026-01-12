@@ -220,6 +220,7 @@ def interpolate(str_in: str, inputs: Dict[str, Any]) -> str:
 
 
 def _submit_job(
+    session: Session,
     job_name: str,
     container_overrides: Dict[str, Any],
     job_def: str,
@@ -227,6 +228,13 @@ def _submit_job(
 ) -> dict:
     """
     Submit a job to AWS Batch, and return the job id.
+
+    Args:
+        session: Database session for retrieving AWS settings
+        job_name: Name of the job to submit
+        container_overrides: Container configuration overrides
+        job_def: Job definition name
+        job_queue: Job queue name
     """
     logger.info(
         f"Submitting job '{job_name}' to AWS Batch queue '{job_queue}' "
@@ -234,10 +242,10 @@ def _submit_job(
     )
     logger.info(f"Container overrides: {container_overrides}")
 
-    settings = get_settings()
+    aws_region = get_setting_value(session, "AWS_REGION") or "us-east-1"
 
     try:
-        batch_client = boto3.client("batch", region_name=settings.AWS_REGION)
+        batch_client = boto3.client("batch", region_name=aws_region)
         response = batch_client.submit_job(
             jobName=job_name,
             jobQueue=job_queue,
@@ -254,11 +262,12 @@ def _submit_job(
     return response
 
 
-def submit_job(tool_body: ToolSubmitBody, s3_client=None) -> dict:
+def submit_job(session: Session, tool_body: ToolSubmitBody, s3_client=None) -> dict:
     """
     Submit an AWS Batch job for the specified tool.
 
     Args:
+        session: Database session
         tool_body: The tool execution request containing tool_id,
                    run_barcode, and inputs
         s3_client: Optional boto3 S3 client
@@ -266,7 +275,7 @@ def submit_job(tool_body: ToolSubmitBody, s3_client=None) -> dict:
         A dictionary containing job submission details.
     """
     tool_config = get_tool_config(
-        tool_id=tool_body.tool_id, s3_client=s3_client
+        session=session, tool_id=tool_body.tool_id, s3_client=s3_client
     )
 
     # Interpolate inputs with aws_batch schema definition
@@ -294,6 +303,7 @@ def submit_job(tool_body: ToolSubmitBody, s3_client=None) -> dict:
 
     # Submit the job to AWS Batch
     response = _submit_job(
+        session=session,
         job_name=job_name,
         container_overrides=container_overrides,
         job_def=tool_config.aws_batch.job_definition,
