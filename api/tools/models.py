@@ -1,4 +1,4 @@
-from typing import List, Optional, Any
+from typing import List, Optional, Any, Dict
 from pydantic import BaseModel, model_validator
 from enum import Enum
 
@@ -29,6 +29,19 @@ class ToolConfigTag(BaseModel):
     name: str
 
 
+class AwsBatchEnvironment(BaseModel):
+    name: str
+    value: str
+
+
+class AwsBatchConfig(BaseModel):
+    job_name: str
+    job_definition: str
+    job_queue: str
+    command: str
+    environment: Optional[List[AwsBatchEnvironment]] = None
+
+
 class ToolConfig(BaseModel):
     version: int
     tool_id: str
@@ -37,3 +50,10 @@ class ToolConfig(BaseModel):
     inputs: List[ToolConfigInput]
     help: str
     tags: List[ToolConfigTag]
+    aws_batch: Optional[AwsBatchConfig] = None
+
+
+class ToolSubmitBody(BaseModel):
+    tool_id: str
+    run_barcode: str
+    inputs: Dict[str, Any]

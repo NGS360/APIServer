@@ -2,13 +2,17 @@
 Services for the Tools API
 """
 
+from core.logger import logger
 from fastapi import HTTPException, status
 import yaml
 import boto3
+import botocore
 from botocore.exceptions import NoCredentialsError, ClientError
+from jinja2.sandbox import SandboxedEnvironment
+from typing import Dict, Any
 from sqlmodel import Session
 
-from api.tools.models import ToolConfig
+from api.tools.models import ToolConfig, ToolSubmitBody
 from api.settings.services import get_setting_value
 
 
@@ -196,3 +200,107 @@ def get_tool_config(session: Session, tool_id: str, s3_client=None) -> ToolConfi
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Unexpected error retrieving tool config: {str(exc)}",
         ) from exc
+
+
+def interpolate(str_in: str, inputs: Dict[str, Any]) -> str:
+    '''
+    Take an input str, and substitute expressions containing variables with
+    their actual values provided in inputs. Uses Jinja2 SandboxedEnvironment
+    to prevent code execution vulnerabilities.
+
+    :param str_in: String to be interpolated
+    :param inputs: Dictionary of tool inputs (key-value pairs with
+                   defaults pre-populated)
+    :return: String containing substitutions
+    '''
+    env = SandboxedEnvironment()
+    template = env.from_string(str_in)
+    str_out = template.render(inputs).strip()
+    return str_out
+
+
+def _submit_job(
+    job_name: str,
+    container_overrides: Dict[str, Any],
+    job_def: str,
+    job_queue: str
+) -> dict:
+    """
+    Submit a job to AWS Batch, and return the job id.
+    """
+    logger.info(
+        f"Submitting job '{job_name}' to AWS Batch queue '{job_queue}' "
+        f"with definition '{job_def}'"
+    )
+    logger.info(f"Container overrides: {container_overrides}")
+
+    settings = get_settings()
+
+    try:
+        batch_client = boto3.client("batch", region_name=settings.AWS_REGION)
+        response = batch_client.submit_job(
+            jobName=job_name,
+            jobQueue=job_queue,
+            jobDefinition=job_def,
+            containerOverrides=container_overrides,
+        )
+    except botocore.exceptions.ClientError as err:
+        logger.error(f"Failed to submit job to AWS Batch: {err}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to submit job to AWS Batch: {err}",
+        ) from err
+
+    return response
+
+
+def submit_job(tool_body: ToolSubmitBody, s3_client=None) -> dict:
+    """
+    Submit an AWS Batch job for the specified tool.
+
+    Args:
+        tool_body: The tool execution request containing tool_id,
+                   run_barcode, and inputs
+        s3_client: Optional boto3 S3 client
+    Returns:
+        A dictionary containing job submission details.
+    """
+    tool_config = get_tool_config(
+        tool_id=tool_body.tool_id, s3_client=s3_client
+    )
+
+    # Interpolate inputs with aws_batch schema definition
+    if not tool_config.aws_batch:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"Tool '{tool_body.tool_id}' is not configured for "
+                f"AWS Batch execution."
+            ),
+        )
+
+    job_name = interpolate(tool_config.aws_batch.job_name, tool_body.inputs)
+    command = interpolate(tool_config.aws_batch.command, tool_body.inputs)
+    container_overrides = {
+        "command": command.split(),
+        "environment": [
+            {
+                "name": env.name,
+                "value": interpolate(env.value, tool_body.inputs)
+            }
+            for env in (tool_config.aws_batch.environment or [])
+        ],
+    }
+
+    # Submit the job to AWS Batch
+    response = _submit_job(
+        job_name=job_name,
+        container_overrides=container_overrides,
+        job_def=tool_config.aws_batch.job_definition,
+        job_queue=tool_config.aws_batch.job_queue,
+    )
+
+    if 'jobId' in response:
+        response['jobCommand'] = command
+
+    return response
