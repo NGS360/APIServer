@@ -575,7 +575,7 @@ def get_demux_workflow_config(
 
         # Validate and return as DemuxWorkflowConfig model
         config = DemuxWorkflowConfig(**config_data)
-        
+
         # If run_barcode is provided, prepopulate s3_run_folder_path from the run's run_folder_uri
         if run_barcode:
             run = get_run(session=session, run_barcode=run_barcode)
@@ -584,7 +584,7 @@ def get_demux_workflow_config(
                 for input_item in config.inputs:
                     if 's3_run_folder_path' in input_item.name.lower():
                         input_item.default = run.run_folder_uri
-        
+
         return config
 
     except HTTPException:
