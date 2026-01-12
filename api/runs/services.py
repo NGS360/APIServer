@@ -527,7 +527,7 @@ def list_demux_workflow_configs(session: Session, s3_client=None) -> list[str]:
 
 
 def get_demux_workflow_config(
-    session: Session, workflow_id: str, s3_client=None
+    session: Session, workflow_id: str, s3_client=None, run_barcode: str = None
 ) -> DemuxWorkflowConfig:
     """
     Retrieve a specific tool configuration from S3.
@@ -536,9 +536,10 @@ def get_demux_workflow_config(
         session: Database session
         workflow_id: The workflow identifier (filename without extension)
         s3_client: Optional boto3 S3 client
+        run_barcode: Optional run barcode to prepopulate s3_run_folder_path from run's run_folder_uri
 
     Returns:
-        DemuxWorkflowConfig object
+        DemuxWorkflowConfig object with prepopulated defaults if run_barcode is provided
     """
     bucket, prefix = _get_demux_workflow_configs_s3_location(session)
 
@@ -573,7 +574,18 @@ def get_demux_workflow_config(
         config_data = yaml.safe_load(yaml_content)
 
         # Validate and return as DemuxWorkflowConfig model
-        return DemuxWorkflowConfig(**config_data)
+        config = DemuxWorkflowConfig(**config_data)
+        
+        # If run_barcode is provided, prepopulate s3_run_folder_path from the run's run_folder_uri
+        if run_barcode:
+            run = get_run(session=session, run_barcode=run_barcode)
+            if run and run.run_folder_uri:
+                # Find inputs that contain 's3_run_folder_path' in their name and set the default
+                for input_item in config.inputs:
+                    if 's3_run_folder_path' in input_item.name.lower():
+                        input_item.default = run.run_folder_uri
+        
+        return config
 
     except HTTPException:
         raise
