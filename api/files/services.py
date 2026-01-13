@@ -335,6 +335,27 @@ def _validate_entity_exists(
             )
 
 
+def get_file_by_id(session: Session, file_id: str) -> File:
+    """
+    Retrieve file metadata by file ID.
+
+    Args:
+        session: Database session
+        file_id: ID of the file to retrieve
+    Returns:
+        File object
+    """
+    file_record = session.exec(
+        select(File).where(File.file_id == file_id)
+    ).first()
+    if not file_record:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"File not found: {file_id}"
+        )
+    return file_record
+
+
 def _parse_s3_path(s3_path: str) -> tuple[str, str]:
     """Parse S3 path into bucket and prefix"""
     if not s3_path.startswith("s3://"):

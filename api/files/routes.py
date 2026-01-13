@@ -14,6 +14,17 @@ from core.deps import get_s3_client, SessionDep
 router = APIRouter(prefix="/files", tags=["File Endpoints"])
 
 
+@router.get("/{file_id}", response_model=FilePublic, tags=["File Endpoints"])
+def get_file(
+    file_id: str,
+    session: SessionDep,
+) -> FilePublic:
+    """
+    Retrieve file metadata by file ID.
+    """
+    return services.get_file_by_id(session, file_id)
+
+
 @router.post(
     "",
     response_model=FilePublic,
