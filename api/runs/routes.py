@@ -15,8 +15,8 @@ GET    /api/v1/runs/[id]/metrics       Retrieve demux metrics from Stat.json
 """
 
 from typing import Literal
-from fastapi import APIRouter, Query, status, UploadFile, File
-from core.deps import SessionDep, OpenSearchDep
+from fastapi import APIRouter, Query, status, UploadFile, File, Depends
+from core.deps import SessionDep, OpenSearchDep, get_s3_client
 from api.runs.models import (
     IlluminaMetricsResponseModel,
     SequencingRun,
@@ -25,7 +25,8 @@ from api.runs.models import (
     SequencingRunsPublic,
     SequencingRunUpdateRequest,
     IlluminaSampleSheetResponseModel,
-    DemultiplexAnalysisAvailable
+    DemuxWorkflowConfig,
+    DemuxWorkflowSubmitBody
 )
 from api.runs import services
 
@@ -152,36 +153,62 @@ def reindex_runs(
 ###############################################################################
 
 
-@router.get(
-    "/demultiplex",
-    response_model=DemultiplexAnalysisAvailable,
-    status_code=status.HTTP_200_OK,
-    tags=["Run Endpoints"],
-)
-def get_multiplex_workflows(session: SessionDep) -> DemultiplexAnalysisAvailable:
+@router.get("/demultiplex", response_model=list[str], tags=["Run Endpoints"])
+def list_demultiplex_workflows(
+    session: SessionDep,
+    s3_client=Depends(get_s3_client),
+) -> list[str]:
     """
-    Placeholder endpoint for getting available demultiplex workflows.
-    """
-    # TBD: How do we want to manage available demultiplexing workflows?
-    # This should be a list of available demultiplexing workflows in a database table
-    # and is dependent on how we support GA4GH WES API.
+    List all available demultiplex workflows from S3.
 
-    # return services.get_demultiplex_workflows(session=session)
-    return DemultiplexAnalysisAvailable(demux_analysis_name=["bcl2fastq", "cellranger"])
+    Returns a list of workflow IDs (config filenames without extensions).
+    """
+    return services.list_demux_workflow_configs(session=session, s3_client=s3_client)
 
 
 @router.post(
     "/demultiplex",
-    response_model=SequencingRunPublic,
-    status_code=status.HTTP_202_ACCEPTED,
+    response_model=dict,
     tags=["Run Endpoints"],
 )
-def demultiplex_run(session: SessionDep, run_barcode: str) -> SequencingRunPublic:
+def submit_demultiplex_workflow_job(
+    session: SessionDep,
+    workflow_body: DemuxWorkflowSubmitBody,
+    s3_client=Depends(get_s3_client),
+) -> dict:
     """
-    Submit a demultiplex job for a specific run.
+    Submit a job for the specified demultiplex workflow.
+    Args:
+        session: Database session
+        workflow_body: The demultiplex workflow execution request containing
+            workflow_id, run_barcode, and inputs
+        s3_client: S3 client for accessing workflow configs
+    Returns:
+        A dictionary containing job submission details.
     """
-    # return services.demultiplex_run(session=session, run_barcode=run_barcode)
-    return services.get_run(session=session, run_barcode=run_barcode)
+    return services.submit_job(session=session, workflow_body=workflow_body, s3_client=s3_client)
+
+
+@router.get("/demultiplex/{workflow_id}", response_model=DemuxWorkflowConfig, tags=["Run Endpoints"])
+def get_demultiplex_workflow_config(
+    workflow_id: str,
+    session: SessionDep,
+    s3_client=Depends(get_s3_client),
+    run_barcode: str = Query(None, description="Run barcode to prepopulate s3_run_folder_path"),
+) -> DemuxWorkflowConfig:
+    """
+    Retrieve a specific demultiplex workflow configuration.
+
+    Args:
+        workflow_id: The workflow identifier (filename without extension)
+        run_barcode: Optional run barcode to prepopulate s3_run_folder_path from run's run_folder_uri
+
+    Returns:
+        Complete workflow configuration with prepopulated defaults if run_barcode is provided
+    """
+    return services.get_demux_workflow_config(
+        session=session, workflow_id=workflow_id, s3_client=s3_client, run_barcode=run_barcode
+    )
 
 
 @router.get(

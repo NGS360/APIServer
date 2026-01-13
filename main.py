@@ -13,9 +13,10 @@ from api.project.routes import router as project_router
 from api.runs.routes import router as runs_router
 from api.samples.routes import router as samples_router
 from api.search.routes import router as search_router
-from api.tools.routes import router as tools_router
+from api.settings.routes import router as settings_router
 from api.vendors.routes import router as vendors_router
 from api.workflow.routes import router as workflow_router
+from api.manifest.routes import router as manifest_router
 
 
 # Customize route id's
@@ -61,8 +62,9 @@ app.include_router(project_router, prefix=API_PREFIX)
 app.include_router(runs_router, prefix=API_PREFIX)
 app.include_router(samples_router, prefix=API_PREFIX)
 app.include_router(search_router, prefix=API_PREFIX)
-app.include_router(tools_router, prefix=API_PREFIX)
+app.include_router(settings_router, prefix=API_PREFIX)
 app.include_router(vendors_router, prefix=API_PREFIX)
+app.include_router(manifest_router, prefix=API_PREFIX)
 app.include_router(workflow_router, prefix=API_PREFIX)
 
 
