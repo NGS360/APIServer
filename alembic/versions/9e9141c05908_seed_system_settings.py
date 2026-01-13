@@ -64,33 +64,6 @@ def upgrade() -> None:
             ]
         },
         {
-            'key': 'AWS_ACCESS_KEY_ID',
-            'value': '',
-            'name': 'AWS Access Key ID',
-            'description': 'AWS access key ID for authenticating API requests',
-            'tags': [
-                {'key': 'category', 'value': 'aws credentials'}
-            ]
-        },
-        {
-            'key': 'AWS_SECRET_ACCESS_KEY',
-            'value': '',
-            'name': 'AWS Secret Access Key',
-            'description': 'AWS secret access key for authenticating API requests',
-            'tags': [
-                {'key': 'category', 'value': 'aws credentials'}
-            ]
-        },
-        {
-            'key': 'AWS_REGION',
-            'value': '',
-            'name': 'AWS Region',
-            'description': 'AWS region for resource deployment and API calls',
-            'tags': [
-                {'key': 'category', 'value': 'aws credentials'}
-            ]
-        },
-        {
             'key': 'MANIFEST_VALIDATION_LAMBDA',
             'value': '',
             'name': 'Manifest Validation Lambda',
@@ -106,5 +79,5 @@ def downgrade() -> None:
     """Downgrade schema."""
     # Delete the seeded settings
     op.execute(
-        "DELETE FROM setting WHERE `key` IN ('DATA_BUCKET_URI', 'RESULTS_BUCKET_URI', 'DEMUX_WORKFLOW_CONFIGS_BUCKET_URI', 'AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'AWS_REGION', 'MANIFEST_VALIDATION_LAMBDA')"
+        "DELETE FROM setting WHERE `key` IN ('DATA_BUCKET_URI', 'RESULTS_BUCKET_URI', 'DEMUX_WORKFLOW_CONFIGS_BUCKET_URI', 'MANIFEST_VALIDATION_LAMBDA')"
     )

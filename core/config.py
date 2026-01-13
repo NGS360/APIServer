@@ -142,6 +142,25 @@ class Settings(BaseSettings):
         value = self._get_config_value("OPENSEARCH_VERIFY_CERTS", default="false")
         return value.lower() in ("true", "1", "yes")
 
+    # AWS Configuration
+    @computed_field
+    @property
+    def AWS_ACCESS_KEY_ID(self) -> str | None:
+        """Get AWS Access Key ID from env or secrets"""
+        return self._get_config_value("AWS_ACCESS_KEY_ID")
+
+    @computed_field
+    @property
+    def AWS_SECRET_ACCESS_KEY(self) -> str | None:
+        """Get AWS Secret Access Key from env or secrets"""
+        return self._get_config_value("AWS_SECRET_ACCESS_KEY")
+
+    @computed_field
+    @property
+    def AWS_REGION(self) -> str:
+        """Get AWS Region from env or secrets (defaults to us-east-1)"""
+        return self._get_config_value("AWS_REGION", default="us-east-1")
+
     # Read environment variables from .env file, if it exists
     # extra='ignore' prevents validation errors from extra env vars
     model_config = SettingsConfigDict(

@@ -27,9 +27,6 @@ def sync_env_to_settings():
         "DATA_BUCKET_URI",
         "RESULTS_BUCKET_URI",
         "DEMUX_WORKFLOW_CONFIGS_BUCKET_URI",
-        "AWS_ACCESS_KEY_ID",
-        "AWS_SECRET_ACCESS_KEY",
-        "AWS_REGION",
         "MANIFEST_VALIDATION_LAMBDA"
     ]
 

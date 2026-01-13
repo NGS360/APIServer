@@ -17,6 +17,7 @@ from jinja2.sandbox import SandboxedEnvironment
 
 from sample_sheet import SampleSheet as IlluminaSampleSheet
 
+from core.config import get_settings
 from core.utils import define_search_body
 from core.logger import logger
 
@@ -668,10 +669,8 @@ def _submit_job(
     )
     logger.info(f"Container overrides: {container_overrides}")
 
-    aws_region = get_setting_value(session, "AWS_REGION") or "us-east-1"
-
     try:
-        batch_client = boto3.client("batch", region_name=aws_region)
+        batch_client = boto3.client("batch", region_name=get_settings().AWS_REGION)
         response = batch_client.submit_job(
             jobName=job_name,
             jobQueue=job_queue,
