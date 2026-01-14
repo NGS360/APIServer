@@ -199,7 +199,8 @@ class FilePublic(SQLModel):
     is_public: bool
     is_archived: bool
     storage_backend: StorageBackend
-    file_path: str | None = None    # TODO: This should only be exposed to services e.g. Workflow Executor
+    # TODO: file_path should only be exposed to services e.g. Workflow Executor
+    file_path: str | None = None
     checksum: str | None = None
     relative_path: str | None = None
 

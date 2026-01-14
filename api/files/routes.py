@@ -127,6 +127,7 @@ def download_file(
         }
     )
 
+
 @router.get("/{file_id}", response_model=FilePublic, tags=["File Endpoints"])
 def get_file(
     file_id: str,
@@ -136,4 +137,3 @@ def get_file(
     Retrieve file metadata by file ID.
     """
     return services.get_file_by_id(session, file_id)
-

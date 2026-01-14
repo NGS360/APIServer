@@ -17,7 +17,7 @@ def test_create_file_via_api_with_subdirectory(client: TestClient, test_project)
         },
         files={"content": ("test.txt", b"test content", "text/plain")},
     )
-    
+
     assert response.status_code == 201
     data = response.json()
     assert data["filename"] == "test.txt"
@@ -38,7 +38,7 @@ def test_create_file_via_api_at_root(client: TestClient, test_project):
         },
         files={"content": ("report.pdf", b"%PDF-1.4...", "application/pdf")},
     )
-    
+
     assert response.status_code == 201
     data = response.json()
     assert data["filename"] == "report.pdf"
@@ -57,7 +57,6 @@ def test_create_file_with_path_traversal(client: TestClient, test_project):
         },
         files={"content": ("malicious.txt", b"attack", "text/plain")},
     )
-    
+
     assert response.status_code == 400
     assert "Invalid relative_path" in response.json()["detail"]
-

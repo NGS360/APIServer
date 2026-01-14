@@ -90,7 +90,9 @@ class TestFileCreation:
         )
 
         assert file_record.relative_path is None
-        assert file_record.file_path.endswith(f"{test_project.project_id}/{file_record.file_id}_test.txt")
+        assert file_record.file_path.endswith(
+            f"{test_project.project_id}/{file_record.file_id}_test.txt"
+        )
 
     def test_create_file_in_subdirectory(self, session, mock_s3_client, test_project):
         """Test creating file in subdirectory."""
