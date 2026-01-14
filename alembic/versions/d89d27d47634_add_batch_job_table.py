@@ -1,8 +1,8 @@
 """add batch job table
 
-Revision ID: cf64fb844154
+Revision ID: d89d27d47634
 Revises: 9e9141c05908
-Create Date: 2026-01-14 14:52:08.324569
+Create Date: 2026-01-14 19:52:49.718948
 
 """
 from typing import Sequence, Union
@@ -13,7 +13,7 @@ import sqlmodel
 
 
 # revision identifiers, used by Alembic.
-revision: str = 'cf64fb844154'
+revision: str = 'd89d27d47634'
 down_revision: Union[str, Sequence[str], None] = '9e9141c05908'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
@@ -30,7 +30,7 @@ def upgrade() -> None:
     sa.Column('submitted_on', sa.DateTime(), nullable=False),
     sa.Column('aws_job_id', sqlmodel.sql.sqltypes.AutoString(length=255), nullable=True),
     sa.Column('log_stream_name', sqlmodel.sql.sqltypes.AutoString(length=255), nullable=True),
-    sa.Column('status', sa.Enum('QUEUED', 'SUBMITTED', 'PENDING', 'RUNNABLE', 'STARTING', 'RUNNING', 'SUCCEEDED', 'FAILED', name='jobstatus'), nullable=False),
+    sa.Column('status', sa.Enum('SUBMITTED', 'PENDING', 'RUNNABLE', 'STARTING', 'RUNNING', 'SUCCEEDED', 'FAILED', name='jobstatus'), nullable=False),
     sa.Column('viewed', sa.Boolean(), nullable=False),
     sa.PrimaryKeyConstraint('id')
     )

@@ -11,7 +11,6 @@ from pydantic import ConfigDict
 
 class JobStatus(str, Enum):
     """Enumeration of valid batch job statuses"""
-    QUEUED = "Queued"
     SUBMITTED = "Submitted"
     PENDING = "Pending"
     RUNNABLE = "Runnable"
@@ -32,7 +31,7 @@ class BatchJob(SQLModel, table=True):
     submitted_on: datetime = Field(default_factory=datetime.utcnow)
     aws_job_id: str | None = Field(default=None, max_length=255)
     log_stream_name: str | None = Field(default=None, max_length=255)
-    status: JobStatus = Field(default=JobStatus.QUEUED)
+    status: JobStatus = Field(default=JobStatus.SUBMITTED)
     viewed: bool = Field(default=False)
 
     model_config = ConfigDict(from_attributes=True)
@@ -45,7 +44,7 @@ class BatchJobCreate(SQLModel):
     user: str
     aws_job_id: Optional[str] = None
     log_stream_name: Optional[str] = None
-    status: Optional[JobStatus] = JobStatus.QUEUED
+    status: Optional[JobStatus] = JobStatus.SUBMITTED
 
 
 class BatchJobUpdate(SQLModel):
@@ -54,7 +53,7 @@ class BatchJobUpdate(SQLModel):
     command: Optional[str] = None
     aws_job_id: Optional[str] = None
     log_stream_name: Optional[str] = None
-    status: Optional[JobStatus] = None
+    status: Optional[JobStatus] = JobStatus.SUBMITTED
     viewed: Optional[bool] = None
 
 
