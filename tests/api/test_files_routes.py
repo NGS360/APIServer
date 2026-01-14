@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 def test_create_file_via_api_with_subdirectory(client: TestClient, test_project):
     """Test file creation via API with subdirectory."""
     response = client.post(
-        "/files",
+        "/api/v1/files",
         data={
             "filename": "test.txt",
             "entity_type": "project",
@@ -28,7 +28,7 @@ def test_create_file_via_api_with_subdirectory(client: TestClient, test_project)
 def test_create_file_via_api_at_root(client: TestClient, test_project):
     """Test file creation via API at entity root."""
     response = client.post(
-        "/files",
+        "/api/v1/files",
         data={
             "filename": "report.pdf",
             "entity_type": "project",
@@ -48,7 +48,7 @@ def test_create_file_via_api_at_root(client: TestClient, test_project):
 def test_create_file_with_path_traversal(client: TestClient, test_project):
     """Test that path traversal attempts are rejected."""
     response = client.post(
-        "/files",
+        "/api/v1/files",
         data={
             "filename": "malicious.txt",
             "entity_type": "project",

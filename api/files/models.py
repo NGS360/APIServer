@@ -126,6 +126,13 @@ class File(SQLModel, table=True):
         if not relative_path:
             return None
 
+        if relative_path.startswith('/'):
+            raise ValueError("Absolute paths not allowed")
+
+        # Check for double slashes
+        if '//' in relative_path:
+            raise ValueError("Double slashes not allowed")
+
         # Remove leading/trailing slashes
         path = relative_path.strip('/')
 
@@ -135,13 +142,6 @@ class File(SQLModel, table=True):
         # Security checks
         if '..' in path:
             raise ValueError("Path traversal not allowed (..)")
-
-        if path.startswith('/'):
-            raise ValueError("Absolute paths not allowed")
-
-        # Check for double slashes
-        if '//' in path:
-            raise ValueError("Double slashes not allowed")
 
         # Optional: validate characters (allow alphanumeric, dash, underscore, slash)
         import re
