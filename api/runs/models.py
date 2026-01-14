@@ -8,6 +8,8 @@ from enum import Enum
 from sqlmodel import SQLModel, Field
 from pydantic import ConfigDict, computed_field, field_validator, BaseModel, model_validator
 
+from api.jobs.models import AwsBatchConfig
+
 
 class RunStatus(str, Enum):
     """Enumeration of valid sequencing run statuses"""
@@ -283,19 +285,6 @@ class DemuxWorkflowConfigInput(BaseModel):
 
 class DemuxWorkflowTag(BaseModel):
     name: str
-
-
-class AwsBatchEnvironment(BaseModel):
-    name: str
-    value: str
-
-
-class AwsBatchConfig(BaseModel):
-    job_name: str
-    job_definition: str
-    job_queue: str
-    command: str
-    environment: Optional[List[AwsBatchEnvironment]] = None
 
 
 class DemuxWorkflowConfig(BaseModel):
