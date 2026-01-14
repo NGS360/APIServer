@@ -9,7 +9,7 @@ GET    /api/v1/jobs/[id]    Retrieve info about a specific job
 PUT    /api/v1/jobs/[id]    Update a batch job
 """
 
-from typing import Optional
+from typing import Optional, Literal
 from fastapi import APIRouter, Query, status
 from core.deps import SessionDep
 from api.jobs.models import (
@@ -84,9 +84,11 @@ def get_jobs(
     limit: int = Query(100, ge=1, le=1000),
     user: Optional[str] = Query(None, description="Filter by user"),
     status_filter: Optional[JobStatus] = Query(None, description="Filter by status"),
+    sort_by: str = Query("submitted_on", description="Field to sort by"),
+    sort_order: Literal["asc", "desc"] = Query("desc", description="Sort order (asc or desc)"),
 ) -> BatchJobsPublic:
     """
-    Retrieve a list of batch jobs with optional filtering.
+    Retrieve a list of batch jobs with optional filtering and sorting.
 
     Args:
         session: Database session
@@ -94,12 +96,20 @@ def get_jobs(
         limit: Maximum number of records to return
         user: Optional user filter
         status_filter: Optional status filter
+        sort_by: Field to sort by (defaults to 'submitted_on')
+        sort_order: Sort order 'asc' or 'desc' (defaults to 'desc')
 
     Returns:
         List of jobs and total count
     """
     jobs, total_count = services.get_batch_jobs(
-        session, skip, limit, user, status_filter
+        session=session,
+        skip=skip,
+        limit=limit,
+        user=user,
+        status_filter=status_filter,
+        sort_by=sort_by,
+        sort_order=sort_order,
     )
     return BatchJobsPublic(
         data=[BatchJobPublic.model_validate(job) for job in jobs],

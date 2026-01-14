@@ -1,7 +1,7 @@
 """
 Services for managing batch jobs.
 """
-from typing import Any, List, Dict
+from typing import Any, List, Dict, Literal
 from sqlmodel import select, Session, func
 from fastapi import HTTPException, status
 import uuid
@@ -65,7 +65,9 @@ def get_batch_jobs(
     skip: int = 0,
     limit: int = 100,
     user: str | None = None,
-    status_filter: JobStatus | None = None
+    status_filter: JobStatus | None = None,
+    sort_by: str = "submitted_on",
+    sort_order: Literal["asc", "desc"] = "desc"
 ) -> tuple[List[BatchJob], int]:
     """
     Retrieve a list of batch jobs with optional filtering.
@@ -76,6 +78,8 @@ def get_batch_jobs(
         limit: Maximum number of records to return
         user: Optional user filter
         status_filter: Optional status filter
+        sort_by: Field to sort by (defaults to 'submitted_on')
+        sort_order: Sort order 'asc' or 'desc' (defaults to 'desc')
 
     Returns:
         Tuple of (list of BatchJob instances, total count)
@@ -91,8 +95,12 @@ def get_batch_jobs(
     count_query = select(func.count()).select_from(query.subquery())
     total_count = session.exec(count_query).one()
 
+    # Determine sort field and direction
+    sort_field = getattr(BatchJob, sort_by, BatchJob.submitted_on)
+    sort_direction = sort_field.asc() if sort_order == "asc" else sort_field.desc()
+
     # Get paginated results
-    query = query.offset(skip).limit(limit).order_by(BatchJob.submitted_on.desc())
+    query = query.offset(skip).limit(limit).order_by(sort_direction)
     jobs = session.exec(query).all()
 
     return jobs, total_count
@@ -186,6 +194,7 @@ def submit_batch_job(
     )
 
     batch_job = create_batch_job(session, job_create)
-    logger.info(f"Created database record for AWS Batch job {response.get('jobId')}")
-
+    # logger.info(f"Created database record for AWS Batch job {response.get('jobId')}")
+    logger.info(f"Created database record for AWS Batch job {batch_job.aws_job_id}")
+    
     return batch_job

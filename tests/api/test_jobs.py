@@ -436,6 +436,71 @@ class TestJobsAPI:
         assert len(data["data"]) == 10
         assert data["count"] == 25
 
+    @patch("api.jobs.services.boto3.client")
+    def test_jobs_sorting(self, mock_boto_client, client: TestClient):
+        """Test job list sorting by different fields"""
+        import time
+        mock_batch = MagicMock()
+        mock_batch.submit_job.return_value = {
+            "jobId": "aws-job-123",
+            "jobName": "test-job",
+        }
+        mock_boto_client.return_value = mock_batch
+
+        # Create jobs with different names
+        client.post("/api/v1/jobs", json={
+            "job_name": "zebra-job",
+            "job_definition": "test-def:1",
+            "job_queue": "test-queue",
+            "command": "echo hello",
+            "user": "testuser",
+        })
+        time.sleep(0.01)  # Small delay to ensure different timestamps
+        client.post("/api/v1/jobs", json={
+            "job_name": "alpha-job",
+            "job_definition": "test-def:1",
+            "job_queue": "test-queue",
+            "command": "echo hello",
+            "user": "testuser",
+        })
+        time.sleep(0.01)
+        client.post("/api/v1/jobs", json={
+            "job_name": "beta-job",
+            "job_definition": "test-def:1",
+            "job_queue": "test-queue",
+            "command": "echo hello",
+            "user": "testuser",
+        })
+
+        # Test default sort (submitted_on desc - most recent first)
+        response = client.get("/api/v1/jobs")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["data"][0]["name"] == "beta-job"
+        assert data["data"][2]["name"] == "zebra-job"
+
+        # Test sort by name ascending
+        response = client.get("/api/v1/jobs?sort_by=name&sort_order=asc")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["data"][0]["name"] == "alpha-job"
+        assert data["data"][1]["name"] == "beta-job"
+        assert data["data"][2]["name"] == "zebra-job"
+
+        # Test sort by name descending
+        response = client.get("/api/v1/jobs?sort_by=name&sort_order=desc")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["data"][0]["name"] == "zebra-job"
+        assert data["data"][2]["name"] == "alpha-job"
+
+        # Test sort by submitted_on ascending (oldest first)
+        response = client.get("/api/v1/jobs?sort_by=submitted_on&sort_order=asc")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["data"][0]["name"] == "zebra-job"
+        assert data["data"][2]["name"] == "beta-job"
+
 
 ###############################################################################
 # Service Layer Tests
