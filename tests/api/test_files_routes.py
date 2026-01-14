@@ -1,6 +1,5 @@
 """Integration tests for file creation API."""
 
-import pytest
 from fastapi.testclient import TestClient
 
 
