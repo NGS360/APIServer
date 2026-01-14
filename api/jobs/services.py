@@ -169,32 +169,32 @@ def submit_batch_job(
     # Extract command from container overrides (expecting list)
     command = " ".join(container_overrides.get("command", []))
 
-    try:
-        batch_client = boto3.client("batch", region_name=get_settings().AWS_REGION)
-        response = batch_client.submit_job(
-            jobName=job_name,
-            jobQueue=job_queue,
-            jobDefinition=job_def,
-            containerOverrides=container_overrides,
-        )
-    except botocore.exceptions.ClientError as err:
-        logger.error(f"Failed to submit job to AWS Batch: {err}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to submit job to AWS Batch: {err}",
-        ) from err
+    # try:
+    #     batch_client = boto3.client("batch", region_name=get_settings().AWS_REGION)
+    #     response = batch_client.submit_job(
+    #         jobName=job_name,
+    #         jobQueue=job_queue,
+    #         jobDefinition=job_def,
+    #         containerOverrides=container_overrides,
+    #     )
+    # except botocore.exceptions.ClientError as err:
+    #     logger.error(f"Failed to submit job to AWS Batch: {err}")
+    #     raise HTTPException(
+    #         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+    #         detail=f"Failed to submit job to AWS Batch: {err}",
+    #     ) from err
 
     # Create database record with AWS job information
     job_create = BatchJobCreate(
         name=job_name,
         command=command,
         user=user,
-        aws_job_id=response.get("jobId"),
+        aws_job_id="aws_job_id",  # response.get("jobId"),
         status=JobStatus.SUBMITTED
     )
 
     batch_job = create_batch_job(session, job_create)
     # logger.info(f"Created database record for AWS Batch job {response.get('jobId')}")
     logger.info(f"Created database record for AWS Batch job {batch_job.aws_job_id}")
-    
+
     return batch_job

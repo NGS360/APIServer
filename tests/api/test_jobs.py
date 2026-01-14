@@ -30,7 +30,6 @@ class TestJobModels:
 
     def test_job_status_enum(self):
         """Test JobStatus enum values"""
-        assert JobStatus.QUEUED.value == "Queued"
         assert JobStatus.SUBMITTED.value == "Submitted"
         assert JobStatus.PENDING.value == "Pending"
         assert JobStatus.RUNNABLE.value == "Runnable"
@@ -45,12 +44,12 @@ class TestJobModels:
             name="test-job",
             command="echo hello",
             user="testuser",
-            status=JobStatus.QUEUED,
+            status=JobStatus.SUBMITTED,
         )
         assert job.name == "test-job"
         assert job.command == "echo hello"
         assert job.user == "testuser"
-        assert job.status == JobStatus.QUEUED
+        assert job.status == JobStatus.SUBMITTED
         assert job.viewed is False
         assert job.id is not None
 
