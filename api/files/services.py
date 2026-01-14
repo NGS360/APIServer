@@ -279,13 +279,13 @@ def _check_duplicate_file(
         File.entity_type == entity_type,
         File.entity_id == entity_id,
         File.filename == filename,
-        File.is_archived is False,  # Only active files count as duplicates
+        File.is_archived == False,  # Only active files count as duplicates
     )
 
     # Handle NULL vs empty string for relative_path
     if relative_path is None or relative_path == "":
         query = query.where(
-            (File.relative_path is None) | (File.relative_path == "")
+            (File.relative_path == None) | (File.relative_path == "")
         )
     else:
         query = query.where(File.relative_path == relative_path)
