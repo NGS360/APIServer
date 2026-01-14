@@ -350,6 +350,21 @@ class MockS3Client:
         return {"ETag": '"mock-etag"', "VersionId": "mock-version-id"}
 
 
+@pytest.fixture(name="test_project")
+def test_project_fixture(session):
+    """Provide a test project instance"""
+    from api.project.models import Project
+
+    project = Project(
+        project_id="P-19900109-0001",
+        name="Test Project"
+    )
+    session.add(project)
+    session.commit()
+    session.refresh(project)
+    return project
+
+
 @pytest.fixture(scope="session", autouse=True)
 def isolate_test_environment():
     """Isolate tests from production environment variables"""

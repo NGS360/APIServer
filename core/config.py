@@ -161,6 +161,10 @@ class Settings(BaseSettings):
         """Get AWS Region from env or secrets (defaults to us-east-1)"""
         return self._get_config_value("AWS_REGION", default="us-east-1")
 
+    # Options are from api.files.models.StorageBackend
+    STORAGE_BACKEND: str = os.getenv("STORAGE_BACKEND", "s3")
+    STORAGE_ROOT_PATH: str = os.getenv("STORAGE_URI", "s3://my-storage-bucket")
+
     # Read environment variables from .env file, if it exists
     # extra='ignore' prevents validation errors from extra env vars
     model_config = SettingsConfigDict(

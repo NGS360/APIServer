@@ -1,8 +1,8 @@
 """seed_system_settings
 
 Revision ID: 9e9141c05908
-Revises: 6c6c80d9aaeb
-Create Date: 2026-01-08 22:31:47.768783
+Revises: 07c0715af653
+Create Date: 2026-01-13 14:57:04.093577
 
 """
 from typing import Sequence, Union
@@ -17,7 +17,7 @@ from sqlalchemy.sql import insert
 
 # revision identifiers, used by Alembic.
 revision: str = '9e9141c05908'
-down_revision: Union[str, Sequence[str], None] = '6c6c80d9aaeb'
+down_revision: Union[str, Sequence[str], None] = '07c0715af653'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

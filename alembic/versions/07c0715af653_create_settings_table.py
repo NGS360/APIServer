@@ -1,8 +1,8 @@
-"""add_settings_table
+"""Create Settings table
 
-Revision ID: 6c6c80d9aaeb
-Revises: 424e0175e008
-Create Date: 2026-01-08 22:31:17.289225
+Revision ID: 07c0715af653
+Revises: e158df5a8df1
+Create Date: 2026-01-13 14:57:04.093577
 
 """
 from typing import Sequence, Union
@@ -13,8 +13,8 @@ import sqlmodel
 
 
 # revision identifiers, used by Alembic.
-revision: str = '6c6c80d9aaeb'
-down_revision: Union[str, Sequence[str], None] = '424e0175e008'
+revision: str = '07c0715af653'
+down_revision: Union[str, Sequence[str], None] = 'e158df5a8df1'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
