@@ -28,6 +28,7 @@ from api.runs.models import (
     DemuxWorkflowConfig,
     DemuxWorkflowSubmitBody
 )
+from api.jobs.models import BatchJobPublic
 from api.runs import services
 
 router = APIRouter(prefix="/runs", tags=["Run Endpoints"])
@@ -168,14 +169,14 @@ def list_demultiplex_workflows(
 
 @router.post(
     "/demultiplex",
-    response_model=dict,
+    response_model=BatchJobPublic,
     tags=["Run Endpoints"],
 )
 def submit_demultiplex_workflow_job(
     session: SessionDep,
     workflow_body: DemuxWorkflowSubmitBody,
     s3_client=Depends(get_s3_client),
-) -> dict:
+) -> BatchJobPublic:
     """
     Submit a job for the specified demultiplex workflow.
     Args:
@@ -184,9 +185,11 @@ def submit_demultiplex_workflow_job(
             workflow_id, run_barcode, and inputs
         s3_client: S3 client for accessing workflow configs
     Returns:
-        A dictionary containing job submission details.
+        BatchJobPublic: The created batch job with AWS job information.
     """
-    return services.submit_job(session=session, workflow_body=workflow_body, s3_client=s3_client)
+    return services.submit_demux_job(
+        session=session, workflow_body=workflow_body, s3_client=s3_client
+    )
 
 
 @router.get("/demultiplex/{workflow_id}", response_model=DemuxWorkflowConfig, tags=["Run Endpoints"])

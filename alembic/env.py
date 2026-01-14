@@ -14,6 +14,7 @@ from api.project.models import Project
 from api.runs.models import SequencingRun
 from api.vendors.models import Vendor
 from api.workflow.models import Workflow, WorkflowAttribute
+from api.jobs.models import BatchJob
 
 # Import Base from your SQLModel setup
 #from core.db import Base

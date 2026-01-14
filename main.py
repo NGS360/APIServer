@@ -9,6 +9,7 @@ from core.lifespan import lifespan
 from core.config import get_settings
 
 from api.files.routes import router as files_router
+from api.jobs.routes import router as jobs_router
 from api.project.routes import router as project_router
 from api.runs.routes import router as runs_router
 from api.samples.routes import router as samples_router
@@ -58,6 +59,7 @@ def health_check():
 API_PREFIX = "/api/v1"
 
 app.include_router(files_router, prefix=API_PREFIX)
+app.include_router(jobs_router, prefix=API_PREFIX)
 app.include_router(project_router, prefix=API_PREFIX)
 app.include_router(runs_router, prefix=API_PREFIX)
 app.include_router(samples_router, prefix=API_PREFIX)

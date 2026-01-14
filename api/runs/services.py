@@ -4,7 +4,7 @@ Services for managing sequencing runs.
 import json
 import yaml
 import boto3
-import botocore
+
 from typing import List, Literal, Dict, Any
 from sqlmodel import select, Session, func
 from pydantic import PositiveInt
@@ -17,9 +17,7 @@ from jinja2.sandbox import SandboxedEnvironment
 
 from sample_sheet import SampleSheet as IlluminaSampleSheet
 
-from core.config import get_settings
 from core.utils import define_search_body
-from core.logger import logger
 
 from api.runs.models import (
     DemuxWorkflowConfig,
@@ -36,6 +34,8 @@ from api.search.services import add_object_to_index, delete_index
 from api.search.models import (
     SearchDocument,
 )
+from api.jobs.services import submit_batch_job
+from api.jobs.models import BatchJobPublic
 from api.settings.services import get_setting_value
 
 
@@ -646,48 +646,9 @@ def interpolate(str_in: str, inputs: Dict[str, Any]) -> str:
     return str_out
 
 
-def _submit_job(
-    session: Session,
-    job_name: str,
-    container_overrides: Dict[str, Any],
-    job_def: str,
-    job_queue: str
-) -> dict:
-    """
-    Submit a job to AWS Batch, and return the job id.
-
-    Args:
-        session: Database session for retrieving AWS settings
-        job_name: Name of the job to submit
-        container_overrides: Container configuration overrides
-        job_def: Job definition name
-        job_queue: Job queue name
-    """
-    logger.info(
-        f"Submitting job '{job_name}' to AWS Batch queue '{job_queue}' "
-        f"with definition '{job_def}'"
-    )
-    logger.info(f"Container overrides: {container_overrides}")
-
-    try:
-        batch_client = boto3.client("batch", region_name=get_settings().AWS_REGION)
-        response = batch_client.submit_job(
-            jobName=job_name,
-            jobQueue=job_queue,
-            jobDefinition=job_def,
-            containerOverrides=container_overrides,
-        )
-    except botocore.exceptions.ClientError as err:
-        logger.error(f"Failed to submit job to AWS Batch: {err}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to submit job to AWS Batch: {err}",
-        ) from err
-
-    return response
-
-
-def submit_job(session: Session, workflow_body: DemuxWorkflowSubmitBody, s3_client=None) -> dict:
+def submit_demux_job(
+    session: Session, workflow_body: DemuxWorkflowSubmitBody, s3_client=None
+) -> BatchJobPublic:
     """
     Submit an AWS Batch job for the specified demultiplex workflow.
 
@@ -697,8 +658,9 @@ def submit_job(session: Session, workflow_body: DemuxWorkflowSubmitBody, s3_clie
                    run_barcode, and inputs
         s3_client: Optional boto3 S3 client
     Returns:
-        A dictionary containing job submission details.
+        BatchJobPublic: The created batch job with AWS job information.
     """
+    # Get tool config
     tool_config = get_demux_workflow_config(
         session=session, workflow_id=workflow_body.workflow_id, s3_client=s3_client
     )
@@ -726,16 +688,17 @@ def submit_job(session: Session, workflow_body: DemuxWorkflowSubmitBody, s3_clie
         ],
     }
 
-    # Submit the job to AWS Batch
-    response = _submit_job(
+    # TODO: Extract user from request context when authentication is implemented
+    user = "system"
+
+    # Submit the job to AWS Batch and create database record
+    batch_job = submit_batch_job(
         session=session,
         job_name=job_name,
         container_overrides=container_overrides,
         job_def=tool_config.aws_batch.job_definition,
         job_queue=tool_config.aws_batch.job_queue,
+        user=user,
     )
 
-    if 'jobId' in response:
-        response['jobCommand'] = command
-
-    return response
+    return BatchJobPublic.model_validate(batch_job)

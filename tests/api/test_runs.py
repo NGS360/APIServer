@@ -902,62 +902,13 @@ class TestDemuxWorkflowConfigModels:
         assert input_config.type == InputType.BOOLEAN
         assert input_config.default is False
 
-    def test_aws_batch_environment_model(self):
-        """Test AwsBatchEnvironment model"""
-        from api.runs.models import AwsBatchEnvironment
-
-        env = AwsBatchEnvironment(
-            name="MY_VAR",
-            value="my_value"
-        )
-        assert env.name == "MY_VAR"
-        assert env.value == "my_value"
-
-    def test_aws_batch_config_minimal(self):
-        """Test AwsBatchConfig with minimal required fields"""
-        from api.runs.models import AwsBatchConfig
-
-        aws_config = AwsBatchConfig(
-            job_name="test-job",
-            job_definition="test-def:1",
-            job_queue="test-queue",
-            command="run.sh",
-        )
-        assert aws_config.job_name == "test-job"
-        assert aws_config.job_definition == "test-def:1"
-        assert aws_config.job_queue == "test-queue"
-        assert aws_config.command == "run.sh"
-        assert aws_config.environment is None
-
-    def test_aws_batch_config_with_environment(self):
-        """Test AwsBatchConfig with environment variables"""
-        from api.runs.models import AwsBatchEnvironment, AwsBatchConfig
-
-        env_vars = [
-            AwsBatchEnvironment(name="VAR1", value="value1"),
-            AwsBatchEnvironment(name="VAR2", value="value2"),
-        ]
-
-        aws_config = AwsBatchConfig(
-            job_name="test-job",
-            job_definition="test-def:1",
-            job_queue="test-queue",
-            command="run.sh",
-            environment=env_vars,
-        )
-
-        assert len(aws_config.environment) == 2
-        assert aws_config.environment[0].name == "VAR1"
-        assert aws_config.environment[1].value == "value2"
-
     def test_demux_workflow_config_complete_with_aws_batch(self):
         """Test complete DemuxWorkflowConfig with aws_batch"""
+        from api.jobs.models import AwsBatchEnvironment, AwsBatchConfig
         from api.runs.models import (
             DemuxWorkflowConfig,
             DemuxWorkflowConfigInput,
             DemuxWorkflowTag,
-            AwsBatchEnvironment,
-            AwsBatchConfig,
             InputType
         )
 
@@ -1106,10 +1057,13 @@ aws_batch:
 
         assert response.status_code == 200
         data = response.json()
-        assert data["jobId"] == "test-job-123"
-        assert data["jobName"] == "cellranger-mkfastq-test-run"
-        assert "jobCommand" in data
-        assert data["jobCommand"] == "mkfastq.sh"
+        assert data["aws_job_id"] == "test-job-123"
+        assert data["name"] == "cellranger-mkfastq-test-run"
+        assert "command" in data
+        assert data["command"] == "mkfastq.sh"
+        assert "id" in data
+        assert "status" in data
+        assert data["user"] == "system"
 
     def test_submit_job_with_jinja_expressions(
         self, client: TestClient, mock_s3_client, monkeypatch
@@ -1179,8 +1133,10 @@ aws_batch:
         data = response.json()
 
         # Verify Jinja2 expression was evaluated correctly
-        assert data["jobName"] == "test-file.txt-5000"
-        assert data["jobCommand"] == "run.sh 5000"
+        assert data["name"] == "test-file.txt-5000"
+        assert data["command"] == "run.sh 5000"
+        assert data["aws_job_id"] == "job-456"
+        assert data["user"] == "system"
 
         # Verify container overrides
         assert "containerOverrides" in captured_submit_args
@@ -1363,7 +1319,9 @@ aws_batch:
 
         assert response.status_code == 200
         data = response.json()
-        assert data["jobId"] == "job-789"
+        assert data["aws_job_id"] == "job-789"
+        assert data["name"] == "no-env-job"
+        assert data["user"] == "system"
 
         # Verify environment is empty list
         overrides = captured_submit_args["containerOverrides"]
@@ -1463,7 +1421,9 @@ aws_batch:
 
         assert response.status_code == 200
         data = response.json()
-        assert data["jobName"] == "complex-test_string-42"
+        assert data["name"] == "complex-test_string-42"
+        assert data["aws_job_id"] == "job-complex"
+        assert data["user"] == "system"
 
         # Verify environment variables have correct values
         overrides = captured_submit_args["containerOverrides"]
