@@ -4,7 +4,7 @@ Models for the Project API
 
 import uuid
 from sqlmodel import SQLModel, Field, Relationship, UniqueConstraint
-from typing import List, Dict, Literal, Any, TYPE_CHECKING
+from typing import List, Dict, Any, TYPE_CHECKING
 from pydantic import ConfigDict
 
 if TYPE_CHECKING:
@@ -42,6 +42,14 @@ class ProjectCreate(SQLModel):
     name: str
     attributes: List[Attribute] | None = None
     model_config = ConfigDict(extra="forbid")
+
+
+class ProjectUpdate(SQLModel):
+    """
+    Represents the data that can be updated for a project
+    """
+    name: str | None = None
+    attributes: List[Attribute] | None = None
 
 
 class ProjectPublic(SQLModel):

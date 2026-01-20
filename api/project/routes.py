@@ -7,6 +7,7 @@ from fastapi import APIRouter, Query, status, Depends
 from core.deps import SessionDep, OpenSearchDep, get_s3_client
 from api.project.models import (
     ProjectCreate,
+    ProjectUpdate,
     ProjectPublic,
     ProjectsPublic,
     PipelineConfig,
@@ -253,7 +254,7 @@ def get_project_types(
     Args:
         action: The project action
         platform: The platform
-        
+
     Returns:
         List of project types with label, value, and project_type
     """
@@ -277,6 +278,28 @@ def get_project_by_project_id(session: SessionDep, project_id: str) -> ProjectPu
     """
     return services.get_project_by_project_id(session=session, project_id=project_id)
 
+
+@router.put(
+    "/{project_id}",
+    response_model=ProjectPublic,
+    status_code=status.HTTP_200_OK,
+    tags=["Project Endpoints"],
+)
+def update_project(
+    session: SessionDep,
+    opensearch_client: OpenSearchDep,
+    project_id: str,
+    update_request: ProjectUpdate,
+) -> ProjectPublic:
+    """
+    Update information about a specific project.
+    """
+    return services.update_project(
+        session=session,
+        opensearch_client=opensearch_client,
+        project_id=project_id,
+        update_request=update_request,
+    )
 
 ###############################################################################
 # Samples Endpoints /api/v1/projects/{project_id}/samples

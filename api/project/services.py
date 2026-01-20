@@ -19,6 +19,7 @@ from api.project.models import (
     Project,
     ProjectAttribute,
     ProjectCreate,
+    ProjectUpdate,
     ProjectPublic,
     ProjectsPublic,
     PipelineConfig,
@@ -181,6 +182,84 @@ def get_project_by_project_id(session: Session, project_id: str) -> ProjectPubli
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Project {project_id} not found.",
         )
+
+    data_bucket = get_setting_value(session, "DATA_BUCKET_URI")
+    results_bucket = get_setting_value(session, "RESULTS_BUCKET_URI")
+
+    return ProjectPublic(
+        project_id=project.project_id,
+        name=project.name,
+        data_folder_uri=f"{data_bucket}/{project.project_id}/",
+        results_folder_uri=f"{results_bucket}/{project.project_id}/",
+        attributes=project.attributes,
+    )
+
+
+def update_project(
+    *,
+    session: Session,
+    opensearch_client: OpenSearch,
+    project_id: str,
+    update_request: ProjectUpdate,
+) -> ProjectPublic:
+    """
+    Update an existing project with optional name and attributes.
+    """
+    # Fetch the project
+    project = session.exec(
+        select(Project).where(Project.project_id == project_id)
+    ).first()
+
+    if not project:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Project {project_id} not found.",
+        )
+
+    # Update name if provided
+    if update_request.name is not None:
+        project.name = update_request.name
+
+    # Handle attributes if provided
+    if update_request.attributes is not None:
+        # Prevent duplicate keys
+        seen = set()
+        keys = [attr.key for attr in update_request.attributes]
+        dups = [k for k in keys if k in seen or seen.add(k)]
+        if dups:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Duplicate keys ({', '.join(dups)}) are not allowed in project attributes.",
+            )
+
+        # Delete all existing attributes for this project
+        existing_attributes = session.exec(
+            select(ProjectAttribute).where(
+                ProjectAttribute.project_id == project.id
+            )
+        ).all()
+        for existing_attr in existing_attributes:
+            session.delete(existing_attr)
+
+        # Flush to execute DELETEs before INSERTs to avoid constraint violations
+        session.flush()
+
+        # Add new attributes
+        for attr in update_request.attributes:
+            new_attr = ProjectAttribute(
+                project_id=project.id,
+                key=attr.key,
+                value=attr.value,
+            )
+            session.add(new_attr)
+
+    session.commit()
+    session.refresh(project)
+
+    # Update project in opensearch
+    if opensearch_client:
+        search_doc = SearchDocument(id=project.project_id, body=project)
+        add_object_to_index(opensearch_client, search_doc, index="projects")
 
     data_bucket = get_setting_value(session, "DATA_BUCKET_URI")
     results_bucket = get_setting_value(session, "RESULTS_BUCKET_URI")
@@ -363,7 +442,7 @@ def get_workflow_config(
     Returns:
         PipelineConfig object
     """
-    
+
     bucket, prefix = _get_workflow_configs_s3_location(session)
 
     try:
@@ -394,7 +473,7 @@ def get_workflow_config(
 
         # Parse YAML
         config_data = yaml.safe_load(yaml_content)
-        
+
         # Add workflow_id to the data
         config_data["workflow_id"] = workflow_id
 
@@ -445,10 +524,10 @@ def get_all_workflow_configs(
     Returns:
         PipelineConfigsResponse with list of all configs
     """
-    
+
     # Get list of workflow IDs
     workflow_ids = list_workflow_configs(session=session, s3_client=s3_client)
-    
+
     # Fetch and parse each config
     configs = []
     for workflow_id in workflow_ids:
@@ -459,11 +538,11 @@ def get_all_workflow_configs(
                 s3_client=s3_client
             )
             configs.append(config)
-        except HTTPException as e:
+        except HTTPException:
             # Log but continue with other configs
             # Could add logging here
             continue
-    
+
     return PipelineConfigsResponse(
         configs=configs,
         total=len(configs)
@@ -478,13 +557,13 @@ def get_project_types_for_action_and_platform(
 ) -> list[dict[str, str]]:
     """
     Get available project types based on action and platform.
-    
+
     Args:
         session: Database session
         action: The action type
         platform: The platform name
         s3_client: Optional boto3 S3 client
-        
+
     Returns:
         List of dictionaries with project type information
     """
@@ -493,26 +572,26 @@ def get_project_types_for_action_and_platform(
         'arvados': 'Arvados',
         'sevenbridges': 'SevenBridges'
     }
-    
+
     platform_key = platform_map.get(platform.lower())
     if not platform_key:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Invalid platform: {platform}. Must be 'arvados' or 'sevenbridges'"
         )
-    
+
     # Get all workflow configs
     all_configs = get_all_workflow_configs(session=session, s3_client=s3_client)
-    
+
     result = []
-    
+
     for config in all_configs.configs:
         # Check if the platform exists in this config
         if platform_key not in config.platforms:
             continue
-            
+
         platform_config = config.platforms[platform_key]
-        
+
         if action == 'export-project-results':
             # For export action, return the exports list
             if platform_config.exports:
@@ -524,7 +603,7 @@ def get_project_types_for_action_and_platform(
                             'value': value,
                             'project_type': config.project_type
                         })
-        
+
         elif action == 'create-project':
             # For create action, return the project_type if platform is listed
             result.append({
@@ -532,7 +611,7 @@ def get_project_types_for_action_and_platform(
                 'value': config.project_type,
                 'project_type': config.project_type
             })
-    
+
     # Remove duplicates based on label and value
     unique_results = []
     seen = set()
@@ -541,5 +620,5 @@ def get_project_types_for_action_and_platform(
         if key not in seen:
             seen.add(key)
             unique_results.append(item)
-    
+
     return unique_results
