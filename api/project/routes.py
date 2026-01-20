@@ -3,9 +3,16 @@ Routes/endpoints for the Project API
 """
 
 from typing import Literal
-from fastapi import APIRouter, Query, status
-from core.deps import SessionDep, OpenSearchDep
-from api.project.models import ProjectCreate, ProjectPublic, ProjectsPublic
+from fastapi import APIRouter, Query, status, Depends
+from core.deps import SessionDep, OpenSearchDep, get_s3_client
+from api.project.models import (
+    ProjectCreate,
+    ProjectPublic,
+    ProjectsPublic,
+    PipelineConfig,
+    PipelineConfigsResponse,
+    ProjectOption,
+)
 from api.samples.models import SampleCreate, SamplePublic, SamplesPublic, Attribute
 from api.project import services
 from api.samples import services as sample_services
@@ -112,6 +119,150 @@ def reindex_projects(
     """
     services.reindex_projects(session, client)
     return 'OK'
+
+###############################################################################
+# Project Endpoints /api/v1/projects/workflows
+###############################################################################
+
+
+@router.get("/workflows", response_model=list[str], tags=["Project Endpoints"])
+def list_workflow_configs(
+    session: SessionDep,
+    s3_client=Depends(get_s3_client),
+) -> list[str]:
+    """
+    List all available project workflow configs from S3.
+
+    Returns a list of workflow IDs (config filenames without extensions).
+    """
+    return services.list_workflow_configs(session=session, s3_client=s3_client)
+
+
+@router.get(
+    "/workflows/configs",
+    response_model=PipelineConfigsResponse,
+    tags=["Project Endpoints"],
+)
+def get_all_workflow_configs(
+    session: SessionDep,
+    s3_client=Depends(get_s3_client),
+) -> PipelineConfigsResponse:
+    """
+    Retrieve and parse all project workflow configurations from S3.
+
+    Returns:
+        PipelineConfigsResponse containing all parsed workflow configurations
+    """
+    return services.get_all_workflow_configs(session=session, s3_client=s3_client)
+
+
+@router.get(
+    "/workflows/{workflow_id}",
+    response_model=PipelineConfig,
+    tags=["Project Endpoints"],
+)
+def get_workflow_config(
+    workflow_id: str,
+    session: SessionDep,
+    s3_client=Depends(get_s3_client),
+) -> PipelineConfig:
+    """
+    Retrieve a specific workflow configuration.
+
+    Args:
+        workflow_id: The workflow identifier (filename without extension)
+
+    Returns:
+        Complete workflow configuration
+    """
+    return services.get_workflow_config(
+        session=session, workflow_id=workflow_id, s3_client=s3_client
+    )
+
+
+@router.get(
+    "/actions",
+    response_model=list[ProjectOption],
+    tags=["Project Endpoints"],
+)
+def get_project_actions() -> list[ProjectOption]:
+    """
+    Get available project actions.
+
+    Returns:
+        List of available project actions with labels, values, and descriptions
+    """
+    return [
+        ProjectOption(
+            label="Create Project",
+            value="create-project",
+            description="Create a new project in one of the supported platforms",
+        ),
+        ProjectOption(
+            label="Export Project Results",
+            value="export-project-results",
+            description="Export the project results from one of the supported platforms",
+        ),
+    ]
+
+
+@router.get(
+    "/platforms",
+    response_model=list[ProjectOption],
+    tags=["Project Endpoints"],
+)
+def get_project_platforms() -> list[ProjectOption]:
+    """
+    Get available project platforms.
+
+    Returns:
+        List of available platforms with labels, values, and descriptions
+    """
+    return [
+        ProjectOption(
+            label="Arvados",
+            value="arvados",
+            description="Arvados platform",
+        ),
+        ProjectOption(
+            label="SevenBridges",
+            value="sevenbridges",
+            description="SevenBridges platform",
+        ),
+    ]
+
+
+@router.get(
+    "/types",
+    response_model=list[dict],
+    tags=["Project Endpoints"],
+)
+def get_project_types(
+    session: SessionDep,
+    action: Literal["create-project", "export-project-results"] = Query(
+        description="Project action"
+    ),
+    platform: Literal["arvados", "sevenbridges"] = Query(
+        description="Project platform"
+    ),
+    s3_client=Depends(get_s3_client),
+) -> list[dict]:
+    """
+    Get available project types based on action and platform.
+
+    Args:
+        action: The project action
+        platform: The platform
+        
+    Returns:
+        List of project types with label, value, and project_type
+    """
+    return services.get_project_types_for_action_and_platform(
+        session=session,
+        action=action,
+        platform=platform,
+        s3_client=s3_client
+    )
 
 ###############################################################################
 # Project Endpoints /api/v1/projects/{project_id}

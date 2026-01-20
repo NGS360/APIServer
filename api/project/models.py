@@ -4,7 +4,7 @@ Models for the Project API
 
 import uuid
 from sqlmodel import SQLModel, Field, Relationship, UniqueConstraint
-from typing import List, TYPE_CHECKING
+from typing import List, Dict, Literal, Any, TYPE_CHECKING
 from pydantic import ConfigDict
 
 if TYPE_CHECKING:
@@ -60,3 +60,41 @@ class ProjectsPublic(SQLModel):
     per_page: int
     has_next: bool
     has_prev: bool
+
+
+class PipelineInput(SQLModel):
+    """Model for pipeline input configuration."""
+    name: str
+    desc: str
+    type: str
+    default: Any = None
+
+
+class PlatformConfig(SQLModel):
+    """Model for platform-specific configuration (Arvados, SevenBridges, etc)."""
+    launchers: str | List[str] | None = None
+    exports: List[Dict[str, str]] | None = None
+    export_command: str | None = None
+
+
+class PipelineConfig(SQLModel):
+    """Model for pipeline workflow configuration."""
+    workflow_id: str | None = None
+    project_type: str
+    project_admins: List[str]
+    inputs: List[PipelineInput] | None = None
+    platforms: Dict[str, PlatformConfig]
+    export_command: str | None = None
+
+
+class PipelineConfigsResponse(SQLModel):
+    """Response model for list of pipeline workflow configurations."""
+    configs: List[PipelineConfig]
+    total: int
+
+
+class ProjectOption(SQLModel):
+    """Model for project option"""
+    label: str
+    value: str
+    description: str
