@@ -8,6 +8,8 @@ from fastapi.routing import APIRoute
 from core.lifespan import lifespan
 from core.config import get_settings
 
+from api.auth.routes import router as auth_router
+from api.auth.oauth_routes import router as oauth_router
 from api.files.routes import router as files_router
 from api.jobs.routes import router as jobs_router
 from api.project.routes import router as project_router
@@ -58,6 +60,11 @@ def health_check():
 # Add each api/feature folder here
 API_PREFIX = "/api/v1"
 
+# Authentication routers (no auth required)
+app.include_router(auth_router, prefix=API_PREFIX)
+app.include_router(oauth_router, prefix=API_PREFIX)
+
+# Feature routers
 app.include_router(files_router, prefix=API_PREFIX)
 app.include_router(jobs_router, prefix=API_PREFIX)
 app.include_router(project_router, prefix=API_PREFIX)
