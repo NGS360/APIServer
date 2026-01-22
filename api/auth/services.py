@@ -19,6 +19,25 @@ from core.config import get_settings
 from core.email import send_password_reset_email, send_verification_email
 
 
+def ensure_timezone_aware(dt: datetime | None) -> datetime | None:
+    """
+    Ensure datetime is timezone-aware (UTC).
+    SQLite stores datetimes without timezone info, so we need to add it back.
+    
+    Args:
+        dt: Datetime that may be naive or aware
+        
+    Returns:
+        Timezone-aware datetime in UTC, or None if input is None
+    """
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        # Assume UTC for naive datetimes from database
+        return dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
 def authenticate_user(
     session: Session, email: str, password: str
 ) -> User | None:
@@ -41,7 +60,8 @@ def authenticate_user(
         return None
 
     # Check if account is locked
-    if user.locked_until and user.locked_until > datetime.now(timezone.utc):
+    locked_until = ensure_timezone_aware(user.locked_until)
+    if locked_until and locked_until > datetime.now(timezone.utc):
         raise HTTPException(
             status_code=status.HTTP_423_LOCKED,
             detail=(
@@ -154,7 +174,8 @@ def refresh_access_token(session: Session, refresh_token_str: str) -> dict:
         )
 
     # Check if expired
-    if refresh_token.expires_at < datetime.now(timezone.utc):
+    expires_at = ensure_timezone_aware(refresh_token.expires_at)
+    if expires_at < datetime.now(timezone.utc):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Refresh token expired"
@@ -292,7 +313,8 @@ def complete_password_reset(
         )
 
     # Check if expired
-    if reset_token.expires_at < datetime.now(timezone.utc):
+    expires_at = ensure_timezone_aware(reset_token.expires_at)
+    if expires_at < datetime.now(timezone.utc):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Reset token has expired"
@@ -371,7 +393,8 @@ def verify_email(session: Session, token_str: str) -> bool:
             detail="Invalid or already used verification token"
         )
 
-    if verification_token.expires_at < datetime.now(timezone.utc):
+    expires_at = ensure_timezone_aware(verification_token.expires_at)
+    if expires_at < datetime.now(timezone.utc):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Verification token has expired"
