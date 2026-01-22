@@ -137,7 +137,7 @@ class UserRegister(SQLModel):
     """User registration request"""
     email: EmailStr
     username: str = Field(min_length=3, max_length=50)
-    password: str = Field(min_length=8, max_length=100)
+    password: str = Field(max_length=100)  # Validation done in service layer
     full_name: str | None = None
 
 
@@ -168,13 +168,13 @@ class PasswordResetRequest(SQLModel):
 class PasswordResetConfirm(SQLModel):
     """Password reset confirmation"""
     token: str
-    new_password: str = Field(min_length=8, max_length=100)
+    new_password: str = Field(max_length=100)  # Validation in service layer
 
 
 class PasswordChange(SQLModel):
     """Password change request"""
     current_password: str
-    new_password: str = Field(min_length=8, max_length=100)
+    new_password: str = Field(max_length=100)  # Validation in service layer
 
 
 class EmailVerificationRequest(SQLModel):
