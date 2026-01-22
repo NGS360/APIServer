@@ -7,11 +7,11 @@ import secrets
 import uuid
 
 from passlib.context import CryptContext
-from jose import JWTError, jwt
-from sqlmodel import Session, select
+from jose import jwt
+from sqlmodel import Session
 
 from core.config import get_settings
-from api.auth.models import RefreshToken, User
+from api.auth.models import RefreshToken
 
 # Password hashing context
 # Configure bcrypt to handle Python 3.13 compatibility

@@ -170,7 +170,10 @@ class Settings(BaseSettings):
     @property
     def JWT_SECRET_KEY(self) -> str:
         """Get JWT secret key from env or secrets"""
-        return self._get_config_value("JWT_SECRET_KEY", default="change-this-secret-key-in-production")
+        return self._get_config_value(
+            "JWT_SECRET_KEY",
+            default="change-this-secret-key-in-production"
+        )
 
     @computed_field
     @property

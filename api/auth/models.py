@@ -4,7 +4,7 @@ Authentication models for users, tokens, and OAuth providers
 from datetime import datetime, timezone
 from enum import Enum
 import uuid
-from sqlmodel import Field, SQLModel, Relationship
+from sqlmodel import Field, SQLModel
 from pydantic import EmailStr, ConfigDict
 
 
