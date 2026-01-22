@@ -23,10 +23,10 @@ def ensure_timezone_aware(dt: datetime | None) -> datetime | None:
     """
     Ensure datetime is timezone-aware (UTC).
     SQLite stores datetimes without timezone info, so we need to add it back.
-    
+
     Args:
         dt: Datetime that may be naive or aware
-        
+
     Returns:
         Timezone-aware datetime in UTC, or None if input is None
     """
