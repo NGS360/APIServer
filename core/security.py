@@ -14,7 +14,13 @@ from core.config import get_settings
 from api.auth.models import RefreshToken, User
 
 # Password hashing context
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+# Configure bcrypt to handle Python 3.13 compatibility
+pwd_context = CryptContext(
+    schemes=["bcrypt"],
+    deprecated="auto",
+    bcrypt__rounds=12,
+    bcrypt__ident="2b"
+)
 
 
 def hash_password(password: str) -> str:
