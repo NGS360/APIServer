@@ -432,6 +432,12 @@ def session_fixture():
                 name="Demux Workflow Configs Bucket URI",
                 description="Test demux workflow configs bucket"
             ),
+            Setting(
+                key="MANIFEST_VALIDATION_LAMBDA",
+                value="test-manifest-validation-lambda",
+                name="Manifest Validation Lambda",
+                description="Test Lambda function for manifest validation"
+            ),
         ]
         for setting in test_settings:
             session.add(setting)

@@ -3,6 +3,7 @@ Test /manifest endpoint
 """
 
 from datetime import datetime
+from unittest.mock import MagicMock, patch
 
 from fastapi.testclient import TestClient
 
@@ -637,10 +638,22 @@ class TestManifestUpload:
 class TestManifestValidation:
     """Test manifest validation endpoint"""
 
-    def test_validate_manifest_valid(self, client: TestClient):
+    @patch("api.manifest.services.boto3.client")
+    def test_validate_manifest_valid(self, mock_boto_client, client: TestClient):
         """Test validation endpoint with valid manifest (mock)"""
+        # Mock Lambda response for valid manifest
+        mock_lambda = MagicMock()
+        valid_response_json = (
+            b'{"valid": true, "message": {"ManifestVersion": "1.0"}, '
+            b'"error": {}, "warning": {}}'
+        )
+        mock_lambda.invoke.return_value = {
+            "Payload": MagicMock(read=lambda: valid_response_json)
+        }
+        mock_boto_client.return_value = mock_lambda
+
         response = client.post(
-            "/api/v1/manifest/validate?s3_path=s3://test-bucket/manifest.csv&valid=true"
+            "/api/v1/manifest/validate?s3_path=s3://test-bucket/manifest.csv"
         )
 
         # Verify successful response
@@ -666,10 +679,29 @@ class TestManifestValidation:
         # Should have manifest version message
         assert "ManifestVersion" in data["message"]
 
-    def test_validate_manifest_invalid(self, client: TestClient):
+        # Verify Lambda was invoked
+        mock_lambda.invoke.assert_called_once()
+
+    @patch("api.manifest.services.boto3.client")
+    def test_validate_manifest_invalid(self, mock_boto_client, client: TestClient):
         """Test validation endpoint with invalid manifest (mock)"""
+        # Mock Lambda response for invalid manifest
+        mock_lambda = MagicMock()
+        invalid_response_json = (
+            b'{"valid": false, "message": {"ManifestVersion": "1.0", '
+            b'"ExtraFields": "field1, field2"}, "error": '
+            b'{"InvalidFilePath": ["Invalid path at row 5"], '
+            b'"MissingRequiredField": ["sample_id missing at row 3"], '
+            b'"InvalidDataFormat": ["Invalid date format at row 2"]}, '
+            b'"warning": {"DuplicateSample": ["Duplicate sample ID: S001"]}}'
+        )
+        mock_lambda.invoke.return_value = {
+            "Payload": MagicMock(read=lambda: invalid_response_json)
+        }
+        mock_boto_client.return_value = mock_lambda
+
         response = client.post(
-            "/api/v1/manifest/validate?s3_path=s3://test-bucket/manifest.csv&valid=false"
+            "/api/v1/manifest/validate?s3_path=s3://test-bucket/manifest.csv"
         )
 
         # Verify successful response
@@ -710,8 +742,21 @@ class TestManifestValidation:
         assert "ManifestVersion" in data["message"]
         assert "ExtraFields" in data["message"]
 
-    def test_validate_manifest_default_valid(self, client: TestClient):
-        """Test validation endpoint defaults to valid=true"""
+        # Verify Lambda was invoked
+        mock_lambda.invoke.assert_called_once()
+
+    @patch("api.manifest.services.boto3.client")
+    def test_validate_manifest_default_valid(self, mock_boto_client, client: TestClient):
+        """Test validation endpoint with default Lambda response"""
+        # Mock Lambda response
+        mock_lambda = MagicMock()
+        mock_lambda.invoke.return_value = {
+            "Payload": MagicMock(
+                read=lambda: b'{"valid": true, "message": {}, "error": {}, "warning": {}}'
+            )
+        }
+        mock_boto_client.return_value = mock_lambda
+
         response = client.post(
             "/api/v1/manifest/validate?s3_path=s3://test-bucket/manifest.csv"
         )
@@ -721,7 +766,7 @@ class TestManifestValidation:
 
         data = response.json()
 
-        # Default should be valid
+        # Should process valid response
         assert data["valid"] is True
 
     def test_validate_manifest_missing_s3_path(self, client: TestClient):
@@ -731,17 +776,38 @@ class TestManifestValidation:
         # Verify 422 error (missing required parameter)
         assert response.status_code == 422
 
-    def test_validate_manifest_response_structure(self, client: TestClient):
+    @patch("api.manifest.services.boto3.client")
+    def test_validate_manifest_response_structure(self, mock_boto_client, client: TestClient):
         """Test that both valid and invalid responses match expected structure"""
+        # Mock Lambda for valid response
+        mock_lambda = MagicMock()
+        valid_json = (
+            b'{"valid": true, "message": {"ManifestVersion": "1.0"}, '
+            b'"error": {}, "warning": {}}'
+        )
+        mock_lambda.invoke.return_value = {
+            "Payload": MagicMock(read=lambda: valid_json)
+        }
+        mock_boto_client.return_value = mock_lambda
+
         # Test valid response
         valid_response = client.post(
-            "/api/v1/manifest/validate?s3_path=s3://test-bucket/manifest.csv&valid=true"
+            "/api/v1/manifest/validate?s3_path=s3://test-bucket/manifest.csv"
         )
         valid_data = valid_response.json()
 
+        # Mock Lambda for invalid response
+        invalid_json = (
+            b'{"valid": false, "message": {"ManifestVersion": "1.0"}, '
+            b'"error": {"InvalidFilePath": ["Error"]}, "warning": {}}'
+        )
+        mock_lambda.invoke.return_value = {
+            "Payload": MagicMock(read=lambda: invalid_json)
+        }
+
         # Test invalid response
         invalid_response = client.post(
-            "/api/v1/manifest/validate?s3_path=s3://test-bucket/manifest.csv&valid=false"
+            "/api/v1/manifest/validate?s3_path=s3://test-bucket/manifest.csv"
         )
         invalid_data = invalid_response.json()
 

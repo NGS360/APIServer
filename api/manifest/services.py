@@ -243,18 +243,18 @@ def validate_manifest_file(
 
     # Convert the payload dictionary to a JSON string and then to bytes
     payload_bytes = bytes(json.dumps({"s3_path": s3_path}), encoding='utf8')
- 
+
     # Initialize the Lambda client
     # Boto3 uses credentials from the environment or a configured profile
     client = boto3.client('lambda', region_name=get_settings().AWS_REGION)
- 
+
     # Invoke the function
     response = client.invoke(
         FunctionName=lambda_function_name,
-        InvocationType='RequestResponse', # Use 'Event' for asynchronous invocation
+        InvocationType='RequestResponse',  # Use 'Event' for async invocation
         Payload=payload_bytes
     )
- 
+
     # Read and decode the payload from the response
     response_payload = json.loads(response['Payload'].read().decode('utf-8'))
     return ManifestValidationResponse.model_validate(response_payload)
