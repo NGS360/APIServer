@@ -79,11 +79,7 @@ def validate_manifest(
     session: SessionDep,
     s3_path: str = Query(
         ..., description="S3 path to the manifest CSV file to validate"
-    ),
-    valid: bool = Query(
-        True,
-        description="Mock validation result for testing (True=valid, False=invalid)"
-    ),
+    )
 ) -> ManifestValidationResponse:
     """
     Validate a manifest CSV file from S3.
@@ -95,10 +91,9 @@ def validate_manifest(
 
     Args:
         s3_path: S3 path to the manifest CSV file to validate
-        valid: Mock parameter to simulate valid or invalid responses for testing
 
     Returns:
         ManifestValidationResponse with validation status and any errors found
     """
-    result = services.validate_manifest_file(session, s3_path, valid)
+    result = services.validate_manifest_file(session, s3_path)
     return result

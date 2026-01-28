@@ -2,11 +2,13 @@
 Services for the Manifest API
 """
 
+import json
 from fastapi import HTTPException, status, UploadFile
 import boto3
 from botocore.exceptions import NoCredentialsError, ClientError
 from api.manifest.models import ManifestUploadResponse, ManifestValidationResponse
 from api.settings.services import get_setting_value
+from core.config import get_settings
 from core.deps import SessionDep
 from core.logger import logger
 
@@ -220,7 +222,7 @@ def upload_manifest_file(
 
 def validate_manifest_file(
     session: SessionDep,
-    s3_path: str, valid: bool = True
+    s3_path: str
 ) -> ManifestValidationResponse:
     """
     Validate a manifest CSV file from S3.
@@ -228,7 +230,6 @@ def validate_manifest_file(
     Args:
         session: Database session
         s3_path: S3 path to the manifest CSV file to validate
-        valid: Mock parameter to simulate valid or invalid responses for testing
 
     Returns:
         ManifestValidationResponse with validation status and any errors found
@@ -240,51 +241,20 @@ def validate_manifest_file(
     lambda_function_name = get_setting_value(session, "MANIFEST_VALIDATION_LAMBDA")
     logger.info(f"Invoking Lambda function: {lambda_function_name} for manifest validation")
 
-    # Placeholder for invoking the lambda function
-    # response = invoke_lambda(lambda_function_name, payload={"s3_path": s3_path})
-
-    if not valid:
-        # Return mock validation errors for testing
-        return ManifestValidationResponse(
-            valid=False,
-            message={
-                "ManifestVersion": "Validated against manifest version: DTS12.1",
-                "ExtraFields": (
-                    "See extra fields (info only): "
-                    "['VHYB', 'VLANE', 'VBARCODE']"
-                )
-            },
-            error={
-                "InvalidFilePath": [
-                    (
-                        "Unable to find file s3://example/example_1.clipped.fastq.gz "
-                        "described in row 182, check that file exists and is accessible"
-                    ),
-                    (
-                        "Unable to find file s3://example/example_2.clipped.fastq.gz "
-                        "described in row 183, check that file exists and is accessible"
-                    )
-                ],
-                "MissingRequiredField": [
-                    "Row 45 is missing required field 'SAMPLE_ID'",
-                    "Row 67 is missing required field 'FILE_PATH'"
-                ],
-                "InvalidDataFormat": [
-                    "Row 92: Invalid date format in field 'RUN_DATE', expected YYYY-MM-DD"
-                ]
-            },
-            warning={
-                "DuplicateSample": [
-                    "Sample 'ABC-123' appears multiple times in rows 10, 25, 42"
-                ]
-            }
-        )
-
-    return ManifestValidationResponse(
-        valid=True,
-        message={
-            "ManifestVersion": "Validated against manifest version: DTS12.1"
-        },
-        error={},
-        warning={}
+    # Convert the payload dictionary to a JSON string and then to bytes
+    payload_bytes = bytes(json.dumps({"s3_path": s3_path}), encoding='utf8')
+ 
+    # Initialize the Lambda client
+    # Boto3 uses credentials from the environment or a configured profile
+    client = boto3.client('lambda', region_name=get_settings().AWS_REGION)
+ 
+    # Invoke the function
+    response = client.invoke(
+        FunctionName=lambda_function_name,
+        InvocationType='RequestResponse', # Use 'Event' for asynchronous invocation
+        Payload=payload_bytes
     )
+ 
+    # Read and decode the payload from the response
+    response_payload = json.loads(response['Payload'].read().decode('utf-8'))
+    return ManifestValidationResponse.model_validate(response_payload)
