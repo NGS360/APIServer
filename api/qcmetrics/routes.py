@@ -38,8 +38,38 @@ def create_qcrecord(
 
     The record stores quality control metrics from a pipeline execution.
 
-    Right now - created_by is just a string username passed as a query parameter; once
-    authentication is in place, this will be derived from the logged-in user.
+    **Note:** Right now `created_by` is just a string username passed as a query parameter;
+    once authentication is in place, this will be derived from the logged-in user.
+
+    **Example curl command:**
+
+    ```bash
+    curl -X POST "http://localhost:8000/api/v1/qcmetrics?created_by=jsmith" \\
+      -H "Content-Type: application/json" \\
+      -d '{
+        "project_id": "P-1234",
+        "metadata": {
+          "pipeline": "RNA-Seq",
+          "version": "2.0.0"
+        },
+        "metrics": [
+          {
+            "name": "alignment_stats",
+            "samples": [{"sample_name": "Sample1"}],
+            "values": {"reads": "50000000", "alignment_rate": "95.5"}
+          }
+        ],
+        "output_files": [
+          {
+            "uri": "s3://bucket/path/file.bam",
+            "size": 123456789,
+            "samples": [{"sample_name": "Sample1"}],
+            "hash": {"md5": "abc123def456"},
+            "tags": {"type": "alignment"}
+          }
+        ]
+      }'
+    ```
 
     **Request body format:**
 

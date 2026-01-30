@@ -175,19 +175,19 @@ class MetricInput(SQLModel):
     """Input model for a metric group."""
     name: str
     samples: List[MetricSampleInput] | None = None
-    values: dict[str, str]  # {"reads": "50000000", "alignment_rate": "95.5"}
+    values: dict[str, str | int | float]  # {"reads": 50000000, "alignment_rate": 95.5}
 
 
 class QCRecordCreate(SQLModel):
     """
     Request model for creating a QC record.
 
-    Accepts both the new explicit format and backward-compatible formats.
+    Uses the explicit metrics format with sample associations supporting
+    workflow-level, single-sample, and paired-sample (tumor/normal) metrics.
     """
     project_id: str
     metadata: dict[str, str] | None = None  # {"pipeline": "RNA-Seq", "version": "2.0"}
-    metrics: List[MetricInput] | None = None  # New format with explicit sample associations
-    sample_level_metrics: dict[str, dict[str, str]] | None = None  # Legacy ES format
+    metrics: List[MetricInput] | None = None  # Metrics with explicit sample associations
     output_files: List[FileRecordCreate] | None = None
 
     model_config = ConfigDict(extra="forbid")

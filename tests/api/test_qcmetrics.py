@@ -413,23 +413,32 @@ def test_duplicate_detection(client: TestClient, session: Session):
     assert id1 == id2
 
 
-def test_legacy_sample_level_metrics_format(client: TestClient, session: Session):
+def test_numeric_metric_values(client: TestClient, session: Session):
     """
-    Test backward compatibility with the legacy ES format (sample_level_metrics).
+    Test that numeric metric values (int, float) are accepted and stored as strings.
+
+    This matches the legacy ES format where values like QC_ForwardReadCount=122483575
+    were numeric rather than string.
     """
     qcrecord_data = {
-        "project_id": "P-LEGACY-001",
+        "project_id": "P-NUMERIC-001",
         "metadata": {"pipeline": "RNA-Seq"},
-        "sample_level_metrics": {
-            "Sample1": {
-                "reads": "50000000",
-                "alignment_rate": "95.5"
-            },
-            "Sample2": {
-                "reads": "45000000",
-                "alignment_rate": "93.2"
+        "metrics": [
+            {
+                "name": "sample_qc_metrics",
+                "samples": [{"sample_name": "SampleA"}],
+                "values": {
+                    "QC_ForwardReadCount": 122483575,  # int
+                    "QC_ReverseReadCount": 122483575,  # int
+                    "QC_FractionContaminatedReads": 0,  # int (zero)
+                    "QC_MeanReadLength": 150,  # int
+                    "QC_FractionReadsAligned": 0.587,  # float
+                    "QC_StrandBalance": 0.5,  # float
+                    "QC_Median5Bias": 0.395753,  # float
+                    "QC_DynamicRange": 2452.4661796537  # float with high precision
+                }
             }
-        }
+        ]
     }
 
     response = client.post(
@@ -439,15 +448,52 @@ def test_legacy_sample_level_metrics_format(client: TestClient, session: Session
     assert response.status_code == 201
 
     data = response.json()
+    assert len(data["metrics"]) == 1
 
-    # Legacy format should be converted to metrics
-    assert len(data["metrics"]) == 2
+    metric = data["metrics"][0]
+    assert metric["name"] == "sample_qc_metrics"
+    assert len(metric["samples"]) == 1
+    assert metric["samples"][0]["sample_name"] == "SampleA"
 
-    # Check that sample names are preserved
-    metric_sample_names = set()
-    for metric in data["metrics"]:
-        for sample in metric["samples"]:
-            metric_sample_names.add(sample["sample_name"])
+    # Values should be stored as strings
+    values_dict = {v["key"]: v["value"] for v in metric["values"]}
+    assert values_dict["QC_ForwardReadCount"] == "122483575"
+    assert values_dict["QC_FractionReadsAligned"] == "0.587"
+    assert values_dict["QC_DynamicRange"] == "2452.4661796537"
 
-    assert "Sample1" in metric_sample_names
-    assert "Sample2" in metric_sample_names
+
+def test_mixed_string_and_numeric_values(client: TestClient, session: Session):
+    """
+    Test that both string and numeric values can be provided in the same metric.
+    """
+    qcrecord_data = {
+        "project_id": "P-MIXED-001",
+        "metadata": {"pipeline": "RNA-Seq"},
+        "metrics": [
+            {
+                "name": "alignment_stats",
+                "samples": [{"sample_name": "Sample1"}],
+                "values": {
+                    "total_reads": 50000000,  # numeric int
+                    "alignment_rate": 97.5,  # numeric float
+                    "reference_genome": "GRCh38",  # string
+                    "status": "passed"  # string
+                }
+            }
+        ]
+    }
+
+    response = client.post(
+        "/api/v1/qcmetrics?created_by=test_user",
+        json=qcrecord_data
+    )
+    assert response.status_code == 201
+
+    data = response.json()
+    values_dict = {v["key"]: v["value"] for v in data["metrics"][0]["values"]}
+
+    # All values should be strings in the response
+    assert values_dict["total_reads"] == "50000000"
+    assert values_dict["alignment_rate"] == "97.5"
+    assert values_dict["reference_genome"] == "GRCh38"
+    assert values_dict["status"] == "passed"

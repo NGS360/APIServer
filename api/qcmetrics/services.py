@@ -50,8 +50,8 @@ def create_qcrecord(
     """
     Create a new QC record with all associated data.
 
-    Handles both the new explicit format (metrics with samples) and
-    the legacy ES format (sample_level_metrics dict).
+    Metrics can have numeric values (int, float) which are stored as strings
+    in the database.
     """
     # Check for duplicate record
     existing = _check_duplicate_record(session, qcrecord_create)
@@ -82,20 +82,9 @@ def create_qcrecord(
             )
             session.add(metadata_entry)
 
-    # Add metrics (new format)
+    # Add metrics
     if qcrecord_create.metrics:
         for metric_input in qcrecord_create.metrics:
-            _create_metric(session, qcrecord.id, metric_input)
-
-    # Handle legacy sample_level_metrics format (ES compatibility)
-    if qcrecord_create.sample_level_metrics:
-        for sample_name, metrics_dict in qcrecord_create.sample_level_metrics.items():
-            # Convert to new format: one metric group per sample
-            metric_input = MetricInput(
-                name=f"sample_metrics_{sample_name}",
-                samples=[{"sample_name": sample_name}],
-                values=metrics_dict,
-            )
             _create_metric(session, qcrecord.id, metric_input)
 
     # Add output files
