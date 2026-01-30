@@ -69,6 +69,7 @@ app.include_router(settings_router, prefix=API_PREFIX)
 app.include_router(vendors_router, prefix=API_PREFIX)
 app.include_router(manifest_router, prefix=API_PREFIX)
 app.include_router(workflow_router, prefix=API_PREFIX)
+app.include_router(qcmetrics_router, prefix=API_PREFIX)
 
 
 if __name__ == "__main__":

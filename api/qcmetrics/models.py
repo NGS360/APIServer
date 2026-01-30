@@ -35,7 +35,7 @@ class QCRecordMetadata(SQLModel, table=True):
     value: str = Field(nullable=False)
 
     # Relationship back to parent
-    qcrecord: "QCRecord" = Relationship(back_populates="metadata")
+    qcrecord: "QCRecord" = Relationship(back_populates="pipeline_metadata")
 
     __table_args__ = (
         UniqueConstraint("qcrecord_id", "key", name="uq_qcrecordmetadata_record_key"),
@@ -136,7 +136,7 @@ class QCRecord(SQLModel, table=True):
     project_id: str = Field(max_length=50, nullable=False, index=True)
 
     # Relationships to child tables
-    metadata: List["QCRecordMetadata"] = Relationship(
+    pipeline_metadata: List["QCRecordMetadata"] = Relationship(
         back_populates="qcrecord",
         sa_relationship_kwargs={"cascade": "all, delete-orphan"}
     )
