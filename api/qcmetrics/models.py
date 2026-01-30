@@ -46,6 +46,9 @@ class QCMetricValue(SQLModel, table=True):
     """
     Key-value store for individual metric values within a metric group.
     Examples: reads=50000000, alignment_rate=95.5, tmb=8.5
+
+    The value_type column preserves the original Python type so values
+    can be returned in their original format (int, float, or str).
     """
     __tablename__ = "qcmetricvalue"
 
@@ -53,6 +56,7 @@ class QCMetricValue(SQLModel, table=True):
     qc_metric_id: uuid.UUID = Field(foreign_key="qcmetric.id", nullable=False)
     key: str = Field(max_length=255, nullable=False)
     value: str = Field(nullable=False)
+    value_type: str = Field(max_length=10, default="str")  # "str", "int", "float"
 
     # Relationship back to parent
     qc_metric: "QCMetric" = Relationship(back_populates="values")
@@ -194,9 +198,9 @@ class QCRecordCreate(SQLModel):
 
 
 class MetricValuePublic(SQLModel):
-    """Public representation of a metric value."""
+    """Public representation of a metric value with original type preserved."""
     key: str
-    value: str
+    value: str | int | float
 
 
 class MetricSamplePublic(SQLModel):

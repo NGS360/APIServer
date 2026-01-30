@@ -415,7 +415,8 @@ def test_duplicate_detection(client: TestClient, session: Session):
 
 def test_numeric_metric_values(client: TestClient, session: Session):
     """
-    Test that numeric metric values (int, float) are accepted and stored as strings.
+    Test that numeric metric values (int, float) are accepted and returned
+    with their original types preserved.
 
     This matches the legacy ES format where values like QC_ForwardReadCount=122483575
     were numeric rather than string.
@@ -455,16 +456,28 @@ def test_numeric_metric_values(client: TestClient, session: Session):
     assert len(metric["samples"]) == 1
     assert metric["samples"][0]["sample_name"] == "SampleA"
 
-    # Values should be stored as strings
+    # Values should be returned with their original types preserved
     values_dict = {v["key"]: v["value"] for v in metric["values"]}
-    assert values_dict["QC_ForwardReadCount"] == "122483575"
-    assert values_dict["QC_FractionReadsAligned"] == "0.587"
-    assert values_dict["QC_DynamicRange"] == "2452.4661796537"
+
+    # Integer values
+    assert values_dict["QC_ForwardReadCount"] == 122483575
+    assert isinstance(values_dict["QC_ForwardReadCount"], int)
+    assert values_dict["QC_FractionContaminatedReads"] == 0
+    assert isinstance(values_dict["QC_FractionContaminatedReads"], int)
+    assert values_dict["QC_MeanReadLength"] == 150
+    assert isinstance(values_dict["QC_MeanReadLength"], int)
+
+    # Float values
+    assert values_dict["QC_FractionReadsAligned"] == 0.587
+    assert isinstance(values_dict["QC_FractionReadsAligned"], float)
+    assert values_dict["QC_DynamicRange"] == 2452.4661796537
+    assert isinstance(values_dict["QC_DynamicRange"], float)
 
 
 def test_mixed_string_and_numeric_values(client: TestClient, session: Session):
     """
-    Test that both string and numeric values can be provided in the same metric.
+    Test that both string and numeric values can be provided in the same metric,
+    and each is returned with its original type.
     """
     qcrecord_data = {
         "project_id": "P-MIXED-001",
@@ -492,8 +505,14 @@ def test_mixed_string_and_numeric_values(client: TestClient, session: Session):
     data = response.json()
     values_dict = {v["key"]: v["value"] for v in data["metrics"][0]["values"]}
 
-    # All values should be strings in the response
-    assert values_dict["total_reads"] == "50000000"
-    assert values_dict["alignment_rate"] == "97.5"
+    # Numeric values returned with original types
+    assert values_dict["total_reads"] == 50000000
+    assert isinstance(values_dict["total_reads"], int)
+    assert values_dict["alignment_rate"] == 97.5
+    assert isinstance(values_dict["alignment_rate"], float)
+
+    # String values remain as strings
     assert values_dict["reference_genome"] == "GRCh38"
+    assert isinstance(values_dict["reference_genome"], str)
     assert values_dict["status"] == "passed"
+    assert isinstance(values_dict["status"], str)

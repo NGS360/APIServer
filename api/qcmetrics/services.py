@@ -135,12 +135,24 @@ def _create_metric(
             )
             session.add(sample_assoc)
 
-    # Add metric values
+    # Add metric values with type preservation
     for key, value in metric_input.values.items():
+        # Determine the original type
+        if isinstance(value, bool):
+            # bool is subclass of int, so check first
+            value_type = "str"  # Store bools as strings
+        elif isinstance(value, int):
+            value_type = "int"
+        elif isinstance(value, float):
+            value_type = "float"
+        else:
+            value_type = "str"
+
         metric_value = QCMetricValue(
             qc_metric_id=metric.id,
             key=key,
             value=str(value),
+            value_type=value_type,
         )
         session.add(metric_value)
 
@@ -372,6 +384,15 @@ def delete_qcrecord(session: Session, qcrecord_id: str) -> dict:
     return {"status": "deleted", "id": qcrecord_id}
 
 
+def _convert_value_to_type(value: str, value_type: str) -> str | int | float:
+    """Convert a string value back to its original type."""
+    if value_type == "int":
+        return int(value)
+    elif value_type == "float":
+        return float(value)
+    return value
+
+
 def _qcrecord_to_public(session: Session, record: QCRecord) -> QCRecordPublic:
     """Convert a QCRecord database object to public format."""
     # Get metadata
@@ -410,7 +431,10 @@ def _qcrecord_to_public(session: Session, record: QCRecord) -> QCRecordPublic:
                 for s in samples
             ],
             values=[
-                MetricValuePublic(key=v.key, value=v.value)
+                MetricValuePublic(
+                    key=v.key,
+                    value=_convert_value_to_type(v.value, v.value_type)
+                )
                 for v in values
             ],
         ))

@@ -117,13 +117,17 @@ def upgrade() -> None:
         sa.UniqueConstraint('qcrecord_id', 'name', name='uq_qcmetric_record_name')
     )
 
-    # qcmetricvalue - metric values
+    # qcmetricvalue - metric values with type preservation
     op.create_table(
         'qcmetricvalue',
         sa.Column('id', sa.Uuid(), nullable=False),
         sa.Column('qc_metric_id', sa.Uuid(), nullable=False),
         sa.Column('key', sqlmodel.sql.sqltypes.AutoString(length=255), nullable=False),
         sa.Column('value', sa.Text(), nullable=False),
+        sa.Column(
+            'value_type', sqlmodel.sql.sqltypes.AutoString(length=10),
+            nullable=False, server_default='str'
+        ),
         sa.ForeignKeyConstraint(['qc_metric_id'], ['qcmetric.id'], ondelete='CASCADE'),
         sa.PrimaryKeyConstraint('id'),
         sa.UniqueConstraint('qc_metric_id', 'key', name='uq_qcmetricvalue_metric_key')
