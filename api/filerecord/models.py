@@ -8,7 +8,7 @@ file metadata (URI, size, hashes, tags, samples) with various entity types.
 import uuid
 from datetime import datetime
 from enum import Enum
-from typing import List, TYPE_CHECKING
+from typing import List
 from sqlmodel import SQLModel, Field, Relationship, UniqueConstraint
 from pydantic import ConfigDict
 
@@ -67,7 +67,7 @@ class FileRecordTag(SQLModel, table=True):
 class FileRecordSample(SQLModel, table=True):
     """
     Associates samples with a file record.
-    
+
     Supports:
     - 0 rows: workflow-level file (e.g., expression matrix)
     - 1 row: single-sample file (e.g., BAM file)
@@ -91,7 +91,7 @@ class FileRecordSample(SQLModel, table=True):
 class FileRecord(SQLModel, table=True):
     """
     Metadata record for files stored in external locations (S3, etc.).
-    
+
     Uses polymorphic association via entity_type and entity_id to link
     to parent entities (QCRecord, Sample, etc.) without hard FK constraints.
     """

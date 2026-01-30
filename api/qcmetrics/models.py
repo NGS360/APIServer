@@ -65,7 +65,7 @@ class QCMetricValue(SQLModel, table=True):
 class QCMetricSample(SQLModel, table=True):
     """
     Associates samples with a metric group.
-    
+
     Supports:
     - 0 rows: workflow-level metric (e.g., pipeline runtime)
     - 1 row: single-sample metric (e.g., alignment stats for Sample1)
@@ -89,7 +89,7 @@ class QCMetricSample(SQLModel, table=True):
 class QCMetric(SQLModel, table=True):
     """
     A named group of metrics within a QC record.
-    
+
     Can be workflow-level (no samples), single-sample, or multi-sample (paired).
     Examples: alignment_stats, somatic_variants, expression_summary
     """
@@ -120,7 +120,7 @@ class QCMetric(SQLModel, table=True):
 class QCRecord(SQLModel, table=True):
     """
     Main QC record entity - one per pipeline execution per project.
-    
+
     Multiple records per project are allowed for versioning (history).
     The created_on timestamp differentiates versions.
     """
@@ -181,7 +181,7 @@ class MetricInput(SQLModel):
 class QCRecordCreate(SQLModel):
     """
     Request model for creating a QC record.
-    
+
     Accepts both the new explicit format and backward-compatible formats.
     """
     project_id: str

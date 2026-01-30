@@ -6,10 +6,9 @@ Business logic for creating, searching, and deleting QC records.
 
 import logging
 from datetime import datetime, timezone
-from typing import List
+import uuid as uuid_module
 from fastapi import HTTPException, status
 from sqlmodel import Session, select, col
-from sqlalchemy import func
 
 from api.qcmetrics.models import (
     QCRecord,
@@ -50,7 +49,7 @@ def create_qcrecord(
 ) -> QCRecordPublic:
     """
     Create a new QC record with all associated data.
-    
+
     Handles both the new explicit format (metrics with samples) and
     the legacy ES format (sample_level_metrics dict).
     """
@@ -140,8 +139,10 @@ def _create_metric(
         for sample_input in metric_input.samples:
             sample_assoc = QCMetricSample(
                 qc_metric_id=metric.id,
-                sample_name=sample_input.sample_name if hasattr(sample_input, 'sample_name') else sample_input['sample_name'],
-                role=sample_input.role if hasattr(sample_input, 'role') else sample_input.get('role'),
+                sample_name=sample_input.sample_name if hasattr(sample_input, 'sample_name')
+                else sample_input['sample_name'],
+                role=sample_input.role if hasattr(sample_input, 'role')
+                else sample_input.get('role'),
             )
             session.add(sample_assoc)
 
@@ -213,16 +214,16 @@ def _check_duplicate_record(
 ) -> QCRecord | None:
     """
     Check if an equivalent QC record already exists.
-    
+
     Returns the existing record if found, None otherwise.
     """
     # Find existing records for this project
     stmt = select(QCRecord).where(
         QCRecord.project_id == qcrecord_create.project_id
     ).order_by(col(QCRecord.created_on).desc())
-    
+
     existing_records = session.exec(stmt).all()
-    
+
     if not existing_records:
         return None
 
@@ -230,7 +231,7 @@ def _check_duplicate_record(
     # A full comparison would require comparing all nested data
     # This is a simplified version that checks metadata keys
     latest = existing_records[0]
-    
+
     # Get existing metadata
     existing_metadata = {
         m.key: m.value
@@ -240,14 +241,14 @@ def _check_duplicate_record(
             )
         ).all()
     }
-    
+
     # Compare metadata
     new_metadata = qcrecord_create.metadata or {}
     if existing_metadata == {k: str(v) for k, v in new_metadata.items()}:
         # Metadata matches - could do deeper comparison here
         # For now, consider it a duplicate if metadata matches
         return latest
-    
+
     return None
 
 
@@ -260,7 +261,7 @@ def search_qcrecords(
 ) -> QCRecordsPublic:
     """
     Search for QC records with filtering and pagination.
-    
+
     Args:
         session: Database session
         filter_on: Dictionary of fields to filter by
@@ -269,10 +270,10 @@ def search_qcrecords(
         latest: If True, return only the newest record per project
     """
     filter_on = filter_on or {}
-    
+
     # Build base query
     stmt = select(QCRecord)
-    
+
     # Apply filters
     if "project_id" in filter_on:
         project_ids = filter_on["project_id"]
@@ -280,7 +281,7 @@ def search_qcrecords(
             stmt = stmt.where(col(QCRecord.project_id).in_(project_ids))
         else:
             stmt = stmt.where(QCRecord.project_id == project_ids)
-    
+
     # Handle metadata filtering
     if "metadata" in filter_on and isinstance(filter_on["metadata"], dict):
         for key, value in filter_on["metadata"].items():
@@ -290,13 +291,13 @@ def search_qcrecords(
                 QCRecordMetadata.value == str(value)
             )
             stmt = stmt.where(col(QCRecord.id).in_(subq))
-    
+
     # Order by created_on descending
     stmt = stmt.order_by(col(QCRecord.created_on).desc())
-    
+
     # Execute to get all matching records
     all_records = list(session.exec(stmt).all())
-    
+
     # Apply "latest" filter - keep only newest per project
     if latest:
         seen_projects = set()
@@ -306,16 +307,16 @@ def search_qcrecords(
                 filtered_records.append(record)
                 seen_projects.add(record.project_id)
         all_records = filtered_records
-    
+
     # Calculate pagination
     total = len(all_records)
     start_idx = (page - 1) * per_page
     end_idx = start_idx + per_page
     paginated_records = all_records[start_idx:end_idx]
-    
+
     # Convert to public format
     data = [_qcrecord_to_public(session, record) for record in paginated_records]
-    
+
     return QCRecordsPublic(
         data=data,
         total=total,
@@ -326,8 +327,7 @@ def search_qcrecords(
 
 def get_qcrecord_by_id(session: Session, qcrecord_id: str) -> QCRecordPublic:
     """Get a single QC record by ID."""
-    import uuid as uuid_module
-    
+
     try:
         record_uuid = uuid_module.UUID(qcrecord_id)
     except ValueError as exc:
@@ -335,21 +335,19 @@ def get_qcrecord_by_id(session: Session, qcrecord_id: str) -> QCRecordPublic:
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Invalid UUID format: {qcrecord_id}"
         ) from exc
-    
+
     record = session.get(QCRecord, record_uuid)
     if not record:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"QC record not found: {qcrecord_id}"
         )
-    
+
     return _qcrecord_to_public(session, record)
 
 
 def delete_qcrecord(session: Session, qcrecord_id: str) -> dict:
     """Delete a QC record and all associated data."""
-    import uuid as uuid_module
-    
     try:
         record_uuid = uuid_module.UUID(qcrecord_id)
     except ValueError as exc:
@@ -357,14 +355,14 @@ def delete_qcrecord(session: Session, qcrecord_id: str) -> dict:
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Invalid UUID format: {qcrecord_id}"
         ) from exc
-    
+
     record = session.get(QCRecord, record_uuid)
     if not record:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"QC record not found: {qcrecord_id}"
         )
-    
+
     # Delete associated file records (polymorphic, not cascade)
     file_records = session.exec(
         select(FileRecord).where(
@@ -372,16 +370,16 @@ def delete_qcrecord(session: Session, qcrecord_id: str) -> dict:
             FileRecord.entity_id == record_uuid
         )
     ).all()
-    
+
     for file_record in file_records:
         session.delete(file_record)
-    
+
     # Delete the QC record (cascades to metadata, metrics, etc.)
     session.delete(record)
     session.commit()
-    
+
     logger.info("Deleted QC record %s", qcrecord_id)
-    
+
     return {"status": "deleted", "id": qcrecord_id}
 
 
@@ -393,29 +391,29 @@ def _qcrecord_to_public(session: Session, record: QCRecord) -> QCRecordPublic:
             QCRecordMetadata.qcrecord_id == record.id
         )
     ).all()
-    
+
     metadata = [
         MetadataKeyValue(key=m.key, value=m.value)
         for m in metadata_entries
     ]
-    
+
     # Get metrics
     metric_entries = session.exec(
         select(QCMetric).where(QCMetric.qcrecord_id == record.id)
     ).all()
-    
+
     metrics = []
     for metric in metric_entries:
         # Get metric values
         values = session.exec(
             select(QCMetricValue).where(QCMetricValue.qc_metric_id == metric.id)
         ).all()
-        
+
         # Get metric samples
         samples = session.exec(
             select(QCMetricSample).where(QCMetricSample.qc_metric_id == metric.id)
         ).all()
-        
+
         metrics.append(MetricPublic(
             name=metric.name,
             samples=[
@@ -427,7 +425,7 @@ def _qcrecord_to_public(session: Session, record: QCRecord) -> QCRecordPublic:
                 for v in values
             ],
         ))
-    
+
     # Get file records
     file_records = session.exec(
         select(FileRecord).where(
@@ -435,7 +433,7 @@ def _qcrecord_to_public(session: Session, record: QCRecord) -> QCRecordPublic:
             FileRecord.entity_id == record.id
         )
     ).all()
-    
+
     output_files = []
     for file_record in file_records:
         # Get hashes
@@ -444,21 +442,21 @@ def _qcrecord_to_public(session: Session, record: QCRecord) -> QCRecordPublic:
                 FileRecordHash.file_record_id == file_record.id
             )
         ).all()
-        
+
         # Get tags
         tags = session.exec(
             select(FileRecordTag).where(
                 FileRecordTag.file_record_id == file_record.id
             )
         ).all()
-        
+
         # Get samples
         samples = session.exec(
             select(FileRecordSample).where(
                 FileRecordSample.file_record_id == file_record.id
             )
         ).all()
-        
+
         output_files.append(FileRecordPublic(
             id=file_record.id,
             uri=file_record.uri,
@@ -468,7 +466,7 @@ def _qcrecord_to_public(session: Session, record: QCRecord) -> QCRecordPublic:
             tags=[TagPublic(key=t.key, value=t.value) for t in tags],
             samples=[SamplePublic(sample_name=s.sample_name, role=s.role) for s in samples],
         ))
-    
+
     return QCRecordPublic(
         id=record.id,
         created_on=record.created_on,
