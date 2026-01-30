@@ -47,15 +47,19 @@ class QCMetricValue(SQLModel, table=True):
     Key-value store for individual metric values within a metric group.
     Examples: reads=50000000, alignment_rate=95.5, tmb=8.5
 
-    The value_type column preserves the original Python type so values
-    can be returned in their original format (int, float, or str).
+    Stores values in two formats:
+    - value_string: Always populated, used for string matching and display
+    - value_numeric: Populated only for int/float types, enables numeric queries
+      (greater than, less than, range, aggregations)
+    - value_type: Preserves original Python type ("str", "int", "float")
     """
     __tablename__ = "qcmetricvalue"
 
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     qc_metric_id: uuid.UUID = Field(foreign_key="qcmetric.id", nullable=False)
     key: str = Field(max_length=255, nullable=False)
-    value: str = Field(nullable=False)
+    value_string: str = Field(nullable=False)
+    value_numeric: float | None = Field(default=None, nullable=True)  # For numeric queries
     value_type: str = Field(max_length=10, default="str")  # "str", "int", "float"
 
     # Relationship back to parent

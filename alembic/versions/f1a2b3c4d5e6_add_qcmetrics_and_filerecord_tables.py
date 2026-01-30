@@ -117,13 +117,14 @@ def upgrade() -> None:
         sa.UniqueConstraint('qcrecord_id', 'name', name='uq_qcmetric_record_name')
     )
 
-    # qcmetricvalue - metric values with type preservation
+    # qcmetricvalue - metric values with dual storage for string/numeric queries
     op.create_table(
         'qcmetricvalue',
         sa.Column('id', sa.Uuid(), nullable=False),
         sa.Column('qc_metric_id', sa.Uuid(), nullable=False),
         sa.Column('key', sqlmodel.sql.sqltypes.AutoString(length=255), nullable=False),
-        sa.Column('value', sa.Text(), nullable=False),
+        sa.Column('value_string', sa.Text(), nullable=False),
+        sa.Column('value_numeric', sa.Float(), nullable=True),
         sa.Column(
             'value_type', sqlmodel.sql.sqltypes.AutoString(length=10),
             nullable=False, server_default='str'
@@ -131,6 +132,11 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(['qc_metric_id'], ['qcmetric.id'], ondelete='CASCADE'),
         sa.PrimaryKeyConstraint('id'),
         sa.UniqueConstraint('qc_metric_id', 'key', name='uq_qcmetricvalue_metric_key')
+    )
+    # Index on key + value_numeric for efficient numeric range queries
+    op.create_index(
+        'ix_qcmetricvalue_key_numeric', 'qcmetricvalue',
+        ['key', 'value_numeric']
     )
 
     # qcmetricsample - sample associations for metrics
@@ -151,6 +157,7 @@ def downgrade() -> None:
 
     # Drop QCRecord tables (in reverse order of creation)
     op.drop_table('qcmetricsample')
+    op.drop_index('ix_qcmetricvalue_key_numeric', table_name='qcmetricvalue')
     op.drop_table('qcmetricvalue')
     op.drop_table('qcmetric')
     op.drop_table('qcrecordmetadata')

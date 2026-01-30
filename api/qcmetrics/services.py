@@ -135,23 +135,28 @@ def _create_metric(
             )
             session.add(sample_assoc)
 
-    # Add metric values with type preservation
+    # Add metric values with type preservation and dual storage
     for key, value in metric_input.values.items():
-        # Determine the original type
+        # Determine the original type and numeric value
         if isinstance(value, bool):
             # bool is subclass of int, so check first
-            value_type = "str"  # Store bools as strings
+            value_type = "str"
+            value_numeric = None
         elif isinstance(value, int):
             value_type = "int"
+            value_numeric = float(value)  # Store as float for consistent numeric ops
         elif isinstance(value, float):
             value_type = "float"
+            value_numeric = value
         else:
             value_type = "str"
+            value_numeric = None
 
         metric_value = QCMetricValue(
             qc_metric_id=metric.id,
             key=key,
-            value=str(value),
+            value_string=str(value),
+            value_numeric=value_numeric,
             value_type=value_type,
         )
         session.add(metric_value)
@@ -384,13 +389,15 @@ def delete_qcrecord(session: Session, qcrecord_id: str) -> dict:
     return {"status": "deleted", "id": qcrecord_id}
 
 
-def _convert_value_to_type(value: str, value_type: str) -> str | int | float:
-    """Convert a string value back to its original type."""
-    if value_type == "int":
-        return int(value)
-    elif value_type == "float":
-        return float(value)
-    return value
+def _convert_value_to_type(
+    value_string: str, value_numeric: float | None, value_type: str
+) -> str | int | float:
+    """Convert stored values back to their original type."""
+    if value_type == "int" and value_numeric is not None:
+        return int(value_numeric)
+    elif value_type == "float" and value_numeric is not None:
+        return value_numeric
+    return value_string
 
 
 def _qcrecord_to_public(session: Session, record: QCRecord) -> QCRecordPublic:
@@ -433,7 +440,9 @@ def _qcrecord_to_public(session: Session, record: QCRecord) -> QCRecordPublic:
             values=[
                 MetricValuePublic(
                     key=v.key,
-                    value=_convert_value_to_type(v.value, v.value_type)
+                    value=_convert_value_to_type(
+                        v.value_string, v.value_numeric, v.value_type
+                    )
                 )
                 for v in values
             ],
