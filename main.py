@@ -18,6 +18,7 @@ from api.settings.routes import router as settings_router
 from api.vendors.routes import router as vendors_router
 from api.workflow.routes import router as workflow_router
 from api.manifest.routes import router as manifest_router
+from api.qcmetrics.routes import router as qcmetrics_router
 
 
 # Customize route id's
