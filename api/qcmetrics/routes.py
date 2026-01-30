@@ -38,6 +38,9 @@ def create_qcrecord(
 
     The record stores quality control metrics from a pipeline execution.
 
+    Right now - created_by is just a string username passed as a query parameter; once
+    authentication is in place, this will be derived from the logged-in user.
+
     **Request body format:**
 
     ```json
