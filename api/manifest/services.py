@@ -253,9 +253,15 @@ def validate_manifest_file(
         # Create Lambda client
         lambda_client = boto3.client("lambda", region_name=region)
 
+        # Parse the S3 path to extract the bucket for files_bucket parameter
+        bucket, _ = _parse_s3_path(s3_path)
+
         # Prepare payload for Lambda function
+        # Lambda expects: manifest_path, files_bucket, manifest_version (optional),
+        # files_prefix (optional), available_pipelines (optional)
         payload = {
-            "s3_path": s3_path
+            "manifest_path": s3_path,
+            "files_bucket": bucket,
         }
 
         # Invoke Lambda function synchronously
@@ -269,7 +275,7 @@ def validate_manifest_file(
         response_payload = json.loads(response["Payload"].read().decode("utf-8"))
         logger.debug(f"Lambda response: {response_payload}")
 
-        # Check for Lambda execution errors
+        # Check for Lambda execution errors (unhandled exceptions)
         if "FunctionError" in response:
             error_message = response_payload.get(
                 "errorMessage",
@@ -282,21 +288,54 @@ def validate_manifest_file(
             )
 
         # Parse the Lambda response body if it contains a nested body field
-        # (common pattern for API Gateway-style Lambda responses)
+        # (API Gateway-style Lambda responses have body as JSON string)
         if "body" in response_payload:
             if isinstance(response_payload["body"], str):
                 validation_result = json.loads(response_payload["body"])
             else:
                 validation_result = response_payload["body"]
         else:
+            # Direct invocation returns raw body with statusCode embedded
             validation_result = response_payload
 
+        # Check for Lambda-level errors (validation errors, missing params, etc.)
+        if not validation_result.get("success", True):
+            error_msg = validation_result.get("error", "Unknown validation error")
+            error_type = validation_result.get("error_type", "ValidationError")
+            lambda_status = validation_result.get("statusCode", 400)
+
+            logger.error(f"Lambda returned error: {error_type} - {error_msg}")
+
+            # Map Lambda status codes to HTTP exceptions
+            if lambda_status == 400:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Validation request error: {error_msg}"
+                )
+            elif lambda_status == 404:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Manifest file not found: {error_msg}"
+                )
+            elif lambda_status == 503:
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail=f"Service unavailable: {error_msg}"
+                )
+            else:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=f"Validation error: {error_msg}"
+                )
+
         # Build response from Lambda result
+        # Lambda returns: validation_passed, messages, errors, warnings
+        # API returns: valid, message, error, warning
         return ManifestValidationResponse(
-            valid=validation_result.get("valid", False),
-            message=validation_result.get("message", {}),
-            error=validation_result.get("error", {}),
-            warning=validation_result.get("warning", {})
+            valid=validation_result.get("validation_passed", False),
+            message=validation_result.get("messages", {}),
+            error=validation_result.get("errors", {}),
+            warning=validation_result.get("warnings", {})
         )
 
     except NoCredentialsError as exc:
