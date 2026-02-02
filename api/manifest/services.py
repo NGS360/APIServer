@@ -235,10 +235,9 @@ def validate_manifest_file(
         ManifestValidationResponse with validation status and any errors found
     """
     # Get Lambda function name from settings, fall back to default
-    lambda_function_name = get_setting_value(
-        session,
-        "MANIFEST_VALIDATION_LAMBDA",
-        default="ngs360-manifest-validator"
+    lambda_function_name = (
+        get_setting_value(session, "MANIFEST_VALIDATION_LAMBDA")
+        or "ngs360-manifest-validator"
     )
     logger.info(
         f"Invoking Lambda function: {lambda_function_name} "
