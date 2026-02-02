@@ -2,11 +2,13 @@
 Services for the Manifest API
 """
 
+import json
 from fastapi import HTTPException, status, UploadFile
 import boto3
 from botocore.exceptions import NoCredentialsError, ClientError
 from api.manifest.models import ManifestUploadResponse, ManifestValidationResponse
 from api.settings.services import get_setting_value
+from core.config import get_settings
 from core.deps import SessionDep
 from core.logger import logger
 
@@ -220,71 +222,121 @@ def upload_manifest_file(
 
 def validate_manifest_file(
     session: SessionDep,
-    s3_path: str, valid: bool = True
+    s3_path: str,
 ) -> ManifestValidationResponse:
     """
-    Validate a manifest CSV file from S3.
+    Validate a manifest CSV file from S3 by invoking a Lambda function.
 
     Args:
         session: Database session
         s3_path: S3 path to the manifest CSV file to validate
-        valid: Mock parameter to simulate valid or invalid responses for testing
 
     Returns:
         ManifestValidationResponse with validation status and any errors found
     """
-    # Placeholder for validation logic
-    # The actual validation logic would go here
+    # Get Lambda function name from settings, fall back to default
+    lambda_function_name = get_setting_value(
+        session,
+        "MANIFEST_VALIDATION_LAMBDA",
+        default="ngs360-manifest-validator"
+    )
+    logger.info(
+        f"Invoking Lambda function: {lambda_function_name} "
+        f"for manifest validation of {s3_path}"
+    )
 
-    # Call to lambda function for validation (placeholder)
-    lambda_function_name = get_setting_value(session, "MANIFEST_VALIDATION_LAMBDA")
-    logger.info(f"Invoking Lambda function: {lambda_function_name} for manifest validation")
+    try:
+        # Get AWS region from settings
+        settings = get_settings()
+        region = settings.AWS_REGION
 
-    # Placeholder for invoking the lambda function
-    # response = invoke_lambda(lambda_function_name, payload={"s3_path": s3_path})
+        # Create Lambda client
+        lambda_client = boto3.client("lambda", region_name=region)
 
-    if not valid:
-        # Return mock validation errors for testing
-        return ManifestValidationResponse(
-            valid=False,
-            message={
-                "ManifestVersion": "Validated against manifest version: DTS12.1",
-                "ExtraFields": (
-                    "See extra fields (info only): "
-                    "['VHYB', 'VLANE', 'VBARCODE']"
-                )
-            },
-            error={
-                "InvalidFilePath": [
-                    (
-                        "Unable to find file s3://example/example_1.clipped.fastq.gz "
-                        "described in row 182, check that file exists and is accessible"
-                    ),
-                    (
-                        "Unable to find file s3://example/example_2.clipped.fastq.gz "
-                        "described in row 183, check that file exists and is accessible"
-                    )
-                ],
-                "MissingRequiredField": [
-                    "Row 45 is missing required field 'SAMPLE_ID'",
-                    "Row 67 is missing required field 'FILE_PATH'"
-                ],
-                "InvalidDataFormat": [
-                    "Row 92: Invalid date format in field 'RUN_DATE', expected YYYY-MM-DD"
-                ]
-            },
-            warning={
-                "DuplicateSample": [
-                    "Sample 'ABC-123' appears multiple times in rows 10, 25, 42"
-                ]
-            }
+        # Prepare payload for Lambda function
+        payload = {
+            "s3_path": s3_path
+        }
+
+        # Invoke Lambda function synchronously
+        response = lambda_client.invoke(
+            FunctionName=lambda_function_name,
+            InvocationType="RequestResponse",
+            Payload=json.dumps(payload)
         )
 
-    return ManifestValidationResponse(
-        valid=True,
-        message={
-            "ManifestVersion": "Validated against manifest version: DTS12.1"
-        },
-        error={},
-        warning={}
-    )
+        # Read and parse Lambda response
+        response_payload = json.loads(response["Payload"].read().decode("utf-8"))
+        logger.debug(f"Lambda response: {response_payload}")
+
+        # Check for Lambda execution errors
+        if "FunctionError" in response:
+            error_message = response_payload.get(
+                "errorMessage",
+                "Unknown Lambda execution error"
+            )
+            logger.error(f"Lambda function error: {error_message}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Lambda validation error: {error_message}"
+            )
+
+        # Parse the Lambda response body if it contains a nested body field
+        # (common pattern for API Gateway-style Lambda responses)
+        if "body" in response_payload:
+            if isinstance(response_payload["body"], str):
+                validation_result = json.loads(response_payload["body"])
+            else:
+                validation_result = response_payload["body"]
+        else:
+            validation_result = response_payload
+
+        # Build response from Lambda result
+        return ManifestValidationResponse(
+            valid=validation_result.get("valid", False),
+            message=validation_result.get("message", {}),
+            error=validation_result.get("error", {}),
+            warning=validation_result.get("warning", {})
+        )
+
+    except NoCredentialsError as exc:
+        logger.error("AWS credentials not found for Lambda invocation")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="AWS credentials not found. Please configure AWS credentials.",
+        ) from exc
+    except ClientError as exc:
+        error_code = exc.response["Error"]["Code"]
+        error_message = exc.response["Error"]["Message"]
+        logger.error(f"Lambda ClientError: {error_code} - {error_message}")
+
+        if error_code == "ResourceNotFoundException":
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Lambda function not found: {lambda_function_name}",
+            ) from exc
+        elif error_code == "AccessDeniedException":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Access denied to Lambda function: {lambda_function_name}",
+            ) from exc
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Lambda error: {error_message}",
+            ) from exc
+    except json.JSONDecodeError as exc:
+        logger.error(f"Failed to parse Lambda response: {exc}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to parse validation response from Lambda",
+        ) from exc
+    except HTTPException:
+        # Re-raise HTTPException without modification
+        raise
+    except Exception as exc:
+        logger.error(f"Unexpected error invoking Lambda: {exc}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Unexpected error during manifest validation: {str(exc)}",
+        ) from exc
