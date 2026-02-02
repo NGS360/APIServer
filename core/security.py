@@ -6,21 +6,15 @@ from typing import Any
 import secrets
 import uuid
 
-from passlib.context import CryptContext
+import bcrypt
 from jose import jwt
 from sqlmodel import Session
 
 from core.config import get_settings
 from api.auth.models import RefreshToken
 
-# Password hashing context
-# Configure bcrypt to handle Python 3.13 compatibility
-pwd_context = CryptContext(
-    schemes=["bcrypt"],
-    deprecated="auto",
-    bcrypt__rounds=12,
-    bcrypt__ident="2b"
-)
+# Bcrypt configuration
+BCRYPT_ROUNDS = 12
 
 
 def hash_password(password: str) -> str:
@@ -33,7 +27,10 @@ def hash_password(password: str) -> str:
     Returns:
         Hashed password string
     """
-    return pwd_context.hash(password)
+    password_bytes = password.encode('utf-8')
+    salt = bcrypt.gensalt(rounds=BCRYPT_ROUNDS)
+    hashed = bcrypt.hashpw(password_bytes, salt)
+    return hashed.decode('utf-8')
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
@@ -47,7 +44,12 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
     Returns:
         True if password matches, False otherwise
     """
-    return pwd_context.verify(plain_password, hashed_password)
+    try:
+        password_bytes = plain_password.encode('utf-8')
+        hashed_bytes = hashed_password.encode('utf-8')
+        return bcrypt.checkpw(password_bytes, hashed_bytes)
+    except (ValueError, AttributeError):
+        return False
 
 
 def create_access_token(data: dict[str, Any], expires_delta: timedelta | None = None) -> str:
