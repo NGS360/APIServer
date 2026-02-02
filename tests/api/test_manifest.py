@@ -637,10 +637,23 @@ class TestManifestUpload:
 class TestManifestValidation:
     """Test manifest validation endpoint"""
 
-    def test_validate_manifest_valid(self, client: TestClient):
-        """Test validation endpoint with valid manifest (mock)"""
+    def test_validate_manifest_valid(
+        self, client: TestClient, mock_lambda_client
+    ):
+        """Test validation endpoint with valid manifest via Lambda"""
+        # Configure mock Lambda response for valid manifest
+        mock_lambda_client.set_response({
+            "success": True,
+            "validation_passed": True,
+            "messages": {"ManifestVersion": "Validated against manifest version: DTS12.1"},
+            "errors": {},
+            "warnings": {},
+            "manifest_path": "s3://test-bucket/manifest.csv",
+            "statusCode": 200
+        })
+
         response = client.post(
-            "/api/v1/manifest/validate?s3_path=s3://test-bucket/manifest.csv&valid=true"
+            "/api/v1/manifest/validate?s3_path=s3://test-bucket/manifest.csv"
         )
 
         # Verify successful response
@@ -666,10 +679,44 @@ class TestManifestValidation:
         # Should have manifest version message
         assert "ManifestVersion" in data["message"]
 
-    def test_validate_manifest_invalid(self, client: TestClient):
-        """Test validation endpoint with invalid manifest (mock)"""
+    def test_validate_manifest_invalid(
+        self, client: TestClient, mock_lambda_client
+    ):
+        """Test validation endpoint with invalid manifest via Lambda"""
+        # Configure mock Lambda response for invalid manifest
+        mock_lambda_client.set_response({
+            "success": True,
+            "validation_passed": False,
+            "messages": {
+                "ManifestVersion": "Validated against manifest version: DTS12.1",
+                "ExtraFields": "See extra fields (info only): ['VHYB', 'VLANE', 'VBARCODE']"
+            },
+            "errors": {
+                "InvalidFilePath": [
+                    "Unable to find file s3://example/example_1.clipped.fastq.gz "
+                    "described in row 182, check that file exists and is accessible",
+                    "Unable to find file s3://example/example_2.clipped.fastq.gz "
+                    "described in row 183, check that file exists and is accessible"
+                ],
+                "MissingRequiredField": [
+                    "Row 45 is missing required field 'SAMPLE_ID'",
+                    "Row 67 is missing required field 'FILE_PATH'"
+                ],
+                "InvalidDataFormat": [
+                    "Row 92: Invalid date format in field 'RUN_DATE', expected YYYY-MM-DD"
+                ]
+            },
+            "warnings": {
+                "DuplicateSample": [
+                    "Sample 'ABC-123' appears multiple times in rows 10, 25, 42"
+                ]
+            },
+            "manifest_path": "s3://test-bucket/manifest.csv",
+            "statusCode": 422
+        })
+
         response = client.post(
-            "/api/v1/manifest/validate?s3_path=s3://test-bucket/manifest.csv&valid=false"
+            "/api/v1/manifest/validate?s3_path=s3://test-bucket/manifest.csv"
         )
 
         # Verify successful response
@@ -710,20 +757,6 @@ class TestManifestValidation:
         assert "ManifestVersion" in data["message"]
         assert "ExtraFields" in data["message"]
 
-    def test_validate_manifest_default_valid(self, client: TestClient):
-        """Test validation endpoint defaults to valid=true"""
-        response = client.post(
-            "/api/v1/manifest/validate?s3_path=s3://test-bucket/manifest.csv"
-        )
-
-        # Verify successful response
-        assert response.status_code == 200
-
-        data = response.json()
-
-        # Default should be valid
-        assert data["valid"] is True
-
     def test_validate_manifest_missing_s3_path(self, client: TestClient):
         """Test validation endpoint fails without s3_path"""
         response = client.post("/api/v1/manifest/validate")
@@ -731,17 +764,35 @@ class TestManifestValidation:
         # Verify 422 error (missing required parameter)
         assert response.status_code == 422
 
-    def test_validate_manifest_response_structure(self, client: TestClient):
+    def test_validate_manifest_response_structure(
+        self, client: TestClient, mock_lambda_client
+    ):
         """Test that both valid and invalid responses match expected structure"""
         # Test valid response
+        mock_lambda_client.set_response({
+            "success": True,
+            "validation_passed": True,
+            "messages": {"ManifestVersion": "DTS12.1"},
+            "errors": {},
+            "warnings": {},
+            "statusCode": 200
+        })
         valid_response = client.post(
-            "/api/v1/manifest/validate?s3_path=s3://test-bucket/manifest.csv&valid=true"
+            "/api/v1/manifest/validate?s3_path=s3://test-bucket/manifest.csv"
         )
         valid_data = valid_response.json()
 
         # Test invalid response
+        mock_lambda_client.set_response({
+            "success": True,
+            "validation_passed": False,
+            "messages": {"ManifestVersion": "DTS12.1"},
+            "errors": {"SomeError": ["Error message"]},
+            "warnings": {"SomeWarning": ["Warning message"]},
+            "statusCode": 422
+        })
         invalid_response = client.post(
-            "/api/v1/manifest/validate?s3_path=s3://test-bucket/manifest.csv&valid=false"
+            "/api/v1/manifest/validate?s3_path=s3://test-bucket/manifest.csv"
         )
         invalid_data = invalid_response.json()
 
@@ -755,3 +806,63 @@ class TestManifestValidation:
             assert isinstance(data["error"], dict)
             assert isinstance(data["warning"], dict)
             assert isinstance(data["valid"], bool)
+
+    def test_validate_manifest_lambda_error(
+        self, client: TestClient, mock_lambda_client
+    ):
+        """Test validation endpoint handles Lambda errors"""
+        # Configure mock Lambda response for validation request error
+        mock_lambda_client.set_response({
+            "success": False,
+            "error": "manifest_path is required",
+            "error_type": "ValidationError",
+            "statusCode": 400
+        })
+
+        response = client.post(
+            "/api/v1/manifest/validate?s3_path=s3://test-bucket/manifest.csv"
+        )
+
+        # Verify error response
+        assert response.status_code == 400
+        assert "manifest_path" in response.json()["detail"]
+
+    def test_validate_manifest_lambda_file_not_found(
+        self, client: TestClient, mock_lambda_client
+    ):
+        """Test validation endpoint handles file not found errors"""
+        # Configure mock Lambda response for file not found
+        mock_lambda_client.set_response({
+            "success": False,
+            "error": "Manifest file not found at s3://test-bucket/manifest.csv",
+            "error_type": "FileNotFoundError",
+            "statusCode": 404
+        })
+
+        response = client.post(
+            "/api/v1/manifest/validate?s3_path=s3://test-bucket/manifest.csv"
+        )
+
+        # Verify error response
+        assert response.status_code == 404
+        assert "not found" in response.json()["detail"].lower()
+
+    def test_validate_manifest_lambda_service_unavailable(
+        self, client: TestClient, mock_lambda_client
+    ):
+        """Test validation endpoint handles service unavailable errors"""
+        # Configure mock Lambda response for service unavailable
+        mock_lambda_client.set_response({
+            "success": False,
+            "error": "Failed to connect to NGS360",
+            "error_type": "ServiceUnavailable",
+            "statusCode": 503
+        })
+
+        response = client.post(
+            "/api/v1/manifest/validate?s3_path=s3://test-bucket/manifest.csv"
+        )
+
+        # Verify error response
+        assert response.status_code == 503
+        assert "unavailable" in response.json()["detail"].lower()
