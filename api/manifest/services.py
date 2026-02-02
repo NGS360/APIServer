@@ -240,8 +240,9 @@ def validate_manifest_file(
         or "ngs360-manifest-validator"
     )
     logger.info(
-        f"Invoking Lambda function: {lambda_function_name} "
-        f"for manifest validation of {s3_path}"
+        "Invoking Lambda function: %s for manifest validation of %s",
+        lambda_function_name,
+        s3_path
     )
 
     try:
@@ -272,7 +273,7 @@ def validate_manifest_file(
 
         # Read and parse Lambda response
         response_payload = json.loads(response["Payload"].read().decode("utf-8"))
-        logger.debug(f"Lambda response: {response_payload}")
+        logger.debug("Lambda response: %s", response_payload)
 
         # Check for Lambda execution errors (unhandled exceptions)
         if "FunctionError" in response:
@@ -280,7 +281,7 @@ def validate_manifest_file(
                 "errorMessage",
                 "Unknown Lambda execution error"
             )
-            logger.error(f"Lambda function error: {error_message}")
+            logger.error("Lambda function error: %s", error_message)
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"Lambda validation error: {error_message}"
@@ -303,7 +304,7 @@ def validate_manifest_file(
             error_type = validation_result.get("error_type", "ValidationError")
             lambda_status = validation_result.get("statusCode", 400)
 
-            logger.error(f"Lambda returned error: {error_type} - {error_msg}")
+            logger.error("Lambda returned error: %s - %s", error_type, error_msg)
 
             # Map Lambda status codes to HTTP exceptions
             if lambda_status == 400:
@@ -346,7 +347,7 @@ def validate_manifest_file(
     except ClientError as exc:
         error_code = exc.response["Error"]["Code"]
         error_message = exc.response["Error"]["Message"]
-        logger.error(f"Lambda ClientError: {error_code} - {error_message}")
+        logger.error("Lambda ClientError: %s - %s", error_code, error_message)
 
         if error_code == "ResourceNotFoundException":
             raise HTTPException(
@@ -364,7 +365,7 @@ def validate_manifest_file(
                 detail=f"Lambda error: {error_message}",
             ) from exc
     except json.JSONDecodeError as exc:
-        logger.error(f"Failed to parse Lambda response: {exc}")
+        logger.error("Failed to parse Lambda response: %s", exc)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to parse validation response from Lambda",
@@ -373,7 +374,7 @@ def validate_manifest_file(
         # Re-raise HTTPException without modification
         raise
     except Exception as exc:
-        logger.error(f"Unexpected error invoking Lambda: {exc}")
+        logger.error("Unexpected error invoking Lambda: %s", exc)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Unexpected error during manifest validation: {str(exc)}",

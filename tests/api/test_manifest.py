@@ -3,8 +3,14 @@ Test /manifest endpoint
 """
 
 from datetime import datetime
+import io
+import pytest
 
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
+
+from api.manifest.services import _parse_s3_path
+from api.manifest.services import get_latest_manifest_file
 
 from tests.conftest import MockS3Client
 
@@ -14,7 +20,6 @@ class TestManifestServices:
 
     def test_parse_s3_path(self):
         """Test S3 path parsing in manifest service"""
-        from api.manifest.services import _parse_s3_path
 
         # Valid paths
         assert _parse_s3_path("s3://my-bucket") == ("my-bucket", "")
@@ -42,8 +47,6 @@ class TestManifestServices:
 
     def test_get_latest_manifest_file_single(self, mock_s3_client: MockS3Client):
         """Test finding latest manifest when only one exists"""
-        from api.manifest.services import get_latest_manifest_file
-
         # Setup mock S3 with one manifest file
         files = [
             {
@@ -60,8 +63,6 @@ class TestManifestServices:
 
     def test_get_latest_manifest_file_multiple(self, mock_s3_client: MockS3Client):
         """Test finding latest manifest when multiple exist"""
-        from api.manifest.services import get_latest_manifest_file
-
         # Setup mock S3 with multiple manifest files - most recent should be selected
         files = [
             {
@@ -88,8 +89,6 @@ class TestManifestServices:
 
     def test_get_latest_manifest_case_insensitive(self, mock_s3_client: MockS3Client):
         """Test case-insensitive matching for 'Manifest'"""
-        from api.manifest.services import get_latest_manifest_file
-
         # Test various cases: MANIFEST, manifest, Manifest, etc.
         files = [
             {
@@ -117,8 +116,6 @@ class TestManifestServices:
 
     def test_get_latest_manifest_csv_only(self, mock_s3_client: MockS3Client):
         """Test that only .csv files are matched"""
-        from api.manifest.services import get_latest_manifest_file
-
         # Include non-CSV files with manifest in name
         files = [
             {
@@ -151,7 +148,6 @@ class TestManifestServices:
 
     def test_get_latest_manifest_substring_match(self, mock_s3_client: MockS3Client):
         """Test substring matching for 'manifest' in filename"""
-        from api.manifest.services import get_latest_manifest_file
 
         # Files with manifest as substring
         files = [
@@ -180,8 +176,6 @@ class TestManifestServices:
 
     def test_get_latest_manifest_recursive(self, mock_s3_client: MockS3Client):
         """Test recursive search through subdirectories"""
-        from api.manifest.services import get_latest_manifest_file
-
         # Files in different subdirectories
         files = [
             {
@@ -214,8 +208,6 @@ class TestManifestServices:
 
     def test_get_latest_manifest_no_match(self, mock_s3_client: MockS3Client):
         """Test returning None when no manifest files found"""
-        from api.manifest.services import get_latest_manifest_file
-
         # Files without "manifest" in name
         files = [
             {
@@ -237,8 +229,6 @@ class TestManifestServices:
 
     def test_get_latest_manifest_empty_bucket(self, mock_s3_client: MockS3Client):
         """Test returning None when bucket/prefix is empty"""
-        from api.manifest.services import get_latest_manifest_file
-
         # Empty bucket
         mock_s3_client.setup_bucket("test-bucket", "vendor/", [], [])
 
@@ -248,11 +238,6 @@ class TestManifestServices:
 
     def test_get_latest_manifest_invalid_path(self, mock_s3_client: MockS3Client):
         """Test error handling for invalid S3 path"""
-        from api.manifest.services import get_latest_manifest_file
-        from fastapi import HTTPException
-        import pytest
-
-        # Invalid S3 paths
         invalid_paths = ["http://bucket/path", "s3://", "s3:///bucket"]
 
         for path in invalid_paths:
@@ -262,10 +247,6 @@ class TestManifestServices:
 
     def test_get_latest_manifest_no_credentials(self, mock_s3_client: MockS3Client):
         """Test error handling when AWS credentials are missing"""
-        from api.manifest.services import get_latest_manifest_file
-        from fastapi import HTTPException
-        import pytest
-
         mock_s3_client.simulate_error("NoCredentialsError")
 
         with pytest.raises(HTTPException) as exc_info:
@@ -274,10 +255,6 @@ class TestManifestServices:
 
     def test_get_latest_manifest_bucket_not_found(self, mock_s3_client: MockS3Client):
         """Test error handling when bucket doesn't exist"""
-        from api.manifest.services import get_latest_manifest_file
-        from fastapi import HTTPException
-        import pytest
-
         mock_s3_client.simulate_error("NoSuchBucket")
 
         with pytest.raises(HTTPException) as exc_info:
@@ -286,10 +263,6 @@ class TestManifestServices:
 
     def test_get_latest_manifest_access_denied(self, mock_s3_client: MockS3Client):
         """Test error handling when access is denied"""
-        from api.manifest.services import get_latest_manifest_file
-        from fastapi import HTTPException
-        import pytest
-
         mock_s3_client.simulate_error("AccessDenied")
 
         with pytest.raises(HTTPException) as exc_info:
@@ -352,7 +325,7 @@ class TestManifestAPI:
         assert response.text == ""
 
     def test_get_latest_manifest_invalid_path(
-        self, client: TestClient, mock_s3_client: MockS3Client
+        self, client: TestClient
     ):
         """Test 400 error for invalid S3 path"""
         # Make API call with invalid path
@@ -419,7 +392,6 @@ class TestManifestUpload:
         self, client: TestClient, mock_s3_client: MockS3Client
     ):
         """Test uploading a manifest to a directory path (ending with /)"""
-        import io
 
         # Create a test CSV file
         csv_content = b"Sample_ID,Sample_Name,Project\nS001,Sample1,ProjectA\nS002,Sample2,ProjectB"
@@ -450,7 +422,6 @@ class TestManifestUpload:
         self, client: TestClient, mock_s3_client: MockS3Client
     ):
         """Test uploading a manifest with a specific file path"""
-        import io
 
         # Create a test CSV file
         csv_content = b"Sample_ID,Sample_Name\nS001,Sample1"
@@ -476,7 +447,6 @@ class TestManifestUpload:
         self, client: TestClient, mock_s3_client: MockS3Client
     ):
         """Test uploading to a directory path without trailing slash"""
-        import io
 
         # Create a test CSV file
         csv_content = b"Sample_ID\nS001"
@@ -501,7 +471,6 @@ class TestManifestUpload:
         self, client: TestClient, mock_s3_client: MockS3Client
     ):
         """Test uploading a manifest to the root of a bucket"""
-        import io
 
         # Create a test CSV file
         csv_content = b"Sample_ID\nS001"
@@ -521,10 +490,9 @@ class TestManifestUpload:
         assert "root_manifest.csv" in mock_s3_client.uploaded_files["test-bucket"]
 
     def test_upload_manifest_non_csv_file(
-        self, client: TestClient, mock_s3_client: MockS3Client
+        self, client: TestClient
     ):
         """Test that non-CSV files are rejected"""
-        import io
 
         # Create a test text file
         file = io.BytesIO(b"This is not a CSV file")
@@ -544,7 +512,6 @@ class TestManifestUpload:
         self, client: TestClient, mock_s3_client: MockS3Client
     ):
         """Test upload fails when bucket doesn't exist"""
-        import io
 
         mock_s3_client.simulate_error("NoSuchBucket")
 
@@ -565,7 +532,6 @@ class TestManifestUpload:
         self, client: TestClient, mock_s3_client: MockS3Client
     ):
         """Test upload fails when access is denied"""
-        import io
 
         mock_s3_client.simulate_error("AccessDenied")
 
@@ -586,7 +552,6 @@ class TestManifestUpload:
         self, client: TestClient, mock_s3_client: MockS3Client
     ):
         """Test upload fails when AWS credentials are missing"""
-        import io
 
         mock_s3_client.simulate_error("NoCredentialsError")
 
@@ -604,10 +569,9 @@ class TestManifestUpload:
         assert "credentials" in response.json()["detail"].lower()
 
     def test_upload_manifest_invalid_s3_path(
-        self, client: TestClient, mock_s3_client: MockS3Client
+        self, client: TestClient
     ):
         """Test upload fails with invalid S3 path format"""
-        import io
 
         csv_content = b"Sample_ID\nS001"
         file = io.BytesIO(csv_content)
@@ -623,7 +587,7 @@ class TestManifestUpload:
         assert "Invalid S3 path format" in response.json()["detail"]
 
     def test_upload_manifest_missing_file(
-        self, client: TestClient, mock_s3_client: MockS3Client
+        self, client: TestClient
     ):
         """Test that request without file fails"""
         response = client.post(
