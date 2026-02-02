@@ -11,7 +11,7 @@ from jose import JWTError
 from core.deps import SessionDep
 from core.security import decode_token
 from api.auth.models import User
-from api.auth.services import get_user_by_id
+from api.auth.services import get_user_by_username
 
 # OAuth2 scheme for token extraction
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
@@ -48,15 +48,14 @@ def get_current_user(
 
     try:
         payload = decode_token(token)
-        user_id_str: str | None = payload.get("sub")
-        if user_id_str is None:
+        username: str | None = payload.get("sub")
+        if username is None:
             raise credentials_exception
 
-        user_id = uuid.UUID(user_id_str)
     except (JWTError, ValueError):
         raise credentials_exception
 
-    user = get_user_by_id(session, user_id)
+    user = get_user_by_username(session, username)
     if user is None:
         raise credentials_exception
 
@@ -136,12 +135,11 @@ def optional_current_user(
 
     try:
         payload = decode_token(token)
-        user_id_str: str | None = payload.get("sub")
-        if user_id_str is None:
+        username: str | None = payload.get("sub")
+        if username is None:
             return None
 
-        user_id = uuid.UUID(user_id_str)
-        return get_user_by_id(session, user_id)
+        return get_user_by_username(session, username)
     except (JWTError, ValueError):
         return None
 

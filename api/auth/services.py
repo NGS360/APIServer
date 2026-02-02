@@ -127,7 +127,6 @@ def register_user(session: Session, user_data: UserRegister) -> User:
 
     # Create user
     user = User(
-        user_id=User.generate_user_id(),
         email=user_data.email,
         username=user_data.username,
         hashed_password=hash_password(user_data.password),
@@ -182,7 +181,7 @@ def refresh_access_token(session: Session, refresh_token_str: str) -> dict:
         )
 
     # Get user
-    user = session.get(User, refresh_token.user_id)
+    user = session.get(User, refresh_token.username)
     if not user or not user.is_active:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -257,7 +256,7 @@ def initiate_password_reset(session: Session, email: str) -> bool:
         expires_at = datetime.now(timezone.utc) + timedelta(hours=1)
 
         reset_token = PasswordResetToken(
-            user_id=user.id,
+            username=user.username,
             token=token_str,
             expires_at=expires_at
         )
@@ -321,7 +320,7 @@ def complete_password_reset(
         )
 
     # Get user and update password
-    user = session.get(User, reset_token.user_id)
+    user = session.get(User, reset_token.username)
     if not user:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -354,7 +353,7 @@ def create_and_send_verification_email(session: Session, user: User) -> None:
     expires_at = datetime.now(timezone.utc) + timedelta(days=7)
 
     verification_token = EmailVerificationToken(
-        user_id=user.id,
+        username=user.username,
         token=token_str,
         expires_at=expires_at
     )
@@ -400,7 +399,7 @@ def verify_email(session: Session, token_str: str) -> bool:
             detail="Verification token has expired"
         )
 
-    user = session.get(User, verification_token.user_id)
+    user = session.get(User, verification_token.username)
     if not user:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -420,9 +419,9 @@ def verify_email(session: Session, token_str: str) -> bool:
     return True
 
 
-def update_last_login(session: Session, user_id: uuid.UUID) -> None:
+def update_last_login(session: Session, username: str) -> None:
     """Update user's last login timestamp"""
-    user = session.get(User, user_id)
+    user = session.get(User, username)
     if user:
         user.last_login = datetime.now(timezone.utc)
         session.add(user)
@@ -451,9 +450,9 @@ def reset_failed_login(session: Session, user: User) -> None:
     session.commit()
 
 
-def get_user_by_id(session: Session, user_id: uuid.UUID) -> User | None:
-    """Get user by ID"""
-    return session.get(User, user_id)
+def get_user_by_username(session: Session, username: str) -> User | None:
+    """Get user by username"""
+    return session.get(User, username)
 
 
 def get_user_by_email(session: Session, email: str) -> User | None:
