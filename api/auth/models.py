@@ -12,15 +12,14 @@ class User(SQLModel, table=True):
     """User model with authentication support"""
 
     __tablename__ = "users"
-    __searchable__ = ["email", "username", "user_id", "full_name"]
+    __searchable__ = ["email", "username", "full_name"]
 
     # Primary identifiers
     id: uuid.UUID | None = Field(default_factory=uuid.uuid4, primary_key=True)
-    user_id: str = Field(unique=True, index=True, max_length=100)
 
     # Authentication
     email: str = Field(unique=True, index=True, max_length=255)
-    username: str = Field(unique=True, index=True, max_length=100)
+    username: str = Field(unique=True, index=True, max_length=50)
     hashed_password: str | None = Field(default=None, max_length=255)  # None for OAuth-only
 
     # Profile
@@ -42,16 +41,6 @@ class User(SQLModel, table=True):
 
     model_config = ConfigDict(from_attributes=True)
 
-    @staticmethod
-    def generate_user_id() -> str:
-        """Generate unique user ID in format U-YYYYMMDD-NNNN"""
-        from datetime import datetime
-        date_str = datetime.now().strftime("%Y%m%d")
-        # In production, query DB for max sequence number for today
-        import random
-        seq = random.randint(1, 9999)
-        return f"U-{date_str}-{seq:04d}"
-
 
 class RefreshToken(SQLModel, table=True):
     """Refresh token for maintaining user sessions"""
@@ -59,7 +48,7 @@ class RefreshToken(SQLModel, table=True):
     __tablename__ = "refresh_tokens"
 
     id: uuid.UUID | None = Field(default_factory=uuid.uuid4, primary_key=True)
-    user_id: uuid.UUID = Field(foreign_key="users.id", index=True)
+    username: str = Field(foreign_key="users.username", index=True)
     token: str = Field(unique=True, index=True, max_length=500)
     expires_at: datetime
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
@@ -83,9 +72,9 @@ class OAuthProvider(SQLModel, table=True):
     __tablename__ = "oauth_providers"
 
     id: uuid.UUID | None = Field(default_factory=uuid.uuid4, primary_key=True)
-    user_id: uuid.UUID = Field(foreign_key="users.id", index=True)
+    username: str = Field(foreign_key="users.username", index=True)
     provider_name: OAuthProviderName = Field(index=True)
-    provider_user_id: str = Field(max_length=255)
+    provider_username: str = Field(max_length=255)
 
     # OAuth tokens (should be encrypted in production)
     access_token: str | None = Field(default=None, max_length=1000)
@@ -105,7 +94,7 @@ class PasswordResetToken(SQLModel, table=True):
     __tablename__ = "password_reset_tokens"
 
     id: uuid.UUID | None = Field(default_factory=uuid.uuid4, primary_key=True)
-    user_id: uuid.UUID = Field(foreign_key="users.id", index=True)
+    username: str = Field(foreign_key="users.username", index=True)
     token: str = Field(unique=True, index=True, max_length=255)
     expires_at: datetime
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
@@ -121,7 +110,7 @@ class EmailVerificationToken(SQLModel, table=True):
     __tablename__ = "email_verification_tokens"
 
     id: uuid.UUID | None = Field(default_factory=uuid.uuid4, primary_key=True)
-    user_id: uuid.UUID = Field(foreign_key="users.id", index=True)
+    username: str = Field(foreign_key="users.username", index=True)
     token: str = Field(unique=True, index=True, max_length=255)
     expires_at: datetime
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
@@ -194,13 +183,11 @@ class OAuthLinkRequest(SQLModel):
 
 class UserPublic(SQLModel):
     """Public user information"""
-    user_id: str
     email: str
     username: str
     full_name: str | None
     is_active: bool
     is_verified: bool
-    is_superuser: bool
     created_at: datetime
     last_login: datetime | None
     oauth_providers: list[str] = []
