@@ -80,25 +80,21 @@ def validate_manifest(
     s3_path: str = Query(
         ..., description="S3 path to the manifest CSV file to validate"
     ),
-    valid: bool = Query(
-        True,
-        description="Mock validation result for testing (True=valid, False=invalid)"
-    ),
 ) -> ManifestValidationResponse:
     """
-    Validate a manifest CSV file from S3.
+    Validate a manifest CSV file from S3 using the ngs360-manifest-validator Lambda.
 
-    Checks the manifest file for:
+    The Lambda function checks the manifest file for:
     - Required fields
     - Data format compliance
     - Value constraints
+    - File existence verification
 
     Args:
         s3_path: S3 path to the manifest CSV file to validate
-        valid: Mock parameter to simulate valid or invalid responses for testing
 
     Returns:
         ManifestValidationResponse with validation status and any errors found
     """
-    result = services.validate_manifest_file(session, s3_path, valid)
+    result = services.validate_manifest_file(session, s3_path)
     return result
