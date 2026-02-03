@@ -830,3 +830,81 @@ class TestManifestValidation:
         # Verify error response
         assert response.status_code == 503
         assert "unavailable" in response.json()["detail"].lower()
+
+    def test_validate_manifest_with_manifest_version(
+        self, client: TestClient, mock_lambda_client
+    ):
+        """Test validation endpoint with manifest_version parameter"""
+        mock_lambda_client.set_response({
+            "success": True,
+            "validation_passed": True,
+            "messages": {"ManifestVersion": "DTS12.1"},
+            "errors": {},
+            "warnings": {},
+            "statusCode": 200
+        })
+
+        response = client.post(
+            "/api/v1/manifest/validate"
+            "?s3_path=s3://test-bucket/manifest.csv"
+            "&manifest_version=dts12.1"
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["valid"] is True
+
+        # Verify manifest_version was passed (uppercased) to Lambda
+        last_payload = mock_lambda_client.invocations[-1]["Payload"]
+        assert last_payload["manifest_version"] == "DTS12.1"
+
+    def test_validate_manifest_with_files_bucket_and_prefix(
+        self, client: TestClient, mock_lambda_client
+    ):
+        """Test validation endpoint with files_bucket and files_prefix parameters"""
+        mock_lambda_client.set_response({
+            "success": True,
+            "validation_passed": True,
+            "messages": {},
+            "errors": {},
+            "warnings": {},
+            "statusCode": 200
+        })
+
+        response = client.post(
+            "/api/v1/manifest/validate"
+            "?s3_path=s3://test-bucket/manifest.csv"
+            "&files_bucket=data-bucket"
+            "&files_prefix=raw/fastq/"
+        )
+
+        assert response.status_code == 200
+
+        # Verify files_bucket and files_prefix were passed to Lambda
+        last_payload = mock_lambda_client.invocations[-1]["Payload"]
+        assert last_payload["files_bucket"] == "data-bucket"
+        assert last_payload["files_prefix"] == "raw/fastq/"
+
+    def test_validate_manifest_files_bucket_defaults_to_s3_path_bucket(
+        self, client: TestClient, mock_lambda_client
+    ):
+        """Test that files_bucket defaults to bucket from s3_path when not provided"""
+        mock_lambda_client.set_response({
+            "success": True,
+            "validation_passed": True,
+            "messages": {},
+            "errors": {},
+            "warnings": {},
+            "statusCode": 200
+        })
+
+        response = client.post(
+            "/api/v1/manifest/validate?s3_path=s3://my-bucket/path/manifest.csv"
+        )
+
+        assert response.status_code == 200
+
+        # Verify files_bucket defaulted to bucket from s3_path
+        last_payload = mock_lambda_client.invocations[-1]["Payload"]
+        assert last_payload["manifest_path"] == "s3://my-bucket/path/manifest.csv"
+        assert last_payload["files_bucket"] == "my-bucket"
