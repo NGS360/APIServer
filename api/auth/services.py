@@ -333,7 +333,9 @@ def complete_password_reset(
         )
 
     # Get user and update password
-    user = session.get(User, reset_token.username)
+    statement = select(User).where(User.username == reset_token.username)
+    user = session.exec(statement).first()
+
     if not user:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
