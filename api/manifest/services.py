@@ -3,6 +3,7 @@ Services for the Manifest API
 """
 
 import json
+from typing import Optional
 from fastapi import HTTPException, status, UploadFile
 import boto3
 from botocore.exceptions import NoCredentialsError, ClientError
@@ -222,14 +223,20 @@ def upload_manifest_file(
 
 def validate_manifest_file(
     session: SessionDep,
-    s3_path: str,
+    manifest_path: str,
+    manifest_version: Optional[str] = None,
+    files_bucket: Optional[str] = None,
+    files_prefix: Optional[str] = None,
 ) -> ManifestValidationResponse:
     """
     Validate a manifest CSV file from S3 by invoking a Lambda function.
 
     Args:
         session: Database session
-        s3_path: S3 path to the manifest CSV file to validate
+        manifest_path: S3 path to the manifest CSV file to validate
+        manifest_version: Optional manifest version to validate against
+        files_bucket: Optional S3 bucket where manifest files are located
+        files_prefix: Optional S3 prefix/path for file existence checks
 
     Returns:
         ManifestValidationResponse with validation status and any errors found
@@ -242,7 +249,7 @@ def validate_manifest_file(
     logger.info(
         "Invoking Lambda function: %s for manifest validation of %s",
         lambda_function_name,
-        s3_path
+        manifest_path
     )
 
     try:
@@ -253,16 +260,24 @@ def validate_manifest_file(
         # Create Lambda client
         lambda_client = boto3.client("lambda", region_name=region)
 
-        # Parse the S3 path to extract the bucket for files_bucket parameter
-        bucket, _ = _parse_s3_path(s3_path)
+        # Parse the S3 path to extract the bucket for files_bucket parameter if not provided
+        if files_bucket is None:
+            bucket, _ = _parse_s3_path(manifest_path)
+            files_bucket = bucket
 
         # Prepare payload for Lambda function
         # Lambda expects: manifest_path, files_bucket, manifest_version (optional),
         # files_prefix (optional), available_pipelines (optional)
         payload = {
-            "manifest_path": s3_path,
-            "files_bucket": bucket,
+            "manifest_path": manifest_path,
+            "files_bucket": files_bucket,
         }
+
+        # Add optional parameters if provided
+        if manifest_version:
+            payload["manifest_version"] = manifest_version
+        if files_prefix:
+            payload["files_prefix"] = files_prefix
 
         # Invoke Lambda function synchronously
         response = lambda_client.invoke(
