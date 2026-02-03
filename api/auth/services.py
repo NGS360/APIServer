@@ -464,7 +464,8 @@ def reset_failed_login(session: Session, user: User) -> None:
 
 def get_user_by_username(session: Session, username: str) -> User | None:
     """Get user by username"""
-    return session.get(User, username)
+    statement = select(User).where(User.username == username)
+    return session.exec(statement).first()
 
 
 def get_user_by_email(session: Session, email: str) -> User | None:

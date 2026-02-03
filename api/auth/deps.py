@@ -48,14 +48,17 @@ def get_current_user(
 
     try:
         payload = decode_token(token)
-        username: str | None = payload.get("sub")
-        if username is None:
+        user_id_str: str | None = payload.get("sub")
+        if user_id_str is None:
             raise credentials_exception
+
+        # Parse the UUID from the string
+        user_id = uuid.UUID(user_id_str)
 
     except (JWTError, ValueError):
         raise credentials_exception
 
-    user = get_user_by_username(session, username)
+    user = session.get(User, user_id)
     if user is None:
         raise credentials_exception
 
@@ -135,11 +138,14 @@ def optional_current_user(
 
     try:
         payload = decode_token(token)
-        username: str | None = payload.get("sub")
-        if username is None:
+        user_id_str: str | None = payload.get("sub")
+        if user_id_str is None:
             return None
 
-        return get_user_by_username(session, username)
+        # Parse the UUID from the string
+        user_id = uuid.UUID(user_id_str)
+
+        return session.get(User, user_id)
     except (JWTError, ValueError):
         return None
 
