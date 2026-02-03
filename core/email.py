@@ -153,7 +153,7 @@ The NGS360 Team
         return False
 
 
-def _send_email(to_email: str, subject: str, body: str) -> None:
+def _send_email_aws_ses(to_email: str, subject: str, body: str) -> None:
     """
     Internal function to send email using AWS SES
 
@@ -204,3 +204,82 @@ def _send_email(to_email: str, subject: str, body: str) -> None:
     except Exception as e:
         logger.error(f"Unexpected error sending email: {e}")
         raise
+
+
+def _send_email(to_email: str, subject: str, body: str) -> None:
+    """
+    Internal function to send email using SMTP
+
+    Args:
+        to_email: Recipient email address
+        subject: Email subject
+        body: Email body (plain text)
+
+    Raises:
+        Exception: If email sending fails
+    """
+    import smtplib
+    from email.mime.text import MIMEText
+    from email.mime.multipart import MIMEMultipart
+    from email.utils import formataddr
+
+    settings = get_settings()
+
+    # Validate SMTP configuration
+    if not settings.MAIL_SERVER:
+        logger.error("MAIL_SERVER not configured")
+        raise Exception("Email service not configured: MAIL_SERVER is required")
+
+    if not settings.MAIL_PORT:
+        logger.error("MAIL_PORT not configured")
+        raise Exception("Email service not configured: MAIL_PORT is required")
+
+    try:
+        # Create message
+        msg = MIMEMultipart()
+        msg['From'] = formataddr((settings.FROM_NAME, settings.FROM_EMAIL))
+        msg['To'] = to_email
+        msg['Subject'] = subject
+
+        # Attach body as plain text
+        msg.attach(MIMEText(body, 'plain', 'utf-8'))
+
+        # Connect to SMTP server
+        mail_port = int(settings.MAIL_PORT)
+
+        logger.debug(f"Connecting to SMTP server {settings.MAIL_SERVER}:{mail_port}")
+
+        # Create SMTP connection
+        smtp_server = smtplib.SMTP(settings.MAIL_SERVER, mail_port, timeout=30)
+
+        try:
+            # Enable TLS if configured
+            if settings.MAIL_USE_TLS:
+                logger.debug("Starting TLS")
+                smtp_server.starttls()
+
+            # Authenticate if credentials provided
+            if settings.MAIL_USERNAME and settings.MAIL_PASSWORD:
+                logger.debug(f"Authenticating as {settings.MAIL_USERNAME}")
+                smtp_server.login(settings.MAIL_USERNAME, settings.MAIL_PASSWORD)
+
+            # Send email
+            smtp_server.send_message(msg)
+            logger.debug(f"Email sent successfully to {to_email}")
+
+        finally:
+            # Always close the connection
+            smtp_server.quit()
+
+    except smtplib.SMTPAuthenticationError as e:
+        logger.error(f"SMTP authentication failed: {e}")
+        raise Exception("Failed to send email: Authentication failed")
+    except smtplib.SMTPException as e:
+        logger.error(f"SMTP error: {e}")
+        raise Exception(f"Failed to send email: {str(e)}")
+    except ValueError as e:
+        logger.error(f"Invalid MAIL_PORT value: {e}")
+        raise Exception("Email service misconfigured: Invalid port number")
+    except Exception as e:
+        logger.error(f"Unexpected error sending email: {e}")
+        raise Exception(f"Failed to send email: {str(e)}")

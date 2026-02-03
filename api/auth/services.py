@@ -399,7 +399,8 @@ def verify_email(session: Session, token_str: str) -> bool:
             detail="Verification token has expired"
         )
 
-    user = session.get(User, verification_token.username)
+    statement = select(User).where(User.username == verification_token.username)
+    user = session.exec(statement).first()
     if not user:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

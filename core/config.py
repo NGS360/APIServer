@@ -272,6 +272,43 @@ class Settings(BaseSettings):
         """Get frontend URL"""
         return self._get_config_value("FRONTEND_URL", default="http://localhost:3000")
 
+    @computed_field
+    @property
+    def MAIL_SERVER(self) -> str | None:
+        """Get mail server"""
+        return self._get_config_value("MAIL_SERVER")
+
+    @computed_field
+    @property
+    def MAIL_PORT(self) -> str | None:
+        """Get mail server port"""
+        return self._get_config_value("MAIL_PORT")
+
+    @computed_field
+    @property
+    def MAIL_USERNAME(self) -> str | None:
+        """Get mail username"""
+        return self._get_config_value("MAIL_USERNAME")
+
+    @computed_field
+    @property
+    def MAIL_PASSWORD(self) -> str | None:
+        """Get mail password"""
+        return self._get_config_value("MAIL_PASSWORD")
+
+    @computed_field
+    @property
+    def MAIL_USE_TLS(self) -> bool:
+        """Check if mail uses TLS"""
+        value = self._get_config_value("MAIL_USE_TLS", default="false")
+        return value.lower() in ("true", "1", "yes")
+
+    @computed_field
+    @property
+    def MAIL_ADMINS(self) -> str | None:
+        """Get mail admins"""
+        return self._get_config_value("MAIL_ADMINS")
+
     # OAuth2 Configuration
     @computed_field
     @property
