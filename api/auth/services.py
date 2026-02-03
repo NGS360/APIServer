@@ -2,7 +2,7 @@
 Authentication service layer for user management and authentication
 """
 from datetime import datetime, timedelta, timezone
-import uuid
+import logging
 
 from fastapi import HTTPException, status
 from sqlmodel import Session, select
@@ -17,6 +17,9 @@ from core.security import (
 )
 from core.config import get_settings
 from core.email import send_password_reset_email, send_verification_email
+
+
+logger = logging.getLogger(__name__)
 
 
 def ensure_timezone_aware(dt: datetime | None) -> datetime | None:
@@ -129,6 +132,7 @@ def register_user(session: Session, user_data: UserRegister) -> User:
     is_admin = False
     statement = select(User)
     if session.exec(statement).first() is None:
+        logger.info(f"First user registered, granting admin rights to {user_data.username}")
         is_admin = True
 
     # Create user
@@ -139,7 +143,7 @@ def register_user(session: Session, user_data: UserRegister) -> User:
         full_name=user_data.full_name,
         is_active=True,
         is_verified=False,
-        is_admin=is_admin
+        is_superuser=is_admin
     )
 
     session.add(user)
