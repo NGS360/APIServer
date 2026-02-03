@@ -350,6 +350,84 @@ class MockS3Client:
         return {"ETag": '"mock-etag"', "VersionId": "mock-version-id"}
 
 
+class MockLambdaPayload:
+    """Mock Lambda response payload"""
+
+    def __init__(self, content: bytes):
+        self.content = content
+
+    def read(self) -> bytes:
+        return self.content
+
+
+class MockLambdaClient:
+    """Mock Lambda client for testing"""
+
+    def __init__(self):
+        self.response_data = {}  # The response to return
+        self.error_mode = None  # For simulating errors
+        self.invocations = []  # Track invocations
+
+    def set_response(self, response: dict):
+        """Set the response that will be returned by invoke()"""
+        self.response_data = response
+
+    def simulate_error(self, error_type: str):
+        """
+        Configure client to raise specific errors
+
+        Args:
+            error_type: One of "ResourceNotFoundException", "AccessDeniedException",
+                        "NoCredentialsError"
+        """
+        self.error_mode = error_type
+
+    def invoke(self, FunctionName: str, InvocationType: str, Payload: str):
+        """Mock Lambda invoke operation"""
+        import json
+        from botocore.exceptions import NoCredentialsError, ClientError
+
+        # Track the invocation
+        self.invocations.append({
+            "FunctionName": FunctionName,
+            "InvocationType": InvocationType,
+            "Payload": json.loads(Payload)
+        })
+
+        # Check for simulated errors
+        if self.error_mode == "NoCredentialsError":
+            raise NoCredentialsError()
+        elif self.error_mode == "ResourceNotFoundException":
+            error_response = {
+                "Error": {
+                    "Code": "ResourceNotFoundException",
+                    "Message": f"Function not found: {FunctionName}",
+                }
+            }
+            raise ClientError(error_response, "Invoke")
+        elif self.error_mode == "AccessDeniedException":
+            error_response = {
+                "Error": {
+                    "Code": "AccessDeniedException",
+                    "Message": "Access Denied"
+                }
+            }
+            raise ClientError(error_response, "Invoke")
+
+        # Return the configured response
+        response_json = json.dumps(self.response_data).encode("utf-8")
+        return {
+            "StatusCode": 200,
+            "Payload": MockLambdaPayload(response_json)
+        }
+
+
+@pytest.fixture(name="mock_lambda_client")
+def mock_lambda_client_fixture():
+    """Provide a mock Lambda client for testing"""
+    return MockLambdaClient()
+
+
 @pytest.fixture(name="test_project")
 def test_project_fixture(session):
     """Provide a test project instance"""
@@ -480,8 +558,11 @@ def client_fixture(
     session: Session,
     mock_opensearch_client: MockOpenSearchClient,
     mock_s3_client: MockS3Client,
+    mock_lambda_client: MockLambdaClient,
+    monkeypatch,
 ):
     """Provide a TestClient with dependencies overridden for testing"""
+    import boto3
 
     def get_db_override():
         return session
@@ -491,6 +572,16 @@ def client_fixture(
 
     def get_s3_client_override():
         return mock_s3_client
+
+    # Patch boto3.client to return mock Lambda client for "lambda" service
+    original_boto3_client = boto3.client
+
+    def mock_boto3_client(service_name, **kwargs):
+        if service_name == "lambda":
+            return mock_lambda_client
+        return original_boto3_client(service_name, **kwargs)
+
+    monkeypatch.setattr(boto3, "client", mock_boto3_client)
 
     app.dependency_overrides[get_db] = get_db_override
     app.dependency_overrides[get_opensearch_client] = get_opensearch_client_override

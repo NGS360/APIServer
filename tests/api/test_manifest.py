@@ -3,9 +3,15 @@ Test /manifest endpoint
 """
 
 from datetime import datetime
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
+import io
+import pytest
 
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
+
+from api.manifest.services import _parse_s3_path
+from api.manifest.services import get_latest_manifest_file
 
 from tests.conftest import MockS3Client
 
@@ -15,7 +21,6 @@ class TestManifestServices:
 
     def test_parse_s3_path(self):
         """Test S3 path parsing in manifest service"""
-        from api.manifest.services import _parse_s3_path
 
         # Valid paths
         assert _parse_s3_path("s3://my-bucket") == ("my-bucket", "")
@@ -43,8 +48,6 @@ class TestManifestServices:
 
     def test_get_latest_manifest_file_single(self, mock_s3_client: MockS3Client):
         """Test finding latest manifest when only one exists"""
-        from api.manifest.services import get_latest_manifest_file
-
         # Setup mock S3 with one manifest file
         files = [
             {
@@ -61,8 +64,6 @@ class TestManifestServices:
 
     def test_get_latest_manifest_file_multiple(self, mock_s3_client: MockS3Client):
         """Test finding latest manifest when multiple exist"""
-        from api.manifest.services import get_latest_manifest_file
-
         # Setup mock S3 with multiple manifest files - most recent should be selected
         files = [
             {
@@ -89,8 +90,6 @@ class TestManifestServices:
 
     def test_get_latest_manifest_case_insensitive(self, mock_s3_client: MockS3Client):
         """Test case-insensitive matching for 'Manifest'"""
-        from api.manifest.services import get_latest_manifest_file
-
         # Test various cases: MANIFEST, manifest, Manifest, etc.
         files = [
             {
@@ -118,8 +117,6 @@ class TestManifestServices:
 
     def test_get_latest_manifest_csv_only(self, mock_s3_client: MockS3Client):
         """Test that only .csv files are matched"""
-        from api.manifest.services import get_latest_manifest_file
-
         # Include non-CSV files with manifest in name
         files = [
             {
@@ -152,7 +149,6 @@ class TestManifestServices:
 
     def test_get_latest_manifest_substring_match(self, mock_s3_client: MockS3Client):
         """Test substring matching for 'manifest' in filename"""
-        from api.manifest.services import get_latest_manifest_file
 
         # Files with manifest as substring
         files = [
@@ -181,8 +177,6 @@ class TestManifestServices:
 
     def test_get_latest_manifest_recursive(self, mock_s3_client: MockS3Client):
         """Test recursive search through subdirectories"""
-        from api.manifest.services import get_latest_manifest_file
-
         # Files in different subdirectories
         files = [
             {
@@ -215,8 +209,6 @@ class TestManifestServices:
 
     def test_get_latest_manifest_no_match(self, mock_s3_client: MockS3Client):
         """Test returning None when no manifest files found"""
-        from api.manifest.services import get_latest_manifest_file
-
         # Files without "manifest" in name
         files = [
             {
@@ -238,8 +230,6 @@ class TestManifestServices:
 
     def test_get_latest_manifest_empty_bucket(self, mock_s3_client: MockS3Client):
         """Test returning None when bucket/prefix is empty"""
-        from api.manifest.services import get_latest_manifest_file
-
         # Empty bucket
         mock_s3_client.setup_bucket("test-bucket", "vendor/", [], [])
 
@@ -249,11 +239,6 @@ class TestManifestServices:
 
     def test_get_latest_manifest_invalid_path(self, mock_s3_client: MockS3Client):
         """Test error handling for invalid S3 path"""
-        from api.manifest.services import get_latest_manifest_file
-        from fastapi import HTTPException
-        import pytest
-
-        # Invalid S3 paths
         invalid_paths = ["http://bucket/path", "s3://", "s3:///bucket"]
 
         for path in invalid_paths:
@@ -263,10 +248,6 @@ class TestManifestServices:
 
     def test_get_latest_manifest_no_credentials(self, mock_s3_client: MockS3Client):
         """Test error handling when AWS credentials are missing"""
-        from api.manifest.services import get_latest_manifest_file
-        from fastapi import HTTPException
-        import pytest
-
         mock_s3_client.simulate_error("NoCredentialsError")
 
         with pytest.raises(HTTPException) as exc_info:
@@ -275,10 +256,6 @@ class TestManifestServices:
 
     def test_get_latest_manifest_bucket_not_found(self, mock_s3_client: MockS3Client):
         """Test error handling when bucket doesn't exist"""
-        from api.manifest.services import get_latest_manifest_file
-        from fastapi import HTTPException
-        import pytest
-
         mock_s3_client.simulate_error("NoSuchBucket")
 
         with pytest.raises(HTTPException) as exc_info:
@@ -287,10 +264,6 @@ class TestManifestServices:
 
     def test_get_latest_manifest_access_denied(self, mock_s3_client: MockS3Client):
         """Test error handling when access is denied"""
-        from api.manifest.services import get_latest_manifest_file
-        from fastapi import HTTPException
-        import pytest
-
         mock_s3_client.simulate_error("AccessDenied")
 
         with pytest.raises(HTTPException) as exc_info:
@@ -353,7 +326,7 @@ class TestManifestAPI:
         assert response.text == ""
 
     def test_get_latest_manifest_invalid_path(
-        self, client: TestClient, mock_s3_client: MockS3Client
+        self, client: TestClient
     ):
         """Test 400 error for invalid S3 path"""
         # Make API call with invalid path
@@ -420,7 +393,6 @@ class TestManifestUpload:
         self, client: TestClient, mock_s3_client: MockS3Client
     ):
         """Test uploading a manifest to a directory path (ending with /)"""
-        import io
 
         # Create a test CSV file
         csv_content = b"Sample_ID,Sample_Name,Project\nS001,Sample1,ProjectA\nS002,Sample2,ProjectB"
@@ -451,7 +423,6 @@ class TestManifestUpload:
         self, client: TestClient, mock_s3_client: MockS3Client
     ):
         """Test uploading a manifest with a specific file path"""
-        import io
 
         # Create a test CSV file
         csv_content = b"Sample_ID,Sample_Name\nS001,Sample1"
@@ -477,7 +448,6 @@ class TestManifestUpload:
         self, client: TestClient, mock_s3_client: MockS3Client
     ):
         """Test uploading to a directory path without trailing slash"""
-        import io
 
         # Create a test CSV file
         csv_content = b"Sample_ID\nS001"
@@ -502,7 +472,6 @@ class TestManifestUpload:
         self, client: TestClient, mock_s3_client: MockS3Client
     ):
         """Test uploading a manifest to the root of a bucket"""
-        import io
 
         # Create a test CSV file
         csv_content = b"Sample_ID\nS001"
@@ -522,10 +491,9 @@ class TestManifestUpload:
         assert "root_manifest.csv" in mock_s3_client.uploaded_files["test-bucket"]
 
     def test_upload_manifest_non_csv_file(
-        self, client: TestClient, mock_s3_client: MockS3Client
+        self, client: TestClient
     ):
         """Test that non-CSV files are rejected"""
-        import io
 
         # Create a test text file
         file = io.BytesIO(b"This is not a CSV file")
@@ -545,7 +513,6 @@ class TestManifestUpload:
         self, client: TestClient, mock_s3_client: MockS3Client
     ):
         """Test upload fails when bucket doesn't exist"""
-        import io
 
         mock_s3_client.simulate_error("NoSuchBucket")
 
@@ -566,7 +533,6 @@ class TestManifestUpload:
         self, client: TestClient, mock_s3_client: MockS3Client
     ):
         """Test upload fails when access is denied"""
-        import io
 
         mock_s3_client.simulate_error("AccessDenied")
 
@@ -587,7 +553,6 @@ class TestManifestUpload:
         self, client: TestClient, mock_s3_client: MockS3Client
     ):
         """Test upload fails when AWS credentials are missing"""
-        import io
 
         mock_s3_client.simulate_error("NoCredentialsError")
 
@@ -605,10 +570,9 @@ class TestManifestUpload:
         assert "credentials" in response.json()["detail"].lower()
 
     def test_upload_manifest_invalid_s3_path(
-        self, client: TestClient, mock_s3_client: MockS3Client
+        self, client: TestClient
     ):
         """Test upload fails with invalid S3 path format"""
-        import io
 
         csv_content = b"Sample_ID\nS001"
         file = io.BytesIO(csv_content)
@@ -624,7 +588,7 @@ class TestManifestUpload:
         assert "Invalid S3 path format" in response.json()["detail"]
 
     def test_upload_manifest_missing_file(
-        self, client: TestClient, mock_s3_client: MockS3Client
+        self, client: TestClient
     ):
         """Test that request without file fails"""
         response = client.post(
@@ -638,19 +602,20 @@ class TestManifestUpload:
 class TestManifestValidation:
     """Test manifest validation endpoint"""
 
-    @patch("api.manifest.services.boto3.client")
-    def test_validate_manifest_valid(self, mock_boto_client, client: TestClient):
-        """Test validation endpoint with valid manifest (mock)"""
-        # Mock Lambda response for valid manifest
-        mock_lambda = MagicMock()
-        valid_response_json = (
-            b'{"valid": true, "message": {"ManifestVersion": "1.0"}, '
-            b'"error": {}, "warning": {}}'
-        )
-        mock_lambda.invoke.return_value = {
-            "Payload": MagicMock(read=lambda: valid_response_json)
-        }
-        mock_boto_client.return_value = mock_lambda
+    def test_validate_manifest_valid(
+        self, client: TestClient, mock_lambda_client
+    ):
+        """Test validation endpoint with valid manifest via Lambda"""
+        # Configure mock Lambda response for valid manifest
+        mock_lambda_client.set_response({
+            "success": True,
+            "validation_passed": True,
+            "messages": {"ManifestVersion": "Validated against manifest version: DTS12.1"},
+            "errors": {},
+            "warnings": {},
+            "manifest_path": "s3://test-bucket/manifest.csv",
+            "statusCode": 200
+        })
 
         response = client.post(
             "/api/v1/manifest/validate?s3_path=s3://test-bucket/manifest.csv"
@@ -679,26 +644,41 @@ class TestManifestValidation:
         # Should have manifest version message
         assert "ManifestVersion" in data["message"]
 
-        # Verify Lambda was invoked
-        mock_lambda.invoke.assert_called_once()
-
-    @patch("api.manifest.services.boto3.client")
-    def test_validate_manifest_invalid(self, mock_boto_client, client: TestClient):
-        """Test validation endpoint with invalid manifest (mock)"""
-        # Mock Lambda response for invalid manifest
-        mock_lambda = MagicMock()
-        invalid_response_json = (
-            b'{"valid": false, "message": {"ManifestVersion": "1.0", '
-            b'"ExtraFields": "field1, field2"}, "error": '
-            b'{"InvalidFilePath": ["Invalid path at row 5"], '
-            b'"MissingRequiredField": ["sample_id missing at row 3"], '
-            b'"InvalidDataFormat": ["Invalid date format at row 2"]}, '
-            b'"warning": {"DuplicateSample": ["Duplicate sample ID: S001"]}}'
-        )
-        mock_lambda.invoke.return_value = {
-            "Payload": MagicMock(read=lambda: invalid_response_json)
-        }
-        mock_boto_client.return_value = mock_lambda
+    def test_validate_manifest_invalid(
+        self, client: TestClient, mock_lambda_client
+    ):
+        """Test validation endpoint with invalid manifest via Lambda"""
+        # Configure mock Lambda response for invalid manifest
+        mock_lambda_client.set_response({
+            "success": True,
+            "validation_passed": False,
+            "messages": {
+                "ManifestVersion": "Validated against manifest version: DTS12.1",
+                "ExtraFields": "See extra fields (info only): ['VHYB', 'VLANE', 'VBARCODE']"
+            },
+            "errors": {
+                "InvalidFilePath": [
+                    "Unable to find file s3://example/example_1.clipped.fastq.gz "
+                    "described in row 182, check that file exists and is accessible",
+                    "Unable to find file s3://example/example_2.clipped.fastq.gz "
+                    "described in row 183, check that file exists and is accessible"
+                ],
+                "MissingRequiredField": [
+                    "Row 45 is missing required field 'SAMPLE_ID'",
+                    "Row 67 is missing required field 'FILE_PATH'"
+                ],
+                "InvalidDataFormat": [
+                    "Row 92: Invalid date format in field 'RUN_DATE', expected YYYY-MM-DD"
+                ]
+            },
+            "warnings": {
+                "DuplicateSample": [
+                    "Sample 'ABC-123' appears multiple times in rows 10, 25, 42"
+                ]
+            },
+            "manifest_path": "s3://test-bucket/manifest.csv",
+            "statusCode": 422
+        })
 
         response = client.post(
             "/api/v1/manifest/validate?s3_path=s3://test-bucket/manifest.csv"
@@ -742,33 +722,6 @@ class TestManifestValidation:
         assert "ManifestVersion" in data["message"]
         assert "ExtraFields" in data["message"]
 
-        # Verify Lambda was invoked
-        mock_lambda.invoke.assert_called_once()
-
-    @patch("api.manifest.services.boto3.client")
-    def test_validate_manifest_default_valid(self, mock_boto_client, client: TestClient):
-        """Test validation endpoint with default Lambda response"""
-        # Mock Lambda response
-        mock_lambda = MagicMock()
-        mock_lambda.invoke.return_value = {
-            "Payload": MagicMock(
-                read=lambda: b'{"valid": true, "message": {}, "error": {}, "warning": {}}'
-            )
-        }
-        mock_boto_client.return_value = mock_lambda
-
-        response = client.post(
-            "/api/v1/manifest/validate?s3_path=s3://test-bucket/manifest.csv"
-        )
-
-        # Verify successful response
-        assert response.status_code == 200
-
-        data = response.json()
-
-        # Should process valid response
-        assert data["valid"] is True
-
     def test_validate_manifest_missing_s3_path(self, client: TestClient):
         """Test validation endpoint fails without s3_path"""
         response = client.post("/api/v1/manifest/validate")
@@ -776,8 +729,9 @@ class TestManifestValidation:
         # Verify 422 error (missing required parameter)
         assert response.status_code == 422
 
-    @patch("api.manifest.services.boto3.client")
-    def test_validate_manifest_response_structure(self, mock_boto_client, client: TestClient):
+    def test_validate_manifest_response_structure(
+        self, client: TestClient, mock_lambda_client
+    ):
         """Test that both valid and invalid responses match expected structure"""
         # Mock Lambda for valid response
         mock_lambda = MagicMock()
@@ -788,9 +742,16 @@ class TestManifestValidation:
         mock_lambda.invoke.return_value = {
             "Payload": MagicMock(read=lambda: valid_json)
         }
-        mock_boto_client.return_value = mock_lambda
 
         # Test valid response
+        mock_lambda_client.set_response({
+            "success": True,
+            "validation_passed": True,
+            "messages": {"ManifestVersion": "DTS12.1"},
+            "errors": {},
+            "warnings": {},
+            "statusCode": 200
+        })
         valid_response = client.post(
             "/api/v1/manifest/validate?s3_path=s3://test-bucket/manifest.csv"
         )
@@ -806,6 +767,14 @@ class TestManifestValidation:
         }
 
         # Test invalid response
+        mock_lambda_client.set_response({
+            "success": True,
+            "validation_passed": False,
+            "messages": {"ManifestVersion": "DTS12.1"},
+            "errors": {"SomeError": ["Error message"]},
+            "warnings": {"SomeWarning": ["Warning message"]},
+            "statusCode": 422
+        })
         invalid_response = client.post(
             "/api/v1/manifest/validate?s3_path=s3://test-bucket/manifest.csv"
         )
@@ -821,3 +790,141 @@ class TestManifestValidation:
             assert isinstance(data["error"], dict)
             assert isinstance(data["warning"], dict)
             assert isinstance(data["valid"], bool)
+
+    def test_validate_manifest_lambda_error(
+        self, client: TestClient, mock_lambda_client
+    ):
+        """Test validation endpoint handles Lambda errors"""
+        # Configure mock Lambda response for validation request error
+        mock_lambda_client.set_response({
+            "success": False,
+            "error": "manifest_path is required",
+            "error_type": "ValidationError",
+            "statusCode": 400
+        })
+
+        response = client.post(
+            "/api/v1/manifest/validate?s3_path=s3://test-bucket/manifest.csv"
+        )
+
+        # Verify error response
+        assert response.status_code == 400
+        assert "manifest_path" in response.json()["detail"]
+
+    def test_validate_manifest_lambda_file_not_found(
+        self, client: TestClient, mock_lambda_client
+    ):
+        """Test validation endpoint handles file not found errors"""
+        # Configure mock Lambda response for file not found
+        mock_lambda_client.set_response({
+            "success": False,
+            "error": "Manifest file not found at s3://test-bucket/manifest.csv",
+            "error_type": "FileNotFoundError",
+            "statusCode": 404
+        })
+
+        response = client.post(
+            "/api/v1/manifest/validate?s3_path=s3://test-bucket/manifest.csv"
+        )
+
+        # Verify error response
+        assert response.status_code == 404
+        assert "not found" in response.json()["detail"].lower()
+
+    def test_validate_manifest_lambda_service_unavailable(
+        self, client: TestClient, mock_lambda_client
+    ):
+        """Test validation endpoint handles service unavailable errors"""
+        # Configure mock Lambda response for service unavailable
+        mock_lambda_client.set_response({
+            "success": False,
+            "error": "Failed to connect to NGS360",
+            "error_type": "ServiceUnavailable",
+            "statusCode": 503
+        })
+
+        response = client.post(
+            "/api/v1/manifest/validate?s3_path=s3://test-bucket/manifest.csv"
+        )
+
+        # Verify error response
+        assert response.status_code == 503
+        assert "unavailable" in response.json()["detail"].lower()
+
+    def test_validate_manifest_with_manifest_version(
+        self, client: TestClient, mock_lambda_client
+    ):
+        """Test validation endpoint with manifest_version parameter"""
+        mock_lambda_client.set_response({
+            "success": True,
+            "validation_passed": True,
+            "messages": {"ManifestVersion": "DTS12.1"},
+            "errors": {},
+            "warnings": {},
+            "statusCode": 200
+        })
+
+        response = client.post(
+            "/api/v1/manifest/validate"
+            "?s3_path=s3://test-bucket/manifest.csv"
+            "&manifest_version=dts12.1"
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["valid"] is True
+
+        # Verify manifest_version was passed (uppercased) to Lambda
+        last_payload = mock_lambda_client.invocations[-1]["Payload"]
+        assert last_payload["manifest_version"] == "DTS12.1"
+
+    def test_validate_manifest_with_files_bucket_and_prefix(
+        self, client: TestClient, mock_lambda_client
+    ):
+        """Test validation endpoint with files_bucket and files_prefix parameters"""
+        mock_lambda_client.set_response({
+            "success": True,
+            "validation_passed": True,
+            "messages": {},
+            "errors": {},
+            "warnings": {},
+            "statusCode": 200
+        })
+
+        response = client.post(
+            "/api/v1/manifest/validate"
+            "?s3_path=s3://test-bucket/manifest.csv"
+            "&files_bucket=data-bucket"
+            "&files_prefix=raw/fastq/"
+        )
+
+        assert response.status_code == 200
+
+        # Verify files_bucket and files_prefix were passed to Lambda
+        last_payload = mock_lambda_client.invocations[-1]["Payload"]
+        assert last_payload["files_bucket"] == "data-bucket"
+        assert last_payload["files_prefix"] == "raw/fastq/"
+
+    def test_validate_manifest_files_bucket_defaults_to_s3_path_bucket(
+        self, client: TestClient, mock_lambda_client
+    ):
+        """Test that files_bucket defaults to bucket from s3_path when not provided"""
+        mock_lambda_client.set_response({
+            "success": True,
+            "validation_passed": True,
+            "messages": {},
+            "errors": {},
+            "warnings": {},
+            "statusCode": 200
+        })
+
+        response = client.post(
+            "/api/v1/manifest/validate?s3_path=s3://my-bucket/path/manifest.csv"
+        )
+
+        assert response.status_code == 200
+
+        # Verify files_bucket defaulted to bucket from s3_path
+        last_payload = mock_lambda_client.invocations[-1]["Payload"]
+        assert last_payload["manifest_path"] == "s3://my-bucket/path/manifest.csv"
+        assert last_payload["files_bucket"] == "my-bucket"
