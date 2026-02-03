@@ -677,12 +677,16 @@ def submit_demux_job(
 
     job_name = interpolate(tool_config.aws_batch.job_name, workflow_body.inputs)
     command = interpolate(tool_config.aws_batch.command, workflow_body.inputs)
+    # Add username to inputs for interpolation
+    inputs = workflow_body.inputs
+    inputs['username'] = username
+
     container_overrides = {
         "command": command.split(),
         "environment": [
             {
                 "name": env.name,
-                "value": interpolate(env.value, workflow_body.inputs)
+                "value": interpolate(env.value, inputs)
             }
             for env in (tool_config.aws_batch.environment or [])
         ],
