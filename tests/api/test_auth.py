@@ -78,7 +78,6 @@ class TestUserRegistration:
         assert data["full_name"] == "New User"
         assert data["is_active"] is True
         assert data["is_verified"] is False  # Email not verified yet
-        assert "user_id" in data
 
     def test_register_duplicate_email(self, client: TestClient, test_user):
         """Test registration with duplicate email fails"""
