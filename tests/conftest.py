@@ -407,45 +407,60 @@ def reset_settings_cache():
 def session_fixture():
     """Provide a fresh database session for each test"""
     engine = create_engine(
-        "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+        pool_pre_ping=True
     )
-    SQLModel.metadata.create_all(engine)
-    with Session(engine) as session:
-        # Seed test settings
-        from api.settings.models import Setting
-        test_settings = [
-            Setting(
-                key="DATA_BUCKET_URI",
-                value="s3://test-data-bucket",
-                name="Data Bucket URI",
-                description="Test data bucket"
-            ),
-            Setting(
-                key="RESULTS_BUCKET_URI",
-                value="s3://test-results-bucket",
-                name="Results Bucket URI",
-                description="Test results bucket"
-            ),
-            Setting(
-                key="DEMUX_WORKFLOW_CONFIGS_BUCKET_URI",
-                value="s3://test-tool-configs-bucket",
-                name="Demux Workflow Configs Bucket URI",
-                description="Test demux workflow configs bucket"
-            ),
-            Setting(
-                key="MANIFEST_VALIDATION_LAMBDA",
-                value="test-manifest-validation-lambda",
-                name="Manifest Validation Lambda",
-                description="Test Lambda function for manifest validation"
-            ),
-        ]
-        for setting in test_settings:
-            session.add(setting)
-        session.commit()
+    connection = engine.connect()
+    SQLModel.metadata.create_all(bind=connection)
 
-        yield session
-    SQLModel.metadata.drop_all(engine)
-    engine.dispose()
+    session = Session(bind=connection, expire_on_commit=False)
+
+    # Seed test settings
+    from api.settings.models import Setting
+    test_settings = [
+        Setting(
+            key="DATA_BUCKET_URI",
+            value="s3://test-data-bucket",
+            name="Data Bucket URI",
+            description="Test data bucket"
+        ),
+        Setting(
+            key="RESULTS_BUCKET_URI",
+            value="s3://test-results-bucket",
+            name="Results Bucket URI",
+            description="Test results bucket"
+        ),
+        Setting(
+            key="DEMUX_WORKFLOW_CONFIGS_BUCKET_URI",
+            value="s3://test-tool-configs-bucket",
+            name="Demux Workflow Configs Bucket URI",
+            description="Test demux workflow configs bucket"
+        ),
+        Setting(
+            key="MANIFEST_VALIDATION_LAMBDA",
+            value="test-manifest-validation-lambda",
+            name="Manifest Validation Lambda",
+            description="Test Lambda function for manifest validation"
+        ),
+    ]
+    for setting in test_settings:
+        session.add(setting)
+    session.commit()
+
+    yield session
+
+    # Cleanup: properly close session, connection, and dispose engine
+    try:
+        session.rollback()
+    except Exception:
+        pass
+    finally:
+        session.close()
+        SQLModel.metadata.drop_all(bind=connection)
+        connection.close()
+        engine.dispose()
 
 
 @pytest.fixture(name="mock_opensearch_client")
