@@ -64,7 +64,7 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 
     # Determine if the entire body is missing
     is_missing_body = any(
-        error["type"] == "missing" and "body" in error["loc"] 
+        error["type"] == "missing" and "body" in error["loc"]
         for error in errors
     )
 

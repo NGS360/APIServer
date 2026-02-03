@@ -11,7 +11,6 @@ from jose import JWTError
 from core.deps import SessionDep
 from core.security import decode_token
 from api.auth.models import User
-from api.auth.services import get_user_by_username
 
 # OAuth2 scheme for token extraction
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
