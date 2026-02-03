@@ -125,6 +125,12 @@ def register_user(session: Session, user_data: UserRegister) -> User:
             detail="Username already taken"
         )
 
+    # If this is the first user, make them admin
+    is_admin = False
+    statement = select(User)
+    if session.exec(statement).first() is None:
+        is_admin = True
+
     # Create user
     user = User(
         email=user_data.email,
@@ -132,7 +138,8 @@ def register_user(session: Session, user_data: UserRegister) -> User:
         hashed_password=hash_password(user_data.password),
         full_name=user_data.full_name,
         is_active=True,
-        is_verified=False
+        is_verified=False,
+        is_admin=is_admin
     )
 
     session.add(user)
