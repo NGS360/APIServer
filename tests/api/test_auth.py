@@ -251,6 +251,7 @@ class TestProtectedEndpoints:
         data = response.json()
         assert data["email"] == test_user.email
         assert data["username"] == test_user.username
+        assert data["is_superuser"] == test_user.is_superuser
 
     def test_access_protected_endpoint_without_token(self, client: TestClient):
         """Test accessing protected endpoint without token fails"""
