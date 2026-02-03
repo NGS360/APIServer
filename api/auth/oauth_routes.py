@@ -131,7 +131,7 @@ async def oauth_callback(
         jwt_access_token = create_access_token({"sub": str(user.id)})
         jwt_refresh_token = create_refresh_token(
             session,
-            user.id,
+            user.username,
             f"OAuth2:{provider}"
         )
 

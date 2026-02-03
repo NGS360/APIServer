@@ -97,7 +97,7 @@ def login(
     # Create tokens
     settings = get_settings()
     access_token = create_access_token({"sub": str(user.id)})
-    refresh_token = create_refresh_token(session, user.id, device_info)
+    refresh_token = create_refresh_token(session, user.username, device_info)
 
     return TokenResponse(
         access_token=access_token,

@@ -203,7 +203,7 @@ def refresh_access_token(session: Session, refresh_token_str: str) -> dict:
     access_token = create_access_token({"sub": str(user.id)})
     new_refresh_token = create_refresh_token(
         session,
-        user.id,
+        user.username,
         refresh_token.device_info
     )
 

@@ -4,7 +4,6 @@ Security utilities for password hashing and JWT token management
 from datetime import datetime, timedelta, timezone
 from typing import Any
 import secrets
-import uuid
 
 import bcrypt
 from jose import jwt
@@ -89,7 +88,7 @@ def create_access_token(data: dict[str, Any], expires_delta: timedelta | None = 
 
 def create_refresh_token(
     session: Session,
-    user_id: uuid.UUID,
+    username: str,
     device_info: str | None = None
 ) -> RefreshToken:
     """
@@ -97,7 +96,7 @@ def create_refresh_token(
 
     Args:
         session: Database session
-        user_id: User ID to create token for
+        username: Username to create token for
         device_info: Optional device/client information
 
     Returns:
@@ -115,7 +114,7 @@ def create_refresh_token(
 
     # Create token record
     refresh_token = RefreshToken(
-        user_id=user_id,
+        username=username,
         token=token_string,
         expires_at=expires_at,
         device_info=device_info
