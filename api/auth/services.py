@@ -192,7 +192,9 @@ def refresh_access_token(session: Session, refresh_token_str: str) -> dict:
         )
 
     # Get user
-    user = session.get(User, refresh_token.username)
+    statement = select(User).where(User.username == refresh_token.username)
+    user = session.exec(statement).first()
+
     if not user or not user.is_active:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
