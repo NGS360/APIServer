@@ -647,7 +647,7 @@ def interpolate(str_in: str, inputs: Dict[str, Any]) -> str:
 
 
 def submit_demux_job(
-    session: Session, workflow_body: DemuxWorkflowSubmitBody, s3_client=None
+    session: Session, workflow_body: DemuxWorkflowSubmitBody, username: str, s3_client=None
 ) -> BatchJobPublic:
     """
     Submit an AWS Batch job for the specified demultiplex workflow.
@@ -688,9 +688,6 @@ def submit_demux_job(
         ],
     }
 
-    # TODO: Extract user from request context when authentication is implemented
-    user = "system"
-
     # Submit the job to AWS Batch and create database record
     batch_job = submit_batch_job(
         session=session,
@@ -698,7 +695,7 @@ def submit_demux_job(
         container_overrides=container_overrides,
         job_def=tool_config.aws_batch.job_definition,
         job_queue=tool_config.aws_batch.job_queue,
-        user=user,
+        user=username
     )
 
     return BatchJobPublic.model_validate(batch_job)
