@@ -252,7 +252,7 @@ def create_file_upload(
 
     # Store file content to backend
     if file_content:
-        if storage_backend == "S3":
+        if storage_backend.upper() == "S3":
             _upload_to_s3(file_content, uri, mime_type, s3_client)
             logging.info(f"File uploaded to S3: {uri}")
         else:
