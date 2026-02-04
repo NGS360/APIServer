@@ -346,6 +346,24 @@ class Settings(BaseSettings):
         """Get Microsoft OAuth client secret"""
         return self._get_config_value("OAUTH_MICROSOFT_CLIENT_SECRET")
 
+    # TBD: For Oauth2 Corporate SSO
+    @computed_field
+    @property
+    def OAUTH_CORP_NAME(self) -> str | None:
+        return self._get_config_value("OAUTH_CORP_NAME")
+        
+    @computed_field
+    @property
+    def OAUTH_CORP_CLIENT_ID(self) -> str | None:
+        """Get Corporate OAuth client ID"""
+        return self._get_config_value("OAUTH_CORP_CLIENT_ID")
+
+    @computed_field
+    @property
+    def OAUTH_CORP_CLIENT_SECRET(self) -> str | None:
+        """Get Corporate OAuth client secret"""
+        return self._get_config_value("OAUTH_CORP_CLIENT_SECRET")
+
     # Read environment variables from .env file, if it exists
     # extra='ignore' prevents validation errors from extra env vars
     model_config = SettingsConfigDict(
