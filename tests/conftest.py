@@ -349,6 +349,45 @@ class MockS3Client:
 
         return {"ETag": '"mock-etag"', "VersionId": "mock-version-id"}
 
+    def head_object(self, Bucket: str, Key: str, **kwargs):
+        """Mock S3 head_object operation - check if object exists"""
+        from botocore.exceptions import NoCredentialsError, ClientError
+
+        # Check for simulated errors
+        if self.error_mode == "NoCredentialsError":
+            raise NoCredentialsError()
+        elif self.error_mode == "NoSuchBucket":
+            error_response = {
+                "Error": {
+                    "Code": "NoSuchBucket",
+                    "Message": "The specified bucket does not exist",
+                }
+            }
+            raise ClientError(error_response, "HeadObject")
+        elif self.error_mode == "AccessDenied":
+            error_response = {
+                "Error": {"Code": "AccessDenied", "Message": "Access Denied"}
+            }
+            raise ClientError(error_response, "HeadObject")
+
+        # Check if file exists in uploaded files
+        if Bucket in self.uploaded_files and Key in self.uploaded_files[Bucket]:
+            body = self.uploaded_files[Bucket][Key]
+            return {
+                "ContentType": "application/octet-stream",
+                "ContentLength": len(body) if body else 0,
+                "ETag": '"mock-etag"',
+            }
+
+        # File not found - return 404
+        error_response = {
+            "Error": {
+                "Code": "404",
+                "Message": "Not Found",
+            }
+        }
+        raise ClientError(error_response, "HeadObject")
+
 
 class MockLambdaPayload:
     """Mock Lambda response payload"""

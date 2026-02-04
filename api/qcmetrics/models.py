@@ -11,9 +11,9 @@ from typing import List
 from sqlmodel import SQLModel, Field, Relationship, UniqueConstraint
 from pydantic import ConfigDict
 
-from api.filerecord.models import (
-    FileRecordCreate,
-    FileRecordPublic,
+from api.files.models import (
+    FileCreate,
+    FileSummary,
 )
 
 
@@ -196,7 +196,7 @@ class QCRecordCreate(SQLModel):
     project_id: str
     metadata: dict[str, str] | None = None  # {"pipeline": "RNA-Seq", "version": "2.0"}
     metrics: List[MetricInput] | None = None  # Metrics with explicit sample associations
-    output_files: List[FileRecordCreate] | None = None
+    output_files: List[FileCreate] | None = None
 
     model_config = ConfigDict(extra="forbid")
 
@@ -228,7 +228,7 @@ class QCRecordPublic(SQLModel):
     project_id: str
     metadata: List[MetadataKeyValue]
     metrics: List[MetricPublic]
-    output_files: List[FileRecordPublic]
+    output_files: List[FileSummary]
 
 
 class QCRecordsPublic(SQLModel):
