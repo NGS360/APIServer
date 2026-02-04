@@ -16,6 +16,7 @@ from core.security import hash_password
 from api.runs.models import SequencingRun, RunStatus
 from api.auth.models import User
 
+
 @pytest.fixture(name="test_user")
 def test_user_fixture(session: Session):
     """Create a test user"""

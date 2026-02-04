@@ -351,7 +351,7 @@ class Settings(BaseSettings):
     @property
     def OAUTH_CORP_NAME(self) -> str | None:
         return self._get_config_value("OAUTH_CORP_NAME")
-        
+
     @computed_field
     @property
     def OAUTH_CORP_CLIENT_ID(self) -> str | None:

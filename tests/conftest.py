@@ -6,7 +6,6 @@ from sqlmodel import Session, create_engine, SQLModel
 from sqlmodel.pool import StaticPool
 
 from core.config import get_settings
-from core.security import hash_password
 from core.deps import get_db, get_opensearch_client, get_s3_client
 from main import app
 
