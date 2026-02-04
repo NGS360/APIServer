@@ -209,7 +209,7 @@ def test_fail_to_add_sample_to_project(client: TestClient, session: Session):
         f"/api/v1/projects/{new_project.project_id}/samples", json=sample_data
     )
     assert response.status_code == 422
-    assert "Extra inputs are not permitted" in response.json()["detail"][0]["msg"]
+    assert "Extra inputs are not permitted" in response.json()["errors"][0]["message"]
 
 
 def test_fail_to_add_sample_to_nonexistent_project(

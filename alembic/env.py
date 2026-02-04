@@ -8,6 +8,9 @@ from alembic import context
 from core.config import get_settings
 
 # Import all models here so that they are registered with SQLModel metadata
+from api.auth.models import (
+    User, RefreshToken, PasswordResetToken, EmailVerificationToken
+)
 from api.files.models import File
 from api.samples.models import Sample, SampleAttribute
 from api.settings.models import Setting

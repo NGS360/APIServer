@@ -12,7 +12,27 @@ from botocore.exceptions import NoCredentialsError
 from fastapi.testclient import TestClient
 from sqlmodel import Session, select
 
+from core.security import hash_password
 from api.runs.models import SequencingRun, RunStatus
+from api.auth.models import User
+
+
+@pytest.fixture(name="test_user")
+def test_user_fixture(session: Session):
+    """Create a test user"""
+    user = User(
+        email="testuser@example.com",
+        username="testuser",
+        hashed_password=hash_password("TestPassword123"),
+        full_name="Test User",
+        is_active=True,
+        is_verified=True,
+        is_superuser=False
+    )
+    session.add(user)
+    session.commit()
+    session.refresh(user)
+    return user
 
 
 def test_add_run(client: TestClient):
@@ -979,9 +999,21 @@ class TestSubmitJobEndpoint:
     """Test the submit job endpoint and related services"""
 
     def test_submit_job_success(
-        self, client: TestClient, mock_s3_client, monkeypatch
+        self, client: TestClient, mock_s3_client, monkeypatch, test_user
     ):
         """Test successful job submission"""
+        # Log in user first
+        login_response = client.post(
+            "/api/v1/auth/login",
+            data={
+                "username": test_user.email,
+                "password": "TestPassword123"
+            }
+        )
+        assert login_response.status_code == 200
+        token = login_response.json()["access_token"]
+        client.headers.update({"Authorization": f"Bearer {token}"})
+
         # Setup workflow config with aws_batch
         tool_config_yaml = """
 version: 1
@@ -1047,7 +1079,6 @@ aws_batch:
             "inputs": {
                 "s3_run_folder_path": "s3://bucket/test-run",
                 "barcode_mismatches": 1,
-                "user": "testuser",
             },
         }
 
@@ -1063,12 +1094,24 @@ aws_batch:
         assert data["command"] == "mkfastq.sh"
         assert "id" in data
         assert "status" in data
-        assert data["user"] == "system"
+        assert data["user"] == test_user.username
 
     def test_submit_job_with_jinja_expressions(
-        self, client: TestClient, mock_s3_client, monkeypatch
+        self, client: TestClient, mock_s3_client, monkeypatch, test_user
     ):
         """Test job submission with Jinja2 expressions in template"""
+        # Log in user first
+        login_response = client.post(
+            "/api/v1/auth/login",
+            data={
+                "username": test_user.email,
+                "password": "TestPassword123"
+            }
+        )
+        assert login_response.status_code == 200
+        token = login_response.json()["access_token"]
+        client.headers.update({"Authorization": f"Bearer {token}"})
+
         tool_config_yaml = """
 version: 1
 workflow_id: test-tool
@@ -1136,7 +1179,7 @@ aws_batch:
         assert data["name"] == "test-file.txt-5000"
         assert data["command"] == "run.sh 5000"
         assert data["aws_job_id"] == "job-456"
-        assert data["user"] == "system"
+        assert data["user"] == test_user.username
 
         # Verify container overrides
         assert "containerOverrides" in captured_submit_args
@@ -1148,9 +1191,21 @@ aws_batch:
         assert env_dict["MAX_READS"] == "5000"
 
     def test_submit_job_tool_not_found(
-        self, client: TestClient, mock_s3_client
+        self, client: TestClient, test_user
     ):
         """Test job submission when workflow config doesn't exist"""
+        # Log in user first
+        login_response = client.post(
+            "/api/v1/auth/login",
+            data={
+                "username": test_user.email,
+                "password": "TestPassword123"
+            }
+        )
+        assert login_response.status_code == 200
+        token = login_response.json()["access_token"]
+        client.headers.update({"Authorization": f"Bearer {token}"})
+
         request_body = {
             "workflow_id": "non-existent-tool",
             "run_barcode": "test-run",
@@ -1166,9 +1221,21 @@ aws_batch:
         assert "not found" in data["detail"].lower()
 
     def test_submit_job_no_aws_batch_config(
-        self, client: TestClient, mock_s3_client
+        self, client: TestClient, mock_s3_client, test_user
     ):
         """Test job submission when tool has no AWS Batch configuration"""
+        # Log in user first
+        login_response = client.post(
+            "/api/v1/auth/login",
+            data={
+                "username": test_user.email,
+                "password": "TestPassword123"
+            }
+        )
+        assert login_response.status_code == 200
+        token = login_response.json()["access_token"]
+        client.headers.update({"Authorization": f"Bearer {token}"})
+
         tool_config_yaml = """
 version: 1
 workflow_id: no-batch-tool
@@ -1202,9 +1269,21 @@ tags:
         assert "not configured for AWS Batch" in data["detail"]
 
     def test_submit_job_batch_client_error(
-        self, client: TestClient, mock_s3_client, monkeypatch
+        self, client: TestClient, mock_s3_client, monkeypatch, test_user
     ):
         """Test job submission when AWS Batch client raises an error"""
+        # Log in user first
+        login_response = client.post(
+            "/api/v1/auth/login",
+            data={
+                "username": test_user.email,
+                "password": "TestPassword123"
+            }
+        )
+        assert login_response.status_code == 200
+        token = login_response.json()["access_token"]
+        client.headers.update({"Authorization": f"Bearer {token}"})
+
         tool_config_yaml = """
 version: 1
 workflow_id: batch-error-tool
@@ -1267,9 +1346,21 @@ aws_batch:
         assert "Failed to submit job" in data["detail"]
 
     def test_submit_job_with_empty_environment(
-        self, client: TestClient, mock_s3_client, monkeypatch
+        self, client: TestClient, mock_s3_client, monkeypatch, test_user
     ):
         """Test job submission with no environment variables"""
+        # Log in user first
+        login_response = client.post(
+            "/api/v1/auth/login",
+            data={
+                "username": test_user.email,
+                "password": "TestPassword123"
+            }
+        )
+        assert login_response.status_code == 200
+        token = login_response.json()["access_token"]
+        client.headers.update({"Authorization": f"Bearer {token}"})
+
         tool_config_yaml = """
 version: 1
 workflow_id: no-env-tool
@@ -1321,14 +1412,26 @@ aws_batch:
         data = response.json()
         assert data["aws_job_id"] == "job-789"
         assert data["name"] == "no-env-job"
-        assert data["user"] == "system"
+        assert data["user"] == test_user.username
 
         # Verify environment is empty list
         overrides = captured_submit_args["containerOverrides"]
         assert overrides["environment"] == []
 
-    def test_submit_job_invalid_request_body(self, client: TestClient):
+    def test_submit_job_invalid_request_body(self, client: TestClient, test_user):
         """Test job submission with invalid request body"""
+        # Log in user first
+        login_response = client.post(
+            "/api/v1/auth/login",
+            data={
+                "username": test_user.email,
+                "password": "TestPassword123"
+            }
+        )
+        assert login_response.status_code == 200
+        token = login_response.json()["access_token"]
+        client.headers.update({"Authorization": f"Bearer {token}"})
+
         # Missing required field 'inputs'
         invalid_body = {
             "workflow_id": "test-tool",
@@ -1340,9 +1443,21 @@ aws_batch:
         assert response.status_code == 422  # Validation error
 
     def test_submit_job_with_complex_inputs(
-        self, client: TestClient, mock_s3_client, monkeypatch
+        self, client: TestClient, mock_s3_client, monkeypatch, test_user
     ):
         """Test job submission with various input types"""
+        # Log in user first
+        login_response = client.post(
+            "/api/v1/auth/login",
+            data={
+                "username": test_user.email,
+                "password": "TestPassword123"
+            }
+        )
+        assert login_response.status_code == 200
+        token = login_response.json()["access_token"]
+        client.headers.update({"Authorization": f"Bearer {token}"})
+
         tool_config_yaml = """
 version: 1
 workflow_id: complex-tool
@@ -1423,7 +1538,7 @@ aws_batch:
         data = response.json()
         assert data["name"] == "complex-test_string-42"
         assert data["aws_job_id"] == "job-complex"
-        assert data["user"] == "system"
+        assert data["user"] == test_user.username
 
         # Verify environment variables have correct values
         overrides = captured_submit_args["containerOverrides"]
