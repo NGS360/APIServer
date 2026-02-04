@@ -234,7 +234,9 @@ def upgrade() -> None:
 
     op.alter_column('file', 'uri', nullable=False)
     op.alter_column('file', 'created_on', nullable=False)
-    op.create_unique_constraint('uq_file_uri', 'file', ['uri'])
+    op.create_unique_constraint(
+        'uq_file_uri_created_on', 'file', ['uri', 'created_on']
+    )
 
     # ========================================================================
     # Step 5: Convert storage_backend from enum to varchar
@@ -610,7 +612,7 @@ def downgrade() -> None:
     op.alter_column('file', 'is_archived', nullable=False)
 
     # Drop new columns and constraints
-    op.drop_constraint('uq_file_uri', 'file', type_='unique')
+    op.drop_constraint('uq_file_uri_created_on', 'file', type_='unique')
     op.drop_column('file', 'uri')
     op.drop_column('file', 'size')
     op.drop_column('file', 'created_on')

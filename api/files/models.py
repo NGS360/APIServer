@@ -150,20 +150,30 @@ class File(SQLModel, table=True):
     This unified model replaces both the original File model (upload-focused)
     and FileRecord model (reference-focused).
     
-    The `uri` field serves as both the file location and the human-readable
-    unique identifier. Filename can be derived as `uri.split('/')[-1]`.
+    The `uri` field is the file location. Filename can be derived as
+    `uri.split('/')[-1]`. Same URI can exist multiple times with different
+    `created_on` timestamps, enabling versioning.
+    
+    Version queries:
+    - Latest version: WHERE uri = ? ORDER BY created_on DESC LIMIT 1
+    - All versions: WHERE uri = ? ORDER BY created_on
     """
     __tablename__ = "file"
     __searchable__ = ["uri"]
 
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
-    uri: str = Field(unique=True, max_length=1024)  # File location - serves as unique identifier
+    uri: str = Field(max_length=1024)  # File location (not unique alone)
     original_filename: str | None = Field(default=None, max_length=255)  # For uploads only
     size: int | None = Field(default=None)  # File size in bytes (BIGINT in DB)
     created_on: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     created_by: str | None = Field(default=None, max_length=100)  # User identifier
     source: str | None = Field(default=None, max_length=1024)  # Origin of file record
     storage_backend: str | None = Field(default=None, max_length=20)  # LOCAL, S3, AZURE, GCS
+
+    # Composite unique constraint: uri + created_on enables versioning
+    __table_args__ = (
+        UniqueConstraint("uri", "created_on", name="uq_file_uri_created_on"),
+    )
 
     # Relationships to child tables
     entities: List["FileEntity"] = Relationship(
