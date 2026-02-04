@@ -1,8 +1,8 @@
-"""seed additional system setting
+"""add additional system settings
 
-Revision ID: 119ffa4fc867
-Revises: d89d27d47634
-Create Date: 2026-01-16 19:35:53.855844
+Revision ID: c9fbcc25cd06
+Revises: b6847b89d202
+Create Date: 2026-02-04 15:55:55.517103
 
 """
 from typing import Sequence, Union
@@ -12,10 +12,9 @@ import sqlalchemy as sa
 import sqlmodel
 from sqlalchemy import table, column
 
-
 # revision identifiers, used by Alembic.
-revision: str = '119ffa4fc867'
-down_revision: Union[str, Sequence[str], None] = 'd89d27d47634'
+revision: str = 'c9fbcc25cd06'
+down_revision: Union[str, Sequence[str], None] = 'b6847b89d202'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
@@ -30,7 +29,6 @@ def upgrade() -> None:
         column('description', sa.String),
         column('tags', sa.JSON),
     )
-    
     # Insert system setting
     op.bulk_insert(setting_table, [
         {
@@ -43,11 +41,12 @@ def upgrade() -> None:
             ]
         }
     ])
+    # ### end Alembic commands ###
 
 
 def downgrade() -> None:
     """Downgrade schema."""
-    # Delete the seeded setting
     op.execute(
         "DELETE FROM setting WHERE `key` = 'PROJECT_WORKFLOW_CONFIGS_BUCKET_URI'"
     )
+    # ### end Alembic commands ###
