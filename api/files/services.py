@@ -252,11 +252,15 @@ def create_file_upload(
 
     # Store file content to backend
     if file_content:
+        allow_overwrite = file_upload.overwrite
         if storage_backend.upper() == "S3":
-            _upload_to_s3(file_content, uri, mime_type, s3_client)
+            _upload_to_s3(
+                file_content, uri, mime_type, s3_client,
+                allow_overwrite=allow_overwrite
+            )
             logging.info(f"File uploaded to S3: {uri}")
         else:
-            _write_local_file(uri, file_content)
+            _write_local_file(uri, file_content, allow_overwrite=allow_overwrite)
             logging.info(f"File saved to local storage: {uri}")
 
     session.commit()
@@ -511,7 +515,8 @@ def _upload_to_s3(
     file_content: bytes,
     s3_uri: str,
     mime_type: str,
-    s3_client=None
+    s3_client=None,
+    allow_overwrite: bool = False
 ) -> bool:
     """
     Upload file content to S3.
@@ -521,12 +526,13 @@ def _upload_to_s3(
         s3_uri: Full S3 URI (s3://bucket/key)
         mime_type: Content type for S3 metadata
         s3_client: Optional boto3 S3 client
+        allow_overwrite: If False (default), check if object exists and raise error
 
     Returns:
         True if successful
 
     Raises:
-        HTTPException: If upload fails
+        HTTPException: If upload fails or object exists when allow_overwrite=False
     """
     if not BOTO3_AVAILABLE:
         raise HTTPException(
@@ -539,6 +545,27 @@ def _upload_to_s3(
 
         if s3_client is None:
             s3_client = boto3.client("s3")
+
+        # Check if object exists when overwrite is not allowed
+        if not allow_overwrite:
+            try:
+                s3_client.head_object(Bucket=bucket, Key=key)
+                # Object exists - raise conflict
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail={
+                        "error": "File already exists in S3",
+                        "message": (
+                            f"Object already exists at '{s3_uri}'. "
+                            "Use overwrite=true to replace."
+                        ),
+                        "uri": s3_uri,
+                    }
+                )
+            except ClientError as e:
+                # 404 means object doesn't exist - that's what we want
+                if e.response["Error"]["Code"] != "404":
+                    raise
 
         s3_client.put_object(
             Bucket=bucket,
@@ -589,9 +616,67 @@ def _upload_to_s3(
         ) from exc
 
 
-def _write_local_file(uri: str, file_content: bytes) -> None:
-    """Write file content to local filesystem."""
+def _write_local_file(
+    uri: str,
+    file_content: bytes,
+    allow_overwrite: bool = False
+) -> None:
+    """
+    Write file content to local filesystem.
+
+    Args:
+        uri: File path (should be a valid local filesystem path)
+        file_content: Bytes to write
+        allow_overwrite: If False (default), raises error if file exists
+
+    Raises:
+        HTTPException: If path is invalid or file exists when allow_overwrite=False
+    """
     full_path = Path(uri)
+
+    # Security: Validate path doesn't escape allowed directories
+    # Reject paths that look like URI schemes (e.g., s3://, file://)
+    if "://" in uri or uri.startswith("/"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "error": "Invalid local file path",
+                "message": (
+                    "Local file paths must be relative. "
+                    f"Got: '{uri}'"
+                ),
+            }
+        )
+
+    # Resolve and check for path traversal
+    try:
+        resolved = full_path.resolve()
+        cwd = Path.cwd().resolve()
+        # Ensure resolved path is under current working directory
+        resolved.relative_to(cwd)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "error": "Path traversal detected",
+                "message": "File path must be within the storage directory.",
+            }
+        )
+
+    # Check if file already exists
+    if not allow_overwrite and full_path.exists():
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "error": "File already exists",
+                "message": (
+                    f"File already exists at '{uri}'. "
+                    "Use overwrite=true to replace."
+                ),
+                "uri": uri,
+            }
+        )
+
     full_path.parent.mkdir(parents=True, exist_ok=True)
     with open(full_path, "wb") as f:
         f.write(file_content)
