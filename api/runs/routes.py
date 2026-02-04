@@ -17,6 +17,7 @@ GET    /api/v1/runs/[id]/metrics       Retrieve demux metrics from Stat.json
 from typing import Literal
 from fastapi import APIRouter, Query, status, UploadFile, File, Depends
 from core.deps import SessionDep, OpenSearchDep, get_s3_client
+from api.auth.deps import CurrentUser
 from api.runs.models import (
     IlluminaMetricsResponseModel,
     SequencingRun,
@@ -174,6 +175,7 @@ def list_demultiplex_workflows(
 )
 def submit_demultiplex_workflow_job(
     session: SessionDep,
+    user: CurrentUser,
     workflow_body: DemuxWorkflowSubmitBody,
     s3_client=Depends(get_s3_client),
 ) -> BatchJobPublic:
@@ -188,7 +190,7 @@ def submit_demultiplex_workflow_job(
         BatchJobPublic: The created batch job with AWS job information.
     """
     return services.submit_demux_job(
-        session=session, workflow_body=workflow_body, s3_client=s3_client
+        session=session, workflow_body=workflow_body, username=user.username, s3_client=s3_client
     )
 
 
