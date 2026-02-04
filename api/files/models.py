@@ -413,8 +413,10 @@ class FileSummary(SQLModel):
     uri: str
     filename: str  # Computed from uri
     size: int | None
-    hashes: List[HashPublic]
-    tags: List[TagPublic]
+    created_on: datetime | None = None
+    hashes: List[HashPublic] = []
+    tags: List[TagPublic] = []
+    samples: List[SamplePublic] = []
     samples: List[SamplePublic]
 
 

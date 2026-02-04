@@ -33,7 +33,7 @@ from api.files.models import (
     FileEntity,
     FileEntityType,
     FileCreate,
-    FilePublic,
+    FileSummary,
     HashPublic,
     TagPublic,
     SamplePublic,
@@ -184,27 +184,27 @@ def _create_file_for_qcrecord(
     entity_assoc = FileEntity(
         file_id=file_record.id,
         entity_type=entity_type,
-        entity_id=entity_id,
+        entity_id=str(entity_id),  # Convert UUID to string
     )
     session.add(entity_assoc)
 
-    # Add hashes
+    # Add hashes (dictionary: {"algorithm": "value"})
     if file_create.hashes:
-        for hash_input in file_create.hashes:
+        for algorithm, value in file_create.hashes.items():
             hash_entry = FileHash(
                 file_id=file_record.id,
-                algorithm=hash_input.algorithm,
-                value=hash_input.value,
+                algorithm=algorithm,
+                value=value,
             )
             session.add(hash_entry)
 
-    # Add tags
+    # Add tags (dictionary: {"key": "value"})
     if file_create.tags:
-        for tag_input in file_create.tags:
+        for key, value in file_create.tags.items():
             tag_entry = FileTag(
                 file_id=file_record.id,
-                key=tag_input.key,
-                value=tag_input.value,
+                key=key,
+                value=value,
             )
             session.add(tag_entry)
 
@@ -380,7 +380,7 @@ def delete_qcrecord(session: Session, qcrecord_id: str) -> dict:
     file_entities = session.exec(
         select(FileEntity).where(
             FileEntity.entity_type == FileEntityType.QCRECORD,
-            FileEntity.entity_id == record_uuid
+            FileEntity.entity_id == str(record_uuid)
         )
     ).all()
 
@@ -462,7 +462,7 @@ def _qcrecord_to_public(session: Session, record: QCRecord) -> QCRecordPublic:
     file_entities = session.exec(
         select(FileEntity).where(
             FileEntity.entity_type == FileEntityType.QCRECORD,
-            FileEntity.entity_id == record.id
+            FileEntity.entity_id == str(record.id)
         )
     ).all()
 
@@ -493,9 +493,10 @@ def _qcrecord_to_public(session: Session, record: QCRecord) -> QCRecordPublic:
             )
         ).all()
 
-        output_files.append(FilePublic(
+        output_files.append(FileSummary(
             id=file_record.id,
             uri=file_record.uri,
+            filename=file_record.filename,
             size=file_record.size,
             created_on=file_record.created_on,
             hashes=[HashPublic(algorithm=h.algorithm, value=h.value) for h in hashes],
