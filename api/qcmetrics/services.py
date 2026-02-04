@@ -25,14 +25,15 @@ from api.qcmetrics.models import (
     MetricSamplePublic,
     MetricInput,
 )
-from api.filerecord.models import (
-    FileRecord,
-    FileRecordHash,
-    FileRecordTag,
-    FileRecordSample,
-    FileRecordEntityType,
-    FileRecordCreate,
-    FileRecordPublic,
+from api.files.models import (
+    File,
+    FileHash,
+    FileTag,
+    FileSample,
+    FileEntity,
+    FileEntityType,
+    FileCreate,
+    FilePublic,
     HashPublic,
     TagPublic,
     SamplePublic,
@@ -90,9 +91,9 @@ def create_qcrecord(
     # Add output files
     if qcrecord_create.output_files:
         for file_create in qcrecord_create.output_files:
-            _create_file_record(
+            _create_file_for_qcrecord(
                 session,
-                entity_type=FileRecordEntityType.QCRECORD,
+                entity_type=FileEntityType.QCRECORD,
                 entity_id=qcrecord.id,
                 file_create=file_create,
             )
@@ -164,48 +165,54 @@ def _create_metric(
     return metric
 
 
-def _create_file_record(
+def _create_file_for_qcrecord(
     session: Session,
-    entity_type: FileRecordEntityType,
+    entity_type: str,
     entity_id,
-    file_create: FileRecordCreate,
-) -> FileRecord:
-    """Create a file record with its hashes, tags, and samples."""
-    file_record = FileRecord(
-        entity_type=entity_type,
-        entity_id=entity_id,
+    file_create: FileCreate,
+) -> File:
+    """Create a file record with its hashes, tags, samples, and entity association."""
+    file_record = File(
         uri=file_create.uri,
         size=file_create.size,
-        created_on=file_create.created_on,
+        created_on=file_create.created_on or datetime.now(timezone.utc),
     )
     session.add(file_record)
     session.flush()
 
+    # Add entity association
+    entity_assoc = FileEntity(
+        file_id=file_record.id,
+        entity_type=entity_type,
+        entity_id=entity_id,
+    )
+    session.add(entity_assoc)
+
     # Add hashes
-    if file_create.hash:
-        for algorithm, value in file_create.hash.items():
-            hash_entry = FileRecordHash(
-                file_record_id=file_record.id,
-                algorithm=algorithm,
-                value=value,
+    if file_create.hashes:
+        for hash_input in file_create.hashes:
+            hash_entry = FileHash(
+                file_id=file_record.id,
+                algorithm=hash_input.algorithm,
+                value=hash_input.value,
             )
             session.add(hash_entry)
 
     # Add tags
     if file_create.tags:
-        for key, value in file_create.tags.items():
-            tag_entry = FileRecordTag(
-                file_record_id=file_record.id,
-                key=key,
-                value=str(value),
+        for tag_input in file_create.tags:
+            tag_entry = FileTag(
+                file_id=file_record.id,
+                key=tag_input.key,
+                value=tag_input.value,
             )
             session.add(tag_entry)
 
     # Add sample associations
     if file_create.samples:
         for sample_input in file_create.samples:
-            sample_assoc = FileRecordSample(
-                file_record_id=file_record.id,
+            sample_assoc = FileSample(
+                file_id=file_record.id,
                 sample_name=sample_input.sample_name,
                 role=sample_input.role,
             )
@@ -369,16 +376,19 @@ def delete_qcrecord(session: Session, qcrecord_id: str) -> dict:
             detail=f"QC record not found: {qcrecord_id}"
         )
 
-    # Delete associated file records (polymorphic, not cascade)
-    file_records = session.exec(
-        select(FileRecord).where(
-            FileRecord.entity_type == FileRecordEntityType.QCRECORD,
-            FileRecord.entity_id == record_uuid
+    # Delete associated file records via FileEntity junction table
+    file_entities = session.exec(
+        select(FileEntity).where(
+            FileEntity.entity_type == FileEntityType.QCRECORD,
+            FileEntity.entity_id == record_uuid
         )
     ).all()
 
-    for file_record in file_records:
-        session.delete(file_record)
+    for file_entity in file_entities:
+        # Get the file and delete it (cascades to hashes, tags, samples, entities)
+        file_record = session.get(File, file_entity.file_id)
+        if file_record:
+            session.delete(file_record)
 
     # Delete the QC record (cascades to metadata, metrics, etc.)
     session.delete(record)
@@ -448,38 +458,42 @@ def _qcrecord_to_public(session: Session, record: QCRecord) -> QCRecordPublic:
             ],
         ))
 
-    # Get file records
-    file_records = session.exec(
-        select(FileRecord).where(
-            FileRecord.entity_type == FileRecordEntityType.QCRECORD,
-            FileRecord.entity_id == record.id
+    # Get file records via FileEntity junction table
+    file_entities = session.exec(
+        select(FileEntity).where(
+            FileEntity.entity_type == FileEntityType.QCRECORD,
+            FileEntity.entity_id == record.id
         )
     ).all()
 
     output_files = []
-    for file_record in file_records:
+    for file_entity in file_entities:
+        file_record = session.get(File, file_entity.file_id)
+        if not file_record:
+            continue
+
         # Get hashes
         hashes = session.exec(
-            select(FileRecordHash).where(
-                FileRecordHash.file_record_id == file_record.id
+            select(FileHash).where(
+                FileHash.file_id == file_record.id
             )
         ).all()
 
         # Get tags
         tags = session.exec(
-            select(FileRecordTag).where(
-                FileRecordTag.file_record_id == file_record.id
+            select(FileTag).where(
+                FileTag.file_id == file_record.id
             )
         ).all()
 
         # Get samples
         samples = session.exec(
-            select(FileRecordSample).where(
-                FileRecordSample.file_record_id == file_record.id
+            select(FileSample).where(
+                FileSample.file_id == file_record.id
             )
         ).all()
 
-        output_files.append(FileRecordPublic(
+        output_files.append(FilePublic(
             id=file_record.id,
             uri=file_record.uri,
             size=file_record.size,
