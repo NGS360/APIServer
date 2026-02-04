@@ -328,6 +328,7 @@ class FileCreate(SQLModel):
     uri: str  # Required - serves as unique identifier
     original_filename: str | None = None  # For uploads only
     size: int | None = None
+    created_on: datetime | None = None  # File timestamp - defaults to now if not provided
     source: str | None = None  # Origin of file record
     created_by: str | None = None
     storage_backend: str | None = None
