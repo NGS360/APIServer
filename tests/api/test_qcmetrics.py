@@ -169,13 +169,13 @@ def test_create_qcrecord_with_output_files(client: TestClient, session: Session)
                 "uri": "s3://bucket/Sample1.bam",
                 "size": 123456789,
                 "samples": [{"sample_name": "Sample1"}],
-                "hash": {"md5": "abc123def456"},
+                "hashes": {"md5": "abc123def456"},
                 "tags": {"type": "alignment", "format": "bam"}
             },
             {
                 "uri": "s3://bucket/expression_matrix.tsv",
                 "size": 5678901,
-                "hash": {"sha256": "xyz789"},
+                "hashes": {"sha256": "xyz789"},
                 "tags": {"type": "expression"}
             }
         ]

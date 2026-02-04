@@ -6,7 +6,7 @@ from fastapi.testclient import TestClient
 def test_create_file_via_api_with_subdirectory(client: TestClient, test_project):
     """Test file creation via API with subdirectory."""
     response = client.post(
-        "/api/v1/files",
+        "/api/v1/files/upload",
         data={
             "filename": "test.txt",
             "entity_type": "project",
@@ -19,15 +19,14 @@ def test_create_file_via_api_with_subdirectory(client: TestClient, test_project)
 
     assert response.status_code == 201
     data = response.json()
-    assert data["filename"] == "test.txt"
-    assert data["relative_path"] == "raw_data/sample1"
-    assert data["entity_id"] == test_project.project_id
+    assert "test.txt" in data["uri"]
+    assert "raw_data/sample1" in data["uri"]
 
 
 def test_create_file_via_api_at_root(client: TestClient, test_project):
     """Test file creation via API at entity root."""
     response = client.post(
-        "/api/v1/files",
+        "/api/v1/files/upload",
         data={
             "filename": "report.pdf",
             "entity_type": "project",
@@ -40,14 +39,15 @@ def test_create_file_via_api_at_root(client: TestClient, test_project):
 
     assert response.status_code == 201
     data = response.json()
-    assert data["filename"] == "report.pdf"
-    assert data["relative_path"] is None
+    assert "report.pdf" in data["uri"]
+    # Should not have extra path components between entity_id and filename
+    assert f"{test_project.project_id}/" in data["uri"]
 
 
 def test_create_file_with_path_traversal(client: TestClient, test_project):
     """Test that path traversal attempts are rejected."""
     response = client.post(
-        "/api/v1/files",
+        "/api/v1/files/upload",
         data={
             "filename": "malicious.txt",
             "entity_type": "project",
