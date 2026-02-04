@@ -83,7 +83,9 @@ async def lifespan(app: FastAPI):
         "OPENSEARCH_USER",
         "OPENSEARCH_PASSWORD",
         "OPENSEARCH_USE_SSL",
-        "OPENSEARCH_VERIFY_CERTS"
+        "OPENSEARCH_VERIFY_CERTS",
+        "OAUTH_CORP_CLIENT_ID",
+        "OAUTH_CORP_CLIENT_SECRET"
     ]
     for key in computed_fields:
         value = getattr(settings, key)

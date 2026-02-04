@@ -2,12 +2,16 @@
 Main entrypoint for the FastAPI server
 """
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, status
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
 from core.lifespan import lifespan
 from core.config import get_settings
 
+from api.auth.routes import router as auth_router
+from api.auth.oauth_routes import router as oauth_router
 from api.files.routes import router as files_router
 from api.jobs.routes import router as jobs_router
 from api.project.routes import router as project_router
@@ -29,6 +33,58 @@ def custom_generate_unique_id(route: APIRoute):
 
 # Create schema & router
 app = FastAPI(lifespan=lifespan, generate_unique_id_function=custom_generate_unique_id)
+
+
+# Generic validation error handler
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    """
+    Generic validation error handler that provides detailed, actionable error messages
+    for any endpoint with validation errors.
+    """
+    errors = exc.errors()
+
+    # Build a user-friendly error response
+    formatted_errors = []
+    for error in errors:
+        # Get the field path (e.g., ['body', 'email'] -> 'email')
+        field_path = " -> ".join(str(loc) for loc in error["loc"] if loc != "body")
+
+        formatted_error = {
+            "field": field_path or "body",
+            "message": error["msg"],
+            "type": error["type"],
+        }
+
+        # Add input value if available (helps debugging)
+        if "input" in error:
+            formatted_error["received"] = error.get("input")
+
+        formatted_errors.append(formatted_error)
+
+    # Determine if the entire body is missing
+    is_missing_body = any(
+        error["type"] == "missing" and "body" in error["loc"]
+        for error in errors
+    )
+
+    if is_missing_body:
+        message = "Request body is required but was not provided"
+        hint = f"Please send a JSON body with your request to {request.method} {request.url.path}"
+    else:
+        message = "Validation error in request"
+        hint = "Please check the errors below and correct your request"
+
+    return JSONResponse(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        content={
+            "detail": message,
+            "hint": hint,
+            "errors": formatted_errors,
+            "docs_url": f"{request.base_url}docs#{request.url.path.replace('/', '-').strip('-')}"
+        }
+    )
+
 
 # CORS settings to allow client-server communication
 # Set with env variable
@@ -58,6 +114,11 @@ def health_check():
 # Add each api/feature folder here
 API_PREFIX = "/api/v1"
 
+# Authentication routers (no auth required)
+app.include_router(auth_router, prefix=API_PREFIX)
+app.include_router(oauth_router, prefix=API_PREFIX)
+
+# Feature routers
 app.include_router(files_router, prefix=API_PREFIX)
 app.include_router(jobs_router, prefix=API_PREFIX)
 app.include_router(project_router, prefix=API_PREFIX)

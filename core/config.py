@@ -165,6 +165,205 @@ class Settings(BaseSettings):
     STORAGE_BACKEND: str = os.getenv("STORAGE_BACKEND", "s3")
     STORAGE_ROOT_PATH: str = os.getenv("STORAGE_URI", "s3://my-storage-bucket")
 
+    # JWT Configuration
+    @computed_field
+    @property
+    def JWT_SECRET_KEY(self) -> str:
+        """Get JWT secret key from env or secrets"""
+        return self._get_config_value(
+            "JWT_SECRET_KEY",
+            default="change-this-secret-key-in-production"
+        )
+
+    @computed_field
+    @property
+    def JWT_ALGORITHM(self) -> str:
+        """Get JWT algorithm from env or secrets"""
+        return self._get_config_value("JWT_ALGORITHM", default="HS256")
+
+    @computed_field
+    @property
+    def ACCESS_TOKEN_EXPIRE_MINUTES(self) -> int:
+        """Get access token expiration in minutes"""
+        value = self._get_config_value("ACCESS_TOKEN_EXPIRE_MINUTES", default="30")
+        return int(value)
+
+    @computed_field
+    @property
+    def REFRESH_TOKEN_EXPIRE_DAYS(self) -> int:
+        """Get refresh token expiration in days"""
+        value = self._get_config_value("REFRESH_TOKEN_EXPIRE_DAYS", default="30")
+        return int(value)
+
+    # Password Policy
+    @computed_field
+    @property
+    def PASSWORD_MIN_LENGTH(self) -> int:
+        """Get minimum password length"""
+        value = self._get_config_value("PASSWORD_MIN_LENGTH", default="8")
+        return int(value)
+
+    @computed_field
+    @property
+    def PASSWORD_REQUIRE_UPPERCASE(self) -> bool:
+        """Check if password requires uppercase"""
+        value = self._get_config_value("PASSWORD_REQUIRE_UPPERCASE", default="true")
+        return value.lower() in ("true", "1", "yes")
+
+    @computed_field
+    @property
+    def PASSWORD_REQUIRE_LOWERCASE(self) -> bool:
+        """Check if password requires lowercase"""
+        value = self._get_config_value("PASSWORD_REQUIRE_LOWERCASE", default="true")
+        return value.lower() in ("true", "1", "yes")
+
+    @computed_field
+    @property
+    def PASSWORD_REQUIRE_DIGIT(self) -> bool:
+        """Check if password requires digit"""
+        value = self._get_config_value("PASSWORD_REQUIRE_DIGIT", default="true")
+        return value.lower() in ("true", "1", "yes")
+
+    @computed_field
+    @property
+    def PASSWORD_REQUIRE_SPECIAL(self) -> bool:
+        """Check if password requires special character"""
+        value = self._get_config_value("PASSWORD_REQUIRE_SPECIAL", default="false")
+        return value.lower() in ("true", "1", "yes")
+
+    # Account Lockout
+    @computed_field
+    @property
+    def MAX_FAILED_LOGIN_ATTEMPTS(self) -> int:
+        """Get max failed login attempts before lockout"""
+        value = self._get_config_value("MAX_FAILED_LOGIN_ATTEMPTS", default="5")
+        return int(value)
+
+    @computed_field
+    @property
+    def ACCOUNT_LOCKOUT_DURATION_MINUTES(self) -> int:
+        """Get account lockout duration in minutes"""
+        value = self._get_config_value("ACCOUNT_LOCKOUT_DURATION_MINUTES", default="30")
+        return int(value)
+
+    # Email Configuration
+    @computed_field
+    @property
+    def EMAIL_ENABLED(self) -> bool:
+        """Check if email is enabled"""
+        value = self._get_config_value("EMAIL_ENABLED", default="false")
+        return value.lower() in ("true", "1", "yes")
+
+    @computed_field
+    @property
+    def FROM_EMAIL(self) -> str:
+        """Get from email address"""
+        return self._get_config_value("FROM_EMAIL", default="noreply@example.com")
+
+    @computed_field
+    @property
+    def FROM_NAME(self) -> str:
+        """Get from name"""
+        return self._get_config_value("FROM_NAME", default="NGS360")
+
+    @computed_field
+    @property
+    def FRONTEND_URL(self) -> str:
+        """Get frontend URL"""
+        return self._get_config_value("FRONTEND_URL", default="http://localhost:3000")
+
+    @computed_field
+    @property
+    def MAIL_SERVER(self) -> str | None:
+        """Get mail server"""
+        return self._get_config_value("MAIL_SERVER")
+
+    @computed_field
+    @property
+    def MAIL_PORT(self) -> str | None:
+        """Get mail server port"""
+        return self._get_config_value("MAIL_PORT")
+
+    @computed_field
+    @property
+    def MAIL_USERNAME(self) -> str | None:
+        """Get mail username"""
+        return self._get_config_value("MAIL_USERNAME")
+
+    @computed_field
+    @property
+    def MAIL_PASSWORD(self) -> str | None:
+        """Get mail password"""
+        return self._get_config_value("MAIL_PASSWORD")
+
+    @computed_field
+    @property
+    def MAIL_USE_TLS(self) -> bool:
+        """Check if mail uses TLS"""
+        value = self._get_config_value("MAIL_USE_TLS", default="false")
+        return value.lower() in ("true", "1", "yes")
+
+    @computed_field
+    @property
+    def MAIL_ADMINS(self) -> str | None:
+        """Get mail admins"""
+        return self._get_config_value("MAIL_ADMINS")
+
+    # OAuth2 Configuration
+    @computed_field
+    @property
+    def OAUTH_GOOGLE_CLIENT_ID(self) -> str | None:
+        """Get Google OAuth client ID"""
+        return self._get_config_value("OAUTH_GOOGLE_CLIENT_ID")
+
+    @computed_field
+    @property
+    def OAUTH_GOOGLE_CLIENT_SECRET(self) -> str | None:
+        """Get Google OAuth client secret"""
+        return self._get_config_value("OAUTH_GOOGLE_CLIENT_SECRET")
+
+    @computed_field
+    @property
+    def OAUTH_GITHUB_CLIENT_ID(self) -> str | None:
+        """Get GitHub OAuth client ID"""
+        return self._get_config_value("OAUTH_GITHUB_CLIENT_ID")
+
+    @computed_field
+    @property
+    def OAUTH_GITHUB_CLIENT_SECRET(self) -> str | None:
+        """Get GitHub OAuth client secret"""
+        return self._get_config_value("OAUTH_GITHUB_CLIENT_SECRET")
+
+    @computed_field
+    @property
+    def OAUTH_MICROSOFT_CLIENT_ID(self) -> str | None:
+        """Get Microsoft OAuth client ID"""
+        return self._get_config_value("OAUTH_MICROSOFT_CLIENT_ID")
+
+    @computed_field
+    @property
+    def OAUTH_MICROSOFT_CLIENT_SECRET(self) -> str | None:
+        """Get Microsoft OAuth client secret"""
+        return self._get_config_value("OAUTH_MICROSOFT_CLIENT_SECRET")
+
+    # TBD: For Oauth2 Corporate SSO
+    @computed_field
+    @property
+    def OAUTH_CORP_NAME(self) -> str | None:
+        return self._get_config_value("OAUTH_CORP_NAME")
+
+    @computed_field
+    @property
+    def OAUTH_CORP_CLIENT_ID(self) -> str | None:
+        """Get Corporate OAuth client ID"""
+        return self._get_config_value("OAUTH_CORP_CLIENT_ID")
+
+    @computed_field
+    @property
+    def OAUTH_CORP_CLIENT_SECRET(self) -> str | None:
+        """Get Corporate OAuth client secret"""
+        return self._get_config_value("OAUTH_CORP_CLIENT_SECRET")
+
     # Read environment variables from .env file, if it exists
     # extra='ignore' prevents validation errors from extra env vars
     model_config = SettingsConfigDict(

@@ -3,6 +3,7 @@ Test /manifest endpoint
 """
 
 from datetime import datetime
+from unittest.mock import MagicMock
 import io
 import pytest
 
@@ -732,6 +733,16 @@ class TestManifestValidation:
         self, client: TestClient, mock_lambda_client
     ):
         """Test that both valid and invalid responses match expected structure"""
+        # Mock Lambda for valid response
+        mock_lambda = MagicMock()
+        valid_json = (
+            b'{"valid": true, "message": {"ManifestVersion": "1.0"}, '
+            b'"error": {}, "warning": {}}'
+        )
+        mock_lambda.invoke.return_value = {
+            "Payload": MagicMock(read=lambda: valid_json)
+        }
+
         # Test valid response
         mock_lambda_client.set_response({
             "success": True,
@@ -745,6 +756,15 @@ class TestManifestValidation:
             "/api/v1/manifest/validate?s3_path=s3://test-bucket/manifest.csv"
         )
         valid_data = valid_response.json()
+
+        # Mock Lambda for invalid response
+        invalid_json = (
+            b'{"valid": false, "message": {"ManifestVersion": "1.0"}, '
+            b'"error": {"InvalidFilePath": ["Error"]}, "warning": {}}'
+        )
+        mock_lambda.invoke.return_value = {
+            "Payload": MagicMock(read=lambda: invalid_json)
+        }
 
         # Test invalid response
         mock_lambda_client.set_response({

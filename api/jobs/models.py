@@ -3,7 +3,7 @@ Models for the Jobs API
 """
 from typing import Optional
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from sqlmodel import SQLModel, Field
 from pydantic import ConfigDict
@@ -28,7 +28,7 @@ class BatchJob(SQLModel, table=True):
     name: str = Field(max_length=255)
     command: str = Field(max_length=1000)
     user: str = Field(max_length=100)
-    submitted_on: datetime = Field(default_factory=datetime.utcnow)
+    submitted_on: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     aws_job_id: str | None = Field(default=None, max_length=255)
     log_stream_name: str | None = Field(default=None, max_length=255)
     status: JobStatus = Field(default=JobStatus.SUBMITTED)
