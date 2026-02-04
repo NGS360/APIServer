@@ -1,9 +1,14 @@
-"""Add QCMetrics and unified File tables
+"""Add QCMetrics and migrate File to unified schema
 
 Revision ID: f1a2b3c4d5e6
 Revises: e158df5a8df1
 Create Date: 2026-01-29 16:45:00.000000
 
+This migration:
+1. Transforms the existing `file` table to the new unified schema
+2. Creates supporting tables (fileentity, filehash, filetag, filesample)
+3. Migrates existing data from old columns to new structure
+4. Creates the QCRecord tables for QCMetrics
 """
 from typing import Sequence, Union
 
@@ -20,38 +25,38 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    """Create unified File tables and QCMetrics tables."""
+    """Migrate file table to unified schema and create QCMetrics tables."""
 
     # ========================================================================
-    # Unified File Tables
+    # Step 1: Create new supporting tables for File
     # ========================================================================
-
-    # file - main file metadata table
-    op.create_table(
-        'file',
-        sa.Column('id', sa.Uuid(), nullable=False),
-        sa.Column('uri', sqlmodel.sql.sqltypes.AutoString(length=1024), nullable=False),
-        sa.Column('original_filename', sqlmodel.sql.sqltypes.AutoString(length=255), nullable=True),
-        sa.Column('size', sa.BigInteger(), nullable=True),
-        sa.Column('created_on', sa.DateTime(), nullable=False),
-        sa.Column('created_by', sqlmodel.sql.sqltypes.AutoString(length=100), nullable=True),
-        sa.Column('source', sqlmodel.sql.sqltypes.AutoString(length=1024), nullable=True),
-        sa.Column('storage_backend', sqlmodel.sql.sqltypes.AutoString(length=20), nullable=True),
-        sa.PrimaryKeyConstraint('id'),
-        sa.UniqueConstraint('uri', name='uq_file_uri')
-    )
 
     # fileentity - many-to-many junction for file-entity associations
     op.create_table(
         'fileentity',
         sa.Column('id', sa.Uuid(), nullable=False),
         sa.Column('file_id', sa.Uuid(), nullable=False),
-        sa.Column('entity_type', sqlmodel.sql.sqltypes.AutoString(length=50), nullable=False),
-        sa.Column('entity_id', sqlmodel.sql.sqltypes.AutoString(length=100), nullable=False),
-        sa.Column('role', sqlmodel.sql.sqltypes.AutoString(length=50), nullable=True),
+        sa.Column(
+            'entity_type',
+            sqlmodel.sql.sqltypes.AutoString(length=50),
+            nullable=False
+        ),
+        sa.Column(
+            'entity_id',
+            sqlmodel.sql.sqltypes.AutoString(length=100),
+            nullable=False
+        ),
+        sa.Column(
+            'role',
+            sqlmodel.sql.sqltypes.AutoString(length=50),
+            nullable=True
+        ),
         sa.ForeignKeyConstraint(['file_id'], ['file.id'], ondelete='CASCADE'),
         sa.PrimaryKeyConstraint('id'),
-        sa.UniqueConstraint('file_id', 'entity_type', 'entity_id', name='uq_fileentity_file_entity')
+        sa.UniqueConstraint(
+            'file_id', 'entity_type', 'entity_id',
+            name='uq_fileentity_file_entity'
+        )
     )
     op.create_index(
         'ix_fileentity_entity',
@@ -64,11 +69,22 @@ def upgrade() -> None:
         'filehash',
         sa.Column('id', sa.Uuid(), nullable=False),
         sa.Column('file_id', sa.Uuid(), nullable=False),
-        sa.Column('algorithm', sqlmodel.sql.sqltypes.AutoString(length=50), nullable=False),
-        sa.Column('value', sqlmodel.sql.sqltypes.AutoString(length=128), nullable=False),
+        sa.Column(
+            'algorithm',
+            sqlmodel.sql.sqltypes.AutoString(length=50),
+            nullable=False
+        ),
+        sa.Column(
+            'value',
+            sqlmodel.sql.sqltypes.AutoString(length=128),
+            nullable=False
+        ),
         sa.ForeignKeyConstraint(['file_id'], ['file.id'], ondelete='CASCADE'),
         sa.PrimaryKeyConstraint('id'),
-        sa.UniqueConstraint('file_id', 'algorithm', name='uq_filehash_file_algorithm')
+        sa.UniqueConstraint(
+            'file_id', 'algorithm',
+            name='uq_filehash_file_algorithm'
+        )
     )
 
     # filetag - key-value tags for files
@@ -76,7 +92,11 @@ def upgrade() -> None:
         'filetag',
         sa.Column('id', sa.Uuid(), nullable=False),
         sa.Column('file_id', sa.Uuid(), nullable=False),
-        sa.Column('key', sqlmodel.sql.sqltypes.AutoString(length=255), nullable=False),
+        sa.Column(
+            'key',
+            sqlmodel.sql.sqltypes.AutoString(length=255),
+            nullable=False
+        ),
         sa.Column('value', sa.Text(), nullable=False),
         sa.ForeignKeyConstraint(['file_id'], ['file.id'], ondelete='CASCADE'),
         sa.PrimaryKeyConstraint('id'),
@@ -88,15 +108,180 @@ def upgrade() -> None:
         'filesample',
         sa.Column('id', sa.Uuid(), nullable=False),
         sa.Column('file_id', sa.Uuid(), nullable=False),
-        sa.Column('sample_name', sqlmodel.sql.sqltypes.AutoString(length=255), nullable=False),
-        sa.Column('role', sqlmodel.sql.sqltypes.AutoString(length=50), nullable=True),
+        sa.Column(
+            'sample_name',
+            sqlmodel.sql.sqltypes.AutoString(length=255),
+            nullable=False
+        ),
+        sa.Column(
+            'role',
+            sqlmodel.sql.sqltypes.AutoString(length=50),
+            nullable=True
+        ),
         sa.ForeignKeyConstraint(['file_id'], ['file.id'], ondelete='CASCADE'),
         sa.PrimaryKeyConstraint('id'),
-        sa.UniqueConstraint('file_id', 'sample_name', name='uq_filesample_file_sample')
+        sa.UniqueConstraint(
+            'file_id', 'sample_name',
+            name='uq_filesample_file_sample'
+        )
     )
 
     # ========================================================================
-    # QCRecord Tables
+    # Step 2: Add new columns to file table
+    # ========================================================================
+
+    op.add_column(
+        'file',
+        sa.Column(
+            'uri',
+            sqlmodel.sql.sqltypes.AutoString(length=1024),
+            nullable=True
+        )
+    )
+    op.add_column(
+        'file',
+        sa.Column('size', sa.BigInteger(), nullable=True)
+    )
+    op.add_column(
+        'file',
+        sa.Column('created_on', sa.DateTime(), nullable=True)
+    )
+    op.add_column(
+        'file',
+        sa.Column(
+            'source',
+            sqlmodel.sql.sqltypes.AutoString(length=1024),
+            nullable=True
+        )
+    )
+
+    # ========================================================================
+    # Step 3: Migrate data from old columns to new columns
+    # ========================================================================
+
+    # Copy file_path → uri, file_size → size, upload_date → created_on
+    op.execute("""
+        UPDATE file SET
+            uri = file_path,
+            size = file_size,
+            created_on = upload_date
+    """)
+
+    # Migrate entity associations to fileentity table
+    # (preserving entity_type and entity_id from file table)
+    op.execute("""
+        INSERT INTO fileentity (id, file_id, entity_type, entity_id, role)
+        SELECT
+            gen_random_uuid(),
+            id,
+            UPPER(entity_type::text),
+            entity_id,
+            NULL
+        FROM file
+    """)
+
+    # Migrate checksum to filehash table (as sha256)
+    op.execute("""
+        INSERT INTO filehash (id, file_id, algorithm, value)
+        SELECT
+            gen_random_uuid(),
+            id,
+            'sha256',
+            checksum
+        FROM file
+        WHERE checksum IS NOT NULL
+    """)
+
+    # Migrate description to filetag table
+    op.execute("""
+        INSERT INTO filetag (id, file_id, key, value)
+        SELECT
+            gen_random_uuid(),
+            id,
+            'description',
+            description
+        FROM file
+        WHERE description IS NOT NULL AND description != ''
+    """)
+
+    # Migrate is_public to filetag table
+    op.execute("""
+        INSERT INTO filetag (id, file_id, key, value)
+        SELECT
+            gen_random_uuid(),
+            id,
+            'public',
+            'true'
+        FROM file
+        WHERE is_public = true
+    """)
+
+    # Migrate is_archived to filetag table
+    op.execute("""
+        INSERT INTO filetag (id, file_id, key, value)
+        SELECT
+            gen_random_uuid(),
+            id,
+            'archived',
+            'true'
+        FROM file
+        WHERE is_archived = true
+    """)
+
+    # ========================================================================
+    # Step 4: Make uri NOT NULL and add unique constraint
+    # ========================================================================
+
+    op.alter_column('file', 'uri', nullable=False)
+    op.alter_column('file', 'created_on', nullable=False)
+    op.create_unique_constraint('uq_file_uri', 'file', ['uri'])
+
+    # ========================================================================
+    # Step 5: Convert storage_backend from enum to varchar
+    # ========================================================================
+
+    op.add_column(
+        'file',
+        sa.Column(
+            'storage_backend_new',
+            sqlmodel.sql.sqltypes.AutoString(length=20),
+            nullable=True
+        )
+    )
+    op.execute(
+        "UPDATE file SET storage_backend_new = UPPER(storage_backend::text)"
+    )
+    op.drop_column('file', 'storage_backend')
+    op.alter_column(
+        'file', 'storage_backend_new',
+        new_column_name='storage_backend'
+    )
+
+    # ========================================================================
+    # Step 6: Drop old columns from file table
+    # ========================================================================
+
+    op.drop_constraint('file_file_id_key', 'file', type_='unique')
+    op.drop_column('file', 'file_id')
+    op.drop_column('file', 'filename')
+    op.drop_column('file', 'file_path')
+    op.drop_column('file', 'file_size')
+    op.drop_column('file', 'mime_type')
+    op.drop_column('file', 'checksum')
+    op.drop_column('file', 'description')
+    op.drop_column('file', 'upload_date')
+    op.drop_column('file', 'entity_type')
+    op.drop_column('file', 'entity_id')
+    op.drop_column('file', 'is_public')
+    op.drop_column('file', 'is_archived')
+    op.drop_column('file', 'relative_path')
+
+    # Drop old enums
+    op.execute("DROP TYPE IF EXISTS entitytype")
+    op.execute("DROP TYPE IF EXISTS storagebackend")
+
+    # ========================================================================
+    # Step 7: Create QCRecord Tables
     # ========================================================================
 
     # qcrecord - main QC record table
@@ -104,8 +289,16 @@ def upgrade() -> None:
         'qcrecord',
         sa.Column('id', sa.Uuid(), nullable=False),
         sa.Column('created_on', sa.DateTime(), nullable=False),
-        sa.Column('created_by', sqlmodel.sql.sqltypes.AutoString(length=100), nullable=False),
-        sa.Column('project_id', sqlmodel.sql.sqltypes.AutoString(length=50), nullable=False),
+        sa.Column(
+            'created_by',
+            sqlmodel.sql.sqltypes.AutoString(length=100),
+            nullable=False
+        ),
+        sa.Column(
+            'project_id',
+            sqlmodel.sql.sqltypes.AutoString(length=50),
+            nullable=False
+        ),
         sa.PrimaryKeyConstraint('id')
     )
     op.create_index('ix_qcrecord_project_id', 'qcrecord', ['project_id'])
@@ -115,11 +308,21 @@ def upgrade() -> None:
         'qcrecordmetadata',
         sa.Column('id', sa.Uuid(), nullable=False),
         sa.Column('qcrecord_id', sa.Uuid(), nullable=False),
-        sa.Column('key', sqlmodel.sql.sqltypes.AutoString(length=255), nullable=False),
+        sa.Column(
+            'key',
+            sqlmodel.sql.sqltypes.AutoString(length=255),
+            nullable=False
+        ),
         sa.Column('value', sa.Text(), nullable=False),
-        sa.ForeignKeyConstraint(['qcrecord_id'], ['qcrecord.id'], ondelete='CASCADE'),
+        sa.ForeignKeyConstraint(
+            ['qcrecord_id'], ['qcrecord.id'],
+            ondelete='CASCADE'
+        ),
         sa.PrimaryKeyConstraint('id'),
-        sa.UniqueConstraint('qcrecord_id', 'key', name='uq_qcrecordmetadata_record_key')
+        sa.UniqueConstraint(
+            'qcrecord_id', 'key',
+            name='uq_qcrecordmetadata_record_key'
+        )
     )
 
     # qcmetric - named metric groups
@@ -127,10 +330,20 @@ def upgrade() -> None:
         'qcmetric',
         sa.Column('id', sa.Uuid(), nullable=False),
         sa.Column('qcrecord_id', sa.Uuid(), nullable=False),
-        sa.Column('name', sqlmodel.sql.sqltypes.AutoString(length=255), nullable=False),
-        sa.ForeignKeyConstraint(['qcrecord_id'], ['qcrecord.id'], ondelete='CASCADE'),
+        sa.Column(
+            'name',
+            sqlmodel.sql.sqltypes.AutoString(length=255),
+            nullable=False
+        ),
+        sa.ForeignKeyConstraint(
+            ['qcrecord_id'], ['qcrecord.id'],
+            ondelete='CASCADE'
+        ),
         sa.PrimaryKeyConstraint('id'),
-        sa.UniqueConstraint('qcrecord_id', 'name', name='uq_qcmetric_record_name')
+        sa.UniqueConstraint(
+            'qcrecord_id', 'name',
+            name='uq_qcmetric_record_name'
+        )
     )
 
     # qcmetricvalue - metric values with dual storage for string/numeric queries
@@ -138,18 +351,29 @@ def upgrade() -> None:
         'qcmetricvalue',
         sa.Column('id', sa.Uuid(), nullable=False),
         sa.Column('qc_metric_id', sa.Uuid(), nullable=False),
-        sa.Column('key', sqlmodel.sql.sqltypes.AutoString(length=255), nullable=False),
+        sa.Column(
+            'key',
+            sqlmodel.sql.sqltypes.AutoString(length=255),
+            nullable=False
+        ),
         sa.Column('value_string', sa.Text(), nullable=False),
         sa.Column('value_numeric', sa.Float(), nullable=True),
         sa.Column(
-            'value_type', sqlmodel.sql.sqltypes.AutoString(length=10),
-            nullable=False, server_default='str'
+            'value_type',
+            sqlmodel.sql.sqltypes.AutoString(length=10),
+            nullable=False,
+            server_default='str'
         ),
-        sa.ForeignKeyConstraint(['qc_metric_id'], ['qcmetric.id'], ondelete='CASCADE'),
+        sa.ForeignKeyConstraint(
+            ['qc_metric_id'], ['qcmetric.id'],
+            ondelete='CASCADE'
+        ),
         sa.PrimaryKeyConstraint('id'),
-        sa.UniqueConstraint('qc_metric_id', 'key', name='uq_qcmetricvalue_metric_key')
+        sa.UniqueConstraint(
+            'qc_metric_id', 'key',
+            name='uq_qcmetricvalue_metric_key'
+        )
     )
-    # Index on key + value_numeric for efficient numeric range queries
     op.create_index(
         'ix_qcmetricvalue_key_numeric', 'qcmetricvalue',
         ['key', 'value_numeric']
@@ -160,18 +384,32 @@ def upgrade() -> None:
         'qcmetricsample',
         sa.Column('id', sa.Uuid(), nullable=False),
         sa.Column('qc_metric_id', sa.Uuid(), nullable=False),
-        sa.Column('sample_name', sqlmodel.sql.sqltypes.AutoString(length=255), nullable=False),
-        sa.Column('role', sqlmodel.sql.sqltypes.AutoString(length=50), nullable=True),
-        sa.ForeignKeyConstraint(['qc_metric_id'], ['qcmetric.id'], ondelete='CASCADE'),
+        sa.Column(
+            'sample_name',
+            sqlmodel.sql.sqltypes.AutoString(length=255),
+            nullable=False
+        ),
+        sa.Column(
+            'role',
+            sqlmodel.sql.sqltypes.AutoString(length=50),
+            nullable=True
+        ),
+        sa.ForeignKeyConstraint(
+            ['qc_metric_id'], ['qcmetric.id'],
+            ondelete='CASCADE'
+        ),
         sa.PrimaryKeyConstraint('id'),
-        sa.UniqueConstraint('qc_metric_id', 'sample_name', name='uq_qcmetricsample_metric_sample')
+        sa.UniqueConstraint(
+            'qc_metric_id', 'sample_name',
+            name='uq_qcmetricsample_metric_sample'
+        )
     )
 
 
 def downgrade() -> None:
-    """Drop QCMetrics and unified File tables."""
+    """Revert to original file schema and drop QCMetrics tables."""
 
-    # Drop QCRecord tables (in reverse order of creation)
+    # Drop QCRecord tables
     op.drop_table('qcmetricsample')
     op.drop_index('ix_qcmetricvalue_key_numeric', table_name='qcmetricvalue')
     op.drop_table('qcmetricvalue')
@@ -180,10 +418,210 @@ def downgrade() -> None:
     op.drop_index('ix_qcrecord_project_id', table_name='qcrecord')
     op.drop_table('qcrecord')
 
-    # Drop unified File tables
+    # Recreate enums
+    op.execute("CREATE TYPE entitytype AS ENUM ('PROJECT', 'RUN')")
+    op.execute("CREATE TYPE storagebackend AS ENUM ('LOCAL', 'S3', 'AZURE', 'GCS')")
+
+    # Recreate old file columns
+    op.add_column(
+        'file',
+        sa.Column(
+            'file_id',
+            sqlmodel.sql.sqltypes.AutoString(length=100),
+            nullable=True
+        )
+    )
+    op.add_column(
+        'file',
+        sa.Column(
+            'filename',
+            sqlmodel.sql.sqltypes.AutoString(length=255),
+            nullable=True
+        )
+    )
+    op.add_column(
+        'file',
+        sa.Column(
+            'file_path',
+            sqlmodel.sql.sqltypes.AutoString(length=1024),
+            nullable=True
+        )
+    )
+    op.add_column(
+        'file',
+        sa.Column('file_size', sa.Integer(), nullable=True)
+    )
+    op.add_column(
+        'file',
+        sa.Column(
+            'mime_type',
+            sqlmodel.sql.sqltypes.AutoString(length=100),
+            nullable=True
+        )
+    )
+    op.add_column(
+        'file',
+        sa.Column(
+            'checksum',
+            sqlmodel.sql.sqltypes.AutoString(length=64),
+            nullable=True
+        )
+    )
+    op.add_column(
+        'file',
+        sa.Column(
+            'description',
+            sqlmodel.sql.sqltypes.AutoString(length=1024),
+            nullable=True
+        )
+    )
+    op.add_column(
+        'file',
+        sa.Column('upload_date', sa.DateTime(), nullable=True)
+    )
+    op.add_column(
+        'file',
+        sa.Column(
+            'entity_type_old',
+            sa.Enum('PROJECT', 'RUN', name='entitytype'),
+            nullable=True
+        )
+    )
+    op.add_column(
+        'file',
+        sa.Column(
+            'entity_id',
+            sqlmodel.sql.sqltypes.AutoString(length=100),
+            nullable=True
+        )
+    )
+    op.add_column(
+        'file',
+        sa.Column(
+            'is_public',
+            sa.Boolean(),
+            nullable=True,
+            server_default='false'
+        )
+    )
+    op.add_column(
+        'file',
+        sa.Column(
+            'is_archived',
+            sa.Boolean(),
+            nullable=True,
+            server_default='false'
+        )
+    )
+    op.add_column(
+        'file',
+        sa.Column(
+            'relative_path',
+            sqlmodel.sql.sqltypes.AutoString(length=1024),
+            nullable=True
+        )
+    )
+
+    # Restore data from new to old columns
+    op.execute("""
+        UPDATE file SET
+            file_path = uri,
+            file_size = size,
+            upload_date = created_on,
+            filename = SPLIT_PART(uri, '/', -1)
+    """)
+
+    # Restore entity associations from fileentity
+    op.execute("""
+        UPDATE file f SET
+            entity_type_old = fe.entity_type::entitytype,
+            entity_id = fe.entity_id
+        FROM fileentity fe
+        WHERE fe.file_id = f.id
+    """)
+
+    # Restore checksum from filehash
+    op.execute("""
+        UPDATE file f SET checksum = fh.value
+        FROM filehash fh
+        WHERE fh.file_id = f.id AND fh.algorithm = 'sha256'
+    """)
+
+    # Restore description from filetag
+    op.execute("""
+        UPDATE file f SET description = ft.value
+        FROM filetag ft
+        WHERE ft.file_id = f.id AND ft.key = 'description'
+    """)
+
+    # Restore is_public from filetag
+    op.execute("""
+        UPDATE file f SET is_public = true
+        FROM filetag ft
+        WHERE ft.file_id = f.id AND ft.key = 'public' AND ft.value = 'true'
+    """)
+
+    # Restore is_archived from filetag
+    op.execute("""
+        UPDATE file f SET is_archived = true
+        FROM filetag ft
+        WHERE ft.file_id = f.id AND ft.key = 'archived' AND ft.value = 'true'
+    """)
+
+    # Generate file_id for each record
+    op.execute("""
+        UPDATE file SET file_id = SUBSTR(MD5(RANDOM()::TEXT), 1, 12)
+    """)
+
+    # Handle storage_backend conversion back to enum
+    op.add_column(
+        'file',
+        sa.Column(
+            'storage_backend_old',
+            sa.Enum('LOCAL', 'S3', 'AZURE', 'GCS', name='storagebackend'),
+            nullable=True
+        )
+    )
+    op.execute(
+        "UPDATE file SET storage_backend_old = storage_backend::storagebackend"
+    )
+    op.drop_column('file', 'storage_backend')
+    op.alter_column(
+        'file', 'storage_backend_old',
+        new_column_name='storage_backend'
+    )
+
+    # Rename entity_type column
+    op.alter_column(
+        'file', 'entity_type_old',
+        new_column_name='entity_type'
+    )
+
+    # Make required columns NOT NULL
+    op.alter_column('file', 'file_id', nullable=False)
+    op.alter_column('file', 'filename', nullable=False)
+    op.alter_column('file', 'original_filename', nullable=False)
+    op.alter_column('file', 'file_path', nullable=False)
+    op.alter_column('file', 'upload_date', nullable=False)
+    op.alter_column('file', 'entity_type', nullable=False)
+    op.alter_column('file', 'entity_id', nullable=False)
+    op.alter_column('file', 'storage_backend', nullable=False)
+    op.alter_column('file', 'is_public', nullable=False)
+    op.alter_column('file', 'is_archived', nullable=False)
+
+    # Drop new columns and constraints
+    op.drop_constraint('uq_file_uri', 'file', type_='unique')
+    op.drop_column('file', 'uri')
+    op.drop_column('file', 'size')
+    op.drop_column('file', 'created_on')
+    op.drop_column('file', 'source')
+
+    # Recreate unique constraint on file_id
+    op.create_unique_constraint('file_file_id_key', 'file', ['file_id'])
+
+    # Drop File supporting tables
     op.drop_table('filesample')
     op.drop_table('filetag')
     op.drop_table('filehash')
     op.drop_index('ix_fileentity_entity', table_name='fileentity')
     op.drop_table('fileentity')
-    op.drop_table('file')
