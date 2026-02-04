@@ -1,4 +1,4 @@
-"""Add QCMetrics and FileRecord tables
+"""Add QCMetrics and unified File tables
 
 Revision ID: f1a2b3c4d5e6
 Revises: e158df5a8df1
@@ -20,63 +20,79 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    """Create QCMetrics and FileRecord tables."""
+    """Create unified File tables and QCMetrics tables."""
 
     # ========================================================================
-    # FileRecord Tables (reusable across QCRecord, Sample, etc.)
+    # Unified File Tables
     # ========================================================================
 
-    # filerecord - main file metadata table
+    # file - main file metadata table
     op.create_table(
-        'filerecord',
+        'file',
         sa.Column('id', sa.Uuid(), nullable=False),
-        sa.Column('entity_type', sqlmodel.sql.sqltypes.AutoString(length=50), nullable=False),
-        sa.Column('entity_id', sa.Uuid(), nullable=False),
         sa.Column('uri', sqlmodel.sql.sqltypes.AutoString(length=1024), nullable=False),
+        sa.Column('original_filename', sqlmodel.sql.sqltypes.AutoString(length=255), nullable=True),
         sa.Column('size', sa.BigInteger(), nullable=True),
-        sa.Column('created_on', sa.DateTime(), nullable=True),
-        sa.PrimaryKeyConstraint('id')
+        sa.Column('created_on', sa.DateTime(), nullable=False),
+        sa.Column('created_by', sqlmodel.sql.sqltypes.AutoString(length=100), nullable=True),
+        sa.Column('source', sqlmodel.sql.sqltypes.AutoString(length=1024), nullable=True),
+        sa.Column('storage_backend', sqlmodel.sql.sqltypes.AutoString(length=20), nullable=True),
+        sa.PrimaryKeyConstraint('id'),
+        sa.UniqueConstraint('uri', name='uq_file_uri')
+    )
+
+    # fileentity - many-to-many junction for file-entity associations
+    op.create_table(
+        'fileentity',
+        sa.Column('id', sa.Uuid(), nullable=False),
+        sa.Column('file_id', sa.Uuid(), nullable=False),
+        sa.Column('entity_type', sqlmodel.sql.sqltypes.AutoString(length=50), nullable=False),
+        sa.Column('entity_id', sqlmodel.sql.sqltypes.AutoString(length=100), nullable=False),
+        sa.Column('role', sqlmodel.sql.sqltypes.AutoString(length=50), nullable=True),
+        sa.ForeignKeyConstraint(['file_id'], ['file.id'], ondelete='CASCADE'),
+        sa.PrimaryKeyConstraint('id'),
+        sa.UniqueConstraint('file_id', 'entity_type', 'entity_id', name='uq_fileentity_file_entity')
     )
     op.create_index(
-        'ix_filerecord_entity',
-        'filerecord',
+        'ix_fileentity_entity',
+        'fileentity',
         ['entity_type', 'entity_id']
     )
 
-    # filerecordhash - hash values for files
+    # filehash - hash values for files
     op.create_table(
-        'filerecordhash',
+        'filehash',
         sa.Column('id', sa.Uuid(), nullable=False),
-        sa.Column('file_record_id', sa.Uuid(), nullable=False),
+        sa.Column('file_id', sa.Uuid(), nullable=False),
         sa.Column('algorithm', sqlmodel.sql.sqltypes.AutoString(length=50), nullable=False),
         sa.Column('value', sqlmodel.sql.sqltypes.AutoString(length=128), nullable=False),
-        sa.ForeignKeyConstraint(['file_record_id'], ['filerecord.id'], ondelete='CASCADE'),
+        sa.ForeignKeyConstraint(['file_id'], ['file.id'], ondelete='CASCADE'),
         sa.PrimaryKeyConstraint('id'),
-        sa.UniqueConstraint('file_record_id', 'algorithm', name='uq_filerecordhash_file_algorithm')
+        sa.UniqueConstraint('file_id', 'algorithm', name='uq_filehash_file_algorithm')
     )
 
-    # filerecordtag - key-value tags for files
+    # filetag - key-value tags for files
     op.create_table(
-        'filerecordtag',
+        'filetag',
         sa.Column('id', sa.Uuid(), nullable=False),
-        sa.Column('file_record_id', sa.Uuid(), nullable=False),
+        sa.Column('file_id', sa.Uuid(), nullable=False),
         sa.Column('key', sqlmodel.sql.sqltypes.AutoString(length=255), nullable=False),
         sa.Column('value', sa.Text(), nullable=False),
-        sa.ForeignKeyConstraint(['file_record_id'], ['filerecord.id'], ondelete='CASCADE'),
+        sa.ForeignKeyConstraint(['file_id'], ['file.id'], ondelete='CASCADE'),
         sa.PrimaryKeyConstraint('id'),
-        sa.UniqueConstraint('file_record_id', 'key', name='uq_filerecordtag_file_key')
+        sa.UniqueConstraint('file_id', 'key', name='uq_filetag_file_key')
     )
 
-    # filerecordsample - sample associations for files
+    # filesample - sample associations for files
     op.create_table(
-        'filerecordsample',
+        'filesample',
         sa.Column('id', sa.Uuid(), nullable=False),
-        sa.Column('file_record_id', sa.Uuid(), nullable=False),
+        sa.Column('file_id', sa.Uuid(), nullable=False),
         sa.Column('sample_name', sqlmodel.sql.sqltypes.AutoString(length=255), nullable=False),
         sa.Column('role', sqlmodel.sql.sqltypes.AutoString(length=50), nullable=True),
-        sa.ForeignKeyConstraint(['file_record_id'], ['filerecord.id'], ondelete='CASCADE'),
+        sa.ForeignKeyConstraint(['file_id'], ['file.id'], ondelete='CASCADE'),
         sa.PrimaryKeyConstraint('id'),
-        sa.UniqueConstraint('file_record_id', 'sample_name', name='uq_filerecordsample_file_sample')
+        sa.UniqueConstraint('file_id', 'sample_name', name='uq_filesample_file_sample')
     )
 
     # ========================================================================
@@ -153,7 +169,7 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    """Drop QCMetrics and FileRecord tables."""
+    """Drop QCMetrics and unified File tables."""
 
     # Drop QCRecord tables (in reverse order of creation)
     op.drop_table('qcmetricsample')
@@ -164,9 +180,10 @@ def downgrade() -> None:
     op.drop_index('ix_qcrecord_project_id', table_name='qcrecord')
     op.drop_table('qcrecord')
 
-    # Drop FileRecord tables
-    op.drop_table('filerecordsample')
-    op.drop_table('filerecordtag')
-    op.drop_table('filerecordhash')
-    op.drop_index('ix_filerecord_entity', table_name='filerecord')
-    op.drop_table('filerecord')
+    # Drop unified File tables
+    op.drop_table('filesample')
+    op.drop_table('filetag')
+    op.drop_table('filehash')
+    op.drop_index('ix_fileentity_entity', table_name='fileentity')
+    op.drop_table('fileentity')
+    op.drop_table('file')
