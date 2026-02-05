@@ -10,12 +10,15 @@ Endpoints:
 - GET /api/files/download - Download file from S3
 """
 
+import io
 from typing import Optional
 import uuid
+
 from fastapi import APIRouter, Depends, Query, status, Form, UploadFile
 from fastapi import File as FastAPIFile
 from fastapi.responses import StreamingResponse
-import io
+
+from api.files.models import FileUploadCreate
 
 from api.files.models import (
     FilePublic,
@@ -101,7 +104,6 @@ def upload_file(
     - File in subdirectory: relative_path="raw_data/sample1"
       => s3://bucket/project/P-123/raw_data/sample1/filename.txt
     """
-    from api.files.models import FileUploadCreate
 
     file_upload = FileUploadCreate(
         filename=filename,

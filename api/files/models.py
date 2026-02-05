@@ -11,8 +11,10 @@ This module provides a unified file metadata system that supports:
 
 from datetime import datetime, timezone
 import hashlib
-import uuid
+import mimetypes
+import re
 from typing import List
+import uuid
 
 from pydantic import ConfigDict
 from sqlmodel import Field, Relationship, SQLModel, UniqueConstraint
@@ -26,7 +28,7 @@ from sqlmodel import Field, Relationship, SQLModel, UniqueConstraint
 class FileEntityType:
     """
     Entity types that can have files associated.
-    
+
     Note: Using class constants instead of Enum for flexibility.
     Entity types stored as VARCHAR in database.
     """
@@ -44,7 +46,7 @@ class FileEntityType:
 class FileHash(SQLModel, table=True):
     """
     Hash values for files (supports multiple algorithms).
-    
+
     Supports: md5, sha256, etag, etc.
     """
     __tablename__ = "filehash"
@@ -65,7 +67,7 @@ class FileHash(SQLModel, table=True):
 class FileTag(SQLModel, table=True):
     """
     Flexible key-value metadata for files.
-    
+
     Standard tags:
     - archived: true/false
     - public: true/false
@@ -91,7 +93,7 @@ class FileTag(SQLModel, table=True):
 class FileSample(SQLModel, table=True):
     """
     Associates samples with a file (supports roles for paired analysis).
-    
+
     Supports:
     - 0 rows: workflow-level file (e.g., expression matrix)
     - 1 row: single-sample file (e.g., BAM file)
@@ -115,12 +117,12 @@ class FileSample(SQLModel, table=True):
 class FileEntity(SQLModel, table=True):
     """
     Many-to-many junction table linking files to entities.
-    
+
     Examples:
     - Sample sheet: entity_type=RUN, entity_id=barcode, role=samplesheet
     - Pipeline output: entity_type=QCRECORD, entity_id=uuid, role=output
     - Project manifest (standalone): entity_type=PROJECT, entity_id=P-12345, role=manifest
-    
+
     Important: Files attached to Samples or QCRecords should NOT also be linked
     to their parent Project via FileEntity. The project relationship can be
     traversed through the Sample→Project or QCRecord→Project relationships.
@@ -146,14 +148,14 @@ class FileEntity(SQLModel, table=True):
 class File(SQLModel, table=True):
     """
     Core file entity supporting both uploads and external references.
-    
+
     This unified model replaces both the original File model (upload-focused)
     and FileRecord model (reference-focused).
-    
+
     The `uri` field is the file location. Filename can be derived as
     `uri.split('/')[-1]`. Same URI can exist multiple times with different
     `created_on` timestamps, enabling versioning.
-    
+
     Version queries:
     - Latest version: WHERE uri = ? ORDER BY created_on DESC LIMIT 1
     - All versions: WHERE uri = ? ORDER BY created_on
@@ -273,7 +275,6 @@ class File(SQLModel, table=True):
         if ".." in path:
             raise ValueError("Path traversal not allowed (..)")
 
-        import re
         if not re.match(r"^[a-zA-Z0-9_\-/]+$", path):
             raise ValueError(
                 "Invalid characters in path. "
@@ -295,7 +296,6 @@ class File(SQLModel, table=True):
     @staticmethod
     def get_mime_type(filename: str) -> str:
         """Get MIME type based on file extension."""
-        import mimetypes
         mime_type, _ = mimetypes.guess_type(filename)
         return mime_type or "application/octet-stream"
 
@@ -321,7 +321,7 @@ class SampleInput(SQLModel):
 class FileCreate(SQLModel):
     """
     Request model for creating a file (upload or reference).
-    
+
     For uploads, file_content is provided separately.
     For external references, just the metadata is needed.
     """
@@ -343,7 +343,7 @@ class FileCreate(SQLModel):
 class FileUploadCreate(SQLModel):
     """
     Request model for file upload via form data.
-    
+
     This is a simplified version of FileCreate for form-based uploads
     where files are associated with a single entity.
     """
@@ -406,7 +406,7 @@ class FilePublic(SQLModel):
 class FileSummary(SQLModel):
     """
     Compact file representation for lists.
-    
+
     Used when embedding files in other responses (e.g., QCRecord).
     """
     id: uuid.UUID

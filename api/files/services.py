@@ -16,14 +16,6 @@ from typing import List
 from fastapi import HTTPException, status
 from sqlmodel import Session, select, col
 
-try:
-    import boto3
-    from botocore.exceptions import NoCredentialsError, ClientError
-
-    BOTO3_AVAILABLE = True
-except ImportError:
-    BOTO3_AVAILABLE = False
-
 from api.files.models import (
     File,
     FileEntity,
@@ -38,6 +30,13 @@ from api.files.models import (
     FileEntityType,
 )
 
+try:
+    import boto3
+    from botocore.exceptions import NoCredentialsError, ClientError
+
+    BOTO3_AVAILABLE = True
+except ImportError:
+    BOTO3_AVAILABLE = False
 
 # ============================================================================
 # File Creation Functions
@@ -258,10 +257,10 @@ def create_file_upload(
                 file_content, uri, mime_type, s3_client,
                 allow_overwrite=allow_overwrite
             )
-            logging.info(f"File uploaded to S3: {uri}")
+            logging.info("File uploaded to S3: %s", uri)
         else:
             _write_local_file(uri, file_content, allow_overwrite=allow_overwrite)
-            logging.info(f"File saved to local storage: {uri}")
+            logging.info("File saved to local storage: %s", uri)
 
     session.commit()
     session.refresh(file_record)
@@ -455,7 +454,7 @@ def _validate_entity_exists(
             )
 
     elif entity_type_upper == FileEntityType.SAMPLE:
-        from api.sample.models import Sample
+        from api.samples.models import Sample
         sample = session.exec(
             select(Sample).where(Sample.id == entity_id)
         ).first()
@@ -579,11 +578,11 @@ def _upload_to_s3(
             ServerSideEncryption="AES256",
         )
 
-        logging.info(f"Successfully uploaded file to S3: {s3_uri}")
+        logging.info("Successfully uploaded file to S3: %s", s3_uri)
         return True
 
     except NoCredentialsError as exc:
-        logging.error(f"AWS credentials not configured: {exc}")
+        logging.error("AWS credentials not configured: %s", exc)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="AWS credentials not found.",
@@ -603,13 +602,13 @@ def _upload_to_s3(
                 detail=f"Access denied to S3 bucket: {s3_uri}",
             ) from exc
         else:
-            logging.error(f"S3 ClientError ({error_code}): {message}")
+            logging.error("S3 ClientError (%s): %s", error_code, message)
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"S3 error: {message}",
             ) from exc
     except Exception as exc:
-        logging.error(f"Failed to upload to S3: {exc}")
+        logging.error("Failed to upload to S3: %s", exc)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Unexpected error uploading to S3: {str(exc)}",
