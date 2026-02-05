@@ -126,59 +126,59 @@ def reindex_projects(
 ###############################################################################
 
 
-@router.get("/workflows", response_model=list[str], tags=["Project Endpoints"])
-def list_workflow_configs(
-    session: SessionDep,
-    s3_client=Depends(get_s3_client),
-) -> list[str]:
-    """
-    List all available project workflow configs from S3.
+#@router.get("/workflows", response_model=list[str], tags=["Project Endpoints"])
+#def list_workflow_configs(
+#    session: SessionDep,
+#    s3_client=Depends(get_s3_client),
+#) -> list[str]:
+#    """
+#    List all available project workflow configs from S3.
 
-    Returns a list of workflow IDs (config filenames without extensions).
-    """
-    return services.list_workflow_configs(session=session, s3_client=s3_client)
+#    Returns a list of workflow IDs (config filenames without extensions).
+#    """
+#    return services.list_workflow_configs(session=session, s3_client=s3_client)
 
 
-@router.get(
-    "/workflows/configs",
-    response_model=PipelineConfigsResponse,
-    tags=["Project Endpoints"],
-)
-def get_all_workflow_configs(
-    session: SessionDep,
-    s3_client=Depends(get_s3_client),
-) -> PipelineConfigsResponse:
+#@router.get(
+#    "/workflows/configs",
+#    response_model=PipelineConfigsResponse,
+#    tags=["Project Endpoints"],
+#)
+#def get_all_workflow_configs(
+#    session: SessionDep,
+#    s3_client=Depends(get_s3_client),
+#) -> PipelineConfigsResponse:
     """
     Retrieve and parse all project workflow configurations from S3.
 
     Returns:
         PipelineConfigsResponse containing all parsed workflow configurations
     """
-    return services.get_all_workflow_configs(session=session, s3_client=s3_client)
+#    return services.get_all_workflow_configs(session=session, s3_client=s3_client)
 
 
-@router.get(
-    "/workflows/{workflow_id}",
-    response_model=PipelineConfig,
-    tags=["Project Endpoints"],
-)
-def get_workflow_config(
-    workflow_id: str,
-    session: SessionDep,
-    s3_client=Depends(get_s3_client),
-) -> PipelineConfig:
-    """
-    Retrieve a specific workflow configuration.
+#@router.get(
+    # "/workflows/{workflow_id}",
+    # response_model=PipelineConfig,
+    # tags=["Project Endpoints"],
+#)
+#def get_workflow_config(
+    # workflow_id: str,
+    # session: SessionDep,
+    # s3_client=Depends(get_s3_client),
+#) -> PipelineConfig:
+    # """
+    # Retrieve a specific workflow configuration.
 
-    Args:
-        workflow_id: The workflow identifier (filename without extension)
+    # Args:
+    #     workflow_id: The workflow identifier (filename without extension)
 
-    Returns:
-        Complete workflow configuration
-    """
-    return services.get_workflow_config(
-        session=session, workflow_id=workflow_id, s3_client=s3_client
-    )
+    # Returns:
+    #     Complete workflow configuration
+    # """
+    # return services.get_workflow_config(
+    #     session=session, workflow_id=workflow_id, s3_client=s3_client
+    # )
 
 
 @router.get(
@@ -193,6 +193,7 @@ def get_project_actions() -> list[ProjectOption]:
     Returns:
         List of available project actions with labels, values, and descriptions
     """
+    # TODO: This shouldn't be hardcoded.  I'm not quite sure how we want to handle this but probably with a config setting.
     return [
         ProjectOption(
             label="Create Project",
@@ -219,6 +220,7 @@ def get_project_platforms() -> list[ProjectOption]:
     Returns:
         List of available platforms with labels, values, and descriptions
     """
+    # TODO: This shouldn't be hardcoded.  We should read a list of support platforms from a config file or database.
     return [
         ProjectOption(
             label="Arvados",
