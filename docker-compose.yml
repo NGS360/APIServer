@@ -98,6 +98,7 @@ services:
 
   phpmyadmin:
     image: phpmyadmin/phpmyadmin
+    platform: linux/amd64
     container_name: phpmyadmin
     restart: always
     networks:
