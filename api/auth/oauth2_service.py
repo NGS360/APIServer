@@ -103,6 +103,13 @@ def get_available_providers() -> dict:
                 "authorize_url": f"/api/v1/auth/oauth/{provider}/authorize" if enabled else None
             })
 
+    if settings.OAUTH_CORP_NAME and settings.OAUTH_CORP_CLIENT_ID and settings.OAUTH_CORP_CLIENT_SECRET:
+        providers_info.append({
+            "name": settings.OAUTH_CORP_NAME.lower(),
+            "display_name": settings.OAUTH_CORP_NAME,
+            "authorize_url": f"/api/v1/auth/oauth/{settings.OAUTH_CORP_NAME.lower()}/authorize"
+        })
+
     return {"count": len(providers_info), "providers": providers_info}
 
 
