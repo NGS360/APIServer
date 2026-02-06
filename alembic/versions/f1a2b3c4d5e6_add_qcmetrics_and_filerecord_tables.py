@@ -1,7 +1,7 @@
 """Add QCMetrics and migrate File to unified schema
 
 Revision ID: f1a2b3c4d5e6
-Revises: e158df5a8df1
+Revises: b6847b89d202
 Create Date: 2026-01-29 16:45:00.000000
 
 This migration:
@@ -19,7 +19,7 @@ import sqlmodel
 
 # revision identifiers, used by Alembic.
 revision: str = 'f1a2b3c4d5e6'
-down_revision: Union[str, Sequence[str], None] = 'e158df5a8df1'
+down_revision: Union[str, Sequence[str], None] = 'b6847b89d202'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
