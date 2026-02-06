@@ -328,6 +328,9 @@ def upgrade() -> None:
     )
 
     # qcmetric - named metric groups
+    # NOTE: No unique constraint on (qcrecord_id, name) - multiple metrics with
+    # the same name are allowed, differentiated by their sample associations.
+    # For example, each sample gets its own QCMetric(name="sample_qc") row.
     op.create_table(
         'qcmetric',
         sa.Column('id', sa.Uuid(), nullable=False),
@@ -341,12 +344,10 @@ def upgrade() -> None:
             ['qcrecord_id'], ['qcrecord.id'],
             ondelete='CASCADE'
         ),
-        sa.PrimaryKeyConstraint('id'),
-        sa.UniqueConstraint(
-            'qcrecord_id', 'name',
-            name='uq_qcmetric_record_name'
-        )
+        sa.PrimaryKeyConstraint('id')
     )
+    op.create_index('ix_qcmetric_qcrecord_id', 'qcmetric', ['qcrecord_id'])
+    op.create_index('ix_qcmetric_name', 'qcmetric', ['name'])
 
     # qcmetricvalue - metric values with dual storage for string/numeric queries
     op.create_table(
@@ -406,15 +407,20 @@ def upgrade() -> None:
             name='uq_qcmetricsample_metric_sample'
         )
     )
+    # Index on sample_name for efficient queries like "find all metrics for sample X"
+    op.create_index('ix_qcmetricsample_sample_name', 'qcmetricsample', ['sample_name'])
 
 
 def downgrade() -> None:
     """Revert to original file schema and drop QCMetrics tables."""
 
     # Drop QCRecord tables
+    op.drop_index('ix_qcmetricsample_sample_name', table_name='qcmetricsample')
     op.drop_table('qcmetricsample')
     op.drop_index('ix_qcmetricvalue_key_numeric', table_name='qcmetricvalue')
     op.drop_table('qcmetricvalue')
+    op.drop_index('ix_qcmetric_name', table_name='qcmetric')
+    op.drop_index('ix_qcmetric_qcrecord_id', table_name='qcmetric')
     op.drop_table('qcmetric')
     op.drop_table('qcrecordmetadata')
     op.drop_index('ix_qcrecord_project_id', table_name='qcrecord')

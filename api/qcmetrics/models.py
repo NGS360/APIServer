@@ -83,7 +83,7 @@ class QCMetricSample(SQLModel, table=True):
 
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     qc_metric_id: uuid.UUID = Field(foreign_key="qcmetric.id", nullable=False)
-    sample_name: str = Field(max_length=255, nullable=False)
+    sample_name: str = Field(max_length=255, nullable=False, index=True)
     role: str | None = Field(default=None, max_length=50)  # e.g., "tumor", "normal"
 
     # Relationship back to parent
@@ -99,13 +99,17 @@ class QCMetric(SQLModel, table=True):
     A named group of metrics within a QC record.
 
     Can be workflow-level (no samples), single-sample, or multi-sample (paired).
-    Examples: alignment_stats, somatic_variants, expression_summary
+    Examples: sample_qc, somatic_variants, pipeline_summary
+
+    Multiple QCMetric rows with the same name are allowed within a QCRecord,
+    differentiated by their sample associations in QCMetricSample.
+    For example, each sample gets its own QCMetric(name="sample_qc") row.
     """
     __tablename__ = "qcmetric"
 
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
-    qcrecord_id: uuid.UUID = Field(foreign_key="qcrecord.id", nullable=False)
-    name: str = Field(max_length=255, nullable=False)
+    qcrecord_id: uuid.UUID = Field(foreign_key="qcrecord.id", nullable=False, index=True)
+    name: str = Field(max_length=255, nullable=False, index=True)
 
     # Relationships to child tables
     values: List["QCMetricValue"] = Relationship(
@@ -119,10 +123,6 @@ class QCMetric(SQLModel, table=True):
 
     # Relationship back to parent
     qcrecord: "QCRecord" = Relationship(back_populates="metrics")
-
-    __table_args__ = (
-        UniqueConstraint("qcrecord_id", "name", name="uq_qcmetric_record_name"),
-    )
 
 
 class QCRecord(SQLModel, table=True):
