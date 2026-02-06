@@ -3,6 +3,7 @@
 ## Overview
 
 The NGS360 API now includes a comprehensive authentication system with:
+
 - Local username/password authentication
 - OAuth2 support for external providers (Google, GitHub, Microsoft)
 - JWT-based access tokens with refresh token rotation
@@ -86,6 +87,7 @@ fastapi dev main.py
 ### Authentication Endpoints
 
 #### Register New User
+
 ```http
 POST /api/v1/auth/register
 Content-Type: application/json
@@ -99,6 +101,7 @@ Content-Type: application/json
 ```
 
 #### Login
+
 ```http
 POST /api/v1/auth/login
 Content-Type: application/x-www-form-urlencoded
@@ -107,6 +110,7 @@ username=user@example.com&password=SecurePass123
 ```
 
 Response:
+
 ```json
 {
   "access_token": "eyJ0eXAiOiJKV1QiLCJhbGc...",
@@ -117,6 +121,7 @@ Response:
 ```
 
 #### Refresh Token
+
 ```http
 POST /api/v1/auth/refresh
 Content-Type: application/json
@@ -127,6 +132,7 @@ Content-Type: application/json
 ```
 
 #### Logout
+
 ```http
 POST /api/v1/auth/logout
 Content-Type: application/json
@@ -137,12 +143,14 @@ Content-Type: application/json
 ```
 
 #### Get Current User
+
 ```http
 GET /api/v1/auth/me
 Authorization: Bearer your-access-token
 ```
 
 #### Request Password Reset
+
 ```http
 POST /api/v1/auth/password-reset/request
 Content-Type: application/json
@@ -153,6 +161,7 @@ Content-Type: application/json
 ```
 
 #### Confirm Password Reset
+
 ```http
 POST /api/v1/auth/password-reset/confirm
 Content-Type: application/json
@@ -164,6 +173,7 @@ Content-Type: application/json
 ```
 
 #### Change Password
+
 ```http
 POST /api/v1/auth/password/change
 Authorization: Bearer your-access-token
@@ -176,6 +186,7 @@ Content-Type: application/json
 ```
 
 #### Verify Email
+
 ```http
 POST /api/v1/auth/verify-email
 Content-Type: application/json
@@ -186,6 +197,7 @@ Content-Type: application/json
 ```
 
 #### Resend Verification Email
+
 ```http
 POST /api/v1/auth/resend-verification
 Content-Type: application/json
