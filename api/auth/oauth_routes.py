@@ -13,6 +13,17 @@ import api.auth.oauth2_service as oauth2_service
 
 router = APIRouter(prefix="/auth/oauth", tags=["OAuth2 Authentication"])
 
+@router.get("/providers")
+def get_available_oauth_providers() -> dict:
+    """
+    Get list of available OAuth providers
+
+    Returns:
+        List of supported OAuth providers
+    """
+    providers = oauth2_service.get_available_providers()
+    return providers
+
 
 @router.get("/{provider}/authorize")
 def oauth_authorize(

@@ -306,6 +306,7 @@ def admin_only_endpoint(current_user: CurrentSuperuser):
 ### Password Policy
 
 Configurable password requirements:
+
 - Minimum length (default: 8)
 - Require uppercase letters (default: true)
 - Require lowercase letters (default: true)
@@ -330,15 +331,17 @@ New users must verify their email address before accessing protected resources. 
 ### Password Reset
 
 Password reset tokens are:
+
 - Single-use only
 - Expire after 1 hour
 - Cryptographically secure random strings
 
-## Testing
+## Testing Local User Authentication
 
 ### Manual Testing with curl
 
 Register a user:
+
 ```bash
 curl -X POST http://localhost:8000/api/v1/auth/register \
   -H "Content-Type: application/json" \
@@ -363,9 +366,20 @@ curl -X GET http://localhost:8000/api/v1/auth/me \
   -H "Authorization: Bearer YOUR_ACCESS_TOKEN"
 ```
 
+## Testing OAuth User Authentication
+
+### Manual Testing with curl
+
+Get list of support OAuth providers:
+
+```bash 
+curl -X GET http://localhost:8000/api/v1/auth/oauth/providers
+```
+
 ### Automated Tests
 
 Run the test suite:
+
 ```bash
 pytest tests/api/test_auth.py -v
 ```

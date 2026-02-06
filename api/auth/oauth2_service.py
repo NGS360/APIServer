@@ -55,6 +55,56 @@ class OAuth2ProviderConfig:
             raise ValueError(f"Unsupported provider: {provider}")
         return cls.PROVIDERS[provider]
 
+def get_available_providers() -> dict:
+    """
+    Get list of configured OAuth providers
+    
+    Returns which OAuth providers are configured and available for use.
+    The client apps (e.g. React app) can use this to dynamically show login buttons.
+    
+    Returns:
+        dict: Available providers with metadata
+        
+    Example Response:
+        {
+            "providers": [
+                {
+                    "name": "google",
+                    "display_name": "Google",
+                    "enabled": true,
+                    "authorize_url": "/api/v1/auth/oauth/google/authorize"
+                },
+                {
+                    "name": "github",
+                    "display_name": "GitHub",
+                    "enabled": true,
+                    "authorize_url": "/api/v1/auth/oauth/github/authorize"
+                }
+            ]
+        }
+    """
+    settings = get_settings()
+
+    providers_info = []
+
+    for provider in OAuth2ProviderConfig.PROVIDERS.keys():
+        enabled = False
+        if provider == "google":
+            enabled = bool(settings.OAUTH_GOOGLE_CLIENT_ID and settings.OAUTH_GOOGLE_CLIENT_SECRET)
+        elif provider == "github":
+            enabled = bool(settings.OAUTH_GITHUB_CLIENT_ID and settings.OAUTH_GITHUB_CLIENT_SECRET)
+        elif provider == "microsoft":
+            enabled = bool(settings.OAUTH_MICROSOFT_CLIENT_ID and settings.OAUTH_MICROSOFT_CLIENT_SECRET)
+
+        if enabled:
+            providers_info.append({
+                "name": provider,
+                "display_name": provider.title(),
+                "authorize_url": f"/api/v1/auth/oauth/{provider}/authorize" if enabled else None
+            })
+
+    return {"count": len(providers_info), "providers": providers_info}
+
 
 def get_authorization_url(
     provider: str,
