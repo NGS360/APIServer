@@ -194,7 +194,7 @@ def upgrade() -> None:
 
     # Migrate description to filetag table
     op.execute("""
-        INSERT INTO filetag (id, file_id, key, value)
+        INSERT INTO filetag (id, file_id, `key`, value)
         SELECT
             UUID(),
             id,
@@ -206,7 +206,7 @@ def upgrade() -> None:
 
     # Migrate is_public to filetag table
     op.execute("""
-        INSERT INTO filetag (id, file_id, key, value)
+        INSERT INTO filetag (id, file_id, `key`, value)
         SELECT
             UUID(),
             id,
@@ -218,7 +218,7 @@ def upgrade() -> None:
 
     # Migrate is_archived to filetag table
     op.execute("""
-        INSERT INTO filetag (id, file_id, key, value)
+        INSERT INTO filetag (id, file_id, `key`, value)
         SELECT
             UUID(),
             id,
