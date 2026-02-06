@@ -369,8 +369,3 @@ Additional documentation is available in the `docs/` directory:
 - [AUTHENTICATION.md](docs/AUTHENTICATION.md) - Authentication setup and configuration
 - [OAuth2_Authorization_Code_Grant_Flow.md](docs/OAuth2_Authorization_Code_Grant_Flow.md) - OAuth2 flow details
 - [SETUP.md](docs/SETUP.md) - Environment setup instructions
-
-Design documents are in the `plans/` directory:
-
-- [qcmetrics_migration.md](plans/qcmetrics_migration.md) - QCMetrics schema design
-- [file_model_unification.md](plans/file_model_unification.md) - Unified File model design
