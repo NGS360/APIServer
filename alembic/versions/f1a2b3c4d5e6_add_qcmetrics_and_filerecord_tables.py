@@ -172,9 +172,9 @@ def upgrade() -> None:
     op.execute("""
         INSERT INTO fileentity (id, file_id, entity_type, entity_id, role)
         SELECT
-            gen_random_uuid(),
+            UUID(),
             id,
-            UPPER(entity_type::text),
+            UPPER(entity_type),
             entity_id,
             NULL
         FROM file
@@ -184,7 +184,7 @@ def upgrade() -> None:
     op.execute("""
         INSERT INTO filehash (id, file_id, algorithm, value)
         SELECT
-            gen_random_uuid(),
+            UUID(),
             id,
             'sha256',
             checksum
@@ -196,7 +196,7 @@ def upgrade() -> None:
     op.execute("""
         INSERT INTO filetag (id, file_id, key, value)
         SELECT
-            gen_random_uuid(),
+            UUID(),
             id,
             'description',
             description
@@ -208,24 +208,24 @@ def upgrade() -> None:
     op.execute("""
         INSERT INTO filetag (id, file_id, key, value)
         SELECT
-            gen_random_uuid(),
+            UUID(),
             id,
             'public',
             'true'
         FROM file
-        WHERE is_public = true
+        WHERE is_public = TRUE
     """)
 
     # Migrate is_archived to filetag table
     op.execute("""
         INSERT INTO filetag (id, file_id, key, value)
         SELECT
-            gen_random_uuid(),
+            UUID(),
             id,
             'archived',
             'true'
         FROM file
-        WHERE is_archived = true
+        WHERE is_archived = TRUE
     """)
 
     # ========================================================================
@@ -251,7 +251,7 @@ def upgrade() -> None:
         )
     )
     op.execute(
-        "UPDATE file SET storage_backend_new = UPPER(storage_backend::text)"
+        "UPDATE file SET storage_backend_new = UPPER(storage_backend)"
     )
     op.drop_column('file', 'storage_backend')
     op.alter_column(
