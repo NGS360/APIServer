@@ -272,7 +272,8 @@ def upgrade() -> None:
     # Step 6: Drop old columns from file table
     # ========================================================================
 
-    op.drop_constraint('file_file_id_key', 'file', type_='unique')
+    # MySQL uses index name same as column name when not specified
+    op.execute("DROP INDEX file_id ON file")
     op.drop_column('file', 'file_id')
     op.drop_column('file', 'filename')
     op.drop_column('file', 'file_path')
