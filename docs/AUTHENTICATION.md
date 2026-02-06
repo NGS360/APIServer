@@ -210,14 +210,17 @@ Content-Type: application/json
 ### OAuth2 Endpoints
 
 #### Initiate OAuth2 Flow
+
 ```http
 GET /api/v1/auth/oauth/{provider}/authorize
 ```
+
 Where `{provider}` is one of: `google`, `github`, `microsoft`
 
 This redirects the user to the OAuth provider's authorization page.
 
 #### OAuth2 Callback
+
 ```http
 GET /api/v1/auth/oauth/{provider}/callback?code=auth-code&state=state-value
 ```
@@ -225,6 +228,7 @@ GET /api/v1/auth/oauth/{provider}/callback?code=auth-code&state=state-value
 This endpoint is called by the OAuth provider after user authorization.
 
 #### Link OAuth Provider to Account
+
 ```http
 POST /api/v1/auth/oauth/{provider}/link
 Authorization: Bearer your-access-token
@@ -236,6 +240,7 @@ Content-Type: application/json
 ```
 
 #### Unlink OAuth Provider
+
 ```http
 DELETE /api/v1/auth/oauth/{provider}/unlink
 Authorization: Bearer your-access-token
@@ -371,7 +376,7 @@ pytest tests/api/test_auth.py -v
 
 1. Check `EMAIL_ENABLED=true` in `.env`
 2. Verify AWS credentials are configured
-3. Ensure FROM_EMAIL is verified in AWS SES
+3. Ensure FROM_EMAIL is verified in AWS SES or MAIL_ settings are configured.
 4. Check application logs for error messages
 
 ### OAuth2 Not Working
@@ -391,6 +396,7 @@ pytest tests/api/test_auth.py -v
 ### Account Locked
 
 Wait for the lockout duration to expire, or manually reset in database:
+
 ```sql
 UPDATE users SET failed_login_attempts = 0, locked_until = NULL 
 WHERE email = 'user@example.com';
@@ -399,6 +405,7 @@ WHERE email = 'user@example.com';
 ## Database Schema
 
 ### Users Table
+
 - `id`: UUID primary key
 - `user_id`: Human-readable ID (U-YYYYMMDD-NNNN)
 - `email`: Unique email address
@@ -412,6 +419,7 @@ WHERE email = 'user@example.com';
 - `failed_login_attempts`, `locked_until`: Security fields
 
 ### Refresh Tokens Table
+
 - `id`: UUID primary key
 - `user_id`: Foreign key to users
 - `token`: Unique token string
@@ -420,6 +428,7 @@ WHERE email = 'user@example.com';
 - `device_info`: Optional device information
 
 ### OAuth Providers Table
+
 - `id`: UUID primary key
 - `user_id`: Foreign key to users
 - `provider_name`: Provider enum (google, github, microsoft)
@@ -428,6 +437,7 @@ WHERE email = 'user@example.com';
 - `token_expires_at`: Token expiration
 
 ### Password Reset Tokens Table
+
 - `id`: UUID primary key
 - `user_id`: Foreign key to users
 - `token`: Unique reset token
@@ -435,6 +445,7 @@ WHERE email = 'user@example.com';
 - `used`: Single-use flag
 
 ### Email Verification Tokens Table
+
 - `id`: UUID primary key
 - `user_id`: Foreign key to users
 - `token`: Unique verification token
@@ -450,7 +461,7 @@ WHERE email = 'user@example.com';
 - [ ] Configure CORS properly
 - [ ] Set up rate limiting
 - [ ] Enable email verification requirement
-- [ ] Configure AWS SES for production
+- [ ] Configure AWS SES or SMTP for production
 - [ ] Set up monitoring and alerting
 - [ ] Review and adjust token expiration times
 - [ ] Enable database backups
@@ -478,6 +489,7 @@ FROM_EMAIL=noreply@yourdomain.com
 ## Support
 
 For issues or questions:
+
 1. Check the troubleshooting section above
 2. Review the API documentation at `/docs`
 3. Check application logs
