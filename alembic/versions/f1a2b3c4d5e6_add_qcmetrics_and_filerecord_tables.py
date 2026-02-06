@@ -426,9 +426,8 @@ def downgrade() -> None:
     op.drop_index('ix_qcrecord_project_id', table_name='qcrecord')
     op.drop_table('qcrecord')
 
-    # Recreate enums
-    op.execute("CREATE TYPE entitytype AS ENUM ('PROJECT', 'RUN')")
-    op.execute("CREATE TYPE storagebackend AS ENUM ('LOCAL', 'S3', 'AZURE', 'GCS')")
+    # Note: MySQL doesn't have CREATE TYPE - enums are defined inline on columns
+    # Skip enum creation for MySQL (they're created when columns are added)
 
     # Recreate old file columns
     op.add_column(
@@ -536,49 +535,48 @@ def downgrade() -> None:
             file_path = uri,
             file_size = size,
             upload_date = created_on,
-            filename = SPLIT_PART(uri, '/', -1)
+            filename = SUBSTRING_INDEX(uri, '/', -1)
     """)
 
-    # Restore entity associations from fileentity
+    # Restore entity associations from fileentity (MySQL JOIN syntax)
     op.execute("""
-        UPDATE file f SET
-            entity_type_old = fe.entity_type::entitytype,
-            entity_id = fe.entity_id
-        FROM fileentity fe
-        WHERE fe.file_id = f.id
+        UPDATE file f
+        JOIN fileentity fe ON fe.file_id = f.id
+        SET f.entity_type_old = fe.entity_type,
+            f.entity_id = fe.entity_id
     """)
 
-    # Restore checksum from filehash
+    # Restore checksum from filehash (MySQL JOIN syntax)
     op.execute("""
-        UPDATE file f SET checksum = fh.value
-        FROM filehash fh
-        WHERE fh.file_id = f.id AND fh.algorithm = 'sha256'
+        UPDATE file f
+        JOIN filehash fh ON fh.file_id = f.id AND fh.algorithm = 'sha256'
+        SET f.checksum = fh.value
     """)
 
-    # Restore description from filetag
+    # Restore description from filetag (MySQL JOIN syntax)
     op.execute("""
-        UPDATE file f SET description = ft.value
-        FROM filetag ft
-        WHERE ft.file_id = f.id AND ft.key = 'description'
+        UPDATE file f
+        JOIN filetag ft ON ft.file_id = f.id AND ft.`key` = 'description'
+        SET f.description = ft.value
     """)
 
-    # Restore is_public from filetag
+    # Restore is_public from filetag (MySQL JOIN syntax)
     op.execute("""
-        UPDATE file f SET is_public = true
-        FROM filetag ft
-        WHERE ft.file_id = f.id AND ft.key = 'public' AND ft.value = 'true'
+        UPDATE file f
+        JOIN filetag ft ON ft.file_id = f.id AND ft.`key` = 'public' AND ft.value = 'true'
+        SET f.is_public = TRUE
     """)
 
-    # Restore is_archived from filetag
+    # Restore is_archived from filetag (MySQL JOIN syntax)
     op.execute("""
-        UPDATE file f SET is_archived = true
-        FROM filetag ft
-        WHERE ft.file_id = f.id AND ft.key = 'archived' AND ft.value = 'true'
+        UPDATE file f
+        JOIN filetag ft ON ft.file_id = f.id AND ft.`key` = 'archived' AND ft.value = 'true'
+        SET f.is_archived = TRUE
     """)
 
-    # Generate file_id for each record
+    # Generate file_id for each record (MySQL syntax)
     op.execute("""
-        UPDATE file SET file_id = SUBSTR(MD5(RANDOM()::TEXT), 1, 12)
+        UPDATE file SET file_id = SUBSTR(MD5(RAND()), 1, 12)
     """)
 
     # Handle storage_backend conversion back to enum
@@ -591,7 +589,7 @@ def downgrade() -> None:
         )
     )
     op.execute(
-        "UPDATE file SET storage_backend_old = storage_backend::storagebackend"
+        "UPDATE file SET storage_backend_old = storage_backend"
     )
     op.drop_column('file', 'storage_backend')
     op.alter_column(
