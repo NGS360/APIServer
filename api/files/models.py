@@ -164,7 +164,7 @@ class File(SQLModel, table=True):
     __searchable__ = ["uri"]
 
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
-    uri: str = Field(max_length=1024)  # File location (not unique alone)
+    uri: str = Field(max_length=512)  # File location (not unique alone)
     original_filename: str | None = Field(default=None, max_length=255)  # For uploads only
     size: int | None = Field(default=None)  # File size in bytes (BIGINT in DB)
     created_on: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

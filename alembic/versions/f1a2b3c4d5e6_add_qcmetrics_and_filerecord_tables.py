@@ -134,7 +134,7 @@ def upgrade() -> None:
         'file',
         sa.Column(
             'uri',
-            sqlmodel.sql.sqltypes.AutoString(length=1024),
+            sqlmodel.sql.sqltypes.AutoString(length=512),
             nullable=True
         )
     )
@@ -232,8 +232,16 @@ def upgrade() -> None:
     # Step 4: Make uri NOT NULL and add unique constraint
     # ========================================================================
 
-    op.alter_column('file', 'uri', nullable=False)
-    op.alter_column('file', 'created_on', nullable=False)
+    op.alter_column(
+        'file', 'uri',
+        existing_type=sqlmodel.sql.sqltypes.AutoString(length=512),
+        nullable=False
+    )
+    op.alter_column(
+        'file', 'created_on',
+        existing_type=sa.DateTime(),
+        nullable=False
+    )
     op.create_unique_constraint(
         'uq_file_uri_created_on', 'file', ['uri', 'created_on']
     )
@@ -256,6 +264,7 @@ def upgrade() -> None:
     op.drop_column('file', 'storage_backend')
     op.alter_column(
         'file', 'storage_backend_new',
+        existing_type=sqlmodel.sql.sqltypes.AutoString(length=20),
         new_column_name='storage_backend'
     )
 
@@ -278,9 +287,9 @@ def upgrade() -> None:
     op.drop_column('file', 'is_archived')
     op.drop_column('file', 'relative_path')
 
-    # Drop old enums
-    op.execute("DROP TYPE IF EXISTS entitytype")
-    op.execute("DROP TYPE IF EXISTS storagebackend")
+    # Note: MySQL doesn't use separate enum types - they're inline on the column
+    # For PostgreSQL: op.execute("DROP TYPE IF EXISTS entitytype")
+    # For PostgreSQL: op.execute("DROP TYPE IF EXISTS storagebackend")
 
     # ========================================================================
     # Step 7: Create QCRecord Tables
@@ -594,26 +603,68 @@ def downgrade() -> None:
     op.drop_column('file', 'storage_backend')
     op.alter_column(
         'file', 'storage_backend_old',
+        existing_type=sa.Enum('LOCAL', 'S3', 'AZURE', 'GCS', name='storagebackend'),
         new_column_name='storage_backend'
     )
 
     # Rename entity_type column
     op.alter_column(
         'file', 'entity_type_old',
+        existing_type=sa.Enum('PROJECT', 'RUN', name='entitytype'),
         new_column_name='entity_type'
     )
 
     # Make required columns NOT NULL
-    op.alter_column('file', 'file_id', nullable=False)
-    op.alter_column('file', 'filename', nullable=False)
-    op.alter_column('file', 'original_filename', nullable=False)
-    op.alter_column('file', 'file_path', nullable=False)
-    op.alter_column('file', 'upload_date', nullable=False)
-    op.alter_column('file', 'entity_type', nullable=False)
-    op.alter_column('file', 'entity_id', nullable=False)
-    op.alter_column('file', 'storage_backend', nullable=False)
-    op.alter_column('file', 'is_public', nullable=False)
-    op.alter_column('file', 'is_archived', nullable=False)
+    op.alter_column(
+        'file', 'file_id',
+        existing_type=sqlmodel.sql.sqltypes.AutoString(length=100),
+        nullable=False
+    )
+    op.alter_column(
+        'file', 'filename',
+        existing_type=sqlmodel.sql.sqltypes.AutoString(length=255),
+        nullable=False
+    )
+    op.alter_column(
+        'file', 'original_filename',
+        existing_type=sqlmodel.sql.sqltypes.AutoString(length=255),
+        nullable=False
+    )
+    op.alter_column(
+        'file', 'file_path',
+        existing_type=sqlmodel.sql.sqltypes.AutoString(length=1024),
+        nullable=False
+    )
+    op.alter_column(
+        'file', 'upload_date',
+        existing_type=sa.DateTime(),
+        nullable=False
+    )
+    op.alter_column(
+        'file', 'entity_type',
+        existing_type=sa.Enum('PROJECT', 'RUN', name='entitytype'),
+        nullable=False
+    )
+    op.alter_column(
+        'file', 'entity_id',
+        existing_type=sqlmodel.sql.sqltypes.AutoString(length=100),
+        nullable=False
+    )
+    op.alter_column(
+        'file', 'storage_backend',
+        existing_type=sa.Enum('LOCAL', 'S3', 'AZURE', 'GCS', name='storagebackend'),
+        nullable=False
+    )
+    op.alter_column(
+        'file', 'is_public',
+        existing_type=sa.Boolean(),
+        nullable=False
+    )
+    op.alter_column(
+        'file', 'is_archived',
+        existing_type=sa.Boolean(),
+        nullable=False
+    )
 
     # Drop new columns and constraints
     op.drop_constraint('uq_file_uri_created_on', 'file', type_='unique')
