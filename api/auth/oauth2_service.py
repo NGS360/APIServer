@@ -55,6 +55,7 @@ class OAuth2ProviderConfig:
             raise ValueError(f"Unsupported provider: {provider}")
         return cls.PROVIDERS[provider]
 
+
 def get_available_providers() -> dict:
     """
     Get list of configured OAuth providers
@@ -302,6 +303,7 @@ def _normalize_user_data(provider: str, data: dict) -> dict:
         }
     elif provider == "github":
         return {
+            'provider_username': data.get("login"),
             "provider_user_id": str(data.get("id")),
             "email": data.get("email"),
             "name": data.get("name") or data.get("login"),

@@ -72,9 +72,10 @@ class OAuthProvider(SQLModel, table=True):
     __tablename__ = "oauth_providers"
 
     id: uuid.UUID | None = Field(default_factory=uuid.uuid4, primary_key=True)
-    username: str = Field(foreign_key="users.username", index=True)
+    user_id: uuid.UUID = Field(foreign_key="users.id", index=True)
+
     provider_name: OAuthProviderName = Field(index=True)
-    provider_username: str = Field(max_length=255)
+    provider_user_id: str = Field(index=True, max_length=255)
 
     # OAuth tokens (should be encrypted in production)
     access_token: str | None = Field(default=None, max_length=1000)

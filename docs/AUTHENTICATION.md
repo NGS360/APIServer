@@ -372,9 +372,21 @@ curl -X GET http://localhost:8000/api/v1/auth/me \
 
 Get list of support OAuth providers:
 
-```bash 
+```bash
 curl -X GET http://localhost:8000/api/v1/auth/oauth/providers
 ```
+
+User initiates authorization code grant flow
+
+```bash
+curl -X GET http://localhost:8000/api/v1/auth/oauth/{provider}/authorize
+```
+
+This will redirect them to the provider to authenticate.
+
+After authentication, the provider will call the authorization callback url, defined in oauth_routes.py::oauth_callback)
+
+
 
 ### Automated Tests
 

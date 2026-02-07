@@ -1,6 +1,7 @@
 """
 OAuth2 authentication endpoints for external providers
 """
+import logging
 from fastapi import APIRouter, HTTPException, status, Query
 from fastapi.responses import RedirectResponse
 
@@ -10,6 +11,8 @@ from core.config import get_settings
 from api.auth.models import TokenResponse, OAuthLinkRequest
 from api.auth.deps import CurrentUser
 import api.auth.oauth2_service as oauth2_service
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/auth/oauth", tags=["OAuth2 Authentication"])
 
@@ -61,6 +64,7 @@ def oauth_authorize(
             provider,
             redirect_uri
         )
+        logger.info(f"Redirecting requestor to {auth_url} for OAuth authorization")
         return RedirectResponse(url=auth_url)
     except ValueError as e:
         raise HTTPException(
