@@ -394,7 +394,6 @@ def find_or_create_oauth_user(
             counter += 1
 
         user = User(
-            user_id=User.generate_user_id(),
             email=email,
             username=username,
             full_name=provider_data.get("name"),
