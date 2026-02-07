@@ -384,9 +384,7 @@ curl -X GET http://localhost:8000/api/v1/auth/oauth/{provider}/authorize
 
 This will redirect them to the provider to authenticate.
 
-After authentication, the provider will call the authorization callback url, defined in oauth_routes.py::oauth_callback)
-
-
+After authentication, the provider will redirector the client to call the authorization callback url.
 
 ### Automated Tests
 

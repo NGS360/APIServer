@@ -3,6 +3,7 @@ OAuth2 service for external authentication providers
 """
 import logging
 from datetime import datetime, timezone
+from urllib.parse import urlencode
 import uuid
 
 from fastapi import HTTPException, status
@@ -202,7 +203,8 @@ def get_authorization_url(
     if provider == "github":
         params["scope"] = ",".join(config["scopes"])
 
-    query_string = "&".join(f"{k}={v}" for k, v in params.items())
+    #query_string = "&".join(f"{k}={v}" for k, v in params.items())
+    query_string = urlencode(params)
     return f"{config['authorize_url']}?{query_string}"
 
 
