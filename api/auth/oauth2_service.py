@@ -272,6 +272,7 @@ async def get_user_info(provider: str, access_token: str) -> dict:
             )
             response.raise_for_status()
             user_data = response.json()
+            logger.info("Received user data from %s: %s", provider, user_data)
 
             # Normalize user data across providers
             return _normalize_user_data(provider, user_data)
