@@ -346,7 +346,7 @@ class Settings(BaseSettings):
         """Get Microsoft OAuth client secret"""
         return self._get_config_value("OAUTH_MICROSOFT_CLIENT_SECRET")
 
-    # TBD: For Oauth2 Corporate SSO
+    # For Oauth2 Corporate SSO
     @computed_field
     @property
     def OAUTH_CORP_NAME(self) -> str | None:
@@ -363,6 +363,30 @@ class Settings(BaseSettings):
     def OAUTH_CORP_CLIENT_SECRET(self) -> str | None:
         """Get Corporate OAuth client secret"""
         return self._get_config_value("OAUTH_CORP_CLIENT_SECRET")
+
+    @computed_field
+    @property
+    def OAUTH_CORP_AUTHORIZE_URL(self) -> str | None:
+        """Get Corporate OAuth authorization URL"""
+        return self._get_config_value("OAUTH_CORP_AUTHORIZE_URL")
+
+    @computed_field
+    @property
+    def OAUTH_CORP_TOKEN_URL(self) -> str | None:
+        """Get Corporate OAuth token URL"""
+        return self._get_config_value("OAUTH_CORP_TOKEN_URL")
+
+    @computed_field
+    @property
+    def OAUTH_CORP_USERINFO_URL(self) -> str | None:
+        """Get Corporate OAuth userinfo URL"""
+        return self._get_config_value("OAUTH_CORP_USERINFO_URL")
+
+    @computed_field
+    @property
+    def OAUTH_CORP_SCOPES(self) -> str | None:
+        """Get Corporate OAuth scopes (comma-separated)"""
+        return self._get_config_value("OAUTH_CORP_SCOPES", default="openid,email,profile")
 
     # Read environment variables from .env file, if it exists
     # extra='ignore' prevents validation errors from extra env vars

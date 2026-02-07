@@ -50,10 +50,40 @@ class OAuth2ProviderConfig:
 
     @classmethod
     def get_provider_config(cls, provider: str) -> dict:
-        """Get configuration for OAuth provider"""
-        if provider not in cls.PROVIDERS:
-            raise ValueError(f"Unsupported provider: {provider}")
-        return cls.PROVIDERS[provider]
+        """Get configuration for OAuth provider (including dynamic corporate provider)"""
+        # Check if it's a built-in provider
+        if provider in cls.PROVIDERS:
+            return cls.PROVIDERS[provider]
+
+        # Check if it's the corporate SSO provider
+        settings = get_settings()
+        if (settings.OAUTH_CORP_NAME and provider.lower() == settings.OAUTH_CORP_NAME.lower()):
+            if not all([
+                settings.OAUTH_CORP_AUTHORIZE_URL,
+                settings.OAUTH_CORP_TOKEN_URL,
+                settings.OAUTH_CORP_USERINFO_URL,
+            ]):
+                raise ValueError(f"Corporate OAuth provider '{provider}' is not fully configured")
+
+            scopes_str = settings.OAUTH_CORP_SCOPES or "openid,email,profile"
+            scopes = [scope.strip() for scope in scopes_str.split(",")]
+            return {
+                "authorize_url": settings.OAUTH_CORP_AUTHORIZE_URL,
+                "token_url": settings.OAUTH_CORP_TOKEN_URL,
+                "userinfo_url": settings.OAUTH_CORP_USERINFO_URL,
+                "scopes": scopes,
+            }
+
+        raise ValueError(f"Unsupported OAuth provider: {provider}")
+
+    @classmethod
+    def is_valid_provider(cls, provider: str) -> bool:
+        """Check if a provider is valid (built-in or corporate)"""
+        settings = get_settings()
+        return (
+            provider in cls.PROVIDERS or 
+            (settings.OAUTH_CORP_NAME and provider == settings.OAUTH_CORP_NAME.lower())
+        )
 
 
 def get_available_providers() -> dict:
@@ -145,6 +175,8 @@ def get_authorization_url(
         client_id = settings.OAUTH_GITHUB_CLIENT_ID
     elif provider == "microsoft":
         client_id = settings.OAUTH_MICROSOFT_CLIENT_ID
+    elif settings.OAUTH_CORP_NAME and provider == settings.OAUTH_CORP_NAME.lower():
+        client_id = settings.OAUTH_CORP_CLIENT_ID
 
     if not client_id:
         raise HTTPException(
@@ -208,6 +240,9 @@ async def exchange_code_for_token(
     elif provider == "microsoft":
         client_id = settings.OAUTH_MICROSOFT_CLIENT_ID
         client_secret = settings.OAUTH_MICROSOFT_CLIENT_SECRET
+    elif settings.OAUTH_CORP_NAME and provider == settings.OAUTH_CORP_NAME.lower():
+        client_id = settings.OAUTH_CORP_CLIENT_ID
+        client_secret = settings.OAUTH_CORP_CLIENT_SECRET
 
     if not client_id or not client_secret:
         raise HTTPException(
@@ -318,7 +353,16 @@ def _normalize_user_data(provider: str, data: dict) -> dict:
             "picture": None,
         }
     else:
-        return data
+        # Generic normalization for corporate or unknown providers
+        # Assumes standard OIDC claims
+        return {
+            "provider_user_id": data.get("sub") or data.get("id"),
+            'provider_username': data.get("username") or data.get("login"),
+            "email": data.get("email"),
+            "name": data.get("name") or data.get("displayName") or data.get("email"),
+            "picture": data.get("picture"),
+        }
+        # return data
 
 
 def find_or_create_oauth_user(
@@ -409,7 +453,7 @@ def find_or_create_oauth_user(
     # Link OAuth provider to user
     oauth_provider = OAuthProvider(
         user_id=user.id,
-        provider_name=OAuthProviderName(provider),
+        provider_name=provider,
         provider_user_id=provider_user_id,
         access_token=access_token,
         refresh_token=refresh_token
