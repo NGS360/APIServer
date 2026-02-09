@@ -242,6 +242,13 @@ def upgrade() -> None:
         existing_type=sa.DateTime(),
         nullable=False
     )
+    # Make original_filename nullable (it was NOT NULL in original migration,
+    # but external file references don't have an original filename)
+    op.alter_column(
+        'file', 'original_filename',
+        existing_type=sqlmodel.sql.sqltypes.AutoString(length=255),
+        nullable=True
+    )
     op.create_unique_constraint(
         'uq_file_uri_created_on', 'file', ['uri', 'created_on']
     )
