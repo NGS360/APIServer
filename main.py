@@ -14,6 +14,7 @@ from api.auth.routes import router as auth_router
 from api.auth.oauth_routes import router as oauth_router
 from api.files.routes import router as files_router
 from api.jobs.routes import router as jobs_router
+from api.pipelines.routes import router as pipelines_router
 from api.project.routes import router as project_router
 from api.runs.routes import router as runs_router
 from api.samples.routes import router as samples_router
@@ -122,6 +123,7 @@ app.include_router(oauth_router, prefix=API_PREFIX)
 app.include_router(files_router, prefix=API_PREFIX)
 app.include_router(jobs_router, prefix=API_PREFIX)
 app.include_router(project_router, prefix=API_PREFIX)
+app.include_router(pipelines_router, prefix=API_PREFIX)
 app.include_router(runs_router, prefix=API_PREFIX)
 app.include_router(samples_router, prefix=API_PREFIX)
 app.include_router(search_router, prefix=API_PREFIX)
