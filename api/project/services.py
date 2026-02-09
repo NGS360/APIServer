@@ -2,20 +2,24 @@
 Services for the Project API
 """
 
-import boto3
-import yaml
-import json
 from datetime import datetime
-from typing import Literal
+from typing import Literal, TYPE_CHECKING
 from fastapi import HTTPException, status
-from pydantic import PositiveInt, ValidationError
+from pydantic import PositiveInt
 from pytz import timezone
 from sqlmodel import Session, func, select
 from opensearchpy import OpenSearch
-from botocore.exceptions import NoCredentialsError, ClientError
-from api.settings.services import get_setting_value
 
-from core.utils import define_search_body
+from api.settings.services import get_setting_value
+from api.pipelines.services import get_all_pipeline_configs
+from api.jobs.services import submit_batch_job
+
+from core.utils import define_search_body, interpolate
+
+if TYPE_CHECKING:
+    from api.pipelines.models import PipelineAction, PipelinePlatform
+    from api.jobs.models import BatchJob
+
 from api.project.models import (
     Project,
     ProjectAttribute,
@@ -26,6 +30,14 @@ from api.project.models import (
 )
 from api.search.models import SearchDocument
 from api.search.services import add_object_to_index, delete_index
+from api.samples.models import (
+    Sample,
+    SampleAttribute,
+    SampleCreate,
+    SamplePublic,
+    SamplesPublic,
+    Attribute,
+)
 
 
 def generate_project_id(*, session: Session) -> str:
@@ -332,3 +344,392 @@ def reindex_projects(
     for project in projects:
         search_doc = SearchDocument(id=project.project_id, body=project)
         add_object_to_index(client, search_doc, index="projects")
+
+
+def submit_pipeline_job(
+    session: Session,
+    project: Project,
+    action: "PipelineAction",
+    platform: "PipelinePlatform",
+    project_type: str,
+    username: str,
+    reference: str | None = None,
+    auto_release: bool | None = None,
+    s3_client=None
+) -> "BatchJob":
+    """
+    Submit a pipeline job to AWS Batch.
+
+    This function retrieves the appropriate pipeline configuration, determines which
+    command to use based on the action, interpolates template variables, and submits
+    the job to AWS Batch.
+
+    Args:
+        session: Database session
+        project: The project object (already validated)
+        action: Pipeline action (create-project or export-project-results)
+        platform: Platform name (arvados or sevenbridges)
+        project_type: Pipeline type (e.g., RNA-Seq)
+        username: Username of the user submitting the job
+        reference: Export reference label (required for export action)
+        auto_release: Auto-release flag (only valid for export action)
+        s3_client: Optional boto3 S3 client
+
+    Returns:
+        BatchJob instance
+
+    Raises:
+        HTTPException: If validation fails or submission fails
+    """
+    # Get all pipeline configs and find matching project_type
+    all_configs = get_all_pipeline_configs(session, s3_client)
+    pipeline_config = None
+
+    for config in all_configs.configs:
+        if config.project_type == project_type:
+            pipeline_config = config
+            break
+
+    if pipeline_config is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Pipeline configuration for project type '{project_type}' not found"
+        )
+
+    # Check if platform exists in pipeline config
+    if platform not in pipeline_config.platforms:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Platform '{platform}' not configured for project type '{project_type}'"
+        )
+
+    platform_config = pipeline_config.platforms[platform]
+
+    # Validate action-specific requirements
+    reference_value = None
+    if action == "create-project":
+        # Validate that auto_release is not set for create action
+        if auto_release is not None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="auto_release parameter is not valid for create-project action"
+            )
+    elif action == "export-project-results":
+        # Default auto_release to False if not provided
+        if auto_release is None:
+            auto_release = False
+
+        # Validate reference is provided for export
+        if not reference:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Reference is required for export-project-results action"
+            )
+
+        # Look up reference value from exports list
+        if not platform_config.exports:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    f"No exports configured for platform '{platform}' "
+                    f"in project type '{project_type}'"
+                )
+            )
+
+        # Find the matching export entry
+        reference_value = None
+        for export_item in platform_config.exports:
+            # Each export_item is a dict with one key-value pair
+            for label, value in export_item.items():
+                if label == reference:
+                    reference_value = value
+                    break
+            if reference_value:
+                break
+
+        if reference_value is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    f"Reference '{reference}' not found in exports for "
+                    f"platform '{platform}' and project type "
+                    f"'{project_type}'"
+                )
+            )
+
+    # Prepare template context with all variables needed for interpolation
+    template_context = {
+        "username": username,
+        "projectid": project.project_id,
+        "project_type": project_type,
+        "platform": platform,
+        "action": action,
+        "reference": reference_value,  # Use the looked-up value, not the label
+        "auto_release": auto_release
+    }
+
+    # Select and interpolate the appropriate command based on action
+    if action == "create-project":
+        command_template = platform_config.create_project_command
+    else:  # export-project-results
+        command_template = platform_config.export_command
+
+    try:
+        interpolated_command = interpolate(command_template, template_context)
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to interpolate command template: {str(e)}"
+        ) from e
+
+    # Check if aws_batch config exists
+    if not pipeline_config.aws_batch:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"AWS Batch configuration not found for project type "
+                f"'{project_type}'"
+            )
+        )
+
+    # Interpolate AWS Batch configuration
+    try:
+        interpolated_job_name = interpolate(pipeline_config.aws_batch.job_name, template_context)
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to interpolate job name template: {str(e)}"
+        ) from e
+
+    # Prepare container overrides
+    container_overrides = {
+        "command": interpolated_command.split(),
+        "environment": []
+    }
+
+    # Add environment variables if specified in aws_batch config
+    if pipeline_config.aws_batch.environment:
+        for env in pipeline_config.aws_batch.environment:
+            try:
+                interpolated_env_value = interpolate(env.value, template_context)
+                container_overrides["environment"].append({
+                    "name": env.name,
+                    "value": interpolated_env_value
+                })
+            except Exception as e:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=f"Failed to interpolate environment variable '{env.name}': {str(e)}"
+                ) from e
+
+    # Submit job to AWS Batch
+    batch_job = submit_batch_job(
+        session=session,
+        job_name=interpolated_job_name,
+        container_overrides=container_overrides,
+        job_def=pipeline_config.aws_batch.job_definition,
+        job_queue=pipeline_config.aws_batch.job_queue,
+        user=username
+    )
+    return batch_job
+
+
+def add_sample_to_project(
+    session: Session,
+    opensearch_client: OpenSearch,
+    project: Project,
+    sample_in: SampleCreate,
+) -> Sample:
+    """
+    Create a new sample with optional attributes in a project.
+
+    Args:
+        session: Database session
+        opensearch_client: OpenSearch client for indexing
+        project: The project object (already validated)
+        sample_in: Sample creation data
+
+    Returns:
+        Sample instance
+    """
+    # Create initial sample
+    sample = Sample(sample_id=sample_in.sample_id, project_id=project.project_id)
+    session.add(sample)
+    session.flush()
+
+    # Handle attribute mapping
+    if sample_in.attributes:
+        # Prevent duplicate keys
+        seen = set()
+        keys = [attr.key for attr in sample_in.attributes]
+        dups = [k for k in keys if k in seen or seen.add(k)]
+        if dups:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Duplicate keys ({', '.join(dups)}) are not allowed in sample attributes.",
+            )
+
+        # Create sample attributes
+        sample_attributes = [
+            SampleAttribute(sample_id=sample.id, key=attr.key, value=attr.value)
+            for attr in sample_in.attributes
+        ]
+
+        # Update database with attribute links
+        session.add_all(sample_attributes)
+
+    session.commit()
+    session.refresh(sample)
+
+    # Add sample to opensearch
+    if opensearch_client:
+        search_doc = SearchDocument(id=str(sample.id), body=sample)
+        add_object_to_index(opensearch_client, search_doc, index="samples")
+
+    return sample
+
+
+def get_project_samples(
+    *,
+    session: Session,
+    project: Project,
+    page: PositiveInt,
+    per_page: PositiveInt,
+    sort_by: str,
+    sort_order: Literal["asc", "desc"],
+) -> SamplesPublic:
+    """
+    Get a paginated list of samples for a specific project.
+
+    Args:
+        session: Database session
+        project: The project object (already validated)
+        page: Page number (1-based)
+        per_page: Number of items per page
+        sort_by: Column name to sort by
+        sort_order: Sort direction ('asc' or 'desc')
+
+    Returns:
+        SamplesPublic: Paginated list of samples for the project
+    """
+    # Get the total count of samples for the project
+    total_count = session.exec(
+        select(func.count()).select_from(Sample).where(Sample.project_id == project.project_id)
+    ).one()
+
+    # Compute total pages
+    total_pages = (total_count + per_page - 1) // per_page  # Ceiling division
+
+    # Calculate offset for pagination
+    offset = (page - 1) * per_page
+
+    # Build the select statement
+    statement = select(Sample).where(Sample.project_id == project.project_id)
+
+    # Add sorting
+    if hasattr(Sample, sort_by):
+        sort_column = getattr(Sample, sort_by)
+        if sort_order == "desc":
+            sort_column = sort_column.desc()
+        statement = statement.order_by(sort_column)
+
+    # Add pagination
+    statement = statement.offset(offset).limit(per_page)
+
+    # Execute the query
+    samples = session.exec(statement).all()
+
+    # Map to public samples
+    public_samples = [
+        SamplePublic(
+            sample_id=sample.sample_id,
+            project_id=sample.project_id,
+            attributes=sample.attributes,
+        )
+        for sample in samples
+    ]
+
+    # Collect all unique attribute keys across all samples for data_cols
+    data_cols = None
+    if samples:
+        all_keys = set()
+        for sample in samples:
+            if sample.attributes:
+                for attr in sample.attributes:
+                    all_keys.add(attr.key)
+        data_cols = sorted(list(all_keys)) if all_keys else None
+
+    return SamplesPublic(
+        data=public_samples,
+        data_cols=data_cols,
+        total_items=total_count,
+        total_pages=total_pages,
+        current_page=page,
+        per_page=per_page,
+        has_next=page < total_pages,
+        has_prev=page > 1,
+    )
+
+
+def update_sample_in_project(
+    session: Session,
+    project: Project,
+    sample_id: str,
+    attribute: Attribute,
+) -> SamplePublic:
+    """
+    Update an existing sample in a project.
+
+    Args:
+        session: Database session
+        project: The project object (already validated)
+        sample_id: ID of the sample to update
+        attribute: Attribute to add or update
+
+    Returns:
+        Updated sample
+    """
+    # Fetch the sample
+    sample = session.exec(
+        select(Sample).where(
+            Sample.sample_id == sample_id,
+            Sample.project_id == project.project_id
+        )
+    ).first()
+
+    if not sample:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Sample {sample_id} in project {project.project_id} not found.",
+        )
+
+    # Check if the attribute exists
+    sample_attribute = session.exec(
+        select(SampleAttribute).where(
+            SampleAttribute.sample_id == sample.id,
+            SampleAttribute.key == attribute.key
+        )
+    ).first()
+
+    if sample_attribute:
+        # Update existing attribute
+        sample_attribute.value = attribute.value
+    else:
+        # Create new attribute
+        new_attribute = SampleAttribute(
+            sample_id=sample.id,
+            key=attribute.key,
+            value=attribute.value
+        )
+        session.add(new_attribute)
+
+    session.commit()
+    session.refresh(sample)
+
+    return SamplePublic(
+        sample_id=sample.sample_id,
+        project_id=sample.project_id,
+        attributes=[
+            Attribute(key=attr.key, value=attr.value) for attr in (sample.attributes or [])
+        ] if sample.attributes else []
+    )

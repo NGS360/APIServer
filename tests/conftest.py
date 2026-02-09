@@ -563,6 +563,7 @@ def client_fixture(
 ):
     """Provide a TestClient with dependencies overridden for testing"""
     import boto3
+    from api.auth.models import User
 
     def get_db_override():
         return session
@@ -572,6 +573,17 @@ def client_fixture(
 
     def get_s3_client_override():
         return mock_s3_client
+
+    def get_current_user_override():
+        """Return a mock user for authentication"""
+        return User(
+            id="00000000-0000-0000-0000-000000000001",
+            username="testuser",
+            email="test@example.com",
+            is_active=True,
+            is_verified=True,
+            is_superuser=False
+        )
 
     # Patch boto3.client to return mock Lambda client for "lambda" service
     original_boto3_client = boto3.client
@@ -583,9 +595,13 @@ def client_fixture(
 
     monkeypatch.setattr(boto3, "client", mock_boto3_client)
 
+    # Import auth dependencies
+    from api.auth.deps import get_current_user
+
     app.dependency_overrides[get_db] = get_db_override
     app.dependency_overrides[get_opensearch_client] = get_opensearch_client_override
     app.dependency_overrides[get_s3_client] = get_s3_client_override
+    app.dependency_overrides[get_current_user] = get_current_user_override
 
     client = TestClient(app)
     yield client

@@ -1,3 +1,5 @@
+from jinja2.sandbox import SandboxedEnvironment
+
 # OpenSearch utilities ----
 
 
@@ -37,3 +39,23 @@ def define_search_body(
         search_body["sort"] = [{sort_field: {"order": "asc"}}]
 
     return search_body
+
+
+# Template utilities ----
+
+
+def interpolate(template_str: str, context: dict) -> str:
+    """
+    Interpolate a Jinja2 template string with the provided context.
+    Uses SandboxedEnvironment to prevent code execution vulnerabilities.
+
+    Args:
+        template_str: The template string to interpolate
+        context: Dictionary of variables to pass to the template
+
+    Returns:
+        Interpolated string with variables substituted
+    """
+    env = SandboxedEnvironment()
+    template = env.from_string(template_str)
+    return template.render(context).strip()

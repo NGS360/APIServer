@@ -5,6 +5,9 @@ Routes/endpoints for the Project API
 from typing import Literal
 from fastapi import APIRouter, Query, status, Depends
 from core.deps import SessionDep, OpenSearchDep, get_s3_client
+from api.auth.deps import CurrentUser
+from api.jobs.models import BatchJobPublic
+from api.project.deps import ProjectDep
 from api.project.models import (
     ProjectCreate,
     ProjectUpdate,
@@ -13,7 +16,7 @@ from api.project.models import (
 )
 from api.samples.models import SampleCreate, SamplePublic, SamplesPublic, Attribute
 from api.project import services
-from api.samples import services as sample_services
+from api.pipelines.models import PipelineSubmitRequest
 
 router = APIRouter(prefix="/projects")
 
@@ -124,12 +127,12 @@ def reindex_projects(
 
 
 @router.get("/{project_id}", response_model=ProjectPublic, tags=["Project Endpoints"])
-def get_project_by_project_id(session: SessionDep, project_id: str) -> ProjectPublic:
+def get_project_by_project_id(session: SessionDep, project: ProjectDep) -> ProjectPublic:
     """
     Returns a single project by its project_id.
     Note: This is different from its internal "id".
     """
-    return services.get_project_by_project_id(session=session, project_id=project_id)
+    return services.get_project_by_project_id(session=session, project_id=project.project_id)
 
 
 @router.put(
@@ -141,7 +144,7 @@ def get_project_by_project_id(session: SessionDep, project_id: str) -> ProjectPu
 def update_project(
     session: SessionDep,
     opensearch_client: OpenSearchDep,
-    project_id: str,
+    project: ProjectDep,
     update_request: ProjectUpdate,
 ) -> ProjectPublic:
     """
@@ -150,44 +153,44 @@ def update_project(
     return services.update_project(
         session=session,
         opensearch_client=opensearch_client,
-        project_id=project_id,
+        project_id=project.project_id,
         update_request=update_request,
     )
 
 ###############################################################################
-# Samples Endpoints /api/v1/projects/{project_id}/samples
+# "Samples" Endpoints /api/v1/projects/{project_id}/samples
 ###############################################################################
 
 
 @router.post(
     "/{project_id}/samples",
     response_model=SamplePublic,
-    tags=["Sample Endpoints"],
+    tags=["Project Endpoints"],
     status_code=status.HTTP_201_CREATED,
 )
 def add_sample_to_project(
     session: SessionDep,
     opensearch_client: OpenSearchDep,
-    project_id: str,
+    project: ProjectDep,
     sample_in: SampleCreate,
 ) -> SamplePublic:
     """
     Create a new sample with optional attributes.
     """
-    return sample_services.add_sample_to_project(
+    return services.add_sample_to_project(
         session=session,
         opensearch_client=opensearch_client,
-        project_id=project_id,
+        project=project,
         sample_in=sample_in,
     )
 
 
 @router.get(
-    "/{project_id}/samples", response_model=SamplesPublic, tags=["Sample Endpoints"]
+    "/{project_id}/samples", response_model=SamplesPublic, tags=["Project Endpoints"]
 )
-def get_samples(
+def get_project_samples(
     session: SessionDep,
-    project_id: str,
+    project: ProjectDep,
     page: int = Query(1, description="Page number (1-indexed)"),
     per_page: int = Query(20, description="Number of items per page"),
     sort_by: str = Query("sample_id", description="Field to sort by"),
@@ -198,9 +201,9 @@ def get_samples(
     """
     Returns a paginated list of samples.
     """
-    return sample_services.get_samples(
+    return services.get_project_samples(
         session=session,
-        project_id=project_id,
+        project=project,
         page=page,
         per_page=per_page,
         sort_by=sort_by,
@@ -211,20 +214,76 @@ def get_samples(
 @router.put(
     "/{project_id}/samples/{sample_id}",
     response_model=SamplePublic,
-    tags=["Sample Endpoints"],
+    tags=["Project Endpoints"],
 )
 def update_sample_in_project(
     session: SessionDep,
-    project_id: str,
+    project: ProjectDep,
     sample_id: str,
     attribute: Attribute,
 ) -> SamplePublic:
     """
     Update an existing sample in a project.
     """
-    return sample_services.update_sample_in_project(
+    return services.update_sample_in_project(
         session=session,
-        project_id=project_id,
+        project=project,
         sample_id=sample_id,
         attribute=attribute,
     )
+
+
+###############################################################################
+# Pipeline Submission Endpoint /api/v1/projects/{project_id}/pipelines/submit
+###############################################################################
+
+
+@router.post(
+    "/{project_id}/pipelines/submit",
+    # response_model=BatchJobPublic,  # COMMENTED OUT FOR TESTING
+    tags=["Project Endpoints"],
+    status_code=status.HTTP_201_CREATED,
+)
+def submit_pipeline_job(
+    project: ProjectDep,
+    request: PipelineSubmitRequest,
+    current_user: CurrentUser,
+    session: SessionDep,
+    s3_client=Depends(get_s3_client),
+) -> BatchJobPublic:
+    """
+    Submit a pipeline job to AWS Batch for a project.
+
+    This endpoint validates the project exists, retrieves the appropriate pipeline
+    configuration based on the project type, determines the command to execute
+    based on the action (create-project or export-project-results), interpolates
+    template variables, and submits the job to AWS Batch.
+
+    Args:
+        session: Database session
+        project_id: The project ID
+        request: Pipeline submission request containing:
+            - action: Pipeline action (create-project or export-project-results)
+            - platform: Platform name (Arvados or SevenBridges)
+            - project_type: Pipeline workflow type (e.g., RNA-Seq, WGS)
+            - reference: Export reference (required for export-project-results)
+            - auto_release: Auto-release flag for export action (default: False)
+        current_user: Currently authenticated user
+        s3_client: S3 client for retrieving pipeline configs
+
+    Returns:
+        BatchJobPublic: The created batch job information
+    """
+    batch_job = services.submit_pipeline_job(
+        session=session,
+        project=project,
+        action=request.action,
+        platform=request.platform,
+        project_type=request.project_type,
+        username=current_user.username,
+        reference=request.reference,
+        auto_release=request.auto_release,
+        s3_client=s3_client
+    )
+
+    return BatchJobPublic.model_validate(batch_job)

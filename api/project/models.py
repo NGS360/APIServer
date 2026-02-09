@@ -4,7 +4,7 @@ Models for the Project API
 
 import uuid
 from sqlmodel import SQLModel, Field, Relationship, UniqueConstraint
-from typing import List, Dict, Any, TYPE_CHECKING
+from typing import List, TYPE_CHECKING
 from pydantic import ConfigDict
 
 if TYPE_CHECKING:

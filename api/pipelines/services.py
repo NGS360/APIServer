@@ -10,9 +10,9 @@ from api.settings.services import get_setting_value
 from .models import PipelineConfig, PipelineConfigsResponse
 
 
-def _get_workflow_configs_s3_location(session: Session) -> tuple[str, str]:
+def _get_pipeline_configs_s3_location(session: Session) -> tuple[str, str]:
     """
-    Get the S3 bucket and prefix for project workflow configurations.
+    Get the S3 bucket and prefix for project pipeline configurations.
 
     Args:
         session: Database session
@@ -20,35 +20,35 @@ def _get_workflow_configs_s3_location(session: Session) -> tuple[str, str]:
     Returns:
         Tuple of (bucket, prefix) where prefix includes the full path with subfolders
     """
-    workflow_configs_uri = get_setting_value(
+    pipeline_configs_uri = get_setting_value(
         session,
         "PROJECT_WORKFLOW_CONFIGS_BUCKET_URI"
     )
 
     # Ensure URI ends with /
-    if not workflow_configs_uri.endswith("/"):
-        workflow_configs_uri += "/"
+    if not pipeline_configs_uri.endswith("/"):
+        pipeline_configs_uri += "/"
 
     # Parse S3 URI to get bucket and prefix
-    s3_path = workflow_configs_uri.replace("s3://", "")
+    s3_path = pipeline_configs_uri.replace("s3://", "")
     bucket = s3_path.split("/")[0]
     prefix = "/".join(s3_path.split("/")[1:])
 
     return bucket, prefix
 
 
-def list_workflow_configs(session: Session, s3_client=None) -> list[str]:
+def list_pipeline_configs(session: Session, s3_client=None) -> list[str]:
     """
-    List available project workflow configuration files from S3.
+    List available project pipeline configuration files from S3.
 
     Args:
         session: Database session
         s3_client: Optional boto3 S3 client
 
     Returns:
-        List of workflow configuration filenames (without .yaml extension)
+        List of pipeline configuration filenames (without .yaml extension)
     """
-    bucket, prefix = _get_workflow_configs_s3_location(session)
+    bucket, prefix = _get_pipeline_configs_s3_location(session)
 
     try:
         if s3_client is None:
@@ -58,7 +58,7 @@ def list_workflow_configs(session: Session, s3_client=None) -> list[str]:
         paginator = s3_client.get_paginator("list_objects_v2")
         page_iterator = paginator.paginate(Bucket=bucket, Prefix=prefix)
 
-        workflow_configs = []
+        pipeline_configs = []
 
         for page in page_iterator:
             for obj in page.get("Contents", []):
@@ -74,10 +74,10 @@ def list_workflow_configs(session: Session, s3_client=None) -> list[str]:
                 # Only include .yaml or .yml files
                 if filename.endswith((".yaml", ".yml")):
                     # Remove extension and add to list
-                    workflow_id = filename.rsplit(".", 1)[0]
-                    workflow_configs.append(workflow_id)
+                    pipeline_id = filename.rsplit(".", 1)[0]
+                    pipeline_configs.append(pipeline_id)
 
-        return sorted(workflow_configs)
+        return sorted(pipeline_configs)
 
     except NoCredentialsError as exc:
         raise HTTPException(
@@ -103,22 +103,22 @@ def list_workflow_configs(session: Session, s3_client=None) -> list[str]:
             ) from exc
 
 
-def get_workflow_config(
-    session: Session, workflow_id: str, s3_client=None
+def get_pipeline_config(
+    session: Session, pipeline_id: str, s3_client=None
 ) -> PipelineConfig:
     """
-    Retrieve a specific workflow configuration from S3.
+    Retrieve a specific pipeline configuration from S3.
 
     Args:
         session: Database session
-        workflow_id: The workflow identifier (filename without extension)
+        pipeline_id: The pipeline identifier (filename without extension)
         s3_client: Optional boto3 S3 client
 
     Returns:
         PipelineConfig object
     """
 
-    bucket, prefix = _get_workflow_configs_s3_location(session)
+    bucket, prefix = _get_pipeline_configs_s3_location(session)
 
     try:
         if s3_client is None:
@@ -127,7 +127,7 @@ def get_workflow_config(
         # Try both .yaml and .yml extensions
         key = None
         for ext in [".yaml", ".yml"]:
-            potential_key = f"{prefix}{workflow_id}{ext}"
+            potential_key = f"{prefix}{pipeline_id}{ext}"
             try:
                 response = s3_client.get_object(Bucket=bucket, Key=potential_key)
                 key = potential_key
@@ -143,14 +143,14 @@ def get_workflow_config(
         if key is None:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Workflow config '{workflow_id}' not found",
+                detail=f"Pipeline config '{pipeline_id}' not found",
             )
 
         # Parse YAML
         config_data = yaml.safe_load(yaml_content)
 
-        # Add workflow_id to the data
-        config_data["workflow_id"] = workflow_id
+        # Add pipeline_id to the data
+        config_data["workflow_id"] = pipeline_id
 
         # Validate and return as PipelineConfig model
         return PipelineConfig(**config_data)
@@ -182,15 +182,15 @@ def get_workflow_config(
     except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error parsing workflow config: {str(exc)}",
+            detail=f"Error parsing pipeline config: {str(exc)}",
         ) from exc
 
 
-def get_all_workflow_configs(
+def get_all_pipeline_configs(
     session: Session, s3_client=None
 ) -> PipelineConfigsResponse:
     """
-    Retrieve and parse all workflow configurations from S3.
+    Retrieve and parse all pipeline configurations from S3.
 
     Args:
         session: Database session
@@ -200,16 +200,16 @@ def get_all_workflow_configs(
         PipelineConfigsResponse with list of all configs
     """
 
-    # Get list of workflow IDs
-    workflow_ids = list_workflow_configs(session=session, s3_client=s3_client)
+    # Get list of pipeline IDs
+    pipeline_ids = list_pipeline_configs(session=session, s3_client=s3_client)
 
     # Fetch and parse each config
     configs = []
-    for workflow_id in workflow_ids:
+    for pipeline_id in pipeline_ids:
         try:
-            config = get_workflow_config(
+            config = get_pipeline_config(
                 session=session,
-                workflow_id=workflow_id,
+                pipeline_id=pipeline_id,
                 s3_client=s3_client
             )
             configs.append(config)
@@ -255,8 +255,8 @@ def get_project_types_for_action_and_platform(
             detail=f"Invalid platform: {platform}. Must be 'arvados' or 'sevenbridges'"
         )
 
-    # Get all workflow configs
-    all_configs = get_all_workflow_configs(session=session, s3_client=s3_client)
+    # Get all pipeline configs
+    all_configs = get_all_pipeline_configs(session=session, s3_client=s3_client)
 
     result = []
 
@@ -304,20 +304,20 @@ def validate_pipeline_config(
 ) -> PipelineConfig:
     """
     Validate a pipeline configuration from S3 against the PipelineConfig schema.
-    
+
     Args:
         session: Database session
         s3_path: S3 path to the config file (s3://bucket/path/to/config.yaml or path/to/config.yaml)
         s3_client: Optional boto3 S3 client
-        
+
     Returns:
         PipelineConfig object if valid
-        
+
     Raises:
         HTTPException: If validation fails with details about the errors
     """
     from pydantic import ValidationError
-    
+
     # Parse S3 path
     if s3_path.startswith("s3://"):
         # Format: s3://bucket/key
@@ -330,23 +330,23 @@ def validate_pipeline_config(
         bucket, key = parts
     else:
         # Use default bucket and treat path as key
-        bucket, prefix = _get_workflow_configs_s3_location(session)
+        bucket, prefix = _get_pipeline_configs_s3_location(session)
         key = f"{prefix}{s3_path}" if not s3_path.startswith(prefix) else s3_path
-    
+
     try:
         if s3_client is None:
             s3_client = boto3.client("s3")
-        
+
         # Fetch file from S3
         response = s3_client.get_object(Bucket=bucket, Key=key)
         config_content = response["Body"].read().decode("utf-8")
-        
+
         # Parse YAML
         parsed_config = yaml.safe_load(config_content)
-        
+
         # Validate with Pydantic - let it handle all validation
         return PipelineConfig(**parsed_config)
-        
+
     except ValidationError as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
