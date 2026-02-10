@@ -18,7 +18,6 @@ from api.jobs.services import submit_batch_job
 from core.utils import define_search_body, interpolate
 
 if TYPE_CHECKING:
-    from api.pipelines.models import PipelineAction, PipelinePlatform
     from api.jobs.models import BatchJob
 
 from api.project.models import (
@@ -409,13 +408,10 @@ def submit_pipeline_job(
     # Validate action-specific requirements
     reference_value = None
     if action == PipelineAction.CREATE_PROJECT:
-        # Validate that auto_release is not set for create action
-        if auto_release is not None:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="auto_release parameter is not valid for create-project action"
-            )
-    elif action == "export-project-results":
+        # Ignore auto_release for create action - just set to None/False
+        if auto_release is None:
+            auto_release = False
+    elif action == PipelineAction.EXPORT_PROJECT_RESULTS:
         # Default auto_release to False if not provided
         if auto_release is None:
             auto_release = False
@@ -463,8 +459,8 @@ def submit_pipeline_job(
         "username": username,
         "projectid": project.project_id,
         "project_type": project_type,
-        "platform": platform,
-        "action": action,
+        "platform": platform.value,
+        "action": action.value,
         "reference": reference_value,  # Use the looked-up value, not the label
         "auto_release": auto_release
     }

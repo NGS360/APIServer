@@ -577,7 +577,7 @@ def test_submit_pipeline_job_export_without_reference(
 
 @patch("api.jobs.services.boto3.client")
 @patch("api.pipelines.services.get_setting_value")
-def test_submit_pipeline_job_create_with_auto_release_fails(
+def test_submit_pipeline_job_create_with_auto_release_ignored(
     mock_get_setting: MagicMock,
     mock_boto_client: MagicMock,
     client: TestClient,
@@ -585,8 +585,16 @@ def test_submit_pipeline_job_create_with_auto_release_fails(
     test_project: Project,
     mock_s3_client
 ):
-    """Test that create-project action with auto_release parameter returns 400"""
+    """Test that create-project action ignores auto_release parameter and succeeds"""
     mock_get_setting.return_value = "s3://ngs360-resources/pipeline_configs/"
+
+    # Mock AWS Batch response
+    mock_batch = MagicMock()
+    mock_batch.submit_job.return_value = {
+        "jobId": "aws-batch-job-789",
+        "jobName": "create-job",
+    }
+    mock_boto_client.return_value = mock_batch
 
     pipeline_config = {
         "project_type": "RNA-Seq",
@@ -611,12 +619,12 @@ def test_submit_pipeline_job_create_with_auto_release_fails(
         "pipeline_configs/rna-seq_pipeline.yaml": yaml.dump(pipeline_config).encode("utf-8")
     }
 
-    # Submit with auto_release (invalid for create-project)
+    # Submit with auto_release (should be ignored for create-project)
     submit_data = {
         "action": "create-project",
         "platform": "Arvados",
         "project_type": "RNA-Seq",
-        "auto_release": True  # Should not be allowed for create action
+        "auto_release": True  # Should be ignored for create action
     }
 
     response = client.post(
@@ -624,8 +632,11 @@ def test_submit_pipeline_job_create_with_auto_release_fails(
         json=submit_data
     )
 
-    assert response.status_code == 400
-    assert "auto_release parameter is not valid" in response.json()["detail"]
+    # Should succeed and ignore auto_release
+    assert response.status_code == 201
+    response_json = response.json()
+    assert response_json["aws_job_id"] == "aws-batch-job-789"
+    assert response_json["status"] == "Submitted"
 
 
 @patch("api.pipelines.services.get_setting_value")

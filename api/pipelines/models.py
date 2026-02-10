@@ -3,7 +3,7 @@ Models for the Pipeline API
 """
 
 from enum import Enum
-from typing import List, Dict, Any, Literal
+from typing import List, Dict, Any
 from sqlmodel import SQLModel
 from api.jobs.models import AwsBatchConfig
 
