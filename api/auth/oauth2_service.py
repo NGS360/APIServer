@@ -11,7 +11,8 @@ from sqlmodel import Session, select
 import httpx
 
 from api.auth.models import (
-    User, OAuthProvider, OAuthProviderName
+    User, OAuthProvider, OAuthProviderName,
+    OAuthProviderInfo, AvailableProvidersResponse
 )
 from core.config import get_settings
 from core.security import generate_secure_token
@@ -87,7 +88,7 @@ class OAuth2ProviderConfig:
         )
 
 
-def get_available_providers() -> dict:
+def get_available_providers() -> AvailableProvidersResponse:
     """
     Get list of configured OAuth providers
     
@@ -95,21 +96,20 @@ def get_available_providers() -> dict:
     The client apps (e.g. React app) can use this to dynamically show login buttons.
     
     Returns:
-        dict: Available providers with metadata
+        AvailableProvidersResponse: Available providers with metadata
         
     Example Response:
         {
+            "count": 2,
             "providers": [
                 {
                     "name": "google",
                     "display_name": "Google",
-                    "enabled": true,
                     "authorize_url": "/api/v1/auth/oauth/google/authorize"
                 },
                 {
                     "name": "github",
                     "display_name": "GitHub",
-                    "enabled": true,
                     "authorize_url": "/api/v1/auth/oauth/github/authorize"
                 }
             ]
@@ -120,29 +120,34 @@ def get_available_providers() -> dict:
     providers_info = []
 
     for provider in OAuth2ProviderConfig.PROVIDERS.keys():
-        enabled = False
-        if provider == "google":
-            enabled = bool(settings.OAUTH_GOOGLE_CLIENT_ID and settings.OAUTH_GOOGLE_CLIENT_SECRET)
-        elif provider == "github":
-            enabled = bool(settings.OAUTH_GITHUB_CLIENT_ID and settings.OAUTH_GITHUB_CLIENT_SECRET)
-        elif provider == "microsoft":
-            enabled = bool(settings.OAUTH_MICROSOFT_CLIENT_ID and settings.OAUTH_MICROSOFT_CLIENT_SECRET)
+        match provider:
+            case "google":
+                enabled = bool(settings.OAUTH_GOOGLE_CLIENT_ID and settings.OAUTH_GOOGLE_CLIENT_SECRET)
+            case "github":
+                enabled = bool(settings.OAUTH_GITHUB_CLIENT_ID and settings.OAUTH_GITHUB_CLIENT_SECRET)
+            case "microsoft":
+                enabled = bool(settings.OAUTH_MICROSOFT_CLIENT_ID and settings.OAUTH_MICROSOFT_CLIENT_SECRET)
+            case _:
+                enabled = False
 
         if enabled:
-            providers_info.append({
-                "name": provider,
-                "display_name": provider.title(),
-                "authorize_url": f"/api/v1/auth/oauth/{provider}/authorize" if enabled else None
-            })
+            providers_info.append(OAuthProviderInfo(
+                name=provider,
+                display_name=provider.title(),
+                logo_url=f"/static/logos/{provider}.svg",
+                authorize_url=f"/api/v1/auth/oauth/{provider}/authorize"
+            ))
 
     if settings.OAUTH_CORP_NAME and settings.OAUTH_CORP_CLIENT_ID and settings.OAUTH_CORP_CLIENT_SECRET:
-        providers_info.append({
-            "name": settings.OAUTH_CORP_NAME.lower(),
-            "display_name": settings.OAUTH_CORP_NAME,
-            "authorize_url": f"/api/v1/auth/oauth/{settings.OAUTH_CORP_NAME.lower()}/authorize"
-        })
+        corp_name_lower = settings.OAUTH_CORP_NAME.lower()
+        providers_info.append(OAuthProviderInfo(
+            name=corp_name_lower,
+            display_name=settings.OAUTH_CORP_NAME,
+            logo_url=f"/static/logos/{corp_name_lower}.svg",
+            authorize_url=f"/api/v1/auth/oauth/{corp_name_lower}/authorize"
+        ))
 
-    return {"count": len(providers_info), "providers": providers_info}
+    return AvailableProvidersResponse(count=len(providers_info), providers=providers_info)
 
 
 def get_authorization_url(
@@ -169,15 +174,17 @@ def get_authorization_url(
     config = OAuth2ProviderConfig.get_provider_config(provider)
 
     # Get client ID based on provider
-    client_id = None
-    if provider == "google":
-        client_id = settings.OAUTH_GOOGLE_CLIENT_ID
-    elif provider == "github":
-        client_id = settings.OAUTH_GITHUB_CLIENT_ID
-    elif provider == "microsoft":
-        client_id = settings.OAUTH_MICROSOFT_CLIENT_ID
-    elif settings.OAUTH_CORP_NAME and provider == settings.OAUTH_CORP_NAME.lower():
-        client_id = settings.OAUTH_CORP_CLIENT_ID
+    match provider:
+        case "google":
+            client_id = settings.OAUTH_GOOGLE_CLIENT_ID
+        case "github":
+            client_id = settings.OAUTH_GITHUB_CLIENT_ID
+        case "microsoft":
+            client_id = settings.OAUTH_MICROSOFT_CLIENT_ID
+        case _ if settings.OAUTH_CORP_NAME and provider == settings.OAUTH_CORP_NAME.lower():
+            client_id = settings.OAUTH_CORP_CLIENT_ID
+        case _:
+            client_id = None
 
     if not client_id:
         raise HTTPException(
@@ -231,20 +238,22 @@ async def exchange_code_for_token(
     config = OAuth2ProviderConfig.get_provider_config(provider)
 
     # Get client credentials
-    client_id = None
-    client_secret = None
-    if provider == "google":
-        client_id = settings.OAUTH_GOOGLE_CLIENT_ID
-        client_secret = settings.OAUTH_GOOGLE_CLIENT_SECRET
-    elif provider == "github":
-        client_id = settings.OAUTH_GITHUB_CLIENT_ID
-        client_secret = settings.OAUTH_GITHUB_CLIENT_SECRET
-    elif provider == "microsoft":
-        client_id = settings.OAUTH_MICROSOFT_CLIENT_ID
-        client_secret = settings.OAUTH_MICROSOFT_CLIENT_SECRET
-    elif settings.OAUTH_CORP_NAME and provider == settings.OAUTH_CORP_NAME.lower():
-        client_id = settings.OAUTH_CORP_CLIENT_ID
-        client_secret = settings.OAUTH_CORP_CLIENT_SECRET
+    match provider:
+        case "google":
+            client_id = settings.OAUTH_GOOGLE_CLIENT_ID
+            client_secret = settings.OAUTH_GOOGLE_CLIENT_SECRET
+        case "github":
+            client_id = settings.OAUTH_GITHUB_CLIENT_ID
+            client_secret = settings.OAUTH_GITHUB_CLIENT_SECRET
+        case "microsoft":
+            client_id = settings.OAUTH_MICROSOFT_CLIENT_ID
+            client_secret = settings.OAUTH_MICROSOFT_CLIENT_SECRET
+        case _ if settings.OAUTH_CORP_NAME and provider == settings.OAUTH_CORP_NAME.lower():
+            client_id = settings.OAUTH_CORP_CLIENT_ID
+            client_secret = settings.OAUTH_CORP_CLIENT_SECRET
+        case _:
+            client_id = None
+            client_secret = None
 
     if not client_id or not client_secret:
         raise HTTPException(
@@ -332,39 +341,39 @@ def _normalize_user_data(provider: str, data: dict) -> dict:
     Returns:
         Normalized user data with standard fields
     """
-    if provider == "google":
-        return {
-            "provider_user_id": data.get("id"),
-            "email": data.get("email"),
-            "name": data.get("name"),
-            "picture": data.get("picture"),
-        }
-    elif provider == "github":
-        return {
-            'provider_username': data.get("login"),
-            "provider_user_id": str(data.get("id")),
-            "email": data.get("email"),
-            "name": data.get("name") or data.get("login"),
-            "picture": data.get("avatar_url"),
-        }
-    elif provider == "microsoft":
-        return {
-            "provider_user_id": data.get("id"),
-            "email": data.get("mail") or data.get("userPrincipalName"),
-            "name": data.get("displayName"),
-            "picture": None,
-        }
-    else:
-        # Generic normalization for corporate or unknown providers
-        # Assumes standard OIDC claims
-        return {
-            "provider_user_id": data.get("sub") or data.get("id"),
-            'provider_username': data.get("username") or data.get("login"),
-            "email": data.get("email"),
-            "name": data.get("name") or data.get("displayName") or data.get("email"),
-            "picture": data.get("picture"),
-        }
-        # return data
+    match provider:
+        case "google":
+            return {
+                "provider_user_id": data.get("id"),
+                "email": data.get("email"),
+                "name": data.get("name"),
+                "picture": data.get("picture"),
+            }
+        case "github":
+            return {
+                'provider_username': data.get("login"),
+                "provider_user_id": str(data.get("id")),
+                "email": data.get("email"),
+                "name": data.get("name") or data.get("login"),
+                "picture": data.get("avatar_url"),
+            }
+        case "microsoft":
+            return {
+                "provider_user_id": data.get("id"),
+                "email": data.get("mail") or data.get("userPrincipalName"),
+                "name": data.get("displayName"),
+                "picture": None,
+            }
+        case _:
+            # Generic normalization for corporate or unknown providers
+            # Assumes standard OIDC claims
+            return {
+                "provider_user_id": data.get("sub") or data.get("id"),
+                'provider_username': data.get("username") or data.get("login"),
+                "email": data.get("email"),
+                "name": data.get("name") or data.get("displayName") or data.get("email"),
+                "picture": data.get("picture"),
+            }
 
 
 def find_or_create_oauth_user(

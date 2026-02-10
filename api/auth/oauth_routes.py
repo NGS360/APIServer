@@ -8,7 +8,7 @@ from fastapi.responses import RedirectResponse
 from core.deps import SessionDep
 from core.security import create_access_token, create_refresh_token
 from core.config import get_settings
-from api.auth.models import TokenResponse, OAuthLinkRequest
+from api.auth.models import TokenResponse, OAuthLinkRequest, AvailableProvidersResponse
 from api.auth.deps import CurrentUser
 import api.auth.oauth2_service as oauth2_service
 
@@ -17,15 +17,14 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/auth/oauth", tags=["OAuth2 Authentication"])
 
 @router.get("/providers")
-def get_available_oauth_providers() -> dict:
+def get_available_oauth_providers() -> AvailableProvidersResponse:
     """
     Get list of available OAuth providers
 
     Returns:
         List of supported OAuth providers
     """
-    providers = oauth2_service.get_available_providers()
-    return providers
+    return oauth2_service.get_available_providers()
 
 
 @router.get("/{provider}/authorize")

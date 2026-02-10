@@ -208,3 +208,17 @@ class UsersPublic(SQLModel):
     count: int
     page: int
     per_page: int
+
+
+class OAuthProviderInfo(SQLModel):
+    """OAuth provider information"""
+    name: str
+    display_name: str
+    logo_url: str
+    authorize_url: str
+
+
+class AvailableProvidersResponse(SQLModel):
+    """Available OAuth providers response"""
+    count: int
+    providers: list[OAuthProviderInfo]
