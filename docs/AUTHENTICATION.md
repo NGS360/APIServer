@@ -209,6 +209,12 @@ Content-Type: application/json
 
 ### OAuth2 Endpoints
 
+#### Query for suport OAuth providers
+
+```http
+GET /api/v1/auth/oauth/providers
+```
+
 #### Initiate OAuth2 Flow
 
 ```http
