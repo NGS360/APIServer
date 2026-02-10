@@ -9,6 +9,7 @@ from fastapi import APIRouter, Query, status
 
 from api.qcmetrics.models import (
     QCRecordCreate,
+    QCRecordCreated,
     QCRecordPublic,
     QCRecordsPublic,
     QCRecordSearchRequest,
@@ -21,7 +22,7 @@ router = APIRouter(prefix="/qcmetrics", tags=["QC Metrics"])
 
 @router.post(
     "",
-    response_model=QCRecordPublic,
+    response_model=QCRecordCreated,
     status_code=status.HTTP_201_CREATED,
     summary="Create a new QC record",
 )
@@ -32,7 +33,7 @@ def create_qcrecord(
         ...,
         description="Username of the person creating this record"
     ),
-) -> QCRecordPublic:
+) -> QCRecordCreated:
     """
     Create a new QC record with metrics and output files.
 

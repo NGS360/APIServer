@@ -9,6 +9,8 @@ from sqlmodel import Session
 def test_create_qcrecord_basic(client: TestClient, session: Session):
     """
     Test creating a basic QC record with metadata only.
+
+    Create returns minimal response; use GET to verify full data.
     """
     qcrecord_data = {
         "project_id": "P-TEST-001",
@@ -24,13 +26,21 @@ def test_create_qcrecord_basic(client: TestClient, session: Session):
     )
     assert response.status_code == 201
 
+    # Check minimal create response
     data = response.json()
     assert data["project_id"] == "P-TEST-001"
     assert data["created_by"] == "test_user"
-    assert len(data["metadata"]) == 2
+    assert data["is_duplicate"] is False
+    assert "id" in data
+    assert "created_on" in data
+
+    # Verify full data via GET
+    get_response = client.get(f"/api/v1/qcmetrics/{data['id']}")
+    full_data = get_response.json()
+    assert len(full_data["metadata"]) == 2
 
     # Check metadata values
-    metadata_dict = {m["key"]: m["value"] for m in data["metadata"]}
+    metadata_dict = {m["key"]: m["value"] for m in full_data["metadata"]}
     assert metadata_dict["pipeline"] == "RNA-Seq"
     assert metadata_dict["version"] == "2.0.0"
 
@@ -63,10 +73,14 @@ def test_create_qcrecord_with_single_sample_metrics(client: TestClient, session:
     )
     assert response.status_code == 201
 
+    # Verify via GET
     data = response.json()
-    assert len(data["metrics"]) == 1
+    get_response = client.get(f"/api/v1/qcmetrics/{data['id']}")
+    full_data = get_response.json()
 
-    metric = data["metrics"][0]
+    assert len(full_data["metrics"]) == 1
+
+    metric = full_data["metrics"][0]
     assert metric["name"] == "alignment_stats"
     assert len(metric["samples"]) == 1
     assert metric["samples"][0]["sample_name"] == "Sample1"
@@ -108,8 +122,12 @@ def test_create_qcrecord_with_paired_sample_metrics(client: TestClient, session:
     )
     assert response.status_code == 201
 
+    # Verify via GET
     data = response.json()
-    metric = data["metrics"][0]
+    get_response = client.get(f"/api/v1/qcmetrics/{data['id']}")
+    full_data = get_response.json()
+
+    metric = full_data["metrics"][0]
 
     # Check paired samples with roles
     assert len(metric["samples"]) == 2
@@ -145,8 +163,12 @@ def test_create_qcrecord_with_workflow_level_metrics(client: TestClient, session
     )
     assert response.status_code == 201
 
+    # Verify via GET
     data = response.json()
-    metric = data["metrics"][0]
+    get_response = client.get(f"/api/v1/qcmetrics/{data['id']}")
+    full_data = get_response.json()
+
+    metric = full_data["metrics"][0]
 
     # Workflow-level metrics have no samples
     assert len(metric["samples"]) == 0
@@ -187,11 +209,15 @@ def test_create_qcrecord_with_output_files(client: TestClient, session: Session)
     )
     assert response.status_code == 201
 
+    # Verify via GET
     data = response.json()
-    assert len(data["output_files"]) == 2
+    get_response = client.get(f"/api/v1/qcmetrics/{data['id']}")
+    full_data = get_response.json()
+
+    assert len(full_data["output_files"]) == 2
 
     # Check first file (single sample)
-    bam_file = next(f for f in data["output_files"] if "bam" in f["uri"])
+    bam_file = next(f for f in full_data["output_files"] if "bam" in f["uri"])
     assert bam_file["size"] == 123456789
     assert len(bam_file["samples"]) == 1
     assert bam_file["samples"][0]["sample_name"] == "Sample1"
@@ -205,7 +231,7 @@ def test_create_qcrecord_with_output_files(client: TestClient, session: Session)
     assert tags_dict["type"] == "alignment"
 
     # Check second file (workflow-level, no samples)
-    matrix_file = next(f for f in data["output_files"] if "matrix" in f["uri"])
+    matrix_file = next(f for f in full_data["output_files"] if "matrix" in f["uri"])
     assert len(matrix_file["samples"]) == 0
 
 
@@ -342,6 +368,10 @@ def test_get_qcrecord_by_id(client: TestClient, session: Session):
     assert data["id"] == qcrecord_id
     assert data["project_id"] == "P-GET-001"
 
+    # Full response should include metadata
+    assert len(data["metadata"]) == 1
+    assert data["metadata"][0]["key"] == "pipeline"
+
 
 def test_get_qcrecord_not_found(client: TestClient, session: Session):
     """
@@ -402,15 +432,17 @@ def test_duplicate_detection(client: TestClient, session: Session):
     # Create first record
     response1 = client.post("/api/v1/qcmetrics?created_by=user1", json=qcrecord_data)
     assert response1.status_code == 201
-    id1 = response1.json()["id"]
+    data1 = response1.json()
+    assert data1["is_duplicate"] is False
 
     # Try to create identical record
     response2 = client.post("/api/v1/qcmetrics?created_by=user2", json=qcrecord_data)
     assert response2.status_code == 201
-    id2 = response2.json()["id"]
+    data2 = response2.json()
+    assert data2["is_duplicate"] is True
 
     # Should return the same record (duplicate detection)
-    assert id1 == id2
+    assert data1["id"] == data2["id"]
 
 
 def test_numeric_metric_values(client: TestClient, session: Session):
@@ -448,10 +480,14 @@ def test_numeric_metric_values(client: TestClient, session: Session):
     )
     assert response.status_code == 201
 
+    # Verify via GET
     data = response.json()
-    assert len(data["metrics"]) == 1
+    get_response = client.get(f"/api/v1/qcmetrics/{data['id']}")
+    full_data = get_response.json()
 
-    metric = data["metrics"][0]
+    assert len(full_data["metrics"]) == 1
+
+    metric = full_data["metrics"][0]
     assert metric["name"] == "sample_qc_metrics"
     assert len(metric["samples"]) == 1
     assert metric["samples"][0]["sample_name"] == "SampleA"
@@ -502,8 +538,12 @@ def test_mixed_string_and_numeric_values(client: TestClient, session: Session):
     )
     assert response.status_code == 201
 
+    # Verify via GET
     data = response.json()
-    values_dict = {v["key"]: v["value"] for v in data["metrics"][0]["values"]}
+    get_response = client.get(f"/api/v1/qcmetrics/{data['id']}")
+    full_data = get_response.json()
+
+    values_dict = {v["key"]: v["value"] for v in full_data["metrics"][0]["values"]}
 
     # Numeric values returned with original types
     assert values_dict["total_reads"] == 50000000

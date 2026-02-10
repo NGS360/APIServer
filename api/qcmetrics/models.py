@@ -231,6 +231,20 @@ class QCRecordPublic(SQLModel):
     output_files: List[FileSummary]
 
 
+class QCRecordCreated(SQLModel):
+    """
+    Minimal response model for QC record creation.
+
+    Returns only essential fields to reduce response size.
+    Use GET /api/v1/qcmetrics/{id} to retrieve full details.
+    """
+    id: uuid.UUID
+    created_on: datetime
+    created_by: str
+    project_id: str
+    is_duplicate: bool = False
+
+
 class QCRecordsPublic(SQLModel):
     """Paginated list of QC records."""
     data: List[QCRecordPublic]

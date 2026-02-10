@@ -17,6 +17,7 @@ from api.qcmetrics.models import (
     QCMetricValue,
     QCMetricSample,
     QCRecordCreate,
+    QCRecordCreated,
     QCRecordPublic,
     QCRecordsPublic,
     MetadataKeyValue,
@@ -47,12 +48,15 @@ def create_qcrecord(
     session: Session,
     qcrecord_create: QCRecordCreate,
     created_by: str,
-) -> QCRecordPublic:
+) -> QCRecordCreated:
     """
     Create a new QC record with all associated data.
 
     Metrics can have numeric values (int, float) which are stored as strings
     in the database.
+
+    Returns a minimal response with essential fields. Use get_qcrecord_by_id()
+    to retrieve full details.
     """
     # Check for duplicate record
     existing = _check_duplicate_record(session, qcrecord_create)
@@ -62,7 +66,13 @@ def create_qcrecord(
             qcrecord_create.project_id,
             existing.id
         )
-        return _qcrecord_to_public(session, existing)
+        return QCRecordCreated(
+            id=existing.id,
+            created_on=existing.created_on,
+            created_by=existing.created_by,
+            project_id=existing.project_id,
+            is_duplicate=True,
+        )
 
     # Create main QC record
     qcrecord = QCRecord(
@@ -108,7 +118,13 @@ def create_qcrecord(
         created_by
     )
 
-    return _qcrecord_to_public(session, qcrecord)
+    return QCRecordCreated(
+        id=qcrecord.id,
+        created_on=qcrecord.created_on,
+        created_by=qcrecord.created_by,
+        project_id=qcrecord.project_id,
+        is_duplicate=False,
+    )
 
 
 def _create_metric(
