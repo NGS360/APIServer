@@ -356,7 +356,7 @@ def test_update_project_removes_all_attributes(client: TestClient, session: Sess
 
 
 @patch("api.jobs.services.boto3.client")
-@patch("api.pipelines.services.get_setting_value")
+@patch("api.actions.services.get_setting_value")
 def test_submit_pipeline_job_create_project(
     mock_get_setting: MagicMock,
     mock_boto_client: MagicMock,
@@ -409,7 +409,7 @@ def test_submit_pipeline_job_create_project(
     }
 
     response = client.post(
-        f"/api/v1/projects/{test_project.project_id}/pipelines/submit",
+        f"/api/v1/projects/{test_project.project_id}/actions/submit",
         json=submit_data
     )
 
@@ -430,7 +430,7 @@ def test_submit_pipeline_job_create_project(
 
 
 @patch("api.jobs.services.boto3.client")
-@patch("api.pipelines.services.get_setting_value")
+@patch("api.actions.services.get_setting_value")
 def test_submit_pipeline_job_export_results(
     mock_get_setting: MagicMock,
     mock_boto_client: MagicMock,
@@ -496,7 +496,7 @@ def test_submit_pipeline_job_export_results(
     }
 
     response = client.post(
-        f"/api/v1/projects/{test_project.project_id}/pipelines/submit",
+        f"/api/v1/projects/{test_project.project_id}/actions/submit",
         json=submit_data
     )
 
@@ -523,7 +523,7 @@ def test_submit_pipeline_job_export_results(
 
 
 @patch("api.jobs.services.boto3.client")
-@patch("api.pipelines.services.get_setting_value")
+@patch("api.actions.services.get_setting_value")
 def test_submit_pipeline_job_export_without_reference(
     mock_get_setting: MagicMock,
     mock_boto_client: MagicMock,
@@ -567,7 +567,7 @@ def test_submit_pipeline_job_export_without_reference(
     }
 
     response = client.post(
-        f"/api/v1/projects/{test_project.project_id}/pipelines/submit",
+        f"/api/v1/projects/{test_project.project_id}/actions/submit",
         json=submit_data
     )
 
@@ -576,7 +576,7 @@ def test_submit_pipeline_job_export_without_reference(
 
 
 @patch("api.jobs.services.boto3.client")
-@patch("api.pipelines.services.get_setting_value")
+@patch("api.actions.services.get_setting_value")
 def test_submit_pipeline_job_create_with_auto_release_ignored(
     mock_get_setting: MagicMock,
     mock_boto_client: MagicMock,
@@ -628,7 +628,7 @@ def test_submit_pipeline_job_create_with_auto_release_ignored(
     }
 
     response = client.post(
-        f"/api/v1/projects/{test_project.project_id}/pipelines/submit",
+        f"/api/v1/projects/{test_project.project_id}/actions/submit",
         json=submit_data
     )
 
@@ -639,7 +639,7 @@ def test_submit_pipeline_job_create_with_auto_release_ignored(
     assert response_json["status"] == "Submitted"
 
 
-@patch("api.pipelines.services.get_setting_value")
+@patch("api.actions.services.get_setting_value")
 def test_submit_pipeline_job_nonexistent_project(
     mock_get_setting: MagicMock,
     client: TestClient,
@@ -656,7 +656,7 @@ def test_submit_pipeline_job_nonexistent_project(
     }
 
     response = client.post(
-        "/api/v1/projects/P-99999999-9999/pipelines/submit",
+        "/api/v1/projects/P-99999999-9999/actions/submit",
         json=submit_data
     )
 
@@ -664,7 +664,7 @@ def test_submit_pipeline_job_nonexistent_project(
 
 
 @patch("api.jobs.services.boto3.client")
-@patch("api.pipelines.services.get_setting_value")
+@patch("api.actions.services.get_setting_value")
 def test_submit_pipeline_job_nonexistent_pipeline_type(
     mock_get_setting: MagicMock,
     mock_boto_client: MagicMock,
@@ -707,16 +707,16 @@ def test_submit_pipeline_job_nonexistent_pipeline_type(
     }
 
     response = client.post(
-        f"/api/v1/projects/{test_project.project_id}/pipelines/submit",
+        f"/api/v1/projects/{test_project.project_id}/actions/submit",
         json=submit_data
     )
 
     assert response.status_code == 404
-    assert "Pipeline configuration for project type" in response.json()["detail"]
+    assert "Action configuration for project type" in response.json()["detail"]
 
 
 @patch("api.jobs.services.boto3.client")
-@patch("api.pipelines.services.get_setting_value")
+@patch("api.actions.services.get_setting_value")
 def test_submit_pipeline_job_platform_not_configured(
     mock_get_setting: MagicMock,
     mock_boto_client: MagicMock,
@@ -759,7 +759,7 @@ def test_submit_pipeline_job_platform_not_configured(
     }
 
     response = client.post(
-        f"/api/v1/projects/{test_project.project_id}/pipelines/submit",
+        f"/api/v1/projects/{test_project.project_id}/actions/submit",
         json=submit_data
     )
 
@@ -769,7 +769,7 @@ def test_submit_pipeline_job_platform_not_configured(
 
 
 @patch("api.jobs.services.boto3.client")
-@patch("api.pipelines.services.get_setting_value")
+@patch("api.actions.services.get_setting_value")
 def test_submit_pipeline_job_missing_aws_batch_config(
     mock_get_setting: MagicMock,
     mock_boto_client: MagicMock,
@@ -806,7 +806,7 @@ def test_submit_pipeline_job_missing_aws_batch_config(
     }
 
     response = client.post(
-        f"/api/v1/projects/{test_project.project_id}/pipelines/submit",
+        f"/api/v1/projects/{test_project.project_id}/actions/submit",
         json=submit_data
     )
 
@@ -815,7 +815,7 @@ def test_submit_pipeline_job_missing_aws_batch_config(
 
 
 @patch("api.jobs.services.boto3.client")
-@patch("api.pipelines.services.get_setting_value")
+@patch("api.actions.services.get_setting_value")
 def test_submit_pipeline_job_invalid_reference(
     mock_get_setting: MagicMock,
     mock_boto_client: MagicMock,
@@ -862,7 +862,7 @@ def test_submit_pipeline_job_invalid_reference(
     }
 
     response = client.post(
-        f"/api/v1/projects/{test_project.project_id}/pipelines/submit",
+        f"/api/v1/projects/{test_project.project_id}/actions/submit",
         json=submit_data
     )
 
@@ -872,7 +872,7 @@ def test_submit_pipeline_job_invalid_reference(
 
 
 @patch("api.jobs.services.boto3.client")
-@patch("api.pipelines.services.get_setting_value")
+@patch("api.actions.services.get_setting_value")
 def test_submit_pipeline_job_template_interpolation(
     mock_get_setting: MagicMock,
     mock_boto_client: MagicMock,
@@ -928,7 +928,7 @@ def test_submit_pipeline_job_template_interpolation(
     }
 
     response = client.post(
-        f"/api/v1/projects/{test_project.project_id}/pipelines/submit",
+        f"/api/v1/projects/{test_project.project_id}/actions/submit",
         json=submit_data
     )
 

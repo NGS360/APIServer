@@ -16,7 +16,7 @@ from api.project.models import (
 )
 from api.samples.models import SampleCreate, SamplePublic, SamplesPublic, Attribute
 from api.project import services
-from api.pipelines.models import PipelineSubmitRequest
+from api.actions.models import ActionSubmitRequest
 
 router = APIRouter(prefix="/projects")
 
@@ -234,19 +234,19 @@ def update_sample_in_project(
 
 
 ###############################################################################
-# Pipeline Submission Endpoint /api/v1/projects/{project_id}/pipelines/submit
+# Action Submission Endpoint /api/v1/projects/{project_id}/actions/submit
 ###############################################################################
 
 
 @router.post(
-    "/{project_id}/pipelines/submit",
+    "/{project_id}/actions/submit",
     # response_model=BatchJobPublic,  # COMMENTED OUT FOR TESTING
     tags=["Project Endpoints"],
     status_code=status.HTTP_201_CREATED,
 )
 def submit_pipeline_job(
     project: ProjectDep,
-    request: PipelineSubmitRequest,
+    request: ActionSubmitRequest,
     current_user: CurrentUser,
     session: SessionDep,
     s3_client=Depends(get_s3_client),

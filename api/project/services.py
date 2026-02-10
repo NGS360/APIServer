@@ -11,8 +11,8 @@ from sqlmodel import Session, func, select
 from opensearchpy import OpenSearch
 
 from api.settings.services import get_setting_value
-from api.pipelines.services import get_all_pipeline_configs
-from api.pipelines.models import PipelineAction, PipelinePlatform
+from api.actions.services import get_all_action_configs
+from api.actions.models import ActionOption, ActionPlatform
 from api.jobs.services import submit_batch_job
 
 from core.utils import define_search_body, interpolate
@@ -349,8 +349,8 @@ def reindex_projects(
 def submit_pipeline_job(
     session: Session,
     project: Project,
-    action: "PipelineAction",
-    platform: "PipelinePlatform",
+    action: "ActionOption",
+    platform: "ActionPlatform",
     project_type: str,
     username: str,
     reference: str | None = None,
@@ -381,37 +381,37 @@ def submit_pipeline_job(
     Raises:
         HTTPException: If validation fails or submission fails
     """
-    # Get all pipeline configs and find matching project_type
-    all_configs = get_all_pipeline_configs(session, s3_client)
-    pipeline_config = None
+    # Get all action configs and find matching project_type
+    all_configs = get_all_action_configs(session, s3_client)
+    action_config = None
 
     for config in all_configs.configs:
         if config.project_type == project_type:
-            pipeline_config = config
+            action_config = config
             break
 
-    if pipeline_config is None:
+    if action_config is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Pipeline configuration for project type '{project_type}' not found"
+            detail=f"Action configuration for project type '{project_type}' not found"
         )
 
-    # Check if platform exists in pipeline config
-    if platform not in pipeline_config.platforms:
+    # Check if platform exists in action config
+    if platform not in action_config.platforms:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Platform '{platform}' not configured for project type '{project_type}'"
         )
 
-    platform_config = pipeline_config.platforms[platform]
+    platform_config = action_config.platforms[platform]
 
     # Validate action-specific requirements
     reference_value = None
-    if action == PipelineAction.CREATE_PROJECT:
+    if action == ActionOption.CREATE_PROJECT:
         # Ignore auto_release for create action - just set to None/False
         if auto_release is None:
             auto_release = False
-    elif action == PipelineAction.EXPORT_PROJECT_RESULTS:
+    elif action == ActionOption.EXPORT_PROJECT_RESULTS:
         # Default auto_release to False if not provided
         if auto_release is None:
             auto_release = False
@@ -466,7 +466,7 @@ def submit_pipeline_job(
     }
 
     # Select and interpolate the appropriate command based on action
-    if action == PipelineAction.CREATE_PROJECT:
+    if action == ActionOption.CREATE_PROJECT:
         command_template = platform_config.create_project_command
     else:  # export-project-results
         command_template = platform_config.export_command
@@ -480,7 +480,7 @@ def submit_pipeline_job(
         ) from e
 
     # Check if aws_batch config exists
-    if not pipeline_config.aws_batch:
+    if not action_config.aws_batch:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=(
@@ -491,7 +491,7 @@ def submit_pipeline_job(
 
     # Interpolate AWS Batch configuration
     try:
-        interpolated_job_name = interpolate(pipeline_config.aws_batch.job_name, template_context)
+        interpolated_job_name = interpolate(action_config.aws_batch.job_name, template_context)
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -505,8 +505,8 @@ def submit_pipeline_job(
     }
 
     # Add environment variables if specified in aws_batch config
-    if pipeline_config.aws_batch.environment:
-        for env in pipeline_config.aws_batch.environment:
+    if action_config.aws_batch.environment:
+        for env in action_config.aws_batch.environment:
             try:
                 interpolated_env_value = interpolate(env.value, template_context)
                 container_overrides["environment"].append({
@@ -524,8 +524,8 @@ def submit_pipeline_job(
         session=session,
         job_name=interpolated_job_name,
         container_overrides=container_overrides,
-        job_def=pipeline_config.aws_batch.job_definition,
-        job_queue=pipeline_config.aws_batch.job_queue,
+        job_def=action_config.aws_batch.job_definition,
+        job_queue=action_config.aws_batch.job_queue,
         user=username
     )
     return batch_job

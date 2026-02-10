@@ -1,5 +1,5 @@
 """
-Models for the Pipeline API
+Models for the Actions API
 """
 
 from enum import Enum
@@ -8,20 +8,20 @@ from sqlmodel import SQLModel
 from api.jobs.models import AwsBatchConfig
 
 
-class PipelineAction(str, Enum):
-    """Pipeline action types"""
+class ActionOption(str, Enum):
+    """Action types"""
     CREATE_PROJECT = "create-project"
     EXPORT_PROJECT_RESULTS = "export-project-results"
 
 
-class PipelinePlatform(str, Enum):
-    """Pipeline platform types"""
+class ActionPlatform(str, Enum):
+    """Action platform types"""
     ARVADOS = "Arvados"
     SEVENBRIDGES = "SevenBridges"
 
 
-class PipelineInput(SQLModel):
-    """Model for pipeline input configuration."""
+class ActionInput(SQLModel):
+    """Model for action input configuration."""
     name: str
     desc: str
     type: str
@@ -36,35 +36,35 @@ class PlatformConfig(SQLModel):
     export_command: str | None = None
 
 
-class PipelineConfig(SQLModel):
-    """Model for pipeline workflow configuration."""
+class ActionConfig(SQLModel):
+    """Model for action workflow configuration."""
     workflow_id: str | None = None
     project_type: str
     project_admins: List[str]
-    inputs: List[PipelineInput] | None = None
+    inputs: List[ActionInput] | None = None
     platforms: Dict[str, PlatformConfig]
     export_command: str | None = None
     aws_batch: AwsBatchConfig | None = None
 
 
-class PipelineConfigsResponse(SQLModel):
-    """Response model for list of pipeline workflow configurations."""
-    configs: List[PipelineConfig]
+class ActionConfigsResponse(SQLModel):
+    """Response model for list of action workflow configurations."""
+    configs: List[ActionConfig]
     total: int
 
 
-class PipelineOption(SQLModel):
-    """Model for pipeline option"""
+class SelectOption(SQLModel):
+    """Model for UI select/dropdown option"""
     label: str
     value: str
     description: str
 
 
-class PipelineSubmitRequest(SQLModel):
-    """Request model for submitting a pipeline job to AWS Batch"""
-    action: PipelineAction
-    platform: PipelinePlatform
-    project_type: str  # The pipeline workflow type (e.g., "RNA-Seq", "WGS")
+class ActionSubmitRequest(SQLModel):
+    """Request model for submitting an action job to AWS Batch"""
+    action: ActionOption
+    platform: ActionPlatform
+    project_type: str  # The workflow type (e.g., "RNA-Seq", "WGS")
     # Export reference label, required for export action
     reference: str | None = None
     # Auto-release flag (only valid for export action)

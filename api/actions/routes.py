@@ -1,75 +1,75 @@
-"""Pipeline API routes."""
+"""Action API routes."""
 
 from fastapi import APIRouter, Depends, Query, status
 
 from core.deps import SessionDep, get_s3_client
 from . import services
-from .models import PipelineConfig, PipelineOption, PipelineAction, PipelinePlatform
+from .models import ActionConfig, SelectOption, ActionOption, ActionPlatform
 
-router = APIRouter(prefix="/pipelines")
+router = APIRouter(prefix="/actions")
 
 
 @router.post(
-    "/validate",
-    response_model=PipelineConfig,
-    tags=["Pipeline Endpoints"],
+    "/config/validate",
+    response_model=ActionConfig,
+    tags=["Action Endpoints"],
     status_code=status.HTTP_200_OK,
 )
-def validate_pipeline_config(
+def validate_action_config(
     session: SessionDep,
     s3_path: str = Query(
         ...,
-        description="S3 path to pipeline config "
+        description="S3 path to action config "
         "(s3://bucket/path/to/config.yaml or relative path)"
     ),
     s3_client=Depends(get_s3_client),
-) -> PipelineConfig:
+) -> ActionConfig:
     """
-    Validate a pipeline configuration file from S3.
+    Validate an action configuration file from S3.
 
-    Accepts an S3 path to a pipeline configuration file and validates it
-    against the PipelineConfig schema. Returns the parsed config if valid,
+    Accepts an S3 path to an action configuration file and validates it
+    against the ActionConfig schema. Returns the parsed config if valid,
     or error details if invalid.
 
     Args:
         s3_path: S3 path to the config file. Can be:
             - Full S3 URI: s3://bucket/path/to/config.yaml
             - Relative path: config.yaml or path/to/config.yaml
-              (uses default pipeline configs bucket)
+              (uses default action configs bucket)
 
     Examples:
         - s3://my-bucket/configs/rna-seq_pipeline.yaml
         - rna-seq_pipeline.yaml
         - custom/wgs_pipeline.yaml
     """
-    return services.validate_pipeline_config(
+    return services.validate_action_config(
         session=session, s3_path=s3_path, s3_client=s3_client
     )
 
 
 @router.get(
-    "/actions",
-    response_model=list[PipelineOption],
-    tags=["Pipeline Endpoints"],
+    "/options",
+    response_model=list[SelectOption],
+    tags=["Action Endpoints"],
 )
-def get_pipeline_actions() -> list[PipelineOption]:
+def get_action_options() -> list[SelectOption]:
     """
-    Get available pipeline actions.
+    Get available action options.
 
     Returns:
-        List of available pipeline actions with labels, values,
+        List of available action options with labels, values,
         and descriptions
     """
     # TODO: This shouldn't be hardcoded. I'm not quite sure how we want
     # to handle this but probably with a config setting.
     return [
-        PipelineOption(
+        SelectOption(
             label="Create Project",
             value="create-project",
             description="Create a new project in one of the "
             "supported platforms",
         ),
-        PipelineOption(
+        SelectOption(
             label="Export Project Results",
             value="export-project-results",
             description="Export the project results from one of the "
@@ -80,12 +80,12 @@ def get_pipeline_actions() -> list[PipelineOption]:
 
 @router.get(
     "/platforms",
-    response_model=list[PipelineOption],
-    tags=["Pipeline Endpoints"],
+    response_model=list[SelectOption],
+    tags=["Action Endpoints"],
 )
-def get_pipeline_platforms() -> list[PipelineOption]:
+def get_action_platforms() -> list[SelectOption]:
     """
-    Get available pipeline platforms.
+    Get available action platforms.
 
     Returns:
         List of available platforms with labels, values, and descriptions
@@ -93,12 +93,12 @@ def get_pipeline_platforms() -> list[PipelineOption]:
     # TODO: This shouldn't be hardcoded. We should read a list of
     # supported platforms from a config file or database.
     return [
-        PipelineOption(
+        SelectOption(
             label="Arvados",
             value="Arvados",
             description="Arvados platform",
         ),
-        PipelineOption(
+        SelectOption(
             label="SevenBridges",
             value="SevenBridges",
             description="SevenBridges platform",
@@ -109,27 +109,27 @@ def get_pipeline_platforms() -> list[PipelineOption]:
 @router.get(
     "/types",
     response_model=list[dict],
-    tags=["Pipeline Endpoints"],
+    tags=["Action Endpoints"],
 )
-def get_pipeline_types(
+def get_action_types(
     session: SessionDep,
-    action: PipelineAction = Query(
-        description="Pipeline action"
+    action: ActionOption = Query(
+        description="Action type"
     ),
-    platform: PipelinePlatform = Query(
-        description="Pipeline platform"
+    platform: ActionPlatform = Query(
+        description="Action platform"
     ),
     s3_client=Depends(get_s3_client),
 ) -> list[dict]:
     """
-    Get available pipeline types based on action and platform.
+    Get available action types based on action and platform.
 
     Args:
-        action: The pipeline action
+        action: The action type
         platform: The platform
 
     Returns:
-        List of pipeline types with label, value, and project_type
+        List of action types with label, value, and project_type
     """
     return services.get_project_types_for_action_and_platform(
         session=session,

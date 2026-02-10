@@ -1,4 +1,4 @@
-"""Pipeline API services."""
+"""Action API services."""
 
 import boto3
 import yaml
@@ -7,12 +7,12 @@ from fastapi import HTTPException, status
 from sqlmodel import Session
 
 from api.settings.services import get_setting_value
-from .models import PipelineConfig, PipelineConfigsResponse
+from .models import ActionConfig, ActionConfigsResponse
 
 
-def _get_pipeline_configs_s3_location(session: Session) -> tuple[str, str]:
+def _get_action_configs_s3_location(session: Session) -> tuple[str, str]:
     """
-    Get the S3 bucket and prefix for project pipeline configurations.
+    Get the S3 bucket and prefix for project action configurations.
 
     Args:
         session: Database session
@@ -20,35 +20,35 @@ def _get_pipeline_configs_s3_location(session: Session) -> tuple[str, str]:
     Returns:
         Tuple of (bucket, prefix) where prefix includes the full path with subfolders
     """
-    pipeline_configs_uri = get_setting_value(
+    action_configs_uri = get_setting_value(
         session,
         "PROJECT_WORKFLOW_CONFIGS_BUCKET_URI"
     )
 
     # Ensure URI ends with /
-    if not pipeline_configs_uri.endswith("/"):
-        pipeline_configs_uri += "/"
+    if not action_configs_uri.endswith("/"):
+        action_configs_uri += "/"
 
     # Parse S3 URI to get bucket and prefix
-    s3_path = pipeline_configs_uri.replace("s3://", "")
+    s3_path = action_configs_uri.replace("s3://", "")
     bucket = s3_path.split("/")[0]
     prefix = "/".join(s3_path.split("/")[1:])
 
     return bucket, prefix
 
 
-def list_pipeline_configs(session: Session, s3_client=None) -> list[str]:
+def list_action_configs(session: Session, s3_client=None) -> list[str]:
     """
-    List available project pipeline configuration files from S3.
+    List available project action configuration files from S3.
 
     Args:
         session: Database session
         s3_client: Optional boto3 S3 client
 
     Returns:
-        List of pipeline configuration filenames (without .yaml extension)
+        List of action configuration filenames (without .yaml extension)
     """
-    bucket, prefix = _get_pipeline_configs_s3_location(session)
+    bucket, prefix = _get_action_configs_s3_location(session)
 
     try:
         if s3_client is None:
@@ -58,7 +58,7 @@ def list_pipeline_configs(session: Session, s3_client=None) -> list[str]:
         paginator = s3_client.get_paginator("list_objects_v2")
         page_iterator = paginator.paginate(Bucket=bucket, Prefix=prefix)
 
-        pipeline_configs = []
+        action_configs = []
 
         for page in page_iterator:
             for obj in page.get("Contents", []):
@@ -74,10 +74,10 @@ def list_pipeline_configs(session: Session, s3_client=None) -> list[str]:
                 # Only include .yaml or .yml files
                 if filename.endswith((".yaml", ".yml")):
                     # Remove extension and add to list
-                    pipeline_id = filename.rsplit(".", 1)[0]
-                    pipeline_configs.append(pipeline_id)
+                    action_id = filename.rsplit(".", 1)[0]
+                    action_configs.append(action_id)
 
-        return sorted(pipeline_configs)
+        return sorted(action_configs)
 
     except NoCredentialsError as exc:
         raise HTTPException(
@@ -103,22 +103,22 @@ def list_pipeline_configs(session: Session, s3_client=None) -> list[str]:
             ) from exc
 
 
-def get_pipeline_config(
-    session: Session, pipeline_id: str, s3_client=None
-) -> PipelineConfig:
+def get_action_config(
+    session: Session, action_id: str, s3_client=None
+) -> ActionConfig:
     """
-    Retrieve a specific pipeline configuration from S3.
+    Retrieve a specific action configuration from S3.
 
     Args:
         session: Database session
-        pipeline_id: The pipeline identifier (filename without extension)
+        action_id: The action identifier (filename without extension)
         s3_client: Optional boto3 S3 client
 
     Returns:
-        PipelineConfig object
+        ActionConfig object
     """
 
-    bucket, prefix = _get_pipeline_configs_s3_location(session)
+    bucket, prefix = _get_action_configs_s3_location(session)
 
     try:
         if s3_client is None:
@@ -127,7 +127,7 @@ def get_pipeline_config(
         # Try both .yaml and .yml extensions
         key = None
         for ext in [".yaml", ".yml"]:
-            potential_key = f"{prefix}{pipeline_id}{ext}"
+            potential_key = f"{prefix}{action_id}{ext}"
             try:
                 response = s3_client.get_object(Bucket=bucket, Key=potential_key)
                 key = potential_key
@@ -143,17 +143,17 @@ def get_pipeline_config(
         if key is None:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Pipeline config '{pipeline_id}' not found",
+                detail=f"Action config '{action_id}' not found",
             )
 
         # Parse YAML
         config_data = yaml.safe_load(yaml_content)
 
-        # Add pipeline_id to the data
-        config_data["workflow_id"] = pipeline_id
+        # Add action_id to the data
+        config_data["workflow_id"] = action_id
 
-        # Validate and return as PipelineConfig model
-        return PipelineConfig(**config_data)
+        # Validate and return as ActionConfig model
+        return ActionConfig(**config_data)
 
     except HTTPException:
         raise
@@ -182,34 +182,34 @@ def get_pipeline_config(
     except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error parsing pipeline config: {str(exc)}",
+            detail=f"Error parsing action config: {str(exc)}",
         ) from exc
 
 
-def get_all_pipeline_configs(
+def get_all_action_configs(
     session: Session, s3_client=None
-) -> PipelineConfigsResponse:
+) -> ActionConfigsResponse:
     """
-    Retrieve and parse all pipeline configurations from S3.
+    Retrieve and parse all action configurations from S3.
 
     Args:
         session: Database session
         s3_client: Optional boto3 S3 client
 
     Returns:
-        PipelineConfigsResponse with list of all configs
+        ActionConfigsResponse with list of all configs
     """
 
-    # Get list of pipeline IDs
-    pipeline_ids = list_pipeline_configs(session=session, s3_client=s3_client)
+    # Get list of action IDs
+    action_ids = list_action_configs(session=session, s3_client=s3_client)
 
     # Fetch and parse each config
     configs = []
-    for pipeline_id in pipeline_ids:
+    for action_id in action_ids:
         try:
-            config = get_pipeline_config(
+            config = get_action_config(
                 session=session,
-                pipeline_id=pipeline_id,
+                action_id=action_id,
                 s3_client=s3_client
             )
             configs.append(config)
@@ -218,7 +218,7 @@ def get_all_pipeline_configs(
             # Could add logging here
             continue
 
-    return PipelineConfigsResponse(
+    return ActionConfigsResponse(
         configs=configs,
         total=len(configs)
     )
@@ -255,8 +255,8 @@ def get_project_types_for_action_and_platform(
             detail=f"Invalid platform: {platform}. Must be 'arvados' or 'sevenbridges'"
         )
 
-    # Get all pipeline configs
-    all_configs = get_all_pipeline_configs(session=session, s3_client=s3_client)
+    # Get all action configs
+    all_configs = get_all_action_configs(session=session, s3_client=s3_client)
 
     result = []
 
@@ -299,11 +299,11 @@ def get_project_types_for_action_and_platform(
     return unique_results
 
 
-def validate_pipeline_config(
+def validate_action_config(
     session: Session, s3_path: str, s3_client=None
-) -> PipelineConfig:
+) -> ActionConfig:
     """
-    Validate a pipeline configuration from S3 against the PipelineConfig schema.
+    Validate an action configuration from S3 against the ActionConfig schema.
 
     Args:
         session: Database session
@@ -311,7 +311,7 @@ def validate_pipeline_config(
         s3_client: Optional boto3 S3 client
 
     Returns:
-        PipelineConfig object if valid
+        ActionConfig object if valid
 
     Raises:
         HTTPException: If validation fails with details about the errors
@@ -330,7 +330,7 @@ def validate_pipeline_config(
         bucket, key = parts
     else:
         # Use default bucket and treat path as key
-        bucket, prefix = _get_pipeline_configs_s3_location(session)
+        bucket, prefix = _get_action_configs_s3_location(session)
         key = f"{prefix}{s3_path}" if not s3_path.startswith(prefix) else s3_path
 
     try:
@@ -345,7 +345,7 @@ def validate_pipeline_config(
         parsed_config = yaml.safe_load(config_content)
 
         # Validate with Pydantic - let it handle all validation
-        return PipelineConfig(**parsed_config)
+        return ActionConfig(**parsed_config)
 
     except ValidationError as exc:
         raise HTTPException(

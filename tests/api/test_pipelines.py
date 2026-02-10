@@ -10,7 +10,7 @@ import yaml
 
 def test_get_pipeline_actions(client: TestClient):
     """Test retrieving available pipeline actions"""
-    response = client.get("/api/v1/pipelines/actions")
+    response = client.get("/api/v1/actions/options")
     assert response.status_code == 200
     response_json = response.json()
 
@@ -31,7 +31,7 @@ def test_get_pipeline_actions(client: TestClient):
 
 def test_get_pipeline_platforms(client: TestClient):
     """Test retrieving available pipeline platforms"""
-    response = client.get("/api/v1/pipelines/platforms")
+    response = client.get("/api/v1/actions/platforms")
     assert response.status_code == 200
     response_json = response.json()
 
@@ -50,7 +50,7 @@ def test_get_pipeline_platforms(client: TestClient):
     assert "SevenBridges" in platform_values
 
 
-@patch("api.pipelines.services.get_setting_value")
+@patch("api.actions.services.get_setting_value")
 def test_get_pipeline_types(
     mock_get_setting: MagicMock,
     client: TestClient,
@@ -87,7 +87,7 @@ def test_get_pipeline_types(
 
     # Test for create-project action
     response = client.get(
-        "/api/v1/pipelines/types",
+        "/api/v1/actions/types",
         params={"action": "create-project", "platform": "Arvados"}
     )
     assert response.status_code == 200
@@ -98,7 +98,7 @@ def test_get_pipeline_types(
     assert response_json[0]["project_type"] == "RNA-Seq"
 
 
-@patch("api.pipelines.services.get_setting_value")
+@patch("api.actions.services.get_setting_value")
 def test_validate_pipeline_config_success(
     mock_get_setting: MagicMock,
     client: TestClient,
@@ -127,7 +127,7 @@ def test_validate_pipeline_config_success(
 
     # Test validation
     response = client.post(
-        "/api/v1/pipelines/validate",
+        "/api/v1/actions/config/validate",
         params={"s3_path": "rna-seq_pipeline.yaml"}
     )
     assert response.status_code == 200
@@ -137,7 +137,7 @@ def test_validate_pipeline_config_success(
     assert "Arvados" in response_json["platforms"]
 
 
-@patch("api.pipelines.services.get_setting_value")
+@patch("api.actions.services.get_setting_value")
 def test_validate_pipeline_config_invalid_yaml(
     mock_get_setting: MagicMock,
     client: TestClient,
@@ -155,7 +155,7 @@ def test_validate_pipeline_config_invalid_yaml(
 
     # Test validation
     response = client.post(
-        "/api/v1/pipelines/validate",
+        "/api/v1/actions/config/validate",
         params={"s3_path": "invalid_pipeline.yaml"}
     )
     assert response.status_code == 400
@@ -163,7 +163,7 @@ def test_validate_pipeline_config_invalid_yaml(
     assert "Invalid YAML format" in response_json["detail"]
 
 
-@patch("api.pipelines.services.get_setting_value")
+@patch("api.actions.services.get_setting_value")
 def test_validate_pipeline_config_missing_required_fields(
     mock_get_setting: MagicMock,
     client: TestClient,
@@ -187,7 +187,7 @@ def test_validate_pipeline_config_missing_required_fields(
 
     # Test validation
     response = client.post(
-        "/api/v1/pipelines/validate",
+        "/api/v1/actions/config/validate",
         params={"s3_path": "incomplete_pipeline.yaml"}
     )
     assert response.status_code == 422
@@ -197,7 +197,7 @@ def test_validate_pipeline_config_missing_required_fields(
     assert "detail" in response_json
 
 
-@patch("api.pipelines.services.get_setting_value")
+@patch("api.actions.services.get_setting_value")
 def test_validate_pipeline_config_file_not_found(
     mock_get_setting: MagicMock,
     client: TestClient,
@@ -212,7 +212,7 @@ def test_validate_pipeline_config_file_not_found(
 
     # Test validation
     response = client.post(
-        "/api/v1/pipelines/validate",
+        "/api/v1/actions/config/validate",
         params={"s3_path": "nonexistent_pipeline.yaml"}
     )
     assert response.status_code == 404
@@ -220,7 +220,7 @@ def test_validate_pipeline_config_file_not_found(
     assert "not found" in response_json["detail"].lower()
 
 
-@patch("api.pipelines.services.get_setting_value")
+@patch("api.actions.services.get_setting_value")
 def test_validate_pipeline_config_full_s3_uri(
     mock_get_setting: MagicMock,
     client: TestClient,
@@ -249,7 +249,7 @@ def test_validate_pipeline_config_full_s3_uri(
 
     # Test validation with full S3 URI
     response = client.post(
-        "/api/v1/pipelines/validate",
+        "/api/v1/actions/config/validate",
         params={"s3_path": "s3://custom-bucket/custom/path/wgs_pipeline.yaml"}
     )
     assert response.status_code == 200
@@ -257,7 +257,7 @@ def test_validate_pipeline_config_full_s3_uri(
     assert response_json["project_type"] == "WGS"
 
 
-@patch("api.pipelines.services.get_setting_value")
+@patch("api.actions.services.get_setting_value")
 def test_validate_pipeline_config_with_aws_batch(
     mock_get_setting: MagicMock,
     client: TestClient,
@@ -293,7 +293,7 @@ def test_validate_pipeline_config_with_aws_batch(
     }
 
     response = client.post(
-        "/api/v1/pipelines/validate",
+        "/api/v1/actions/config/validate",
         params={"s3_path": "chipseq_pipeline.yaml"}
     )
     assert response.status_code == 200
@@ -304,7 +304,7 @@ def test_validate_pipeline_config_with_aws_batch(
     assert len(response_json["aws_batch"]["environment"]) == 2
 
 
-@patch("api.pipelines.services.get_setting_value")
+@patch("api.actions.services.get_setting_value")
 def test_get_pipeline_types_export_action(
     mock_get_setting: MagicMock,
     client: TestClient,
@@ -341,7 +341,7 @@ def test_get_pipeline_types_export_action(
 
     # Test for export action
     response = client.get(
-        "/api/v1/pipelines/types",
+        "/api/v1/actions/types",
         params={"action": "export-project-results", "platform": "Arvados"}
     )
     assert response.status_code == 200
@@ -359,7 +359,7 @@ def test_get_pipeline_types_export_action(
     assert all(item["project_type"] == "RNA-Seq" for item in response_json)
 
 
-@patch("api.pipelines.services.get_setting_value")
+@patch("api.actions.services.get_setting_value")
 def test_get_pipeline_types_invalid_platform(
     mock_get_setting: MagicMock,
     client: TestClient,
@@ -370,7 +370,7 @@ def test_get_pipeline_types_invalid_platform(
     mock_get_setting.return_value = "s3://ngs360-resources/pipeline_configs/"
 
     response = client.get(
-        "/api/v1/pipelines/types",
+        "/api/v1/actions/types",
         params={"action": "create-project", "platform": "InvalidPlatform"}
     )
     # FastAPI validation returns 422 for invalid Literal values
@@ -379,7 +379,7 @@ def test_get_pipeline_types_invalid_platform(
     assert "detail" in response_json
 
 
-@patch("api.pipelines.services.get_setting_value")
+@patch("api.actions.services.get_setting_value")
 def test_get_pipeline_types_no_configs(
     mock_get_setting: MagicMock,
     client: TestClient,
@@ -393,7 +393,7 @@ def test_get_pipeline_types_no_configs(
     mock_s3_client.setup_bucket("ngs360-resources", "pipeline_configs/", [], [])
 
     response = client.get(
-        "/api/v1/pipelines/types",
+        "/api/v1/actions/types",
         params={"action": "create-project", "platform": "Arvados"}
     )
     assert response.status_code == 200
