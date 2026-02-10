@@ -12,6 +12,7 @@ from opensearchpy import OpenSearch
 
 from api.settings.services import get_setting_value
 from api.pipelines.services import get_all_pipeline_configs
+from api.pipelines.models import PipelineAction, PipelinePlatform
 from api.jobs.services import submit_batch_job
 
 from core.utils import define_search_body, interpolate
@@ -407,7 +408,7 @@ def submit_pipeline_job(
 
     # Validate action-specific requirements
     reference_value = None
-    if action == "create-project":
+    if action == PipelineAction.CREATE_PROJECT:
         # Validate that auto_release is not set for create action
         if auto_release is not None:
             raise HTTPException(
@@ -469,7 +470,7 @@ def submit_pipeline_job(
     }
 
     # Select and interpolate the appropriate command based on action
-    if action == "create-project":
+    if action == PipelineAction.CREATE_PROJECT:
         command_template = platform_config.create_project_command
     else:  # export-project-results
         command_template = platform_config.export_command

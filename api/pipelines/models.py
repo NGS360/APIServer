@@ -2,13 +2,22 @@
 Models for the Pipeline API
 """
 
+from enum import Enum
 from typing import List, Dict, Any, Literal
 from sqlmodel import SQLModel
 from api.jobs.models import AwsBatchConfig
 
-# Type definitions for pipeline actions and platforms
-PipelineAction = Literal["create-project", "export-project-results"]
-PipelinePlatform = Literal["Arvados", "SevenBridges"]
+
+class PipelineAction(str, Enum):
+    """Pipeline action types"""
+    CREATE_PROJECT = "create-project"
+    EXPORT_PROJECT_RESULTS = "export-project-results"
+
+
+class PipelinePlatform(str, Enum):
+    """Pipeline platform types"""
+    ARVADOS = "Arvados"
+    SEVENBRIDGES = "SevenBridges"
 
 
 class PipelineInput(SQLModel):
