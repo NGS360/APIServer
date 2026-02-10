@@ -64,7 +64,7 @@ class OAuthProviderName(str, Enum):
     GOOGLE = "google"
     GITHUB = "github"
     MICROSOFT = "microsoft"
-
+    CORP = "corp"  # For internal corporate SSO
 
 class OAuthProvider(SQLModel, table=True):
     """OAuth provider linkage for external authentication"""

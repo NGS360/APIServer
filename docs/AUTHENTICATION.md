@@ -224,14 +224,13 @@ GET /api/v1/auth/oauth/{provider}/authorize
 Where `{provider}` is one of: `google`, `github`, `microsoft`
 
 This redirects the user to the OAuth provider's authorization page.
+After authorization, the client is redirected to the callback.
 
 #### OAuth2 Callback
 
 ```http
 GET /api/v1/auth/oauth/{provider}/callback?code=auth-code&state=state-value
 ```
-
-This endpoint is called by the OAuth provider after user authorization.
 
 #### Link OAuth Provider to Account
 
