@@ -9,7 +9,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import List
 from sqlmodel import SQLModel, Field, Relationship, UniqueConstraint
-from pydantic import ConfigDict
+from pydantic import BaseModel, ConfigDict
 
 from api.files.models import (
     FileCreate,
@@ -186,7 +186,7 @@ class MetricInput(SQLModel):
     values: dict[str, str | int | float]  # {"reads": 50000000, "alignment_rate": 95.5}
 
 
-class QCRecordCreate(SQLModel):
+class QCRecordCreate(BaseModel):
     """
     Request model for creating a QC record.
 
@@ -220,7 +220,7 @@ class MetricPublic(SQLModel):
     values: List[MetricValuePublic]
 
 
-class QCRecordPublic(SQLModel):
+class QCRecordPublic(BaseModel):
     """Public representation of a QC record."""
     id: uuid.UUID
     created_on: datetime
