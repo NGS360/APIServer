@@ -2,13 +2,11 @@
 Main entrypoint for the FastAPI server
 """
 
-from pathlib import Path
 from fastapi import FastAPI, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
-from fastapi.staticfiles import StaticFiles
 from core.lifespan import lifespan
 from core.config import get_settings
 
@@ -99,13 +97,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-
-# Mount static files directory
-# This allows serving files like logos from /static/logos
-static_dir = Path(__file__).parent / "static"
-if static_dir.exists():
-    app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 
 
 # Create a simple health check endpoint
