@@ -16,6 +16,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/auth/oauth", tags=["OAuth2 Authentication"])
 
+
 @router.get("/providers")
 def get_available_oauth_providers() -> AvailableProvidersResponse:
     """
@@ -52,10 +53,12 @@ def oauth_authorize(
 
     # Use default redirect URI if not provided
     if not redirect_uri:
+        logger.debug(f"No redirect_uri provided, using default for provider {provider}")
         redirect_uri = (
             f"{settings.client_origin}/api/v1/auth/oauth/"
             f"{provider}/callback"
         )
+    logger.debug(f"Using redirect_uri: {redirect_uri} for provider {provider}")
 
     try:
         # Generate authorization URL
@@ -100,6 +103,11 @@ async def oauth_callback(
         400: Invalid code or failed to get user info
         501: Provider not configured
     """
+    logger.debug(
+        "Received OAuth callback with provider: "
+        "%s, code: %s, state: %s, redirect_uri: %s",
+        provider, code, state, redirect_uri
+    )
     settings = get_settings()
 
     # Use default redirect URI if not provided
@@ -111,11 +119,13 @@ async def oauth_callback(
 
     try:
         # Exchange code for access token
+        logger.debug("Exchanging code (%s) for token with provider %s", code, provider)
         token_response = await oauth2_service.exchange_code_for_token(
             provider,
             code,
             redirect_uri
         )
+        logger.debug("Received token response from provider %s: %s", provider, token_response)
 
         access_token = token_response.get("access_token")
         refresh_token_oauth = token_response.get("refresh_token")
@@ -127,10 +137,12 @@ async def oauth_callback(
             )
 
         # Get user info from provider
+        logger.debug("Fetching user info from provider %s using access token", provider)
         user_info = await oauth2_service.get_user_info(
             provider,
             access_token
         )
+        logger.debug("Received user info from provider %s: %s", provider, user_info)
 
         # Find or create user
         user = oauth2_service.find_or_create_oauth_user(

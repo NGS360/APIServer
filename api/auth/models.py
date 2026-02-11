@@ -75,7 +75,7 @@ class OAuthProvider(SQLModel, table=True):
     id: uuid.UUID | None = Field(default_factory=uuid.uuid4, primary_key=True)
     user_id: uuid.UUID = Field(foreign_key="users.id", index=True)
 
-    provider_name: str = Field(index=True, max_length=50)
+    provider_name: str = Field(max_length=50)
     provider_user_id: str = Field(index=True, max_length=255)
 
     # OAuth tokens (should be encrypted in production)
@@ -222,4 +222,5 @@ class OAuthProviderInfo(SQLModel):
 class AvailableProvidersResponse(SQLModel):
     """Available OAuth providers response"""
     count: int
+    use_corporate_sso: bool = False
     providers: list[OAuthProviderInfo]

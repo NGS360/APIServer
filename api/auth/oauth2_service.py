@@ -91,16 +91,17 @@ class OAuth2ProviderConfig:
 def get_available_providers() -> AvailableProvidersResponse:
     """
     Get list of configured OAuth providers
-    
+
     Returns which OAuth providers are configured and available for use.
     The client apps (e.g. React app) can use this to dynamically show login buttons.
-    
+
     Returns:
         AvailableProvidersResponse: Available providers with metadata
-        
+
     Example Response:
         {
             "count": 2,
+            "use_corporate_sso": "true|false",
             "providers": [
                 {
                     "name": "google",
@@ -118,6 +119,7 @@ def get_available_providers() -> AvailableProvidersResponse:
     settings = get_settings()
 
     providers_info = []
+    use_corporate_sso = False
 
     for provider in OAuth2ProviderConfig.PROVIDERS.keys():
         match provider:
@@ -146,8 +148,13 @@ def get_available_providers() -> AvailableProvidersResponse:
             logo_url=f"/static/logos/{corp_name_lower}.svg",
             authorize_url=f"/api/v1/auth/oauth/{corp_name_lower}/authorize"
         ))
+        use_corporate_sso = True
 
-    return AvailableProvidersResponse(count=len(providers_info), providers=providers_info)
+    return AvailableProvidersResponse(
+        count=len(providers_info),
+        use_corporate_sso=use_corporate_sso,
+        providers=providers_info
+    )
 
 
 def get_authorization_url(
@@ -210,7 +217,6 @@ def get_authorization_url(
     if provider == "github":
         params["scope"] = ",".join(config["scopes"])
 
-    #query_string = "&".join(f"{k}={v}" for k, v in params.items())
     query_string = urlencode(params)
     return f"{config['authorize_url']}?{query_string}"
 
@@ -367,9 +373,23 @@ def _normalize_user_data(provider: str, data: dict) -> dict:
         case _:
             # Generic normalization for corporate or unknown providers
             # Assumes standard OIDC claims
+            # {'given_name': 'First', 
+            #  'family_name': 'Last', 
+            #  'name': 'First Last', 
+            #  'bmsid': '00365089', 
+            #  'email': 'Ryan.Golhar@bms.com', 
+            #  'organization_claim': 'LVL', 
+            #  'location_claim': 'Princeton', 
+            #  'countrycode': 'US', 
+            #  'bmspersonassociation': 'Employee', 
+            #  'sub': 'golharr', 
+            #  'subname': 'golharr'
+            # }
+            # TODO: We need a better way to map non-standard fields to standard ones,
+            # possibly via provider-specific config or a mapping function
             return {
-                "provider_user_id": data.get("sub") or data.get("id"),
-                'provider_username': data.get("username") or data.get("login"),
+                "provider_user_id": data.get("bmsid"),  # data.get("sub") or data.get("id"),
+                'provider_username': data.get("sub"),  # or data.get("username") or data.get("login"),
                 "email": data.get("email"),
                 "name": data.get("name") or data.get("displayName") or data.get("email"),
                 "picture": data.get("picture"),
@@ -416,6 +436,7 @@ def find_or_create_oauth_user(
     oauth_link = session.exec(statement).first()
 
     if oauth_link:
+        logger.debug("Found existing OAuth link for provider %s and user ID %s", provider, provider_user_id)
         # User already exists, update tokens
         oauth_link.access_token = access_token
         oauth_link.refresh_token = refresh_token
@@ -437,8 +458,10 @@ def find_or_create_oauth_user(
     user = session.exec(statement).first()
 
     if not user:
+        logger.debug("No existing user with email %s, creating new user", email)
         # Create new user
-        username = email.split("@")[0]
+        # username = email.split("@")[0]
+        username = provider_data.get("provider_username") or email.split("@")[0]
         # Ensure unique username
         base_username = username
         counter = 1
@@ -449,6 +472,13 @@ def find_or_create_oauth_user(
             username = f"{base_username}{counter}"
             counter += 1
 
+        # If this is the first user, make them admin
+        is_admin = False
+        statement = select(User)
+        if session.exec(statement).first() is None:
+            logger.info(f"First user registered, granting admin rights to {username}")
+            is_admin = True
+
         user = User(
             email=email,
             username=username,
@@ -456,12 +486,14 @@ def find_or_create_oauth_user(
             hashed_password=None,  # OAuth-only user
             is_active=True,
             is_verified=True,  # Email verified by OAuth provider
+            is_superuser=is_admin
         )
         session.add(user)
         session.commit()
         session.refresh(user)
 
     # Link OAuth provider to user
+    logger.debug("Linking OAuth provider %s to user %s", provider, user.username)
     oauth_provider = OAuthProvider(
         user_id=user.id,
         provider_name=provider,

@@ -95,6 +95,12 @@ class Settings(BaseSettings):
         # 3. Return default value if provided
         return default
 
+    @computed_field
+    @property
+    def LOG_LEVEL(self) -> str:
+        """Get application log level from env or secrets (defaults to INFO)"""
+        return self._get_config_value("LOG_LEVEL", default="INFO")
+
     # SQLAlchemy - Create db connection string
     @computed_field
     @property
