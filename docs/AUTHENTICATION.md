@@ -63,9 +63,9 @@ OAUTH_MICROSOFT_CLIENT_ID=your-microsoft-client-id
 OAUTH_MICROSOFT_CLIENT_SECRET=your-microsoft-client-secret
 
 # Dev
-OAUTH_CLIENT_ID=ngsdev-360
-OAUTH_SECRETKEY=ngsdev-360-10102024
-OAUTH_URL=https://sso-qa.bms.com
+OAUTH_CLIENT_ID=your-corp-id
+OAUTH_SECRETKEY=your-corp-client-secret
+OAUTH_URL=your-corp-oauth-url
 
 ```
 
