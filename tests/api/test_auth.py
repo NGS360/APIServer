@@ -74,7 +74,8 @@ def mock_oauth_user_info():
     """Mock OAuth user info response"""
     return {
         "provider_user_id": "oauth_user_123",
-        "email": "oauth.user@example.com",
+        # "email": "oauth.user@example.com",
+        "provider_username": "oauthuser",
         "name": "OAuth Test User",
         "picture": "https://example.com/avatar.jpg"
     }

@@ -405,9 +405,10 @@ def find_or_create_oauth_user(
         HTTPException: If user creation fails
     """
     provider_user_id = provider_data.get("provider_user_id")
+    provider_username = provider_data.get("provider_username")
     email = provider_data.get("email")
 
-    if not provider_user_id or not email:
+    if not provider_user_id or not (email or provider_username):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid user data from OAuth provider"
@@ -438,15 +439,21 @@ def find_or_create_oauth_user(
             )
         return user
 
-    # Check if user with email already exists
-    statement = select(User).where(User.email == email)
+    if email:
+        # Check if user with email already exists
+        statement = select(User).where(User.email == email)
+    else:
+        # If we don't have an email, we have to check by provider user ID (less ideal)
+        statement = select(User).join(OAuthProvider).where(
+            OAuthProvider.provider_name == provider,
+            OAuthProvider.provider_user_id == provider_user_id
+        )
     user = session.exec(statement).first()
 
     if not user:
-        logger.debug("No existing user with email %s, creating new user", email)
+        logger.debug("No existing user, creating new user...")
         # Create new user
-        # username = email.split("@")[0]
-        username = provider_data.get("provider_username") or email.split("@")[0]
+        username = provider_username or email.split("@")[0]
         # Ensure unique username
         base_username = username
         counter = 1
@@ -464,13 +471,14 @@ def find_or_create_oauth_user(
             logger.info(f"First user registered, granting admin rights to {username}")
             is_admin = True
 
+        breakpoint()
         user = User(
             email=email,
             username=username,
             full_name=provider_data.get("name"),
             hashed_password=None,  # OAuth-only user
             is_active=True,
-            is_verified=True,  # Email verified by OAuth provider
+            is_verified=True,  # Verified by OAuth provider
             is_superuser=is_admin
         )
         session.add(user)
