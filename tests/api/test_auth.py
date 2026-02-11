@@ -209,7 +209,7 @@ class TestOAuthLogin:
     """Test OAuth login functionality"""
 
     def test_get_available_oauth_providers(self, client: TestClient):
-        """Test retrieving available OAuth providers"""
+        """Test retrieving no available OAuth providers"""
         response = client.get("/api/v1/auth/oauth/providers")
         assert response.status_code == 200
         data = response.json()
@@ -218,8 +218,8 @@ class TestOAuthLogin:
         assert isinstance(data["providers"], list)
         assert len(data["providers"]) == 0
 
-    def Xtest_get_available_providers(self, client: TestClient):
-        """Test retrieving available OAuth providers"""
+    def test_get_available_providers(self, client: TestClient):
+        """Test retrieving 1 available OAuth providers"""
 
         with patch("api.auth.oauth2_service.get_settings") as mock_settings:
             # Explicitly disable other providers (or else they are MagicMock'd)
