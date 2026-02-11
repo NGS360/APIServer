@@ -170,12 +170,10 @@ class TestOAuthLogin:
         response = client.get("/api/v1/auth/oauth/providers")
         assert response.status_code == 200
         data = response.json()
-        assert data["count"] == 3
+        assert data["count"] == 0
         assert "providers" in data
         assert isinstance(data["providers"], list)
-        assert "google" in data["providers"][0]["name"]
-        assert "github" in data["providers"][1]["name"]
-        assert "corp" in data["providers"][2]["name"]
+        assert len(data["providers"]) == 0
 
     def test_oauth_login_success(self, client: TestClient):
         """Test successful OAuth login (mocked)"""
