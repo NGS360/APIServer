@@ -1,0 +1,79 @@
+providers:
+  google:
+    display_name: "Google"
+    authorize_url: "https://accounts.google.com/o/oauth2/v2/auth"
+    token_url: "https://oauth2.googleapis.com/token"
+    userinfo_url: "https://www.googleapis.com/oauth2/v2/userinfo"
+    scopes:
+      - "openid"
+      - "email"
+      - "profile"
+    scope_separator: " "  # space-separated
+    client_id_env: "OAUTH_GOOGLE_CLIENT_ID"
+    client_secret_env: "OAUTH_GOOGLE_CLIENT_SECRET"
+    logo_url: "/static/logos/google.svg"
+
+    # Field mapping for user data normalization
+    field_mapping:
+      provider_user_id: "id"
+      email: "email"
+      name: "name"
+      picture: "picture"
+
+  github:
+    display_name: "GitHub"
+    authorize_url: "https://github.com/login/oauth/authorize"
+    token_url: "https://github.com/login/oauth/access_token"
+    userinfo_url: "https://api.github.com/user"
+    scopes:
+      - "user:email"
+      - "read:user"
+    scope_separator: ","  # comma-separated
+    client_id_env: "OAUTH_GITHUB_CLIENT_ID"
+    client_secret_env: "OAUTH_GITHUB_CLIENT_SECRET"
+    logo_url: "/static/logos/github.svg"
+
+    field_mapping:
+      provider_user_id: "id"
+      provider_username: "login"
+      email: "email"
+      name: "name|login"  # fallback syntax
+      picture: "avatar_url"
+
+  microsoft:
+    display_name: "Microsoft"
+    authorize_url: "https://login.microsoftonline.com/common/oauth2/v2.0/authorize"
+    token_url: "https://login.microsoftonline.com/common/oauth2/v2.0/token"
+    userinfo_url: "https://graph.microsoft.com/v1.0/me"
+    scopes:
+      - "openid"
+      - "email"
+      - "profile"
+    scope_separator: " "
+    client_id_env: "OAUTH_MICROSOFT_CLIENT_ID"
+    client_secret_env: "OAUTH_MICROSOFT_CLIENT_SECRET"
+    logo_url: "/static/logos/microsoft.svg"
+
+    field_mapping:
+      provider_user_id: "id"
+      email: "mail|userPrincipalName"
+      name: "displayName"
+
+  # Support for dynamic providers via environment variables
+  dynamic_provider:
+    enabled: true
+    name_env: "OAUTH_CORP_NAME"
+    client_id_env: "OAUTH_CORP_CLIENT_ID"
+    client_secret_env: "OAUTH_CORP_CLIENT_SECRET"
+    authorize_url_env: "OAUTH_CORP_AUTHORIZE_URL"
+    token_url_env: "OAUTH_CORP_TOKEN_URL"
+    userinfo_url_env: "OAUTH_CORP_USERINFO_URL"
+    scopes_env: "OAUTH_CORP_SCOPES"  # comma-separated
+    scope_separator: " "
+
+    field_mapping:
+      provider_user_id: "bmsid|sub|id"
+      provider_username: "sub|username|login"
+      email: "email"
+      name: "name|displayName|email"
+      picture: "picture"

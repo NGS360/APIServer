@@ -59,7 +59,6 @@ def oauth_authorize(
             f"{provider}/callback"
         )
     logger.debug(f"Using redirect_uri: {redirect_uri} for provider {provider}")
-
     try:
         # Generate authorization URL
         auth_url = oauth2_service.get_authorization_url(

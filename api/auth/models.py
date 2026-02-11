@@ -18,7 +18,7 @@ class User(SQLModel, table=True):
     id: uuid.UUID | None = Field(default_factory=uuid.uuid4, primary_key=True)
 
     # Authentication
-    email: str = Field(unique=True, index=True, max_length=255)
+    email: str | None = Field(unique=True, index=True, max_length=255)
     username: str = Field(unique=True, index=True, max_length=50)
     hashed_password: str | None = Field(default=None, max_length=255)  # None for OAuth-only
 

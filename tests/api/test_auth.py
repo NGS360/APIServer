@@ -2,6 +2,7 @@
 Unit tests for authentication functionality
 """
 import pytest
+from mock import patch
 from fastapi.testclient import TestClient
 from sqlmodel import Session, create_engine, SQLModel
 from sqlmodel.pool import StaticPool
@@ -55,6 +56,49 @@ def test_user_fixture(session: Session):
     session.commit()
     session.refresh(user)
     return user
+
+
+@pytest.fixture(name="oauth_token_response")
+def mock_oauth_token_response():
+    """Mock OAuth token exchange response"""
+    return {
+        "access_token": "mock_access_token_12345",
+        "refresh_token": "mock_refresh_token_67890",
+        "token_type": "Bearer",
+        "expires_in": 3600
+    }
+
+
+@pytest.fixture(name="oauth_user_info")
+def mock_oauth_user_info():
+    """Mock OAuth user info response"""
+    return {
+        "provider_user_id": "oauth_user_123",
+        # "email": "oauth.user@example.com",
+        "provider_username": "oauthuser",
+        "name": "OAuth Test User",
+        "picture": "https://example.com/avatar.jpg"
+    }
+
+
+@pytest.fixture(name="mock_oauth_provider")
+def mock_oauth_provider(oauth_token_response, oauth_user_info):
+    """
+    Mock OAuth provider HTTP calls
+
+    This fixture patches the async HTTP calls made by oauth2_service
+    """
+    with patch("api.auth.oauth2_service.exchange_code_for_token") as mock_exchange, \
+         patch("api.auth.oauth2_service.get_user_info") as mock_user_info:
+
+        # Configure async mocks
+        mock_exchange.return_value = oauth_token_response
+        mock_user_info.return_value = oauth_user_info
+
+        yield {
+            "exchange_code": mock_exchange,
+            "user_info": mock_user_info
+        }
 
 
 class TestUserRegistration:
@@ -165,41 +209,79 @@ class TestUserLogin:
 class TestOAuthLogin:
     """Test OAuth login functionality"""
 
-    def test_get_available_providers(self, client: TestClient):
-        """Test retrieving available OAuth providers"""
+    def test_get_available_oauth_providers(self, client: TestClient):
+        """Test retrieving no available OAuth providers"""
         response = client.get("/api/v1/auth/oauth/providers")
         assert response.status_code == 200
         data = response.json()
-        assert data["count"] == 3
+        assert data["count"] == 0
         assert "providers" in data
         assert isinstance(data["providers"], list)
-        assert "google" in data["providers"][0]["name"]
-        assert "github" in data["providers"][1]["name"]
-        assert "corp" in data["providers"][2]["name"]
+        assert len(data["providers"]) == 0
 
-    def test_oauth_login_success(self, client: TestClient):
+    def test_get_available_providers(self, client: TestClient):
+        """Test retrieving 1 available OAuth providers"""
+
+        with patch("api.auth.oauth2_service.get_settings") as mock_settings:
+            # Explicitly disable other providers (or else they are MagicMock'd)
+            mock_settings.return_value.OAUTH_GOOGLE_CLIENT_ID = None
+            mock_settings.return_value.OAUTH_GOOGLE_CLIENT_SECRET = None
+            mock_settings.return_value.OAUTH_GITHUB_CLIENT_ID = None
+            mock_settings.return_value.OAUTH_GITHUB_CLIENT_SECRET = None
+            mock_settings.return_value.OAUTH_MICROSOFT_CLIENT_ID = None
+            mock_settings.return_value.OAUTH_MICROSOFT_CLIENT_SECRET = None
+            mock_settings.return_value.OAUTH_CORP_NAME = "testcorp"
+            mock_settings.return_value.OAUTH_CORP_CLIENT_ID = "test_client_id"
+            mock_settings.return_value.OAUTH_CORP_CLIENT_SECRET = "test_secret"
+            mock_settings.return_value.client_origin = "http://localhost:3000"
+
+            response = client.get("/api/v1/auth/oauth/providers")
+            assert response.status_code == 200
+            data = response.json()
+            assert data["count"] == 1
+            assert "providers" in data
+            assert isinstance(data["providers"], list)
+            assert len(data["providers"]) == 1
+
+    def test_oauth_login_redirect(self, client: TestClient):
         """Test successful OAuth login (mocked)"""
-        # This is a placeholder for actual OAuth testing.
-        # In real tests, you would mock the OAuth provider responses.
-        response = client.get(
-            "/api/v1/auth/oauth/corp/authorize"
-        )
-        assert response.status_code == 200
-        data = response.json()
-        assert "access_token" in data
-        assert "refresh_token" in data
+        with patch("api.auth.oauth2_service.get_settings") as mock_settings:
+            mock_settings.return_value.client_origin = "http://localhost:3000"
+            mock_settings.return_value.OAUTH_CORP_NAME = "corp"
+            mock_settings.return_value.OAUTH_CORP_CLIENT_ID = "test_client_id"
+            mock_settings.return_value.OAUTH_CORP_CLIENT_SECRET = "test_secret"
+            mock_settings.return_value.OAUTH_CORP_AUTHORIZE_URL = "https://oauth.testcorp.com/authorize"  # noqa: E501
+            mock_settings.return_value.OAUTH_CORP_TOKEN_URL = "https://oauth.testcorp.com/token"  # noqa: E501
+            mock_settings.return_value.OAUTH_CORP_USERINFO_URL = "https://oauth.testcorp.com/userinfo"  # noqa: E501
 
-    def Xtest_oauth_login_invalid_token(self, client: TestClient):
-        """Test OAuth login with invalid token fails"""
-        response = client.post(
-            "/api/v1/auth/oauth/login",
-            json={
-                "provider": "google",
-                "token": "invalid-oauth-token"
-            }
-        )
-        assert response.status_code == 401
-        assert "Invalid OAuth token" in response.json()["detail"]
+            response = client.get(
+                "/api/v1/auth/oauth/corp/authorize",
+                follow_redirects=False
+            )
+            assert response.status_code == 307  # Redirect
+            assert "oauth.testcorp.com" in response.headers["location"]
+
+    def test_oauth_login_callback(self, client: TestClient, mock_oauth_provider):
+        """Test OAuth callback handling (mocked)"""
+        with patch("api.auth.oauth2_service.get_settings") as mock_settings:
+            mock_settings.return_value.client_origin = "http://localhost:3000"
+            mock_settings.return_value.OAUTH_CORP_NAME = "corp"
+            mock_settings.return_value.OAUTH_CORP_CLIENT_ID = "test_client_id"
+            mock_settings.return_value.OAUTH_CORP_CLIENT_SECRET = "test_secret"
+            mock_settings.return_value.OAUTH_CORP_AUTHORIZE_URL = "https://oauth.testcorp.com/authorize"  # noqa: E501
+            mock_settings.return_value.OAUTH_CORP_TOKEN_URL = "https://oauth.testcorp.com/token"
+            mock_settings.return_value.OAUTH_CORP_USERINFO_URL = "https://oauth.testcorp.com/userinfo"  # noqa: E501
+
+            response = client.get(
+                "/api/v1/auth/oauth/corp/callback",
+                params={"code": "mock_code_123"}
+            )
+            assert response.status_code == 200
+            data = response.json()
+            assert "access_token" in data
+            assert "refresh_token" in data
+            assert data["token_type"] == "bearer"
+            assert data["expires_in"] > 0
 
 
 class TestTokenRefresh:
