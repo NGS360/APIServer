@@ -250,9 +250,9 @@ class TestOAuthLogin:
             mock_settings.return_value.OAUTH_CORP_NAME = "corp"
             mock_settings.return_value.OAUTH_CORP_CLIENT_ID = "test_client_id"
             mock_settings.return_value.OAUTH_CORP_CLIENT_SECRET = "test_secret"
-            mock_settings.return_value.OAUTH_CORP_AUTHORIZE_URL = "https://oauth.testcorp.com/authorize"
-            mock_settings.return_value.OAUTH_CORP_TOKEN_URL = "https://oauth.testcorp.com/token"
-            mock_settings.return_value.OAUTH_CORP_USERINFO_URL = "https://oauth.testcorp.com/userinfo"
+            mock_settings.return_value.OAUTH_CORP_AUTHORIZE_URL = "https://oauth.testcorp.com/authorize"  # noqa: E501
+            mock_settings.return_value.OAUTH_CORP_TOKEN_URL = "https://oauth.testcorp.com/token"  # noqa: E501
+            mock_settings.return_value.OAUTH_CORP_USERINFO_URL = "https://oauth.testcorp.com/userinfo"  # noqa: E501
 
             response = client.get(
                 "/api/v1/auth/oauth/corp/authorize",

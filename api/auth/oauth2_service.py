@@ -422,7 +422,10 @@ def find_or_create_oauth_user(
     oauth_link = session.exec(statement).first()
 
     if oauth_link:
-        logger.debug("Found existing OAuth link for provider %s and user ID %s", provider, provider_user_id)
+        logger.debug(
+            "Found existing OAuth link for provider %s and user ID %s",
+            provider, provider_user_id
+            )
         # User already exists, update tokens
         oauth_link.access_token = access_token
         oauth_link.refresh_token = refresh_token
