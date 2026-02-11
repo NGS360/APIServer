@@ -158,7 +158,6 @@ def get_available_providers() -> AvailableProvidersResponse:
     providers_dict = OAuth2ProviderConfig.get_all_providers()
 
     providers_info = []
-    use_corporate_sso = False
 
     for name, config in providers_dict.items():
         providers_info.append(OAuthProviderInfo(
@@ -168,14 +167,8 @@ def get_available_providers() -> AvailableProvidersResponse:
             authorize_url=f"/api/v1/auth/oauth/{name}/authorize"
         ))
 
-        # Check if it's corporate SSO
-        settings = get_settings()
-        if settings.OAUTH_CORP_NAME and name == settings.OAUTH_CORP_NAME.lower():
-            use_corporate_sso = True
-
     return AvailableProvidersResponse(
         count=len(providers_info),
-        use_corporate_sso=use_corporate_sso,
         providers=providers_info
     )
 

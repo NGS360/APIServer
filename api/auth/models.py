@@ -222,5 +222,4 @@ class OAuthProviderInfo(SQLModel):
 class AvailableProvidersResponse(SQLModel):
     """Available OAuth providers response"""
     count: int
-    use_corporate_sso: bool = False
     providers: list[OAuthProviderInfo]
