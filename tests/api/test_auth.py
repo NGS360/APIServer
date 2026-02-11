@@ -221,7 +221,14 @@ class TestOAuthLogin:
     def test_get_available_providers(self, client: TestClient):
         """Test retrieving available OAuth providers"""
 
-        with patch("api.auth.oauth_client.get_settings") as mock_settings:
+        with patch("api.auth.oauth2_service.get_settings") as mock_settings:
+            # Explicitly disable other providers (or else they are MagicMock'd)
+            mock_settings.return_value.OAUTH_GOOGLE_CLIENT_ID = None
+            mock_settings.return_value.OAUTH_GOOGLE_CLIENT_SECRET = None
+            mock_settings.return_value.OAUTH_GITHUB_CLIENT_ID = None
+            mock_settings.return_value.OAUTH_GITHUB_CLIENT_SECRET = None
+            mock_settings.return_value.OAUTH_MICROSOFT_CLIENT_ID = None
+            mock_settings.return_value.OAUTH_MICROSOFT_CLIENT_SECRET = None
             mock_settings.return_value.OAUTH_CORP_NAME = "testcorp"
             mock_settings.return_value.OAUTH_CORP_CLIENT_ID = "test_client_id"
             mock_settings.return_value.OAUTH_CORP_CLIENT_SECRET = "test_secret"
@@ -235,9 +242,10 @@ class TestOAuthLogin:
             assert isinstance(data["providers"], list)
             assert len(data["providers"]) == 1
 
-    def Xtest_oauth_login_redirect(self, client: TestClient):
+    def test_oauth_login_redirect(self, client: TestClient):
         """Test successful OAuth login (mocked)"""
-        with patch("api.auth.oauth_routes.get_settings") as mock_settings:
+        with patch("api.auth.oauth2_service.get_settings") as mock_settings:
+            mock_settings.return_value.OAUTH_CORP_NAME = "testcorp"
             mock_settings.return_value.OAUTH_CORP_CLIENT_ID = "test_client_id"
             mock_settings.return_value.OAUTH_CORP_CLIENT_SECRET = "test_secret"
             mock_settings.return_value.client_origin = "http://localhost:3000"

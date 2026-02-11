@@ -179,7 +179,6 @@ def get_authorization_url(
     """
     settings = get_settings()
     config = OAuth2ProviderConfig.get_provider_config(provider)
-
     # Get client ID based on provider
     match provider:
         case "google":
