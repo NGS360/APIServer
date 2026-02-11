@@ -15,6 +15,7 @@ from api.qcmetrics.models import (
     QCRecordSearchRequest,
 )
 from api.qcmetrics import services
+from api.auth.deps import CurrentActiveUser
 from core.deps import SessionDep
 
 router = APIRouter(prefix="/qcmetrics", tags=["QC Metrics"])
@@ -28,24 +29,22 @@ router = APIRouter(prefix="/qcmetrics", tags=["QC Metrics"])
 )
 def create_qcrecord(
     session: SessionDep,
+    current_user: CurrentActiveUser,
     qcrecord_create: QCRecordCreate,
-    created_by: str = Query(
-        ...,
-        description="Username of the person creating this record"
-    ),
 ) -> QCRecordCreated:
     """
     Create a new QC record with metrics and output files.
 
     The record stores quality control metrics from a pipeline execution.
+    The `created_by` field is automatically set from the authenticated user.
 
-    **Note:** Right now `created_by` is just a string username passed as a query parameter;
-    once authentication is in place, this will be derived from the logged-in user.
+    **Authentication required:** Bearer token must be provided.
 
     **Example curl command:**
 
     ```bash
-    curl -X POST "http://localhost:8000/api/v1/qcmetrics?created_by=jsmith" \\
+    curl -X POST "http://localhost:8000/api/v1/qcmetrics" \\
+      -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \\
       -H "Content-Type: application/json" \\
       -d '{
         "project_id": "P-1234",
@@ -110,7 +109,7 @@ def create_qcrecord(
     If an equivalent record already exists for the project (same metadata),
     the existing record is returned instead of creating a duplicate.
     """
-    return services.create_qcrecord(session, qcrecord_create, created_by)
+    return services.create_qcrecord(session, qcrecord_create, current_user.username)
 
 
 @router.get(
