@@ -165,8 +165,30 @@ Associates samples with a metric group.
 
 **POST /api/v1/qcmetrics**
 
-Query parameters:
-- `created_by` (required): User creating the record
+**Authentication required**: Bearer token must be provided in the Authorization header.
+
+The `created_by` field is automatically set from the authenticated user's username.
+
+**Example curl command**:
+```bash
+curl -X POST "http://localhost:8000/api/v1/qcmetrics" \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "project_id": "P-1234",
+    "metadata": {
+      "pipeline": "RNA-Seq",
+      "version": "2.0.0"
+    },
+    "metrics": [
+      {
+        "name": "alignment_stats",
+        "samples": [{"sample_name": "Sample1"}],
+        "values": {"reads": 50000000, "alignment_rate": 95.5}
+      }
+    ]
+  }'
+```
 
 **Request Body**:
 ```json
