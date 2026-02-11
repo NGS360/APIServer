@@ -242,20 +242,23 @@ class TestOAuthLogin:
             assert isinstance(data["providers"], list)
             assert len(data["providers"]) == 1
 
-    def Xtest_oauth_login_redirect(self, client: TestClient):
+    def test_oauth_login_redirect(self, client: TestClient):
         """Test successful OAuth login (mocked)"""
         with patch("api.auth.oauth2_service.get_settings") as mock_settings:
-            mock_settings.return_value.OAUTH_CORP_NAME = "testcorp"
+            mock_settings.return_value.client_origin = "http://localhost:3000"
+            mock_settings.return_value.OAUTH_CORP_NAME = "corp"
             mock_settings.return_value.OAUTH_CORP_CLIENT_ID = "test_client_id"
             mock_settings.return_value.OAUTH_CORP_CLIENT_SECRET = "test_secret"
-            mock_settings.return_value.client_origin = "http://localhost:3000"
+            mock_settings.return_value.OAUTH_CORP_AUTHORIZE_URL = "https://oauth.testcorp.com/authorize"
+            mock_settings.return_value.OAUTH_CORP_TOKEN_URL = "https://oauth.testcorp.com/token"
+            mock_settings.return_value.OAUTH_CORP_USERINFO_URL = "https://oauth.testcorp.com/userinfo"
 
             response = client.get(
                 "/api/v1/auth/oauth/corp/authorize",
                 follow_redirects=False
             )
             assert response.status_code == 307  # Redirect
-            assert "accounts.google.com" in response.headers["location"]
+            assert "oauth.testcorp.com" in response.headers["location"]
 
     def Xtest_oauth_login_invalid_token(self, client: TestClient):
         """Test OAuth login with invalid token fails"""
