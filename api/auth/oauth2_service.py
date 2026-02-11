@@ -471,7 +471,6 @@ def find_or_create_oauth_user(
             logger.info(f"First user registered, granting admin rights to {username}")
             is_admin = True
 
-        breakpoint()
         user = User(
             email=email,
             username=username,
