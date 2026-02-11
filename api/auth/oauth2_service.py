@@ -373,17 +373,10 @@ def _normalize_user_data(provider: str, data: dict) -> dict:
         case _:
             # Generic normalization for corporate or unknown providers
             # Assumes standard OIDC claims
-            # {'given_name': 'First', 
-            #  'family_name': 'Last', 
-            #  'name': 'First Last', 
+            # {'name': 'First Last', 
             #  'bmsid': '00365089', 
-            #  'email': 'Ryan.Golhar@bms.com', 
-            #  'organization_claim': 'LVL', 
-            #  'location_claim': 'Princeton', 
-            #  'countrycode': 'US', 
-            #  'bmspersonassociation': 'Employee', 
+            #  'email': 'First.Last@company.com', 
             #  'sub': 'golharr', 
-            #  'subname': 'golharr'
             # }
             # TODO: We need a better way to map non-standard fields to standard ones,
             # possibly via provider-specific config or a mapping function
