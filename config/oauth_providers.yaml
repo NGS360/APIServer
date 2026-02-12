@@ -11,7 +11,7 @@ providers:
     scope_separator: " "  # space-separated
     client_id_env: "OAUTH_GOOGLE_CLIENT_ID"
     client_secret_env: "OAUTH_GOOGLE_CLIENT_SECRET"
-    logo_url: "/static/logos/google.svg"
+    logo_url: "/img/google.svg"
 
     # Field mapping for user data normalization
     field_mapping:
@@ -31,7 +31,7 @@ providers:
     scope_separator: ","  # comma-separated
     client_id_env: "OAUTH_GITHUB_CLIENT_ID"
     client_secret_env: "OAUTH_GITHUB_CLIENT_SECRET"
-    logo_url: "/static/logos/github.svg"
+    logo_url: "/img/github.svg"
 
     field_mapping:
       provider_user_id: "id"
@@ -52,7 +52,7 @@ providers:
     scope_separator: " "
     client_id_env: "OAUTH_MICROSOFT_CLIENT_ID"
     client_secret_env: "OAUTH_MICROSOFT_CLIENT_SECRET"
-    logo_url: "/static/logos/microsoft.svg"
+    logo_url: "/img/microsoft.svg"
 
     field_mapping:
       provider_user_id: "id"

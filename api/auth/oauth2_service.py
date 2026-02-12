@@ -136,7 +136,7 @@ class OAuth2ProviderConfig:
             if client_id and client_secret:
                 available[name] = {
                     'display_name': config.get('display_name', name.title()),
-                    'logo_url': config.get('logo_url', f'/static/logos/{name}.svg'),
+                    'logo_url': config.get('logo_url', f'/img/{name}.svg'),
                     'enabled': True,
                 }
 
@@ -146,7 +146,7 @@ class OAuth2ProviderConfig:
             corp_name = settings.OAUTH_CORP_NAME.lower()
             available[corp_name] = {
                 'display_name': settings.OAUTH_CORP_NAME,
-                'logo_url': f'/static/logos/{corp_name}.svg',
+                'logo_url': f'/img/{corp_name}.svg',
                 'enabled': True,
             }
 
