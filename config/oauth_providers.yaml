@@ -63,6 +63,7 @@ providers:
   dynamic_provider:
     enabled: true
     name_env: "OAUTH_CORP_NAME"
+    display_name_env: "OAUTH_CORP_DISPLAY_NAME"
     client_id_env: "OAUTH_CORP_CLIENT_ID"
     client_secret_env: "OAUTH_CORP_CLIENT_SECRET"
     authorize_url_env: "OAUTH_CORP_AUTHORIZE_URL"

@@ -231,6 +231,7 @@ class TestOAuthLogin:
             mock_settings.return_value.OAUTH_MICROSOFT_CLIENT_ID = None
             mock_settings.return_value.OAUTH_MICROSOFT_CLIENT_SECRET = None
             mock_settings.return_value.OAUTH_CORP_NAME = "testcorp"
+            mock_settings.return_value.OAUTH_CORP_DISPLAY_NAME = "TestCorp"
             mock_settings.return_value.OAUTH_CORP_CLIENT_ID = "test_client_id"
             mock_settings.return_value.OAUTH_CORP_CLIENT_SECRET = "test_secret"
             mock_settings.return_value.client_origin = "http://localhost:3000"

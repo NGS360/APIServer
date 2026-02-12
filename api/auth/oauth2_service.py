@@ -145,7 +145,7 @@ class OAuth2ProviderConfig:
         if settings.OAUTH_CORP_NAME and settings.OAUTH_CORP_CLIENT_ID:
             corp_name = settings.OAUTH_CORP_NAME.lower()
             available[corp_name] = {
-                'display_name': settings.OAUTH_CORP_NAME,
+                'display_name': settings.OAUTH_CORP_DISPLAY_NAME,
                 'logo_url': f'/img/{corp_name}.svg',
                 'enabled': True,
             }

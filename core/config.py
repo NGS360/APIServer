@@ -360,6 +360,11 @@ class Settings(BaseSettings):
 
     @computed_field
     @property
+    def OAUTH_CORP_DISPLAY_NAME(self) -> str | None:
+        return self._get_config_value("OAUTH_CORP_DISPLAY_NAME", default=self.OAUTH_CORP_NAME)
+
+    @computed_field
+    @property
     def OAUTH_CORP_CLIENT_ID(self) -> str | None:
         """Get Corporate OAuth client ID"""
         return self._get_config_value("OAUTH_CORP_CLIENT_ID")
