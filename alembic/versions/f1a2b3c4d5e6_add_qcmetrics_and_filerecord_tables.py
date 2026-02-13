@@ -1,7 +1,7 @@
 """Add QCMetrics and migrate File to unified schema
 
 Revision ID: f1a2b3c4d5e6
-Revises: b6847b89d202
+Revises: c02a84176a0a
 Create Date: 2026-01-29 16:45:00.000000
 
 This migration:
@@ -431,16 +431,12 @@ def upgrade() -> None:
 def downgrade() -> None:
     """Revert to original file schema and drop QCMetrics tables."""
 
-    # Drop QCRecord tables
-    #op.drop_index('ix_qcmetricsample_sample_name', table_name='qcmetricsample')
+    # Drop QCRecord tables (child tables first to respect foreign keys;
+    # indexes are automatically dropped with their tables)
     op.drop_table('qcmetricsample', if_exists=True)
-    #op.drop_index('ix_qcmetricvalue_key_numeric', table_name='qcmetricvalue')
     op.drop_table('qcmetricvalue', if_exists=True)
-    #op.drop_index('ix_qcmetric_name', table_name='qcmetric')
-    #op.drop_index('ix_qcmetric_qcrecord_id', table_name='qcmetric')
     op.drop_table('qcmetric', if_exists=True)
-    #op.drop_table('qcrecordmetadata')
-    #op.drop_index('ix_qcrecord_project_id', table_name='qcrecord')
+    op.drop_table('qcrecordmetadata', if_exists=True)
     op.drop_table('qcrecord', if_exists=True)
 
     # Note: MySQL doesn't have CREATE TYPE - enums are defined inline on columns
@@ -684,9 +680,9 @@ def downgrade() -> None:
     # Recreate unique constraint on file_id
     op.create_unique_constraint('file_file_id_key', 'file', ['file_id'])
 
-    # Drop File supporting tables
+    # Drop File supporting tables (indexes are automatically dropped with
+    # their tables)
     op.drop_table('filesample')
     op.drop_table('filetag')
     op.drop_table('filehash')
-    op.drop_index('ix_fileentity_entity', table_name='fileentity')
     op.drop_table('fileentity')
