@@ -15,7 +15,7 @@ down-rm:
 
 drop-db:
 	docker volume rm apiserver_db_data
-
+	docker volume rm apiserver_opensearch_data
 run:
 	uv run fastapi dev main.py
 
