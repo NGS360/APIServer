@@ -432,16 +432,16 @@ def downgrade() -> None:
     """Revert to original file schema and drop QCMetrics tables."""
 
     # Drop QCRecord tables
-    op.drop_index('ix_qcmetricsample_sample_name', table_name='qcmetricsample')
-    op.drop_table('qcmetricsample')
-    op.drop_index('ix_qcmetricvalue_key_numeric', table_name='qcmetricvalue')
-    op.drop_table('qcmetricvalue')
-    op.drop_index('ix_qcmetric_name', table_name='qcmetric')
-    op.drop_index('ix_qcmetric_qcrecord_id', table_name='qcmetric')
-    op.drop_table('qcmetric')
-    op.drop_table('qcrecordmetadata')
-    op.drop_index('ix_qcrecord_project_id', table_name='qcrecord')
-    op.drop_table('qcrecord')
+    #op.drop_index('ix_qcmetricsample_sample_name', table_name='qcmetricsample')
+    op.drop_table('qcmetricsample', if_exists=True)
+    #op.drop_index('ix_qcmetricvalue_key_numeric', table_name='qcmetricvalue')
+    op.drop_table('qcmetricvalue', if_exists=True)
+    #op.drop_index('ix_qcmetric_name', table_name='qcmetric')
+    #op.drop_index('ix_qcmetric_qcrecord_id', table_name='qcmetric')
+    op.drop_table('qcmetric', if_exists=True)
+    #op.drop_table('qcrecordmetadata')
+    #op.drop_index('ix_qcrecord_project_id', table_name='qcrecord')
+    op.drop_table('qcrecord', if_exists=True)
 
     # Note: MySQL doesn't have CREATE TYPE - enums are defined inline on columns
     # Skip enum creation for MySQL (they're created when columns are added)
