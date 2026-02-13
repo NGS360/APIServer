@@ -20,7 +20,7 @@ from api.runs.models import SequencingRun
 from api.vendors.models import Vendor
 from api.workflow.models import Workflow, WorkflowAttribute
 from api.jobs.models import BatchJob
-from api.qc.models import QCRecord, QCRecordMetadata, QCMetric, QCMetricValue, QCMetricSample
+from api.qcmetrics.models import QCRecord, QCRecordMetadata, QCMetric, QCMetricValue, QCMetricSample
 
 # Import Base from your SQLModel setup
 #from core.db import Base
