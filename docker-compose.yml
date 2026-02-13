@@ -43,6 +43,10 @@ services:
       - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY:-admin}
       - AWS_REGION=${AWS_REGION:-us-east-1}
       - DEMUX_WORKFLOW_CONFIGS_BUCKET_URI=${DEMUX_WORKFLOW_CONFIGS_BUCKET_URI:-s3://my-tool-configs-bucket/}
+      - OAUTH_GOOGLE_CLIENT_ID=${OAUTH_GOOGLE_CLIENT_ID:-test}
+      - OAUTH_GOOGLE_CLIENT_SECRET=${OAUTH_GOOGLE_CLIENT_SECRET:-test}
+      - OAUTH_GITHUB_CLIENT_ID=${OAUTH_GITHUB_CLIENT_ID:-test}
+      - OAUTH_GITHUB_CLIENT_SECRET=${OAUTH_GITHUB_CLIENT_SECRET:-test}
     volumes: # this allows live reloading of the backend code
       - ${PWD}:/app
  

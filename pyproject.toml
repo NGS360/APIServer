@@ -39,6 +39,7 @@ dev = [
 [dependency-groups]
 dev = [
     "flake8>=7.3.0",
+    "mock>=5.2.0",
     "pytest>=8.4.1",
     "pytest-cov>=6.2.1",
 ]

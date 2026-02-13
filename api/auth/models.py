@@ -18,7 +18,7 @@ class User(SQLModel, table=True):
     id: uuid.UUID | None = Field(default_factory=uuid.uuid4, primary_key=True)
 
     # Authentication
-    email: str = Field(unique=True, index=True, max_length=255)
+    email: str | None = Field(unique=True, index=True, max_length=255)
     username: str = Field(unique=True, index=True, max_length=50)
     hashed_password: str | None = Field(default=None, max_length=255)  # None for OAuth-only
 
@@ -64,6 +64,7 @@ class OAuthProviderName(str, Enum):
     GOOGLE = "google"
     GITHUB = "github"
     MICROSOFT = "microsoft"
+    CORP = "corp"  # For internal corporate SSO
 
 
 class OAuthProvider(SQLModel, table=True):
@@ -72,9 +73,10 @@ class OAuthProvider(SQLModel, table=True):
     __tablename__ = "oauth_providers"
 
     id: uuid.UUID | None = Field(default_factory=uuid.uuid4, primary_key=True)
-    username: str = Field(foreign_key="users.username", index=True)
-    provider_name: OAuthProviderName = Field(index=True)
-    provider_username: str = Field(max_length=255)
+    user_id: uuid.UUID = Field(foreign_key="users.id", index=True)
+
+    provider_name: str = Field(max_length=50)
+    provider_user_id: str = Field(index=True, max_length=255)
 
     # OAuth tokens (should be encrypted in production)
     access_token: str | None = Field(default=None, max_length=1000)
@@ -207,3 +209,17 @@ class UsersPublic(SQLModel):
     count: int
     page: int
     per_page: int
+
+
+class OAuthProviderInfo(SQLModel):
+    """OAuth provider information"""
+    name: str
+    display_name: str
+    logo_url: str
+    authorize_url: str
+
+
+class AvailableProvidersResponse(SQLModel):
+    """Available OAuth providers response"""
+    count: int
+    providers: list[OAuthProviderInfo]
