@@ -109,7 +109,7 @@ opensearch-py==3.1.0
     # via ngs360-server (pyproject.toml)
 packaging==25.0
     # via gunicorn
-protobuf==6.33.2
+protobuf==6.33.5
     # via opensearch-protobufs
 pyasn1==0.6.2
     # via
@@ -212,7 +212,7 @@ typing-inspection==0.4.2
     # via
     #   pydantic
     #   pydantic-settings
-urllib3==2.6.1
+urllib3==2.6.3
     # via
     #   botocore
     #   opensearch-py
