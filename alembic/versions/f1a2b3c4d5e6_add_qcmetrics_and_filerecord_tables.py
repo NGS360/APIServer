@@ -677,8 +677,9 @@ def downgrade() -> None:
     op.drop_column('file', 'created_on')
     op.drop_column('file', 'source')
 
-    # Recreate unique constraint on file_id
-    op.create_unique_constraint('file_file_id_key', 'file', ['file_id'])
+    # Recreate unique constraint on file_id (MySQL names it 'file_id' when
+    # created via sa.UniqueConstraint('file_id') without an explicit name)
+    op.create_unique_constraint('file_id', 'file', ['file_id'])
 
     # Drop File supporting tables (indexes are automatically dropped with
     # their tables)
