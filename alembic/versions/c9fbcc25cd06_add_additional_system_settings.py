@@ -1,7 +1,7 @@
 """add additional system settings
 
 Revision ID: c9fbcc25cd06
-Revises: b6847b89d202
+Revises: d89d27d47634
 Create Date: 2026-02-04 15:55:55.517103
 
 """
@@ -14,7 +14,7 @@ from sqlalchemy import table, column
 
 # revision identifiers, used by Alembic.
 revision: str = 'c9fbcc25cd06'
-down_revision: Union[str, Sequence[str], None] = 'b6847b89d202'
+down_revision: Union[str, Sequence[str], None] = 'd89d27d47634'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
