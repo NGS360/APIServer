@@ -3,14 +3,20 @@ OAuth2 service for external authentication providers
 """
 import logging
 from datetime import datetime, timezone
+import os
+from typing import Any, Dict, Optional
+from urllib.parse import urlencode
 import uuid
+from pathlib import Path
 
 from fastapi import HTTPException, status
 from sqlmodel import Session, select
 import httpx
+import yaml
 
 from api.auth.models import (
-    User, OAuthProvider, OAuthProviderName
+    User, OAuthProvider, OAuthProviderName,
+    OAuthProviderInfo, AvailableProvidersResponse
 )
 from core.config import get_settings
 from core.security import generate_secure_token
@@ -19,41 +25,152 @@ logger = logging.getLogger(__name__)
 
 
 class OAuth2ProviderConfig:
-    """Configuration for OAuth2 providers"""
+    """Configuration for OAuth2 providers loaded from config file"""
 
-    PROVIDERS = {
-        "google": {
-            "authorize_url": "https://accounts.google.com/o/oauth2/v2/auth",
-            "token_url": "https://oauth2.googleapis.com/token",
-            "userinfo_url": "https://www.googleapis.com/oauth2/v2/userinfo",
-            "scopes": ["openid", "email", "profile"],
-        },
-        "github": {
-            "authorize_url": "https://github.com/login/oauth/authorize",
-            "token_url": "https://github.com/login/oauth/access_token",
-            "userinfo_url": "https://api.github.com/user",
-            "scopes": ["user:email", "read:user"],
-        },
-        "microsoft": {
-            "authorize_url": (
-                "https://login.microsoftonline.com/common/oauth2/v2.0/"
-                "authorize"
-            ),
-            "token_url": (
-                "https://login.microsoftonline.com/common/oauth2/v2.0/"
-                "token"
-            ),
-            "userinfo_url": "https://graph.microsoft.com/v1.0/me",
-            "scopes": ["openid", "email", "profile"],
-        },
-    }
+    _config: Dict[str, Any] = None
+    _providers: Dict[str, Dict] = {}
+
+    @classmethod
+    def load_config(cls, config_path: str = "config/oauth_providers.yaml"):
+        """Load provider configuration from YAML file"""
+        if cls._config is not None:
+            return  # Already loaded
+
+        config_file = Path(config_path)
+        if config_file.exists():
+            with open(config_file, 'r') as f:
+                cls._config = yaml.safe_load(f)
+                cls._providers = cls._config.get('providers', {})
+        else:
+            # Fallback to empty config if file doesn't exist
+            cls._config = {'providers': {}, 'dynamic_provider': {'enabled': True}}
+            cls._providers = {}
 
     @classmethod
     def get_provider_config(cls, provider: str) -> dict:
-        """Get configuration for OAuth provider"""
-        if provider not in cls.PROVIDERS:
-            raise ValueError(f"Unsupported provider: {provider}")
-        return cls.PROVIDERS[provider]
+        """Get configuration for OAuth provider (built-in or dynamic)"""
+        cls.load_config()
+
+        # Check if it's a built-in provider
+        if provider in cls._providers:
+            config = cls._providers[provider]
+            return cls._build_provider_config(config)
+
+        # Check if it's the dynamic corporate provider
+        return cls._get_dynamic_provider_config(provider)
+
+    @classmethod
+    def _build_provider_config(cls, config: dict) -> dict:
+        """Build provider config from YAML definition"""
+        return {
+            "authorize_url": config['authorize_url'],
+            "token_url": config['token_url'],
+            "userinfo_url": config['userinfo_url'],
+            "scopes": config['scopes'],
+            "scope_separator": config.get('scope_separator', ' '),
+            "field_mapping": config.get('field_mapping', {}),
+        }
+
+    @classmethod
+    def _get_dynamic_provider_config(cls, provider: str) -> dict:
+        """Get configuration for dynamically configured corporate provider"""
+        settings = get_settings()
+
+        if settings.OAUTH_CORP_NAME and provider.lower() == settings.OAUTH_CORP_NAME.lower():
+            if not all([
+                settings.OAUTH_CORP_AUTHORIZE_URL,
+                settings.OAUTH_CORP_TOKEN_URL,
+                settings.OAUTH_CORP_USERINFO_URL,
+            ]):
+                raise ValueError(f"Corporate OAuth provider '{provider}' is not fully configured")
+
+            scopes_str = settings.OAUTH_CORP_SCOPES or "openid,email,profile"
+            scopes = [scope.strip() for scope in scopes_str.split(",")]
+
+            return {
+                "authorize_url": settings.OAUTH_CORP_AUTHORIZE_URL,
+                "token_url": settings.OAUTH_CORP_TOKEN_URL,
+                "userinfo_url": settings.OAUTH_CORP_USERINFO_URL,
+                "scopes": scopes,
+                "scope_separator": " ",
+                "field_mapping": {
+                    "provider_user_id": "bmsid|sub|id",
+                    "provider_username": "sub|username|login",
+                    "email": "email",
+                    "name": "name|displayName|email",
+                    "picture": "picture",
+                }
+            }
+
+        raise ValueError(f"Unsupported OAuth provider: {provider}")
+
+    @classmethod
+    def get_client_credentials(cls, provider: str) -> tuple[Optional[str], Optional[str]]:
+        """Get client ID and secret from environment variables"""
+        cls.load_config()
+
+        # Check configured providers
+        if provider in cls._providers:
+            config = cls._providers[provider]
+            client_id = os.getenv(config['client_id_env'])
+            client_secret = os.getenv(config['client_secret_env'])
+            return client_id, client_secret
+
+        # Check dynamic provider
+        settings = get_settings()
+        if settings.OAUTH_CORP_NAME and provider == settings.OAUTH_CORP_NAME.lower():
+            return settings.OAUTH_CORP_CLIENT_ID, settings.OAUTH_CORP_CLIENT_SECRET
+
+        return None, None
+
+    @classmethod
+    def get_all_providers(cls) -> Dict[str, Dict]:
+        """Get all available providers with their configs"""
+        cls.load_config()
+
+        available = {}
+
+        # Add configured providers that have credentials
+        for name, config in cls._providers.items():
+            client_id, client_secret = cls.get_client_credentials(name)
+            if client_id and client_secret:
+                available[name] = {
+                    'display_name': config.get('display_name', name.title()),
+                    'logo_url': config.get('logo_url', f'/img/{name}.svg'),
+                    'enabled': True,
+                }
+
+        # Add dynamic provider if configured
+        settings = get_settings()
+        if settings.OAUTH_CORP_NAME and settings.OAUTH_CORP_CLIENT_ID:
+            corp_name = settings.OAUTH_CORP_NAME.lower()
+            available[corp_name] = {
+                'display_name': settings.OAUTH_CORP_DISPLAY_NAME,
+                'logo_url': f'/img/{corp_name}.svg',
+                'enabled': True,
+            }
+
+        return available
+
+
+def get_available_providers() -> AvailableProvidersResponse:
+    """Get list of configured OAuth providers"""
+    providers_dict = OAuth2ProviderConfig.get_all_providers()
+
+    providers_info = []
+
+    for name, config in providers_dict.items():
+        providers_info.append(OAuthProviderInfo(
+            name=name,
+            display_name=config['display_name'],
+            logo_url=config['logo_url'],
+            authorize_url=f"/api/v1/auth/oauth/{name}/authorize"
+        ))
+
+    return AvailableProvidersResponse(
+        count=len(providers_info),
+        providers=providers_info
+    )
 
 
 def get_authorization_url(
@@ -78,15 +195,18 @@ def get_authorization_url(
     """
     settings = get_settings()
     config = OAuth2ProviderConfig.get_provider_config(provider)
-
     # Get client ID based on provider
-    client_id = None
-    if provider == "google":
-        client_id = settings.OAUTH_GOOGLE_CLIENT_ID
-    elif provider == "github":
-        client_id = settings.OAUTH_GITHUB_CLIENT_ID
-    elif provider == "microsoft":
-        client_id = settings.OAUTH_MICROSOFT_CLIENT_ID
+    match provider:
+        case "google":
+            client_id = settings.OAUTH_GOOGLE_CLIENT_ID
+        case "github":
+            client_id = settings.OAUTH_GITHUB_CLIENT_ID
+        case "microsoft":
+            client_id = settings.OAUTH_MICROSOFT_CLIENT_ID
+        case _ if settings.OAUTH_CORP_NAME and provider == settings.OAUTH_CORP_NAME.lower():
+            client_id = settings.OAUTH_CORP_CLIENT_ID
+        case _:
+            client_id = None
 
     if not client_id:
         raise HTTPException(
@@ -112,7 +232,7 @@ def get_authorization_url(
     if provider == "github":
         params["scope"] = ",".join(config["scopes"])
 
-    query_string = "&".join(f"{k}={v}" for k, v in params.items())
+    query_string = urlencode(params)
     return f"{config['authorize_url']}?{query_string}"
 
 
@@ -139,17 +259,22 @@ async def exchange_code_for_token(
     config = OAuth2ProviderConfig.get_provider_config(provider)
 
     # Get client credentials
-    client_id = None
-    client_secret = None
-    if provider == "google":
-        client_id = settings.OAUTH_GOOGLE_CLIENT_ID
-        client_secret = settings.OAUTH_GOOGLE_CLIENT_SECRET
-    elif provider == "github":
-        client_id = settings.OAUTH_GITHUB_CLIENT_ID
-        client_secret = settings.OAUTH_GITHUB_CLIENT_SECRET
-    elif provider == "microsoft":
-        client_id = settings.OAUTH_MICROSOFT_CLIENT_ID
-        client_secret = settings.OAUTH_MICROSOFT_CLIENT_SECRET
+    match provider:
+        case "google":
+            client_id = settings.OAUTH_GOOGLE_CLIENT_ID
+            client_secret = settings.OAUTH_GOOGLE_CLIENT_SECRET
+        case "github":
+            client_id = settings.OAUTH_GITHUB_CLIENT_ID
+            client_secret = settings.OAUTH_GITHUB_CLIENT_SECRET
+        case "microsoft":
+            client_id = settings.OAUTH_MICROSOFT_CLIENT_ID
+            client_secret = settings.OAUTH_MICROSOFT_CLIENT_SECRET
+        case _ if settings.OAUTH_CORP_NAME and provider == settings.OAUTH_CORP_NAME.lower():
+            client_id = settings.OAUTH_CORP_CLIENT_ID
+            client_secret = settings.OAUTH_CORP_CLIENT_SECRET
+        case _:
+            client_id = None
+            client_secret = None
 
     if not client_id or not client_secret:
         raise HTTPException(
@@ -214,6 +339,7 @@ async def get_user_info(provider: str, access_token: str) -> dict:
             )
             response.raise_for_status()
             user_data = response.json()
+            logger.info("Received user data from %s: %s", provider, user_data)
 
             # Normalize user data across providers
             return _normalize_user_data(provider, user_data)
@@ -226,39 +352,26 @@ async def get_user_info(provider: str, access_token: str) -> dict:
 
 
 def _normalize_user_data(provider: str, data: dict) -> dict:
-    """
-    Normalize user data from different providers
+    """Normalize user data using field mapping from config"""
+    config = OAuth2ProviderConfig.get_provider_config(provider)
+    field_mapping = config.get('field_mapping', {})
 
-    Args:
-        provider: OAuth provider name
-        data: Raw user data from provider
+    normalized = {}
 
-    Returns:
-        Normalized user data with standard fields
-    """
-    if provider == "google":
-        return {
-            "provider_user_id": data.get("id"),
-            "email": data.get("email"),
-            "name": data.get("name"),
-            "picture": data.get("picture"),
-        }
-    elif provider == "github":
-        return {
-            "provider_user_id": str(data.get("id")),
-            "email": data.get("email"),
-            "name": data.get("name") or data.get("login"),
-            "picture": data.get("avatar_url"),
-        }
-    elif provider == "microsoft":
-        return {
-            "provider_user_id": data.get("id"),
-            "email": data.get("mail") or data.get("userPrincipalName"),
-            "name": data.get("displayName"),
-            "picture": None,
-        }
-    else:
-        return data
+    for target_field, source_spec in field_mapping.items():
+        # Support fallback syntax: "field1|field2|field3"
+        sources = source_spec.split('|') if isinstance(source_spec, str) else [source_spec]
+
+        for source in sources:
+            value = data.get(source.strip())
+            if value:
+                # Convert to string if needed (e.g., GitHub IDs are integers)
+                if target_field == 'provider_user_id':
+                    value = str(value)
+                normalized[target_field] = value
+                break
+
+    return normalized
 
 
 def find_or_create_oauth_user(
@@ -285,9 +398,10 @@ def find_or_create_oauth_user(
         HTTPException: If user creation fails
     """
     provider_user_id = provider_data.get("provider_user_id")
+    provider_username = provider_data.get("provider_username")
     email = provider_data.get("email")
 
-    if not provider_user_id or not email:
+    if not provider_user_id or not (email or provider_username):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid user data from OAuth provider"
@@ -301,6 +415,10 @@ def find_or_create_oauth_user(
     oauth_link = session.exec(statement).first()
 
     if oauth_link:
+        logger.debug(
+            "Found existing OAuth link for provider %s and user ID %s",
+            provider, provider_user_id
+            )
         # User already exists, update tokens
         oauth_link.access_token = access_token
         oauth_link.refresh_token = refresh_token
@@ -317,13 +435,21 @@ def find_or_create_oauth_user(
             )
         return user
 
-    # Check if user with email already exists
-    statement = select(User).where(User.email == email)
+    if email:
+        # Check if user with email already exists
+        statement = select(User).where(User.email == email)
+    else:
+        # If we don't have an email, we have to check by provider user ID (less ideal)
+        statement = select(User).join(OAuthProvider).where(
+            OAuthProvider.provider_name == provider,
+            OAuthProvider.provider_user_id == provider_user_id
+        )
     user = session.exec(statement).first()
 
     if not user:
+        logger.debug("No existing user, creating new user...")
         # Create new user
-        username = email.split("@")[0]
+        username = provider_username or email.split("@")[0]
         # Ensure unique username
         base_username = username
         counter = 1
@@ -334,23 +460,31 @@ def find_or_create_oauth_user(
             username = f"{base_username}{counter}"
             counter += 1
 
+        # If this is the first user, make them admin
+        is_admin = False
+        statement = select(User)
+        if session.exec(statement).first() is None:
+            logger.info(f"First user registered, granting admin rights to {username}")
+            is_admin = True
+
         user = User(
-            user_id=User.generate_user_id(),
             email=email,
             username=username,
             full_name=provider_data.get("name"),
             hashed_password=None,  # OAuth-only user
             is_active=True,
-            is_verified=True,  # Email verified by OAuth provider
+            is_verified=True,  # Verified by OAuth provider
+            is_superuser=is_admin
         )
         session.add(user)
         session.commit()
         session.refresh(user)
 
     # Link OAuth provider to user
+    logger.debug("Linking OAuth provider %s to user %s", provider, user.username)
     oauth_provider = OAuthProvider(
         user_id=user.id,
-        provider_name=OAuthProviderName(provider),
+        provider_name=provider,
         provider_user_id=provider_user_id,
         access_token=access_token,
         refresh_token=refresh_token

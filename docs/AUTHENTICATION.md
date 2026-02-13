@@ -3,6 +3,7 @@
 ## Overview
 
 The NGS360 API now includes a comprehensive authentication system with:
+
 - Local username/password authentication
 - OAuth2 support for external providers (Google, GitHub, Microsoft)
 - JWT-based access tokens with refresh token rotation
@@ -86,6 +87,7 @@ fastapi dev main.py
 ### Authentication Endpoints
 
 #### Register New User
+
 ```http
 POST /api/v1/auth/register
 Content-Type: application/json
@@ -99,6 +101,7 @@ Content-Type: application/json
 ```
 
 #### Login
+
 ```http
 POST /api/v1/auth/login
 Content-Type: application/x-www-form-urlencoded
@@ -107,6 +110,7 @@ username=user@example.com&password=SecurePass123
 ```
 
 Response:
+
 ```json
 {
   "access_token": "eyJ0eXAiOiJKV1QiLCJhbGc...",
@@ -117,6 +121,7 @@ Response:
 ```
 
 #### Refresh Token
+
 ```http
 POST /api/v1/auth/refresh
 Content-Type: application/json
@@ -127,6 +132,7 @@ Content-Type: application/json
 ```
 
 #### Logout
+
 ```http
 POST /api/v1/auth/logout
 Content-Type: application/json
@@ -137,12 +143,14 @@ Content-Type: application/json
 ```
 
 #### Get Current User
+
 ```http
 GET /api/v1/auth/me
 Authorization: Bearer your-access-token
 ```
 
 #### Request Password Reset
+
 ```http
 POST /api/v1/auth/password-reset/request
 Content-Type: application/json
@@ -153,6 +161,7 @@ Content-Type: application/json
 ```
 
 #### Confirm Password Reset
+
 ```http
 POST /api/v1/auth/password-reset/confirm
 Content-Type: application/json
@@ -164,6 +173,7 @@ Content-Type: application/json
 ```
 
 #### Change Password
+
 ```http
 POST /api/v1/auth/password/change
 Authorization: Bearer your-access-token
@@ -176,6 +186,7 @@ Content-Type: application/json
 ```
 
 #### Verify Email
+
 ```http
 POST /api/v1/auth/verify-email
 Content-Type: application/json
@@ -186,6 +197,7 @@ Content-Type: application/json
 ```
 
 #### Resend Verification Email
+
 ```http
 POST /api/v1/auth/resend-verification
 Content-Type: application/json
@@ -197,22 +209,31 @@ Content-Type: application/json
 
 ### OAuth2 Endpoints
 
+#### Query for suport OAuth providers
+
+```http
+GET /api/v1/auth/oauth/providers
+```
+
 #### Initiate OAuth2 Flow
+
 ```http
 GET /api/v1/auth/oauth/{provider}/authorize
 ```
+
 Where `{provider}` is one of: `google`, `github`, `microsoft`
 
 This redirects the user to the OAuth provider's authorization page.
+After authorization, the client is redirected to the callback.
 
 #### OAuth2 Callback
+
 ```http
 GET /api/v1/auth/oauth/{provider}/callback?code=auth-code&state=state-value
 ```
 
-This endpoint is called by the OAuth provider after user authorization.
-
 #### Link OAuth Provider to Account
+
 ```http
 POST /api/v1/auth/oauth/{provider}/link
 Authorization: Bearer your-access-token
@@ -224,6 +245,7 @@ Content-Type: application/json
 ```
 
 #### Unlink OAuth Provider
+
 ```http
 DELETE /api/v1/auth/oauth/{provider}/unlink
 Authorization: Bearer your-access-token
@@ -289,6 +311,7 @@ def admin_only_endpoint(current_user: CurrentSuperuser):
 ### Password Policy
 
 Configurable password requirements:
+
 - Minimum length (default: 8)
 - Require uppercase letters (default: true)
 - Require lowercase letters (default: true)
@@ -313,15 +336,17 @@ New users must verify their email address before accessing protected resources. 
 ### Password Reset
 
 Password reset tokens are:
+
 - Single-use only
 - Expire after 1 hour
 - Cryptographically secure random strings
 
-## Testing
+## Testing Local User Authentication
 
 ### Manual Testing with curl
 
 Register a user:
+
 ```bash
 curl -X POST http://localhost:8000/api/v1/auth/register \
   -H "Content-Type: application/json" \
@@ -346,9 +371,30 @@ curl -X GET http://localhost:8000/api/v1/auth/me \
   -H "Authorization: Bearer YOUR_ACCESS_TOKEN"
 ```
 
+## Testing OAuth User Authentication
+
+### Manual Testing with curl
+
+Get list of support OAuth providers:
+
+```bash
+curl -X GET http://localhost:8000/api/v1/auth/oauth/providers
+```
+
+User initiates authorization code grant flow
+
+```bash
+curl -X GET http://localhost:8000/api/v1/auth/oauth/{provider}/authorize
+```
+
+This will redirect them to the provider to authenticate.
+
+After authentication, the provider will redirector the client to call the authorization callback url.
+
 ### Automated Tests
 
 Run the test suite:
+
 ```bash
 pytest tests/api/test_auth.py -v
 ```
@@ -359,7 +405,7 @@ pytest tests/api/test_auth.py -v
 
 1. Check `EMAIL_ENABLED=true` in `.env`
 2. Verify AWS credentials are configured
-3. Ensure FROM_EMAIL is verified in AWS SES
+3. Ensure FROM_EMAIL is verified in AWS SES or MAIL_ settings are configured.
 4. Check application logs for error messages
 
 ### OAuth2 Not Working
@@ -379,6 +425,7 @@ pytest tests/api/test_auth.py -v
 ### Account Locked
 
 Wait for the lockout duration to expire, or manually reset in database:
+
 ```sql
 UPDATE users SET failed_login_attempts = 0, locked_until = NULL 
 WHERE email = 'user@example.com';
@@ -387,6 +434,7 @@ WHERE email = 'user@example.com';
 ## Database Schema
 
 ### Users Table
+
 - `id`: UUID primary key
 - `user_id`: Human-readable ID (U-YYYYMMDD-NNNN)
 - `email`: Unique email address
@@ -400,6 +448,7 @@ WHERE email = 'user@example.com';
 - `failed_login_attempts`, `locked_until`: Security fields
 
 ### Refresh Tokens Table
+
 - `id`: UUID primary key
 - `user_id`: Foreign key to users
 - `token`: Unique token string
@@ -408,6 +457,7 @@ WHERE email = 'user@example.com';
 - `device_info`: Optional device information
 
 ### OAuth Providers Table
+
 - `id`: UUID primary key
 - `user_id`: Foreign key to users
 - `provider_name`: Provider enum (google, github, microsoft)
@@ -416,6 +466,7 @@ WHERE email = 'user@example.com';
 - `token_expires_at`: Token expiration
 
 ### Password Reset Tokens Table
+
 - `id`: UUID primary key
 - `user_id`: Foreign key to users
 - `token`: Unique reset token
@@ -423,6 +474,7 @@ WHERE email = 'user@example.com';
 - `used`: Single-use flag
 
 ### Email Verification Tokens Table
+
 - `id`: UUID primary key
 - `user_id`: Foreign key to users
 - `token`: Unique verification token
@@ -438,7 +490,7 @@ WHERE email = 'user@example.com';
 - [ ] Configure CORS properly
 - [ ] Set up rate limiting
 - [ ] Enable email verification requirement
-- [ ] Configure AWS SES for production
+- [ ] Configure AWS SES or SMTP for production
 - [ ] Set up monitoring and alerting
 - [ ] Review and adjust token expiration times
 - [ ] Enable database backups
@@ -466,6 +518,7 @@ FROM_EMAIL=noreply@yourdomain.com
 ## Support
 
 For issues or questions:
+
 1. Check the troubleshooting section above
 2. Review the API documentation at `/docs`
 3. Check application logs

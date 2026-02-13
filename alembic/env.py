@@ -9,7 +9,8 @@ from core.config import get_settings
 
 # Import all models here so that they are registered with SQLModel metadata
 from api.auth.models import (
-    User, RefreshToken, PasswordResetToken, EmailVerificationToken
+    User, RefreshToken, PasswordResetToken, EmailVerificationToken,
+    OAuthProvider, OAuthProviderName
 )
 from api.files.models import File
 from api.samples.models import Sample, SampleAttribute
@@ -45,6 +46,7 @@ target_metadata = SQLModel.metadata
 # ... etc.
 # Override the sqlalchemy.url in alembic.ini with the app's config
 config.set_main_option("sqlalchemy.url", get_settings().SQLALCHEMY_DATABASE_URI)
+
 
 def run_migrations_offline() -> None:
     """Run migrations in 'offline' mode.
