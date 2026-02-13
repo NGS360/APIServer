@@ -97,7 +97,7 @@ def upgrade() -> None:
             sqlmodel.sql.sqltypes.AutoString(length=255),
             nullable=False
         ),
-        sa.Column('value', sa.Text(), nullable=False),
+        sa.Column('value', sqlmodel.sql.sqltypes.AutoString(), nullable=False),
         sa.ForeignKeyConstraint(['file_id'], ['file.id'], ondelete='CASCADE'),
         sa.PrimaryKeyConstraint('id'),
         sa.UniqueConstraint('file_id', 'key', name='uq_filetag_file_key')
@@ -257,30 +257,18 @@ def upgrade() -> None:
     # Step 5: Convert storage_backend from enum to varchar
     # ========================================================================
 
-    op.add_column(
-        'file',
-        sa.Column(
-            'storage_backend_new',
-            sqlmodel.sql.sqltypes.AutoString(length=20),
-            nullable=True
-        )
-    )
-    op.execute(
-        "UPDATE file SET storage_backend_new = UPPER(storage_backend)"
-    )
-    op.drop_column('file', 'storage_backend')
     op.alter_column(
-        'file', 'storage_backend_new',
-        existing_type=sqlmodel.sql.sqltypes.AutoString(length=20),
-        new_column_name='storage_backend'
+        'file', 'storage_backend',
+        existing_type=sa.Enum('LOCAL', 'S3', 'AZURE', 'GCS', name='storagebackend'),
+        type_=sqlmodel.sql.sqltypes.AutoString(length=20),
+        nullable=True
     )
 
     # ========================================================================
     # Step 6: Drop old columns from file table
     # ========================================================================
 
-    # MySQL uses index name same as column name when not specified
-    op.execute("DROP INDEX file_id ON file")
+    op.drop_index('file_id', table_name='file')
     op.drop_column('file', 'file_id')
     op.drop_column('file', 'filename')
     op.drop_column('file', 'file_path')
@@ -332,7 +320,7 @@ def upgrade() -> None:
             sqlmodel.sql.sqltypes.AutoString(length=255),
             nullable=False
         ),
-        sa.Column('value', sa.Text(), nullable=False),
+        sa.Column('value', sqlmodel.sql.sqltypes.AutoString(), nullable=False),
         sa.ForeignKeyConstraint(
             ['qcrecord_id'], ['qcrecord.id'],
             ondelete='CASCADE'
@@ -376,7 +364,7 @@ def upgrade() -> None:
             sqlmodel.sql.sqltypes.AutoString(length=255),
             nullable=False
         ),
-        sa.Column('value_string', sa.Text(), nullable=False),
+        sa.Column('value_string', sqlmodel.sql.sqltypes.AutoString(), nullable=False),
         sa.Column('value_numeric', sa.Float(), nullable=True),
         sa.Column(
             'value_type',
@@ -502,7 +490,7 @@ def downgrade() -> None:
     op.add_column(
         'file',
         sa.Column(
-            'entity_type_old',
+            'entity_type',
             sa.Enum('PROJECT', 'RUN', name='entitytype'),
             nullable=True
         )
@@ -555,7 +543,7 @@ def downgrade() -> None:
     op.execute("""
         UPDATE file f
         JOIN fileentity fe ON fe.file_id = f.id
-        SET f.entity_type_old = fe.entity_type,
+        SET f.entity_type = fe.entity_type,
             f.entity_id = fe.entity_id
     """)
 
@@ -593,29 +581,11 @@ def downgrade() -> None:
     """)
 
     # Handle storage_backend conversion back to enum
-    op.add_column(
-        'file',
-        sa.Column(
-            'storage_backend_old',
-            sa.Enum('LOCAL', 'S3', 'AZURE', 'GCS', name='storagebackend'),
-            nullable=True
-        )
-    )
-    op.execute(
-        "UPDATE file SET storage_backend_old = storage_backend"
-    )
-    op.drop_column('file', 'storage_backend')
     op.alter_column(
-        'file', 'storage_backend_old',
-        existing_type=sa.Enum('LOCAL', 'S3', 'AZURE', 'GCS', name='storagebackend'),
-        new_column_name='storage_backend'
-    )
-
-    # Rename entity_type column
-    op.alter_column(
-        'file', 'entity_type_old',
-        existing_type=sa.Enum('PROJECT', 'RUN', name='entitytype'),
-        new_column_name='entity_type'
+        'file', 'storage_backend',
+        existing_type=sqlmodel.sql.sqltypes.AutoString(length=20),
+        type_=sa.Enum('LOCAL', 'S3', 'AZURE', 'GCS', name='storagebackend'),
+        nullable=True
     )
 
     # Make required columns NOT NULL
