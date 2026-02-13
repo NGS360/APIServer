@@ -521,7 +521,7 @@ def downgrade() -> None:
             'is_public',
             sa.Boolean(),
             nullable=True,
-            server_default='false'
+            server_default=sa.false()
         )
     )
     op.add_column(
@@ -530,7 +530,7 @@ def downgrade() -> None:
             'is_archived',
             sa.Boolean(),
             nullable=True,
-            server_default='false'
+            server_default=sa.false()
         )
     )
     op.add_column(
