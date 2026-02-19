@@ -37,6 +37,21 @@ def create_batch_job(session: Session, job_in: BatchJobCreate) -> BatchJob:
     return job
 
 
+def get_batch_job_by_aws_id(session: Session, aws_job_id: str) -> BatchJob | None:
+    """
+    Find a batch job by its AWS job ID.
+
+    Args:
+        session: Database session
+        aws_job_id: AWS job ID to search for
+
+    Returns:
+        BatchJob instance if found, otherwise None
+    """
+    statement = select(BatchJob).where(BatchJob.aws_job_id == aws_job_id)
+    return session.exec(statement).first()
+
+
 def get_batch_job(session: Session, job_id: uuid.UUID) -> BatchJob:
     """
     Retrieve a batch job by ID.

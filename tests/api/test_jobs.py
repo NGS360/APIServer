@@ -402,13 +402,15 @@ class TestJobsAPI:
         assert data["status"] == "Succeeded"
         assert data["user"] == original_user  # Unchanged
 
-    @patch("api.jobs.services.boto3.client")
     def test_lambda_update_job_log(self, session: Session, client: TestClient):
         """Test updating job log stream name.  This is what the Lambda function does."""
         # Set up test parameters
 
         # Set up supporting mocks
-        job = BatchJob(name="test-job", command="echo hello", user="testuser")
+        job = BatchJob(
+            name="test-job", command="echo hello", user="testuser",
+            aws_job_id="aws-job-123", status=JobStatus.SUBMITTED
+        )
         session.add(job)
         session.commit()
         session.refresh(job)
@@ -417,15 +419,16 @@ class TestJobsAPI:
         update_data = {
             "aws_job_id": "aws-job-123",
             "log_stream_name": "new-log-stream",
-            "status": "RUNNING"
+            "status": JobStatus.RUNNING
         }
         # Check results
         response = client.put("/api/v1/jobs", json=update_data)
 
         assert response.status_code == 200
         data = response.json()
-        assert data['job_id'] == job.id
+        assert data['id'] == str(job.id)
         assert data["log_stream_name"] == "new-log-stream"
+        assert data["status"] == JobStatus.RUNNING
 
     @patch("api.jobs.services.boto3.client")
     def test_jobs_pagination(self, mock_boto_client, client: TestClient):
