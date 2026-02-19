@@ -219,7 +219,8 @@ def get_batch_job_log(session: Session, job_id: uuid.UUID) -> list[str]:
     log_group = "/aws/batch/job"
     log_stream_name = job.log_stream_name
 
-    logger.info(f"Retrieving logs for job {job_id} from log group '{log_group}' and stream '{log_stream_name}'")
+    logger.info(f"Retrieving logs for job {job_id} from log group '{log_group}' "
+                f"and stream '{log_stream_name}'")
     return get_log_events(log_group, log_stream_name)
 
 
