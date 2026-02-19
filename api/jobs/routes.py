@@ -163,3 +163,26 @@ def update_job(
     """
     job = services.update_batch_job(session, job_id, job_update)
     return BatchJobPublic.model_validate(job)
+
+
+@router.get(
+    "/{job_id}/log",
+    response_model=list[str],
+    tags=["Job Endpoints"],
+)
+def get_job_log(
+    session: SessionDep,
+    job_id: uuid.UUID,
+) -> list[str]:
+    """
+    Retrieve log for a specific batch job.
+
+    Args:
+        session: Database session
+        job_id: Job UUID
+
+    Returns:
+        List of log lines
+    """
+    logs = services.get_batch_job_log(session, job_id)
+    return logs
