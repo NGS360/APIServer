@@ -20,6 +20,8 @@ import uuid
 from pydantic import ConfigDict
 from sqlmodel import Field, Relationship, SQLModel, UniqueConstraint
 
+from api.samples.models import Sample
+
 
 # ============================================================================
 # Entity Type Constants
@@ -101,16 +103,16 @@ class FileSample(SQLModel, table=True):
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     file_id: uuid.UUID = Field(foreign_key="file.id", nullable=False)
 
-    # TBD: I don't think sample_name should be here, since this should link back to Sample
     # Role should also be an attribute on the Sample and not the file.
-    sample_name: str = Field(max_length=255, nullable=False)
+    sample_id: uuid.UUID = Field(foreign_key="sample.id", nullable=False)
     role: str | None = Field(default=None, max_length=50)  # e.g., "tumor", "normal"
 
     # Relationship back to parent
     file: "File" = Relationship(back_populates="samples")
-
+    sample: "Sample" = Relationship()
+    # TBD: Why is this here?
     __table_args__ = (
-        UniqueConstraint("file_id", "sample_name", name="uq_filesample_file_sample"),
+        UniqueConstraint("file_id", "sample_id", name="uq_filesample_file_sample"),
     )
 
 
