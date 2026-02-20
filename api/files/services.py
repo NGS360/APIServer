@@ -418,7 +418,7 @@ def list_files_by_entity(
 
 def _validate_entity_exists(
     session: Session,
-    entity_type: str,
+    entity_type: FileEntityType,
     entity_id: str
 ) -> None:
     """
@@ -432,9 +432,7 @@ def _validate_entity_exists(
     Raises:
         HTTPException: If entity not found
     """
-    entity_type_upper = entity_type.upper()
-
-    if entity_type_upper == FileEntityType.PROJECT:
+    if entity_type == FileEntityType.PROJECT:
         from api.project.models import Project
         project = session.exec(
             select(Project).where(Project.project_id == entity_id)
@@ -445,7 +443,7 @@ def _validate_entity_exists(
                 detail=f"Project not found: {entity_id}"
             )
 
-    elif entity_type_upper == FileEntityType.RUN:
+    elif entity_type == FileEntityType.RUN:
         from api.runs.services import get_run
         run = get_run(session, entity_id)
         if not run:
@@ -454,7 +452,7 @@ def _validate_entity_exists(
                 detail=f"Run not found: {entity_id}"
             )
 
-    elif entity_type_upper == FileEntityType.SAMPLE:
+    elif entity_type == FileEntityType.SAMPLE:
         from api.samples.models import Sample
         sample = session.exec(
             select(Sample).where(Sample.id == entity_id)
@@ -465,7 +463,7 @@ def _validate_entity_exists(
                 detail=f"Sample not found: {entity_id}"
             )
 
-    elif entity_type_upper == FileEntityType.QCRECORD:
+    elif entity_type == FileEntityType.QCRECORD:
         from api.qcmetrics.models import QCRecord
         qcrecord = session.exec(
             select(QCRecord).where(QCRecord.id == entity_id)
