@@ -5,8 +5,6 @@ Tests for the QCMetrics API.
 from fastapi.testclient import TestClient
 from sqlmodel import Session
 
-from core.security import hash_password, create_access_token
-
 
 def test_create_qcrecord_basic(client: TestClient, session: Session, auth_headers: dict):
     """

@@ -602,30 +602,30 @@ def unauthenticated_client_fixture(
 ):
     """Client that requires real authentication (no auth override)"""
     import boto3
-    
+
     def get_db_override():
         return session
-    
+
     def get_opensearch_client_override():
         return mock_opensearch_client
-    
+
     def get_s3_client_override():
         return mock_s3_client
-    
+
     original_boto3_client = boto3.client
-    
+
     def mock_boto3_client(service_name, **kwargs):
         if service_name == "lambda":
             return mock_lambda_client
         return original_boto3_client(service_name, **kwargs)
-    
+
     monkeypatch.setattr(boto3, "client", mock_boto3_client)
-    
+
     # Override dependencies EXCEPT get_current_user
     app.dependency_overrides[get_db] = get_db_override
     app.dependency_overrides[get_opensearch_client] = get_opensearch_client_override
     app.dependency_overrides[get_s3_client] = get_s3_client_override
-    
+
     client = TestClient(app)
     yield client
     app.dependency_overrides.clear()
