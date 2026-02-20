@@ -630,6 +630,7 @@ def unauthenticated_client_fixture(
     yield client
     app.dependency_overrides.clear()
 
+
 @pytest.fixture(name="client")
 def client_fixture(
     session: Session,
@@ -683,6 +684,7 @@ def client_fixture(
     yield client
     app.dependency_overrides.clear()
 
+
 @pytest.fixture(name="auth_headers")
 def auth_headers_fixture():
     """Provide authentication headers with a valid token"""
@@ -696,6 +698,7 @@ def auth_headers_fixture():
     return {
         "Authorization": f"Bearer {access_token}"
     }
+
 
 @pytest.fixture(name="opensearch_client")
 def opensearch_client_fixture(mock_opensearch_client: MockOpenSearchClient):
