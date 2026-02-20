@@ -7,7 +7,7 @@ from unittest.mock import patch, MagicMock
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlmodel import Field, Session
+from sqlmodel import Session
 
 from api.jobs.models import (
     BatchJob,
