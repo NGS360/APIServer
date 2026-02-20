@@ -37,7 +37,7 @@ from api.files.models import (
     FileSummary,
     HashPublic,
     TagPublic,
-    SamplePublic,
+    FileSamplePublic,
 )
 
 
@@ -517,7 +517,7 @@ def _qcrecord_to_public(session: Session, record: QCRecord) -> QCRecordPublic:
             created_on=file_record.created_on,
             hashes=[HashPublic(algorithm=h.algorithm, value=h.value) for h in hashes],
             tags=[TagPublic(key=t.key, value=t.value) for t in tags],
-            samples=[SamplePublic(sample_name=s.sample_name, role=s.role) for s in samples],
+            samples=[FileSamplePublic(sample_name=s.sample_name, role=s.role) for s in samples],
         ))
 
     return QCRecordPublic(
