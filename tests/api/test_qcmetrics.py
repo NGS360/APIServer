@@ -2,37 +2,10 @@
 Tests for the QCMetrics API.
 """
 
-import pytest
 from fastapi.testclient import TestClient
 from sqlmodel import Session
 
-from api.auth.models import User
 from core.security import hash_password, create_access_token
-
-
-@pytest.fixture(name="test_user")
-def test_user_fixture(session: Session):
-    """Create a test user for authentication."""
-    user = User(
-        email="testuser@example.com",
-        username="test_user",
-        hashed_password=hash_password("TestPassword123"),
-        full_name="Test User",
-        is_active=True,
-        is_verified=True,
-        is_superuser=False
-    )
-    session.add(user)
-    session.commit()
-    session.refresh(user)
-    return user
-
-
-@pytest.fixture(name="auth_headers")
-def auth_headers_fixture(test_user: User):
-    """Create authorization headers for the test user."""
-    access_token = create_access_token(data={"sub": str(test_user.id)})
-    return {"Authorization": f"Bearer {access_token}"}
 
 
 def test_create_qcrecord_basic(client: TestClient, session: Session, auth_headers: dict):
@@ -41,6 +14,7 @@ def test_create_qcrecord_basic(client: TestClient, session: Session, auth_header
 
     Create returns minimal response; use GET to verify full data.
     """
+
     qcrecord_data = {
         "project_id": "P-TEST-001",
         "metadata": {
@@ -59,7 +33,7 @@ def test_create_qcrecord_basic(client: TestClient, session: Session, auth_header
     # Check minimal create response
     data = response.json()
     assert data["project_id"] == "P-TEST-001"
-    assert data["created_by"] == "test_user"
+    assert data["created_by"] == "testuser"
     assert data["is_duplicate"] is False
     assert "id" in data
     assert "created_on" in data
@@ -275,7 +249,7 @@ def test_create_qcrecord_with_output_files(client: TestClient, session: Session,
     assert len(matrix_file["samples"]) == 0
 
 
-def test_create_qcrecord_unauthorized(client: TestClient, session: Session):
+def test_create_qcrecord_unauthorized(unauthenticated_client: TestClient, session: Session):
     """
     Test that creating a QC record without authentication fails.
     """
@@ -284,7 +258,7 @@ def test_create_qcrecord_unauthorized(client: TestClient, session: Session):
         "metadata": {"pipeline": "RNA-Seq"}
     }
 
-    response = client.post(
+    response = unauthenticated_client.post(
         "/api/v1/qcmetrics",
         json=qcrecord_data
     )
