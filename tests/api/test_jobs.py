@@ -419,7 +419,7 @@ class TestJobsAPI:
         update_data = {
             "aws_job_id": "aws-job-123",
             "log_stream_name": "new-log-stream",
-            "status": JobStatus.RUNNING
+            "status": "RUNNING"
         }
         # Check results
         response = client.put("/api/v1/jobs", json=update_data)
