@@ -373,8 +373,8 @@ class TagPublic(SQLModel):
     value: str
 
 
-class SamplePublic(SQLModel):
-    """Public representation of a sample association."""
+class FileSamplePublic(SQLModel):
+    """Public representation of a file-sample association."""
     sample_name: str
     role: str | None
 
@@ -398,7 +398,7 @@ class FilePublic(SQLModel):
     source: str | None
     storage_backend: str | None
     entities: List[EntityPublic]
-    samples: List[SamplePublic]
+    samples: List[FileSamplePublic]
     hashes: List[HashPublic]
     tags: List[TagPublic]
 
@@ -416,8 +416,7 @@ class FileSummary(SQLModel):
     created_on: datetime | None = None
     hashes: List[HashPublic] = []
     tags: List[TagPublic] = []
-    samples: List[SamplePublic] = []
-    samples: List[SamplePublic]
+    samples: List[FileSamplePublic] = []
 
 
 class FilesPublic(SQLModel):
@@ -477,7 +476,7 @@ def file_to_public(file: File) -> FilePublic:
             ) for e in file.entities
         ],
         samples=[
-            SamplePublic(sample_name=s.sample_name, role=s.role)
+            FileSamplePublic(sample_name=s.sample_name, role=s.role)
             for s in file.samples
         ],
         hashes=[
@@ -507,7 +506,7 @@ def file_to_summary(file: File) -> FileSummary:
             for t in file.tags
         ],
         samples=[
-            SamplePublic(sample_name=s.sample_name, role=s.role)
+            FileSamplePublic(sample_name=s.sample_name, role=s.role)
             for s in file.samples
         ],
     )
