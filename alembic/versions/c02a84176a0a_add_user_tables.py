@@ -1,7 +1,7 @@
 """Add user tables
 
 Revision ID: c02a84176a0a
-Revises: d89d27d47634
+Revises: c9fbcc25cd06
 Create Date: 2026-02-11 10:43:36.867397
 
 """
@@ -14,7 +14,7 @@ import sqlmodel
 
 # revision identifiers, used by Alembic.
 revision: str = 'c02a84176a0a'
-down_revision: Union[str, Sequence[str], None] = 'd89d27d47634'
+down_revision: Union[str, Sequence[str], None] = 'c9fbcc25cd06'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

@@ -12,6 +12,7 @@ from core.config import get_settings
 
 from api.auth.routes import router as auth_router
 from api.auth.oauth_routes import router as oauth_router
+from api.actions.routes import router as actions_router
 from api.files.routes import router as files_router
 from api.jobs.routes import router as jobs_router
 from api.manifest.routes import router as manifest_router
@@ -120,6 +121,7 @@ app.include_router(auth_router, prefix=API_PREFIX)
 app.include_router(oauth_router, prefix=API_PREFIX)
 
 # Feature routers
+app.include_router(actions_router, prefix=API_PREFIX)
 app.include_router(files_router, prefix=API_PREFIX)
 app.include_router(jobs_router, prefix=API_PREFIX)
 app.include_router(manifest_router, prefix=API_PREFIX)

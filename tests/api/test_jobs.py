@@ -30,13 +30,13 @@ class TestJobModels:
 
     def test_job_status_enum(self):
         """Test JobStatus enum values"""
-        assert JobStatus.SUBMITTED.value == "Submitted"
-        assert JobStatus.PENDING.value == "Pending"
-        assert JobStatus.RUNNABLE.value == "Runnable"
-        assert JobStatus.STARTING.value == "Starting"
-        assert JobStatus.RUNNING.value == "Running"
-        assert JobStatus.SUCCEEDED.value == "Succeeded"
-        assert JobStatus.FAILED.value == "Failed"
+        assert JobStatus.SUBMITTED.value == "SUBMITTED"
+        assert JobStatus.PENDING.value == "PENDING"
+        assert JobStatus.RUNNABLE.value == "RUNNABLE"
+        assert JobStatus.STARTING.value == "STARTING"
+        assert JobStatus.RUNNING.value == "RUNNING"
+        assert JobStatus.SUCCEEDED.value == "SUCCEEDED"
+        assert JobStatus.FAILED.value == "FAILED"
 
     def test_batch_job_model(self):
         """Test BatchJob model creation"""
@@ -196,7 +196,7 @@ class TestJobsAPI:
         assert data["name"] == "test-job"
         assert data["user"] == "testuser"
         assert data["aws_job_id"] == "aws-job-123"
-        assert data["status"] == "Submitted"
+        assert data["status"] == JobStatus.SUBMITTED
         assert "id" in data
 
         # Verify AWS Batch was called
@@ -362,14 +362,14 @@ class TestJobsAPI:
 
         # Update job
         update_data = {
-            "status": "Running",
+            "status": JobStatus.RUNNING,
             "log_stream_name": "test-stream",
             "viewed": True,
         }
         response = client.put(f"/api/v1/jobs/{job_id}", json=update_data)
         assert response.status_code == 200
         data = response.json()
-        assert data["status"] == "Running"
+        assert data["status"] == JobStatus.RUNNING
         assert data["log_stream_name"] == "test-stream"
         assert data["viewed"] is True
 
@@ -395,12 +395,40 @@ class TestJobsAPI:
         original_user = response.json()["user"]
 
         # Update only status
-        update_data = {"status": "Succeeded"}
+        update_data = {"status": JobStatus.SUCCEEDED}
         response = client.put(f"/api/v1/jobs/{job_id}", json=update_data)
         assert response.status_code == 200
         data = response.json()
-        assert data["status"] == "Succeeded"
+        assert data["status"] == JobStatus.SUCCEEDED
         assert data["user"] == original_user  # Unchanged
+
+    def test_lambda_update_job_log(self, session: Session, client: TestClient):
+        """Test updating job log stream name.  This is what the Lambda function does."""
+        # Set up test parameters
+
+        # Set up supporting mocks
+        job = BatchJob(
+            name="test-job", command="echo hello", user="testuser",
+            aws_job_id="aws-job-123", status=JobStatus.SUBMITTED
+        )
+        session.add(job)
+        session.commit()
+        session.refresh(job)
+
+        # Test
+        update_data = {
+            "aws_job_id": "aws-job-123",
+            "log_stream_name": "new-log-stream",
+            "status": "RUNNING"
+        }
+        # Check results
+        response = client.put("/api/v1/jobs", json=update_data)
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data['id'] == str(job.id)
+        assert data["log_stream_name"] == "new-log-stream"
+        assert data["status"] == JobStatus.RUNNING
 
     @patch("api.jobs.services.boto3.client")
     def test_jobs_pagination(self, mock_boto_client, client: TestClient):

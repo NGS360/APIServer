@@ -44,6 +44,14 @@ class ProjectCreate(SQLModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class ProjectUpdate(SQLModel):
+    """
+    Represents the data that can be updated for a project
+    """
+    name: str | None = None
+    attributes: List[Attribute] | None = None
+
+
 class ProjectPublic(SQLModel):
     project_id: str
     name: str | None
