@@ -10,6 +10,7 @@ This module provides a unified file metadata system that supports:
 """
 
 from datetime import datetime, timezone
+from enum import Enum
 import hashlib
 import mimetypes
 import re
@@ -24,13 +25,9 @@ from sqlmodel import Field, Relationship, SQLModel, UniqueConstraint
 # Entity Type Constants
 # ============================================================================
 
-
-class FileEntityType:
+class FileEntityType(str, Enum):
     """
     Entity types that can have files associated.
-
-    Note: Using class constants instead of Enum for flexibility.
-    Entity types stored as VARCHAR in database.
     """
     PROJECT = "PROJECT"
     RUN = "RUN"
@@ -103,6 +100,9 @@ class FileSample(SQLModel, table=True):
 
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     file_id: uuid.UUID = Field(foreign_key="file.id", nullable=False)
+
+    # TBD: I don't think sample_name should be here, since this should link back to Sample
+    # Role should also be an attribute on the Sample and not the file.
     sample_name: str = Field(max_length=255, nullable=False)
     role: str | None = Field(default=None, max_length=50)  # e.g., "tumor", "normal"
 
@@ -133,8 +133,9 @@ class FileEntity(SQLModel, table=True):
 
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     file_id: uuid.UUID = Field(foreign_key="file.id", nullable=False)
-    entity_type: str = Field(max_length=50, nullable=False)  # PROJECT, RUN, SAMPLE, QCRECORD
+    entity_type: FileEntityType = Field(nullable=False)
     entity_id: str = Field(max_length=100, nullable=False)  # Entity identifier
+    # TBD: This should be an Enum or at least constrained to known roles per entity type
     role: str | None = Field(default=None, max_length=50)  # e.g., samplesheet, manifest, output
 
     # Relationship back to parent
@@ -205,7 +206,7 @@ class File(SQLModel, table=True):
     @staticmethod
     def generate_uri(
         base_path: str,
-        entity_type: str,
+        entity_type: FileEntityType,
         entity_id: str,
         filename: str,
         relative_path: str | None = None,
@@ -307,7 +308,7 @@ class File(SQLModel, table=True):
 
 class EntityInput(SQLModel):
     """Entity association input for file creation."""
-    entity_type: str  # PROJECT, RUN, SAMPLE, QCRECORD
+    entity_type: FileEntityType
     entity_id: str
     role: str | None = None
 
@@ -350,7 +351,7 @@ class FileUploadCreate(SQLModel):
     filename: str  # Display filename for the upload
     original_filename: str | None = None
     description: str | None = None
-    entity_type: str  # PROJECT, RUN
+    entity_type: FileEntityType
     entity_id: str
     role: str | None = None  # e.g., samplesheet
     is_public: bool = False
@@ -381,7 +382,7 @@ class SamplePublic(SQLModel):
 
 class EntityPublic(SQLModel):
     """Public representation of an entity association."""
-    entity_type: str
+    entity_type: FileEntityType
     entity_id: str
     role: str | None
 
