@@ -357,7 +357,7 @@ def test_update_project_removes_all_attributes(client: TestClient, session: Sess
 
 @patch("api.jobs.services.boto3.client")
 @patch("api.actions.services.get_setting_value")
-def test_submit_pipeline_job_create_project(
+def test_submit_create_project_job(
     mock_get_setting: MagicMock,
     mock_boto_client: MagicMock,
     client: TestClient,
@@ -365,7 +365,7 @@ def test_submit_pipeline_job_create_project(
     test_project: Project,
     mock_s3_client
 ):
-    """Test submitting a create-project pipeline job"""
+    """Test submitting a create-project job"""
     # Mock S3 settings
     mock_get_setting.return_value = "s3://ngs360-resources/pipeline_configs/"
 
@@ -419,7 +419,7 @@ def test_submit_pipeline_job_create_project(
     # Verify response structure
     assert "id" in response_json
     assert response_json["aws_job_id"] == "aws-batch-job-123"
-    assert response_json["status"] == "Submitted"
+    assert response_json["status"] == "SUBMITTED"
     assert response_json["user"] == "testuser"
 
     # Verify AWS Batch was called with correct parameters
@@ -431,7 +431,7 @@ def test_submit_pipeline_job_create_project(
 
 @patch("api.jobs.services.boto3.client")
 @patch("api.actions.services.get_setting_value")
-def test_submit_pipeline_job_export_results(
+def test_submit_export_results_job(
     mock_get_setting: MagicMock,
     mock_boto_client: MagicMock,
     client: TestClient,
@@ -503,7 +503,7 @@ def test_submit_pipeline_job_export_results(
     assert response.status_code == 201
     response_json = response.json()
     assert response_json["aws_job_id"] == "aws-batch-job-456"
-    assert response_json["status"] == "Submitted"
+    assert response_json["status"] == "SUBMITTED"
 
     # Verify AWS Batch was called
     mock_batch.submit_job.assert_called_once()
@@ -577,7 +577,7 @@ def test_submit_pipeline_job_export_without_reference(
 
 @patch("api.jobs.services.boto3.client")
 @patch("api.actions.services.get_setting_value")
-def test_submit_pipeline_job_create_with_auto_release_ignored(
+def test_submit_create_project_with_auto_release_ignored(
     mock_get_setting: MagicMock,
     mock_boto_client: MagicMock,
     client: TestClient,
@@ -636,7 +636,7 @@ def test_submit_pipeline_job_create_with_auto_release_ignored(
     assert response.status_code == 201
     response_json = response.json()
     assert response_json["aws_job_id"] == "aws-batch-job-789"
-    assert response_json["status"] == "Submitted"
+    assert response_json["status"] == "SUBMITTED"
 
 
 @patch("api.actions.services.get_setting_value")
