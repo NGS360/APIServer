@@ -10,7 +10,6 @@ from pytz import timezone
 from sqlmodel import Session, func, select
 from opensearchpy import OpenSearch
 
-from core.config import get_settings
 from api.settings.services import get_setting_value
 from api.actions.services import get_all_action_configs
 from api.actions.models import ActionOption, ActionPlatform
@@ -463,8 +462,7 @@ def submit_pipeline_job(
         "platform": platform.value,
         "action": action.value,
         "reference": reference_value,  # Use the looked-up value, not the label
-        "auto_release": auto_release,
-        "job_definition": get_settings().NGS_BACKEND_JOB_DEFINITION
+        "auto_release": auto_release
     }
 
     # Select and interpolate the appropriate command based on action

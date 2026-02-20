@@ -399,12 +399,6 @@ class Settings(BaseSettings):
         """Get Corporate OAuth scopes (comma-separated)"""
         return self._get_config_value("OAUTH_CORP_SCOPES", default="openid,email,profile")
 
-    @computed_field
-    @property
-    def NGS_BACKEND_JOB_DEFINITION(self) -> str:
-        """Get AWS Batch job definition for NGS backend jobs"""
-        return self._get_config_value("NGS_BACKEND_JOB_DEFINITION", default="ngs-backend-job-definition:1")
-
     # Read environment variables from .env file, if it exists
     # extra='ignore' prevents validation errors from extra env vars
     model_config = SettingsConfigDict(
