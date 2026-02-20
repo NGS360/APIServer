@@ -258,7 +258,10 @@ def get_log_events(log_group, log_stream_name, start_time=None, end_time=None):
     events = []
     while True:
         try:
-            resp = boto3.client('logs').get_log_events(**kwargs)
+            resp = boto3.client(
+                'logs',
+                region_name=get_settings().AWS_REGION
+            ).get_log_events(**kwargs)
         except botocore.exceptions.ClientError:
             return ["No log (yet) available"]
         for event in resp['events']:
