@@ -47,6 +47,7 @@ def create_workflow(session: Session, workflow_in: WorkflowCreate) -> Workflow:
     session.commit()
     session.refresh(workflow)
 
+    # TBD: A notification should be sent to something (SNS/Lambda?) to trigger workflow registration in the engine
     return workflow
 
 
