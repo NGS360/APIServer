@@ -10,7 +10,7 @@ PUT    /api/v1/jobs/[id]    Update a batch job
 """
 
 from typing import Optional, Literal
-from fastapi import APIRouter, Query, status
+from fastapi import APIRouter, HTTPException, Query, status
 from core.deps import SessionDep
 from api.jobs.models import (
     BatchJobSubmit,
@@ -73,6 +73,41 @@ def submit_job(
     return BatchJobPublic.model_validate(job)
 
 
+@router.put(
+    "",
+    response_model=BatchJobPublic,
+    tags=["Job Endpoints"],
+)
+def find_and_update_job(
+    session: SessionDep,
+    job_update: BatchJobUpdate,
+) -> BatchJobPublic:
+    """
+    Find and Update a batch job.
+
+    Args:
+        session: Database session
+        job_update: Job update data
+
+    Returns:
+        Updated job information
+    """
+    # Make sure there is an aws_job_id to find the job
+    if not job_update.aws_job_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="aws_job_id is required"
+        )
+    job = services.get_batch_job_by_aws_id(session, job_update.aws_job_id)
+    if not job:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"No job found with aws_job_id {job_update.aws_job_id}"
+        )
+    updated_job = services.update_batch_job(session, job.id, job_update)
+    return BatchJobPublic.model_validate(updated_job)
+
+
 @router.get(
     "",
     response_model=BatchJobsPublic,
@@ -116,6 +151,10 @@ def get_jobs(
         count=total_count
     )
 
+
+###############################################################################
+# Job Endpoints /api/v1/jobs/{job_id}
+###############################################################################
 
 @router.get(
     "/{job_id}",
@@ -163,3 +202,26 @@ def update_job(
     """
     job = services.update_batch_job(session, job_id, job_update)
     return BatchJobPublic.model_validate(job)
+
+
+@router.get(
+    "/{job_id}/log",
+    response_model=list[str],
+    tags=["Job Endpoints"],
+)
+def get_job_log(
+    session: SessionDep,
+    job_id: uuid.UUID,
+) -> list[str]:
+    """
+    Retrieve log for a specific batch job.
+
+    Args:
+        session: Database session
+        job_id: Job UUID
+
+    Returns:
+        List of log lines
+    """
+    logs = services.get_batch_job_log(session, job_id)
+    return logs
