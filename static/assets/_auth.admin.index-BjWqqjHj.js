@@ -1,2 +1,0 @@
-import{j as e}from"./index-BIirldc1.js";const t=function(){return e.jsx("div",{className:"flex flex-col gap-6",children:e.jsxs("div",{className:"flex flex-col gap-2",children:[e.jsx("h1",{className:"text-3xl",children:"Admin Dashboard"}),e.jsx("p",{className:"text-muted-foreground",children:"Welcome to the admin panel. Add admin-only content for viewing NGS360 data here."})]})})};export{t as component};
-//# sourceMappingURL=_auth.admin.index-BjWqqjHj.js.map

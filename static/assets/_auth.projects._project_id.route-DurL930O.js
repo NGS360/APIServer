@@ -1,2 +1,0 @@
-import{ax as s,ay as a,j as t,O as n}from"./index-BIirldc1.js";import{u as r}from"./useSuspenseQuery-CDS_6Znd.js";import"./useBaseQuery-o_MHl0Bk.js";const x=function(){const{project_id:e}=s.useParams(),{data:o}=r(a({path:{project_id:e}}));return t.jsx(t.Fragment,{children:t.jsxs("div",{className:"flex flex-col gap-4",children:[t.jsx("h1",{className:"text-3xl font-extralight",children:o.name}),t.jsx(n,{})]})})};export{x as component};
-//# sourceMappingURL=_auth.projects._project_id.route-DurL930O.js.map
