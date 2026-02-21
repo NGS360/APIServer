@@ -1,3 +1,5 @@
+import uuid
+
 from fastapi import HTTPException, status
 from typing import Literal
 from pydantic import PositiveInt
@@ -19,6 +21,55 @@ from api.search.models import (
 )
 from opensearchpy import OpenSearch
 from api.search.services import add_object_to_index, delete_index
+
+
+def resolve_or_create_sample(
+    session: Session,
+    sample_name: str,
+    project_id: str,
+) -> uuid.UUID:
+    """
+    Resolve a sample name to its UUID, creating a stub if it doesn't exist.
+
+    Used by file and QCMetrics services when associating files/metrics with samples.
+    If the sample doesn't exist, creates a stub Sample record tagged with
+    SampleAttribute(key="auto_created_stub", value="true").
+
+    Note: Does NOT commit the session — the caller manages the transaction.
+    Note: Does NOT index to OpenSearch — stubs can be indexed during reconciliation.
+
+    Args:
+        session: Database session (caller manages commit)
+        sample_name: Human-readable sample identifier (maps to Sample.sample_id)
+        project_id: Project the sample belongs to
+
+    Returns:
+        UUID of the existing or newly created Sample record
+    """
+    existing = session.exec(
+        select(Sample).where(
+            Sample.sample_id == sample_name,
+            Sample.project_id == project_id,
+        )
+    ).first()
+
+    if existing:
+        return existing.id
+
+    # Create stub sample
+    stub = Sample(sample_id=sample_name, project_id=project_id)
+    session.add(stub)
+    session.flush()  # Get the UUID
+
+    # Tag as auto-created stub
+    tag = SampleAttribute(
+        sample_id=stub.id,
+        key="auto_created_stub",
+        value="true",
+    )
+    session.add(tag)
+
+    return stub.id
 
 
 def add_sample_to_project(
