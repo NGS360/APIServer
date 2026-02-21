@@ -30,6 +30,7 @@ from api.files.models import (
     FileBrowserFolder,
     FileEntityType,
 )
+from api.samples.services import resolve_or_create_sample
 
 try:
     import boto3
@@ -108,12 +109,17 @@ def create_file(
             )
             session.add(tag_record)
 
-    # Create sample associations
+    # Create sample associations (resolve sample_name → Sample.id via FK)
     if file_create.samples:
         for sample_input in file_create.samples:
+            resolved_sample_id = resolve_or_create_sample(
+                session=session,
+                sample_name=sample_input.sample_name,
+                project_id=file_create.project_id,
+            )
             sample_record = FileSample(
                 file_id=file_record.id,
-                sample_name=sample_input.sample_name,
+                sample_id=resolved_sample_id,
                 role=sample_input.role,
             )
             session.add(sample_record)
