@@ -280,12 +280,6 @@ class Settings(BaseSettings):
 
     @computed_field
     @property
-    def client_origin(self) -> str:
-        """Get client origin for CORS, defaults to FRONTEND_URL if not set"""
-        return self._get_config_value("FRONTEND_URL", default=self.FRONTEND_URL)
-
-    @computed_field
-    @property
     def MAIL_SERVER(self) -> str | None:
         """Get mail server"""
         return self._get_config_value("MAIL_SERVER")
