@@ -619,7 +619,7 @@ def get_demux_workflow_config(
             ) from exc
     except yaml.YAMLError as exc:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=f"Invalid YAML format in demultiplex workflow config: {str(exc)}",
         ) from exc
     except Exception as exc:
