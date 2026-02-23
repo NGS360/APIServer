@@ -8,8 +8,9 @@ from sqlmodel import Session, select, func
 
 
 from api.samples.models import (
-    Sample
+    Sample, SampleCreate, SamplePublic, SamplesPublic, SampleAttribute
 )
+from api.project.models import Project
 from api.search.models import (
     SearchDocument,
 )
