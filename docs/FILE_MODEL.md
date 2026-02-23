@@ -20,16 +20,26 @@ The API server uses a single, unified `File` model that supports:
 ```mermaid
 erDiagram
     Project ||--o{ FileEntity : has_files
-    Sample ||--o{ FileEntity : has_files
     QCRecord ||--o{ FileEntity : has_files
     SequencingRun ||--o{ FileEntity : has_files
-    
+
+    Sample ||--o{ FileEntity : has_files
+    Sample ||--o{ FileSample : associated_files
+
     File ||--o{ FileEntity : belongs_to
-    File ||--o{ FileHash : has_hashes
     File ||--o{ FileTag : has_tags
     File ||--o{ FileSample : associated_samples
-    Sample ||--o{ FileSample : associated_files
-    
+    File ||--o{ FileHash : has_hashes
+
+
+    FileEntity {
+        uuid id PK
+        uuid file_id FK
+        string entity_type
+        string entity_id
+        string role
+    }
+
     File {
         uuid id PK
         string uri
@@ -40,34 +50,26 @@ erDiagram
         string source
         string storage_backend
     }
-    
-    FileEntity {
-        uuid id PK
-        uuid file_id FK
-        string entity_type
-        string entity_id
-        string role
-    }
-    
-    FileHash {
-        uuid id PK
-        uuid file_id FK
-        string algorithm
-        string value
-    }
-    
+
     FileTag {
         uuid id PK
         uuid file_id FK
         string key
         string value
     }
-    
+
     FileSample {
         uuid id PK
         uuid file_id FK
         uuid sample_id FK
         string role
+    }
+
+    FileHash {
+        uuid id PK
+        uuid file_id FK
+        string algorithm
+        string value
     }
 ```
 
