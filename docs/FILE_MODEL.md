@@ -28,6 +28,7 @@ erDiagram
     File ||--o{ FileHash : has_hashes
     File ||--o{ FileTag : has_tags
     File ||--o{ FileSample : associated_samples
+    Sample ||--o{ FileSample : associated_files
     
     File {
         uuid id PK
@@ -65,7 +66,7 @@ erDiagram
     FileSample {
         uuid id PK
         uuid file_id FK
-        string sample_name
+        uuid sample_id FK
         string role
     }
 ```
@@ -163,21 +164,27 @@ Flexible key-value metadata for files.
 
 ### filesample
 
-Associates samples with a file (supports roles for paired analysis).
+Associates samples with a file via foreign key to the `sample` table (supports roles for paired analysis).
 
 | Column | Type | Constraints | Description |
 |--------|------|-------------|-------------|
 | id | UUID | PK | Primary key |
 | file_id | UUID | FK → file.id, NOT NULL, ON DELETE CASCADE | Parent file |
-| sample_name | VARCHAR(255) | NOT NULL | Sample identifier |
+| sample_id | UUID | FK → sample.id, NOT NULL, ON DELETE CASCADE | Reference to sample record |
 | role | VARCHAR(50) | | Optional role (tumor, normal, case, control) |
 
-**Unique constraint**: `(file_id, sample_name)`
+**Unique constraint**: `(file_id, sample_id)`
+
+**Foreign keys**:
+- `file_id` → `file.id` (ON DELETE CASCADE)
+- `sample_id` → `sample.id` (ON DELETE CASCADE)
 
 **Association patterns**:
 - **Workflow-level file** (e.g., expression matrix): No FileSample entries
 - **Single-sample file** (e.g., BAM file): One FileSample entry with `role=null`
 - **Multi-sample file** (e.g., tumor/normal VCF): Multiple FileSample entries with roles
+
+**Sample resolution**: When creating a file with sample associations, the service layer resolves each `sample_name` to a `sample.id` using [`resolve_or_create_sample()`](../api/samples/services.py:26). If no matching Sample record exists for the given `(sample_name, project_id)`, a stub Sample is auto-created with `SampleAttribute(key="auto_created_stub", value="true")`. See [Auto-Created Stub Samples](#auto-created-stub-samples).
 
 ## Sample Association Patterns
 
@@ -192,7 +199,7 @@ FileEntity:
   entity_id: <qcrecord_uuid>
   
 FileSample:
-  sample_name: Sample1
+  sample_id: <sample_uuid>  (resolved from sample_name "Sample1")
   role: null  (single sample, no role needed)
 ```
 
@@ -207,8 +214,8 @@ FileEntity:
   entity_id: <qcrecord_uuid>
   
 FileSample:
-  - sample_name: Sample1, role: tumor
-  - sample_name: Sample2, role: normal
+  - sample_id: <sample1_uuid>, role: tumor
+  - sample_id: <sample2_uuid>, role: normal
 ```
 
 ### Workflow-level file (expression matrix)
@@ -239,6 +246,7 @@ Create a new file record (upload or reference).
   "original_filename": "my_sample.bam",
   "source": "s3://qc-outputs/pipeline-run-123/manifest.json",
   "size": 1234567890,
+  "project_id": "P-12345",
   "entities": [
     {"entity_type": "SAMPLE", "entity_id": "sample-uuid", "role": null},
     {"entity_type": "QCRECORD", "entity_id": "qcrecord-uuid", "role": "output"}
@@ -255,6 +263,7 @@ Create a new file record (upload or reference).
 - `uri` is required and serves as the unique identifier
 - `original_filename` is optional - only needed for uploads where the filename was renamed
 - Filename can be derived from `uri.split('/')[-1]`
+- `project_id` is **required** when `samples` are provided (used to resolve sample names to `sample.id` UUIDs). The validator raises an error if samples are provided without a `project_id`.
 
 ### Get file by ID
 
@@ -290,9 +299,7 @@ List all files associated with a specific entity.
   "entities": [
     {"entity_type": "QCRECORD", "entity_id": "uuid", "role": "output"}
   ],
-  "samples": [
-    {"sample_name": "Sample1", "role": null}
-  ],
+  "samples": ["Sample1"],
   "hashes": [
     {"algorithm": "md5", "value": "abc123..."}
   ],
@@ -302,21 +309,37 @@ List all files associated with a specific entity.
 }
 ```
 
+## Auto-Created Stub Samples
+
+When a file or QC record references a `sample_name` that doesn't yet exist in the `sample` table for the given project, the system automatically creates a **stub Sample** record. This ensures referential integrity (the `filesample.sample_id` and `qcmetricsample.sample_id` foreign keys always point to valid records) without requiring samples to be pre-registered.
+
+Stub samples are tagged with:
+```
+SampleAttribute(key="auto_created_stub", value="true")
+```
+
+This allows downstream processes to distinguish stubs from fully-registered samples and backfill metadata later.
+
+**Resolution logic** (in [`resolve_or_create_sample()`](../api/samples/services.py:26)):
+1. Look up `Sample` by `(sample_id=sample_name, project_id=project_id)`
+2. If found → return its `id` (UUID)
+3. If not found → create a stub Sample with the `auto_created_stub` attribute, flush to DB (without commit), and return its `id`
+
 ## Code Reference
 
 ### Models
 
 The unified file model is defined in [`api/files/models.py`](../api/files/models.py):
 
-- [`File`](../api/files/models.py:148) - Core file entity
-- [`FileEntity`](../api/files/models.py:117) - Entity associations
+- [`File`](../api/files/models.py:151) - Core file entity
+- [`FileEntity`](../api/files/models.py:119) - Entity associations
 - [`FileHash`](../api/files/models.py:46) - Hash values
 - [`FileTag`](../api/files/models.py:67) - Key-value tags
-- [`FileSample`](../api/files/models.py:93) - Sample associations
+- [`FileSample`](../api/files/models.py:93) - Sample associations (FK → `sample.id`)
 
 ### Entity Types
 
-Available entity types for file associations (from [`FileEntityType`](../api/files/models.py:28)):
+Available entity types for file associations (from [`FileEntityType`](../api/files/models.py:31)):
 
 - `PROJECT` - Project-level files (manifests, etc.)
 - `RUN` - Sequencing run files (sample sheets, etc.)
@@ -325,13 +348,16 @@ Available entity types for file associations (from [`FileEntityType`](../api/fil
 
 ### Helper Functions
 
-- [`file_to_public()`](../api/files/models.py:460) - Convert File model to API response
-- [`file_to_summary()`](../api/files/models.py:494) - Convert File model to compact summary
+- [`file_to_public()`](../api/files/models.py:469) - Convert File model to API response
+- [`file_to_summary()`](../api/files/models.py:503) - Convert File model to compact summary
+- [`resolve_or_create_sample()`](../api/samples/services.py:26) - Resolve sample_name to sample.id UUID
 
 ## Cascade Deletes
 
 All child tables cascade delete when the parent file is deleted:
 - `file` → `fileentity`, `filehash`, `filetag`, `filesample`
+
+Additionally, `filesample` and `qcmetricsample` rows cascade delete when their referenced `sample` is deleted (via `ON DELETE CASCADE` on the `sample_id` FK).
 
 When a QCRecord is deleted, its associated FileEntity entries are automatically deleted. The service layer also explicitly deletes the File records themselves (since QCRecord output files typically have no other entity associations).
 
@@ -341,6 +367,7 @@ The unified File model integrates with the QCMetrics system for storing pipeline
 
 1. Created as File records
 2. Associated with the QCRecord via FileEntity
-3. Linked to samples via FileSample (if specified)
+3. Linked to samples via FileSample (sample names resolved to `sample.id` UUIDs)
+4. `project_id` is propagated from the QCRecord to nested FileCreate models automatically
 
 See [`docs/QCMETRICS.md`](./QCMETRICS.md) for details on the QCMetrics API (if available), or reference the QCMetrics routes at [`api/qcmetrics/routes.py`](../api/qcmetrics/routes.py).
