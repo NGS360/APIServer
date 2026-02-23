@@ -39,6 +39,8 @@ from api.files.models import (
     TagPublic,
     FileSamplePublic,
 )
+from api.samples.services import resolve_or_create_sample
+from api.samples.models import Sample
 
 
 logger = logging.getLogger(__name__)
@@ -96,7 +98,7 @@ def create_qcrecord(
     # Add metrics
     if qcrecord_create.metrics:
         for metric_input in qcrecord_create.metrics:
-            _create_metric(session, qcrecord.id, metric_input)
+            _create_metric(session, qcrecord.id, metric_input, qcrecord_create.project_id)
 
     # Add output files
     if qcrecord_create.output_files:
@@ -106,6 +108,7 @@ def create_qcrecord(
                 entity_type=FileEntityType.QCRECORD,
                 entity_id=qcrecord.id,
                 file_create=file_create,
+                project_id=qcrecord_create.project_id,
             )
 
     session.commit()
@@ -131,6 +134,7 @@ def _create_metric(
     session: Session,
     qcrecord_id,
     metric_input: MetricInput,
+    project_id: str,
 ) -> QCMetric:
     """Create a metric group with its samples and values."""
     metric = QCMetric(
@@ -140,15 +144,26 @@ def _create_metric(
     session.add(metric)
     session.flush()
 
-    # Add sample associations
+    # Add sample associations (resolve sample_name → Sample.id via FK)
     if metric_input.samples:
         for sample_input in metric_input.samples:
+            sample_name = (
+                sample_input.sample_name if hasattr(sample_input, 'sample_name')
+                else sample_input['sample_name']
+            )
+            role = (
+                sample_input.role if hasattr(sample_input, 'role')
+                else sample_input.get('role')
+            )
+            resolved_sample_id = resolve_or_create_sample(
+                session=session,
+                sample_name=sample_name,
+                project_id=project_id,
+            )
             sample_assoc = QCMetricSample(
                 qc_metric_id=metric.id,
-                sample_name=sample_input.sample_name if hasattr(sample_input, 'sample_name')
-                else sample_input['sample_name'],
-                role=sample_input.role if hasattr(sample_input, 'role')
-                else sample_input.get('role'),
+                sample_id=resolved_sample_id,
+                role=role,
             )
             session.add(sample_assoc)
 
@@ -186,6 +201,7 @@ def _create_file_for_qcrecord(
     entity_type: str,
     entity_id,
     file_create: FileCreate,
+    project_id: str,
 ) -> File:
     """Create a file record with its hashes, tags, samples, and entity association."""
     file_record = File(
@@ -224,12 +240,17 @@ def _create_file_for_qcrecord(
             )
             session.add(tag_entry)
 
-    # Add sample associations
+    # Add sample associations (resolve sample_name → Sample.id via FK)
     if file_create.samples:
         for sample_input in file_create.samples:
+            resolved_sample_id = resolve_or_create_sample(
+                session=session,
+                sample_name=sample_input.sample_name,
+                project_id=project_id,
+            )
             sample_assoc = FileSample(
                 file_id=file_record.id,
-                sample_name=sample_input.sample_name,
+                sample_id=resolved_sample_id,
                 role=sample_input.role,
             )
             session.add(sample_assoc)
@@ -452,17 +473,22 @@ def _qcrecord_to_public(session: Session, record: QCRecord) -> QCRecordPublic:
             select(QCMetricValue).where(QCMetricValue.qc_metric_id == metric.id)
         ).all()
 
-        # Get metric samples
-        samples = session.exec(
+        # Get metric samples (resolve sample_id → Sample.sample_id for display)
+        metric_samples = session.exec(
             select(QCMetricSample).where(QCMetricSample.qc_metric_id == metric.id)
         ).all()
 
+        metric_sample_publics = []
+        for ms in metric_samples:
+            sample = session.get(Sample, ms.sample_id)
+            sample_name = sample.sample_id if sample else str(ms.sample_id)
+            metric_sample_publics.append(
+                MetricSamplePublic(sample_name=sample_name, role=ms.role)
+            )
+
         metrics.append(MetricPublic(
             name=metric.name,
-            samples=[
-                MetricSamplePublic(sample_name=s.sample_name, role=s.role)
-                for s in samples
-            ],
+            samples=metric_sample_publics,
             values=[
                 MetricValuePublic(
                     key=v.key,
@@ -517,7 +543,17 @@ def _qcrecord_to_public(session: Session, record: QCRecord) -> QCRecordPublic:
             created_on=file_record.created_on,
             hashes=[HashPublic(algorithm=h.algorithm, value=h.value) for h in hashes],
             tags=[TagPublic(key=t.key, value=t.value) for t in tags],
-            samples=[FileSamplePublic(sample_name=s.sample_name, role=s.role) for s in samples],
+            samples=[
+                FileSamplePublic(
+                    sample_name=(
+                        session.get(Sample, s.sample_id).sample_id
+                        if session.get(Sample, s.sample_id)
+                        else str(s.sample_id)
+                    ),
+                    role=s.role
+                )
+                for s in samples
+            ],
         ))
 
     return QCRecordPublic(
