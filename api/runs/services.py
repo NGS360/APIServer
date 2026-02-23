@@ -5,7 +5,7 @@ import json
 import yaml
 import boto3
 
-from typing import List, Literal, Dict, Any
+from typing import List, Literal
 from sqlmodel import select, Session, func
 from pydantic import PositiveInt
 from opensearchpy import OpenSearch
@@ -13,7 +13,7 @@ from fastapi import HTTPException, Response, status, UploadFile
 from smart_open import open as smart_open
 from botocore.exceptions import NoCredentialsError, ClientError
 
-from jinja2.sandbox import SandboxedEnvironment
+from core.utils import interpolate
 
 from sample_sheet import SampleSheet as IlluminaSampleSheet
 
@@ -627,23 +627,6 @@ def get_demux_workflow_config(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Unexpected error retrieving demultiplex workflow config: {str(exc)}",
         ) from exc
-
-
-def interpolate(str_in: str, inputs: Dict[str, Any]) -> str:
-    '''
-    Take an input str, and substitute expressions containing variables with
-    their actual values provided in inputs. Uses Jinja2 SandboxedEnvironment
-    to prevent code execution vulnerabilities.
-
-    :param str_in: String to be interpolated
-    :param inputs: Dictionary of tool inputs (key-value pairs with demultiplex workflow inputs and
-                   defaults pre-populated)
-    :return: String containing substitutions
-    '''
-    env = SandboxedEnvironment()
-    template = env.from_string(str_in)
-    str_out = template.render(inputs).strip()
-    return str_out
 
 
 def submit_demux_job(

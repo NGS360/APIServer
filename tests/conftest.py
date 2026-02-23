@@ -592,15 +592,15 @@ def mock_s3_client_fixture():
     return MockS3Client()
 
 
-@pytest.fixture(name="client")
-def client_fixture(
+@pytest.fixture(name="unauthenticated_client")
+def unauthenticated_client_fixture(
     session: Session,
     mock_opensearch_client: MockOpenSearchClient,
     mock_s3_client: MockS3Client,
     mock_lambda_client: MockLambdaClient,
     monkeypatch,
 ):
-    """Provide a TestClient with dependencies overridden for testing"""
+    """Client that requires real authentication (no auth override)"""
     import boto3
 
     def get_db_override():
@@ -612,6 +612,56 @@ def client_fixture(
     def get_s3_client_override():
         return mock_s3_client
 
+    original_boto3_client = boto3.client
+
+    def mock_boto3_client(service_name, **kwargs):
+        if service_name == "lambda":
+            return mock_lambda_client
+        return original_boto3_client(service_name, **kwargs)
+
+    monkeypatch.setattr(boto3, "client", mock_boto3_client)
+
+    # Override dependencies EXCEPT get_current_user
+    app.dependency_overrides[get_db] = get_db_override
+    app.dependency_overrides[get_opensearch_client] = get_opensearch_client_override
+    app.dependency_overrides[get_s3_client] = get_s3_client_override
+
+    client = TestClient(app)
+    yield client
+    app.dependency_overrides.clear()
+
+
+@pytest.fixture(name="client")
+def client_fixture(
+    session: Session,
+    mock_opensearch_client: MockOpenSearchClient,
+    mock_s3_client: MockS3Client,
+    mock_lambda_client: MockLambdaClient,
+    monkeypatch,
+):
+    """Provide a TestClient with dependencies overridden for testing"""
+    import boto3
+    from api.auth.models import User
+
+    def get_db_override():
+        return session
+
+    def get_opensearch_client_override():
+        return mock_opensearch_client
+
+    def get_s3_client_override():
+        return mock_s3_client
+
+    def get_current_user_override():
+        """Return a mock user for authentication"""
+        return User(
+            username="testuser",
+            email="test@example.com",
+            is_active=True,
+            is_verified=True,
+            is_superuser=False
+        )
+
     # Patch boto3.client to return mock Lambda client for "lambda" service
     original_boto3_client = boto3.client
 
@@ -622,13 +672,32 @@ def client_fixture(
 
     monkeypatch.setattr(boto3, "client", mock_boto3_client)
 
+    # Import auth dependencies
+    from api.auth.deps import get_current_user
+
     app.dependency_overrides[get_db] = get_db_override
     app.dependency_overrides[get_opensearch_client] = get_opensearch_client_override
     app.dependency_overrides[get_s3_client] = get_s3_client_override
+    app.dependency_overrides[get_current_user] = get_current_user_override
 
     client = TestClient(app)
     yield client
     app.dependency_overrides.clear()
+
+
+@pytest.fixture(name="auth_headers")
+def auth_headers_fixture():
+    """Provide authentication headers with a valid token"""
+    from core.security import create_access_token
+
+    # Create a token for the test user
+    access_token = create_access_token(
+        data={"sub": "testuser"}
+    )
+
+    return {
+        "Authorization": f"Bearer {access_token}"
+    }
 
 
 @pytest.fixture(name="opensearch_client")

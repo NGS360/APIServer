@@ -11,13 +11,13 @@ from pydantic import ConfigDict
 
 class JobStatus(str, Enum):
     """Enumeration of valid batch job statuses"""
-    SUBMITTED = "Submitted"
-    PENDING = "Pending"
-    RUNNABLE = "Runnable"
-    STARTING = "Starting"
-    RUNNING = "Running"
-    SUCCEEDED = "Succeeded"
-    FAILED = "Failed"
+    SUBMITTED = "SUBMITTED"
+    PENDING = "PENDING"
+    RUNNABLE = "RUNNABLE"
+    STARTING = "STARTING"
+    RUNNING = "RUNNING"
+    SUCCEEDED = "SUCCEEDED"
+    FAILED = "FAILED"
 
 
 class BatchJob(SQLModel, table=True):

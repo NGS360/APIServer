@@ -37,6 +37,21 @@ def create_batch_job(session: Session, job_in: BatchJobCreate) -> BatchJob:
     return job
 
 
+def get_batch_job_by_aws_id(session: Session, aws_job_id: str) -> BatchJob | None:
+    """
+    Find a batch job by its AWS job ID.
+
+    Args:
+        session: Database session
+        aws_job_id: AWS job ID to search for
+
+    Returns:
+        BatchJob instance if found, otherwise None
+    """
+    statement = select(BatchJob).where(BatchJob.aws_job_id == aws_job_id)
+    return session.exec(statement).first()
+
+
 def get_batch_job(session: Session, job_id: uuid.UUID) -> BatchJob:
     """
     Retrieve a batch job by ID.
@@ -198,3 +213,62 @@ def submit_batch_job(
     logger.info(f"Created database record for AWS Batch job {batch_job.aws_job_id}")
 
     return batch_job
+
+
+def get_batch_job_log(session: Session, job_id: uuid.UUID) -> list[str]:
+    """
+    Retrieve the log output for a batch job.
+
+    Args:
+        session: Database session
+        job_id: Job UUID
+    Returns:
+        Log output as a list of strings
+    """
+    job = get_batch_job(session, job_id)
+
+    if not job.aws_job_id or not job.log_stream_name:
+        logger.warning(f"Job {job_id} does not have AWS job ID or log stream name")
+        return []
+
+    log_group = "/aws/batch/job"
+    log_stream_name = job.log_stream_name
+
+    logger.info(f"Retrieving logs for job {job_id} from log group '{log_group}' "
+                f"and stream '{log_stream_name}'")
+    return get_log_events(log_group, log_stream_name)
+
+
+def get_log_events(log_group, log_stream_name, start_time=None, end_time=None):
+    """
+    List events from CloudWatch log
+    """
+    kwargs = {
+        'logGroupName': log_group,
+        'logStreamName': log_stream_name,
+        'limit': 10000,
+        'startFromHead': True,
+    }
+
+    if start_time:
+        kwargs['startTime'] = start_time
+    if end_time:
+        kwargs['endTime'] = end_time
+
+    events = []
+    while True:
+        try:
+            resp = boto3.client(
+                'logs',
+                region_name=get_settings().AWS_REGION
+            ).get_log_events(**kwargs)
+        except botocore.exceptions.ClientError:
+            return ["No log (yet) available"]
+        for event in resp['events']:
+            events.append(event['message'])
+
+        next_forward_token = resp.get('nextForwardToken')
+        if not next_forward_token or kwargs.get('nextToken') == next_forward_token:
+            break
+        kwargs['nextToken'] = next_forward_token
+    return events
