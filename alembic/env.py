@@ -12,7 +12,7 @@ from api.auth.models import (
     User, RefreshToken, PasswordResetToken, EmailVerificationToken,
     OAuthProvider, OAuthProviderName
 )
-from api.files.models import File
+from api.files.models import File, FileSample, FileEntity, FileHash, FileTag
 from api.samples.models import Sample, SampleAttribute
 from api.settings.models import Setting
 from api.project.models import Project

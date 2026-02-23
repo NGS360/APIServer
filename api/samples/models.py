@@ -9,6 +9,7 @@ from pydantic import ConfigDict
 
 if TYPE_CHECKING:
     from api.project.models import Project
+    from api.files.models import FileSample
 
 
 class Attribute(SQLModel):
@@ -34,6 +35,7 @@ class Sample(SQLModel, table=True):
     project_id: str = Field(foreign_key="project.project_id")
     attributes: List[SampleAttribute] | None = Relationship(back_populates="sample")
     project: "Project" = Relationship(back_populates="samples")
+    file_samples: List["FileSample"] | None = Relationship(back_populates="sample")
 
     model_config = ConfigDict(from_attributes=True)
 
