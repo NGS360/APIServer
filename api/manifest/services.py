@@ -14,36 +14,6 @@ from core.deps import SessionDep
 from core.logger import logger
 
 
-def _parse_s3_path(s3_path: str) -> tuple[str, str]:
-    """Parse S3 path into bucket and prefix"""
-    if not s3_path.startswith("s3://"):
-        raise ValueError("Invalid S3 path format. Must start with s3://")
-
-    # Remove s3:// prefix
-    path_without_scheme = s3_path[5:]
-
-    # Check for empty path after s3://
-    if not path_without_scheme:
-        raise ValueError("Invalid S3 path format. Bucket name is required")
-
-    # Check for leading slash (s3:///)
-    if path_without_scheme.startswith("/"):
-        raise ValueError("Invalid S3 path format. Bucket name cannot start with /")
-
-    # Check for double slashes anywhere in the path
-    if "//" in path_without_scheme:
-        raise ValueError("Invalid S3 path format. Path cannot contain double slashes")
-
-    # Split into bucket and key
-    if "/" in path_without_scheme:
-        bucket, key = path_without_scheme.split("/", 1)
-    else:
-        bucket = path_without_scheme
-        key = ""
-
-    return bucket, key
-
-
 def get_latest_manifest_file(s3_path: str, s3_client=None) -> str | None:
     """
     Recursively search an S3 bucket/prefix for the most recent manifest CSV file.
@@ -223,20 +193,18 @@ def upload_manifest_file(
 
 def validate_manifest_file(
     session: SessionDep,
-    manifest_path: str,
-    manifest_version: Optional[str] = None,
-    files_bucket: Optional[str] = None,
-    files_prefix: Optional[str] = None,
+    manifest_uri: str,
+    files_uri: str,
+    manifest_version: Optional[str] = None
 ) -> ManifestValidationResponse:
     """
     Validate a manifest CSV file from S3 by invoking a Lambda function.
 
     Args:
         session: Database session
-        manifest_path: S3 path to the manifest CSV file to validate
+        manifest_uri: S3 path to the manifest CSV file to validate
         manifest_version: Optional manifest version to validate against
-        files_bucket: Optional S3 bucket where manifest files are located
-        files_prefix: Optional S3 prefix/path for file existence checks
+        files_uri: S3 path where files described in manifest are located
 
     Returns:
         ManifestValidationResponse with validation status and any errors found
@@ -249,7 +217,7 @@ def validate_manifest_file(
     logger.info(
         "Invoking Lambda function: %s for manifest validation of %s",
         lambda_function_name,
-        manifest_path
+        manifest_uri
     )
 
     try:
@@ -260,24 +228,17 @@ def validate_manifest_file(
         # Create Lambda client
         lambda_client = boto3.client("lambda", region_name=region)
 
-        # Parse the S3 path to extract the bucket for files_bucket parameter if not provided
-        if files_bucket is None:
-            bucket, _ = _parse_s3_path(manifest_path)
-            files_bucket = bucket
-
         # Prepare payload for Lambda function
         # Lambda expects: manifest_path, files_bucket, manifest_version (optional),
         # files_prefix (optional), available_pipelines (optional)
         payload = {
-            "manifest_path": manifest_path,
-            "files_bucket": files_bucket,
+            "manifest_uri": manifest_uri,
+            "files_uri": files_uri,
         }
 
         # Add optional parameters if provided
         if manifest_version:
             payload["manifest_version"] = manifest_version
-        if files_prefix:
-            payload["files_prefix"] = files_prefix
 
         # Invoke Lambda function synchronously
         response = lambda_client.invoke(
