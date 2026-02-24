@@ -9,8 +9,10 @@ from pydantic import PositiveInt
 from pytz import timezone
 from sqlmodel import Session, func, select
 from opensearchpy import OpenSearch
+import yaml
 
-from api.settings.services import get_setting_value
+from api.jobs.models import BatchJobConfigInput
+from api.settings.services import get_setting, get_setting_value
 from api.actions.services import get_all_action_configs
 from api.actions.models import ActionOption, ActionPlatform
 from api.jobs.services import submit_batch_job
@@ -20,6 +22,7 @@ from core.utils import define_search_body, interpolate
 if TYPE_CHECKING:
     from api.jobs.models import BatchJob
 
+from core.logger import logger
 from api.project.models import (
     Project,
     ProjectAttribute,
@@ -729,4 +732,31 @@ def update_sample_in_project(
         attributes=[
             Attribute(key=attr.key, value=attr.value) for attr in (sample.attributes or [])
         ] if sample.attributes else []
+    )
+
+
+def ingest_vendor_data(session: Session, project: Project, user: str, manifest_uri: str):
+    """
+    Invoke the vendor ingestion process.
+    """
+    vendor_ingest_config_uri = get_setting(session, key='VENDOR_INGESTION_CONFIG')
+    config_data = yaml.safe_load(open(vendor_ingest_config_uri))
+    config = BatchJobConfigInput(**config_data)
+
+    command = interpolate(config_data.command, config)
+
+    return submit_batch_job(
+        session=session,
+        job_name=f"vendor-ingestion-{project.project_id}",
+        container_overrides={
+            "command": [
+                command,
+                "--project-id", project.project_id,
+                "--manifest-uri", manifest_uri
+            ],
+            "environment": []
+        },
+        job_def=config_data.aws_batch.job_definition,
+        job_queue=config_data.aws_batch.job_queue,
+        user=user
     )
