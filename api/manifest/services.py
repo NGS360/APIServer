@@ -13,6 +13,7 @@ from core.config import get_settings
 from core.deps import SessionDep
 from core.logger import logger
 
+
 def _parse_s3_path(s3_path: str) -> tuple[str, str]:
     """Parse S3 path into bucket and prefix"""
     if not s3_path.startswith("s3://"):
