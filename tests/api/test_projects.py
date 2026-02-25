@@ -954,3 +954,26 @@ def test_submit_pipeline_job_template_interpolation(
     project_type_env = next((e for e in env_vars if e["name"] == "PROJECT_TYPE"), None)
     assert project_type_env is not None
     assert project_type_env["value"] == "RNA-Seq"
+
+
+@patch("api.project.services.get_setting_value")
+def test_ingest_vendor_data(
+    mock_get_setting_value: MagicMock,
+    client: TestClient,
+    test_project: Project,
+):
+    """Test the ingest vendor data endpoint"""
+    # Set up test parameters
+    # Set up supporting mocks
+    mock_get_setting_value.return_value = "s3://ngs360-resources/path/to/vendor_ingestion.yaml"
+
+    # Test
+    response = client.post(
+        f"/api/v1/projects/{test_project.project_id}/ingest?"
+        "manifest_uri=s3://vendor-data-bucket/project123/manifest.csv"
+    )
+    # Check results
+    assert response.status_code == 201
+    response_json = response.json()
+    assert response_json["message"] == "Ingest job submitted successfully"
+    assert response_json["aws_job_id"] == "aws-batch-job-123"
