@@ -13,6 +13,35 @@ from core.config import get_settings
 from core.deps import SessionDep
 from core.logger import logger
 
+def _parse_s3_path(s3_path: str) -> tuple[str, str]:
+    """Parse S3 path into bucket and prefix"""
+    if not s3_path.startswith("s3://"):
+        raise ValueError("Invalid S3 path format. Must start with s3://")
+
+    # Remove s3:// prefix
+    path_without_scheme = s3_path[5:]
+
+    # Check for empty path after s3://
+    if not path_without_scheme:
+        raise ValueError("Invalid S3 path format. Bucket name is required")
+
+    # Check for leading slash (s3:///)
+    if path_without_scheme.startswith("/"):
+        raise ValueError("Invalid S3 path format. Bucket name cannot start with /")
+
+    # Check for double slashes anywhere in the path
+    if "//" in path_without_scheme:
+        raise ValueError("Invalid S3 path format. Path cannot contain double slashes")
+
+    # Split into bucket and key
+    if "/" in path_without_scheme:
+        bucket, key = path_without_scheme.split("/", 1)
+    else:
+        bucket = path_without_scheme
+        key = ""
+
+    return bucket, key
+
 
 def get_latest_manifest_file(s3_path: str, s3_client=None) -> str | None:
     """
