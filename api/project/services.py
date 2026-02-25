@@ -738,7 +738,7 @@ def ingest_vendor_data(
     session: Session,
     project: Project,
     user: str,
-    data_source: str,
+    files_uri: str,
     manifest_uri: str
 ):
     """
@@ -755,7 +755,7 @@ def ingest_vendor_data(
 
     # Prepare template context with all variables needed for interpolation
     template_context = {
-        "bucket": data_source,
+        "files_uri": files_uri,
         "projectid": project.project_id,
         "manifest_uri": manifest_uri,
         "user": user

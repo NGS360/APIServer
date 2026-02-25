@@ -302,8 +302,8 @@ def ingest_vendor_data(
     session: SessionDep,
     project: ProjectDep,
     user: CurrentUser,
-    data_source: str = Query(
-        ..., description="Source Bucket of the data to be ingested"
+    files_uri: str = Query(
+        ..., description="Source Bucket/Prefix of the data to be ingested"
     ),
     manifest_uri: str = Query(
         ..., description="URI (S3) path to the vendor manifest"
@@ -316,5 +316,5 @@ def ingest_vendor_data(
         BatchJobPublic: The created batch job information
     """
     batch_job = services.ingest_vendor_data(
-        session, project, user.username, data_source, manifest_uri)
+        session, project, user.username, files_uri, manifest_uri)
     return BatchJobPublic.model_validate(batch_job)
