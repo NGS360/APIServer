@@ -3,7 +3,7 @@ Services for the Project API
 """
 
 from datetime import datetime
-from typing import Literal, TYPE_CHECKING
+from typing import Literal
 from fastapi import HTTPException, status
 from pydantic import PositiveInt
 from pytz import timezone
@@ -11,16 +11,13 @@ from sqlmodel import Session, func, select
 from opensearchpy import OpenSearch
 import yaml
 
-from api.jobs.models import BatchJobConfigInput, BatchJob, VendorIngestionConfig
+from api.jobs.models import BatchJob, VendorIngestionConfig
 from api.settings.services import get_setting, get_setting_value
 from api.actions.services import get_all_action_configs
 from api.actions.models import ActionOption, ActionPlatform
 from api.jobs.services import submit_batch_job
 
 from core.utils import define_search_body, interpolate
-
-if TYPE_CHECKING:
-    from api.jobs.models import BatchJob
 
 from api.project.models import (
     Project,
