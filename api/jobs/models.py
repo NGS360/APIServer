@@ -99,7 +99,10 @@ class BatchJobSubmit(AwsBatchConfig):
 
 
 class BatchJobConfigInput(BaseModel):
-    """ This is used to interpolate values into the AWS Batch job configuration when submitting a job."""
+    """
+    This is used to interpolate values into the AWS Batch
+    job configuration when submitting a job
+    """
     name: str
     desc: str
     default: Optional[Any] = None

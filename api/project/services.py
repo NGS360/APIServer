@@ -22,7 +22,6 @@ from core.utils import define_search_body, interpolate
 if TYPE_CHECKING:
     from api.jobs.models import BatchJob
 
-from core.logger import logger
 from api.project.models import (
     Project,
     ProjectAttribute,
