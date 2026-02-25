@@ -11,7 +11,7 @@ from sqlmodel import Session, func, select
 from opensearchpy import OpenSearch
 import yaml
 
-from api.jobs.models import BatchJobConfigInput, BatchJob
+from api.jobs.models import BatchJobConfigInput, BatchJob, VendorIngestionConfig
 from api.settings.services import get_setting_value
 from api.actions.services import get_all_action_configs
 from api.actions.models import ActionOption, ActionPlatform
@@ -734,7 +734,13 @@ def update_sample_in_project(
     )
 
 
-def ingest_vendor_data(session: Session, project: Project, user: str, manifest_uri: str):
+def ingest_vendor_data(
+    session: Session,
+    project: Project,
+    user: str,
+    data_source: str,
+    manifest_uri: str
+):
     """
     Invoke the vendor ingestion process.
     """
@@ -744,10 +750,17 @@ def ingest_vendor_data(session: Session, project: Project, user: str, manifest_u
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Vendor ingestion configuration not found"
         )
-    config_data = yaml.safe_load(open(vendor_ingest_config_uri))
-    config = BatchJobConfigInput(**config_data)
+    config = yaml.safe_load(open(vendor_ingest_config_uri))
+    config_data = VendorIngestionConfig(**config)
 
-    command = interpolate(config_data.command, config)
+    # Prepare template context with all variables needed for interpolation
+    template_context = {
+        "bucket": data_source,
+        "projectid": project.project_id,
+        "manifest_uri": manifest_uri,
+        "user": user
+    }
+    command = interpolate(config_data.aws_batch.command, template_context)
 
     return submit_batch_job(
         session=session,

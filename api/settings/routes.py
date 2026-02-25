@@ -48,7 +48,7 @@ def get_setting(session: SessionDep, key: str) -> Setting:
     """
     Retrieve a specific setting by key.
     """
-    return services.get_setting(session=session, key=key)
+    return services.get_setting_value(session=session, key=key)
 
 
 @router.put(

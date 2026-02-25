@@ -1,6 +1,6 @@
 inputs:
     - name: bucket
-      desc: S3 Bucket Name
+      desc: S3 Bucket Name/Prefix where the data to be ingested is located.
       type: String
       required: True
 

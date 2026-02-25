@@ -209,8 +209,8 @@ def submit_batch_job(
     )
 
     batch_job = create_batch_job(session, job_create)
-    logger.info(f"Created database record for AWS Batch job {response.get('jobId')}")
-    logger.info(f"Created database record for AWS Batch job {batch_job.aws_job_id}")
+    logger.info(f"Created database record for Job {response.get('jobId')} "
+                f"/ AWS Batch job {batch_job.aws_job_id}")
 
     return batch_job
 

@@ -105,4 +105,11 @@ class BatchJobConfigInput(BaseModel):
     """
     name: str
     desc: str
+    type: str
+    required: bool
     default: Optional[Any] = None
+
+
+class VendorIngestionConfig(SQLModel):
+    inputs: list[BatchJobConfigInput]
+    aws_batch: AwsBatchConfig
