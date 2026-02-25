@@ -1,14 +1,12 @@
 """
 Models for the Jobs API
 """
-from typing import Any, List, Optional
+from typing import Any, Optional
 import uuid
 from datetime import datetime, timezone
 from enum import Enum
 from sqlmodel import SQLModel, Field
-from pydantic import BaseModel, ConfigDict, model_validator
-
-from api.runs.models import InputType
+from pydantic import BaseModel, ConfigDict
 
 
 class JobStatus(str, Enum):
