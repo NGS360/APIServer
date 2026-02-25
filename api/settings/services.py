@@ -7,6 +7,19 @@ from core.deps import SessionDep
 from api.settings.models import Setting, SettingUpdate
 
 
+def get_setting(session: SessionDep, key: str) -> Setting:
+    """Get a specific setting by key"""
+    setting = session.exec(
+        select(Setting).where(Setting.key == key)
+    ).first()
+    if not setting:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Setting with key '{key}' not found"
+        )
+    return setting
+
+
 def update_setting(
     session: SessionDep,
     key: str,

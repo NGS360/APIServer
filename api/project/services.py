@@ -12,7 +12,7 @@ from opensearchpy import OpenSearch
 import yaml
 
 from api.jobs.models import BatchJobConfigInput, BatchJob, VendorIngestionConfig
-from api.settings.services import get_setting_value
+from api.settings.services import get_setting, get_setting_value
 from api.actions.services import get_all_action_configs
 from api.actions.models import ActionOption, ActionPlatform
 from api.jobs.services import submit_batch_job
@@ -744,7 +744,7 @@ def ingest_vendor_data(
     """
     Invoke the vendor ingestion process.
     """
-    vendor_ingest_config_uri = get_setting_value(session, key='VENDOR_INGESTION_CONFIG')
+    vendor_ingest_config_uri = get_setting(session, key='VENDOR_INGESTION_CONFIG')
     if not vendor_ingest_config_uri:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
