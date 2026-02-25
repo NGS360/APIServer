@@ -312,7 +312,6 @@ def ingest_vendor_data(
     Returns:
         BatchJobPublic: The created batch job information
     """
-    breakpoint()  # DEBUGGING
     batch_job = services.ingest_vendor_data(
         session, project, user.username, manifest_uri)
     return BatchJobPublic.model_validate(batch_job)
