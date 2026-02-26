@@ -782,12 +782,7 @@ def ingest_vendor_data(
         session=session,
         job_name=f"vendor-ingestion-{project.project_id}",
         container_overrides={
-            "command": [
-                command,
-                "--project-id", project.project_id,
-                "--manifest-uri", manifest_uri
-            ],
-            "environment": []
+            "command": command,
         },
         job_def=config_data.aws_batch.job_definition,
         job_queue=config_data.aws_batch.job_queue,
