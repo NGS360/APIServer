@@ -4,6 +4,7 @@ Test /projects endpoint
 """
 
 from unittest.mock import patch, MagicMock
+from dns import name
 from fastapi.testclient import TestClient
 from sqlmodel import Session
 import yaml
@@ -963,11 +964,12 @@ def test_ingest_vendor_data(
     mock_boto_client: MagicMock,
     client: TestClient,
     test_project: Project,
+    mock_s3_client
 ):
     """Test the ingest vendor data endpoint"""
     # Set up test parameters
     # Set up supporting mocks
-    mock_get_setting.return_value = "config/vendor_ingestion.yaml"
+    mock_get_setting.return_value = "s3://config_bucket/configs/vendor_ingestion.yaml"
 
     mock_batch = MagicMock()
     mock_batch.submit_job.return_value = {
@@ -975,6 +977,47 @@ def test_ingest_vendor_data(
         "jobName": "aws-batch-job-123",
     }
     mock_boto_client.return_value = mock_batch
+
+    vendor_ingestion_config = {
+        "inputs": [
+            {
+                "name": "bucket",
+                "desc": "S3 Bucket Name/Prefix where the data to be ingested is located.",
+                "type": "String",
+                "required": True
+            },
+            {
+                "name": "projectid",
+                "desc": "Project ID",
+                "type": "String",
+                "required": True
+            },
+            {
+                "name": "manifest_uri",
+                "desc": "S3 URI for the manifest file containing the list of files to ingest.",
+                "type": "String",
+                "required": True
+            },
+            {
+                "name": "user",
+                "desc": "User submitting the ingestion job.",
+                "type": "String",
+                "required": True
+            }
+        ],
+        "aws_batch": {
+            "job_name": "Ingest Vendor Data - {{ projectid }} - {{ bucket }}",
+            "job_definition": "aws_job_def",
+            "job_queue": "batch-job-queue",
+            "command": "-b {{ bucket }} -p {{ projectid }}" 
+        }
+    }
+
+    files = [{"Key": "configs/vendor_ingestion.yaml"}]
+    mock_s3_client.setup_bucket("config_bucket", "configs/", files, [])
+    mock_s3_client.uploaded_files["config_bucket"] = {
+        "configs/vendor_ingestion.yaml": yaml.dump(vendor_ingestion_config).encode("utf-8")
+    }
 
     # Test
     response = client.post(

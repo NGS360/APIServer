@@ -4,6 +4,7 @@ Services for the Project API
 
 from datetime import datetime
 from typing import Literal
+import boto3
 from fastapi import HTTPException, status
 from pydantic import PositiveInt
 from pytz import timezone
@@ -736,7 +737,8 @@ def ingest_vendor_data(
     project: Project,
     user: str,
     files_uri: str,
-    manifest_uri: str
+    manifest_uri: str,
+    s3_client=None
 ):
     """
     Invoke the vendor ingestion process.
@@ -747,7 +749,23 @@ def ingest_vendor_data(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Vendor ingestion configuration not found"
         )
-    config = yaml.safe_load(open(vendor_ingest_config_uri))
+    # Parse S3 URI to get bucket and prefix
+    s3_path = vendor_ingest_config_uri.replace("s3://", "")
+    bucket = s3_path.split("/")[0]
+    prefix = "/".join(s3_path.split("/")[1:])
+
+    # Read the vendor ingestion configuration from S3
+    try:
+        if s3_client is None:
+            s3_client = boto3.client("s3")
+        response = s3_client.get_object(Bucket=bucket, Key=prefix)
+        config_content = response["Body"].read().decode("utf-8")
+        config = yaml.safe_load(config_content)
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to read vendor ingestion configuration from S3: {str(e)}"
+        ) from e
     config_data = VendorIngestionConfig(**config)
 
     # Prepare template context with all variables needed for interpolation
@@ -759,6 +777,7 @@ def ingest_vendor_data(
     }
     command = interpolate(config_data.aws_batch.command, template_context)
 
+    # Submit job to AWS Batch
     return submit_batch_job(
         session=session,
         job_name=f"vendor-ingestion-{project.project_id}",
