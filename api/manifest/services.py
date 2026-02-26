@@ -281,7 +281,7 @@ def validate_manifest_file(
 
         # Invoke Lambda function synchronously
         response = lambda_client.invoke(
-            FunctionName=lambda_function_name,
+            FunctionName=f"{lambda_function_name}:main",
             InvocationType="RequestResponse",
             Payload=json.dumps(payload)
         )
