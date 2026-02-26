@@ -287,3 +287,35 @@ def submit_pipeline_job(
     )
 
     return BatchJobPublic.model_validate(batch_job)
+
+
+###############################################################################
+# Action Submission Endpoint /api/v1/projects/{project_id}/ingest
+###############################################################################
+
+@router.post(
+    "/{project_id}/ingest",
+    tags=["Project Endpoints"],
+    status_code=status.HTTP_201_CREATED,
+)
+def ingest_vendor_data(
+    session: SessionDep,
+    project: ProjectDep,
+    user: CurrentUser,
+    s3_client=Depends(get_s3_client),
+    files_uri: str = Query(
+        ..., description="Source Bucket/Prefix of the data to be ingested"
+    ),
+    manifest_uri: str = Query(
+        ..., description="URI (S3) path to the vendor manifest"
+    )
+) -> BatchJobPublic:
+    """
+    Ingest vendor data for a project.
+
+    Returns:
+        BatchJobPublic: The created batch job information
+    """
+    batch_job = services.ingest_vendor_data(
+        session, project, user.username, files_uri, manifest_uri, s3_client=s3_client)
+    return BatchJobPublic.model_validate(batch_job)
