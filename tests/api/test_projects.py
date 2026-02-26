@@ -4,7 +4,6 @@ Test /projects endpoint
 """
 
 from unittest.mock import patch, MagicMock
-from dns import name
 from fastapi.testclient import TestClient
 from sqlmodel import Session
 import yaml
@@ -1009,7 +1008,7 @@ def test_ingest_vendor_data(
             "job_name": "Ingest Vendor Data - {{ projectid }} - {{ bucket }}",
             "job_definition": "aws_job_def",
             "job_queue": "batch-job-queue",
-            "command": "-b {{ bucket }} -p {{ projectid }}" 
+            "command": "-b {{ bucket }} -p {{ projectid }}"
         }
     }
 
