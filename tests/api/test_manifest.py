@@ -10,7 +10,6 @@ import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
-from api.manifest.services import _parse_s3_path
 from api.manifest.services import get_latest_manifest_file
 
 from tests.conftest import MockS3Client
@@ -18,33 +17,6 @@ from tests.conftest import MockS3Client
 
 class TestManifestServices:
     """Test manifest service functions"""
-
-    def test_parse_s3_path(self):
-        """Test S3 path parsing in manifest service"""
-
-        # Valid paths
-        assert _parse_s3_path("s3://my-bucket") == ("my-bucket", "")
-        assert _parse_s3_path("s3://my-bucket/") == ("my-bucket", "")
-        assert _parse_s3_path("s3://my-bucket/manifests") == ("my-bucket", "manifests")
-        assert _parse_s3_path("s3://my-bucket/vendor/manifests/") == (
-            "my-bucket",
-            "vendor/manifests/",
-        )
-
-        # Invalid paths
-        invalid_paths = [
-            "http://my-bucket",
-            "s3:/my-bucket",
-            "s3://",
-            "s3:///",
-            "s3://my-bucket//prefix",
-        ]
-        for path in invalid_paths:
-            try:
-                _parse_s3_path(path)
-                assert False, f"Expected ValueError for path: {path}"
-            except ValueError:
-                pass  # Expected
 
     def test_get_latest_manifest_file_single(self, mock_s3_client: MockS3Client):
         """Test finding latest manifest when only one exists"""
@@ -618,7 +590,7 @@ class TestManifestValidation:
         })
 
         response = client.post(
-            "/api/v1/manifest/validate?s3_path=s3://test-bucket/manifest.csv"
+            "/api/v1/manifest/validate?manifest_uri=s3://test-bucket/manifest.csv"
         )
 
         # Verify successful response
@@ -681,7 +653,7 @@ class TestManifestValidation:
         })
 
         response = client.post(
-            "/api/v1/manifest/validate?s3_path=s3://test-bucket/manifest.csv"
+            "/api/v1/manifest/validate?manifest_uri=s3://test-bucket/manifest.csv"
         )
 
         # Verify successful response
@@ -753,7 +725,7 @@ class TestManifestValidation:
             "statusCode": 200
         })
         valid_response = client.post(
-            "/api/v1/manifest/validate?s3_path=s3://test-bucket/manifest.csv"
+            "/api/v1/manifest/validate?manifest_uri=s3://test-bucket/manifest.csv"
         )
         valid_data = valid_response.json()
 
@@ -776,7 +748,7 @@ class TestManifestValidation:
             "statusCode": 422
         })
         invalid_response = client.post(
-            "/api/v1/manifest/validate?s3_path=s3://test-bucket/manifest.csv"
+            "/api/v1/manifest/validate?manifest_uri=s3://test-bucket/manifest.csv"
         )
         invalid_data = invalid_response.json()
 
@@ -804,7 +776,7 @@ class TestManifestValidation:
         })
 
         response = client.post(
-            "/api/v1/manifest/validate?s3_path=s3://test-bucket/manifest.csv"
+            "/api/v1/manifest/validate?manifest_uri=s3://test-bucket/manifest.csv"
         )
 
         # Verify error response
@@ -824,7 +796,7 @@ class TestManifestValidation:
         })
 
         response = client.post(
-            "/api/v1/manifest/validate?s3_path=s3://test-bucket/manifest.csv"
+            "/api/v1/manifest/validate?manifest_uri=s3://test-bucket/manifest.csv"
         )
 
         # Verify error response
@@ -844,7 +816,7 @@ class TestManifestValidation:
         })
 
         response = client.post(
-            "/api/v1/manifest/validate?s3_path=s3://test-bucket/manifest.csv"
+            "/api/v1/manifest/validate?manifest_uri=s3://test-bucket/manifest.csv"
         )
 
         # Verify error response
@@ -866,7 +838,7 @@ class TestManifestValidation:
 
         response = client.post(
             "/api/v1/manifest/validate"
-            "?s3_path=s3://test-bucket/manifest.csv"
+            "?manifest_uri=s3://test-bucket/manifest.csv"
             "&manifest_version=dts12.1"
         )
 
@@ -893,17 +865,15 @@ class TestManifestValidation:
 
         response = client.post(
             "/api/v1/manifest/validate"
-            "?s3_path=s3://test-bucket/manifest.csv"
-            "&files_bucket=data-bucket"
-            "&files_prefix=raw/fastq/"
+            "?manifest_uri=s3://test-bucket/manifest.csv"
+            "&files_uri=s3://data-bucket/raw/fastq/"
         )
 
         assert response.status_code == 200
 
         # Verify files_bucket and files_prefix were passed to Lambda
         last_payload = mock_lambda_client.invocations[-1]["Payload"]
-        assert last_payload["files_bucket"] == "data-bucket"
-        assert last_payload["files_prefix"] == "raw/fastq/"
+        assert last_payload["files_uri"] == "s3://data-bucket/raw/fastq/"
 
     def test_validate_manifest_files_bucket_defaults_to_s3_path_bucket(
         self, client: TestClient, mock_lambda_client
@@ -919,12 +889,11 @@ class TestManifestValidation:
         })
 
         response = client.post(
-            "/api/v1/manifest/validate?s3_path=s3://my-bucket/path/manifest.csv"
+            "/api/v1/manifest/validate?manifest_uri=s3://my-bucket/path/manifest.csv"
         )
 
         assert response.status_code == 200
 
         # Verify files_bucket defaulted to bucket from s3_path
         last_payload = mock_lambda_client.invocations[-1]["Payload"]
-        assert last_payload["manifest_path"] == "s3://my-bucket/path/manifest.csv"
-        assert last_payload["files_bucket"] == "my-bucket"
+        assert last_payload["manifest_uri"] == "s3://my-bucket/path/manifest.csv"

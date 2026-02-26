@@ -9,7 +9,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import List
 from sqlmodel import SQLModel, Field, Relationship, UniqueConstraint
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, model_validator
 
 from api.files.models import (
     FileCreate,
@@ -83,14 +83,14 @@ class QCMetricSample(SQLModel, table=True):
 
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     qc_metric_id: uuid.UUID = Field(foreign_key="qcmetric.id", nullable=False)
-    sample_name: str = Field(max_length=255, nullable=False, index=True)
+    sample_id: uuid.UUID = Field(foreign_key="sample.id", nullable=False, index=True)
     role: str | None = Field(default=None, max_length=50)  # e.g., "tumor", "normal"
 
     # Relationship back to parent
     qc_metric: "QCMetric" = Relationship(back_populates="samples")
 
     __table_args__ = (
-        UniqueConstraint("qc_metric_id", "sample_name", name="uq_qcmetricsample_metric_sample"),
+        UniqueConstraint("qc_metric_id", "sample_id", name="uq_qcmetricsample_metric_sample"),
     )
 
 
@@ -199,6 +199,18 @@ class QCRecordCreate(BaseModel):
     output_files: List[FileCreate] | None = None
 
     model_config = ConfigDict(extra="forbid")
+
+    @model_validator(mode="before")
+    @classmethod
+    def propagate_project_id_to_files(cls, data):
+        """Propagate project_id to nested FileCreate objects before validation."""
+        if isinstance(data, dict):
+            project_id = data.get("project_id")
+            if project_id and data.get("output_files"):
+                for f in data["output_files"]:
+                    if isinstance(f, dict) and not f.get("project_id"):
+                        f["project_id"] = project_id
+        return data
 
 
 class MetricValuePublic(SQLModel):

@@ -954,3 +954,77 @@ def test_submit_pipeline_job_template_interpolation(
     project_type_env = next((e for e in env_vars if e["name"] == "PROJECT_TYPE"), None)
     assert project_type_env is not None
     assert project_type_env["value"] == "RNA-Seq"
+
+
+@patch("api.jobs.services.boto3.client")
+@patch("api.project.services.get_setting")
+def test_ingest_vendor_data(
+    mock_get_setting: MagicMock,
+    mock_boto_client: MagicMock,
+    client: TestClient,
+    test_project: Project,
+    mock_s3_client
+):
+    """Test the ingest vendor data endpoint"""
+    # Set up test parameters
+    # Set up supporting mocks
+    mock_get_setting.return_value = "s3://config_bucket/configs/vendor_ingestion.yaml"
+
+    mock_batch = MagicMock()
+    mock_batch.submit_job.return_value = {
+        "jobId": "aws-batch-job-123",
+        "jobName": "aws-batch-job-123",
+    }
+    mock_boto_client.return_value = mock_batch
+
+    vendor_ingestion_config = {
+        "inputs": [
+            {
+                "name": "bucket",
+                "desc": "S3 Bucket Name/Prefix where the data to be ingested is located.",
+                "type": "String",
+                "required": True
+            },
+            {
+                "name": "projectid",
+                "desc": "Project ID",
+                "type": "String",
+                "required": True
+            },
+            {
+                "name": "manifest_uri",
+                "desc": "S3 URI for the manifest file containing the list of files to ingest.",
+                "type": "String",
+                "required": True
+            },
+            {
+                "name": "user",
+                "desc": "User submitting the ingestion job.",
+                "type": "String",
+                "required": True
+            }
+        ],
+        "aws_batch": {
+            "job_name": "Ingest Vendor Data - {{ projectid }} - {{ bucket }}",
+            "job_definition": "aws_job_def",
+            "job_queue": "batch-job-queue",
+            "command": "-b {{ bucket }} -p {{ projectid }}"
+        }
+    }
+
+    files = [{"Key": "configs/vendor_ingestion.yaml"}]
+    mock_s3_client.setup_bucket("config_bucket", "configs/", files, [])
+    mock_s3_client.uploaded_files["config_bucket"] = {
+        "configs/vendor_ingestion.yaml": yaml.dump(vendor_ingestion_config).encode("utf-8")
+    }
+
+    # Test
+    response = client.post(
+        f"/api/v1/projects/{test_project.project_id}/ingest?"
+        "files_uri=s3://vendor-data-bucket/incoming/project123&"
+        "manifest_uri=s3://vendor-data-bucket/project123/manifest.csv"
+    )
+    # Check results
+    assert response.status_code == 201
+    response_json = response.json()
+    assert response_json["aws_job_id"] == "aws-batch-job-123"

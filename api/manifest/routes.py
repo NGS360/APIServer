@@ -79,17 +79,15 @@ def upload_manifest(
 )
 def validate_manifest(
     session: SessionDep,
-    s3_path: str = Query(
-        ..., description="S3 path to the manifest CSV file to validate"
+    manifest_uri: str = Query(
+        ..., description="(S3, GS) path to the manifest CSV file to validate"
     ),
     manifest_version: Optional[str] = Query(
         None, description="Manifest version to validate against (e.g., 'DTS12.1')"
     ),
-    files_bucket: Optional[str] = Query(
-        None, description="S3 bucket where manifest files are located"
-    ),
-    files_prefix: Optional[str] = Query(
-        None, description="S3 prefix/path where manifest files are located"
+    files_uri: str = Query(
+        None, description="(S3, GS) path where files described in manifest are located "
+                          "(e.g. s3://vendorbucket/path/to/files/)"
     ),
 ) -> ManifestValidationResponse:
     """
@@ -102,11 +100,10 @@ def validate_manifest(
     - File existence verification
 
     Args:
-        s3_path: S3 path to the manifest CSV file to validate
+        manifest_uri: (S3, GS) path to the manifest CSV file to validate
         manifest_version: Optional manifest version to validate against
-        files_bucket: Optional S3 bucket where manifest files are located
-        files_prefix: Optional S3 prefix/path for file existence checks
-
+        files_uri: (S3, GS) path where files described in manifest are located.
+                   If not provided, the bucket from manifest_uri will be used.
     Returns:
         ManifestValidationResponse with validation status and any errors found
     """
@@ -116,9 +113,8 @@ def validate_manifest(
 
     result = services.validate_manifest_file(
         session=session,
-        manifest_path=s3_path,
+        manifest_uri=manifest_uri,
+        files_uri=files_uri,
         manifest_version=manifest_version,
-        files_bucket=files_bucket,
-        files_prefix=files_prefix,
     )
     return result

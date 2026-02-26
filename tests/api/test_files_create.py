@@ -160,6 +160,7 @@ class TestFileCreateSchema:
             created_on=datetime(2024, 1, 15, 12, 0, 0, tzinfo=timezone.utc),
             hashes={"sha256": "abc123", "md5": "def456"},
             tags={"type": "raw_data", "format": "fastq"},
+            project_id="P-123",
             samples=[SampleInput(sample_name="sample1", role="tumor")],
             entities=[EntityInput(entity_type="PROJECT", entity_id="P-123")],
         )

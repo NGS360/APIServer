@@ -14,11 +14,14 @@ from enum import Enum
 import hashlib
 import mimetypes
 import re
-from typing import List
+from typing import List, TYPE_CHECKING
 import uuid
 
-from pydantic import ConfigDict
+from pydantic import ConfigDict, model_validator
 from sqlmodel import Field, Relationship, SQLModel, UniqueConstraint
+
+if TYPE_CHECKING:
+    from api.samples.models import Sample  # noqa: F811
 
 
 # ============================================================================
@@ -100,17 +103,16 @@ class FileSample(SQLModel, table=True):
 
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     file_id: uuid.UUID = Field(foreign_key="file.id", nullable=False)
-
-    # TBD: I don't think sample_name should be here, since this should link back to Sample
-    # Role should also be an attribute on the Sample and not the file.
-    sample_name: str = Field(max_length=255, nullable=False)
+    sample_id: uuid.UUID = Field(foreign_key="sample.id", nullable=False)
     role: str | None = Field(default=None, max_length=50)  # e.g., "tumor", "normal"
 
-    # Relationship back to parent
+    # Relationship back to parent file
     file: "File" = Relationship(back_populates="samples")
+    # Bidirectional relationship to Sample
+    sample: "Sample" = Relationship(back_populates="file_samples")
 
     __table_args__ = (
-        UniqueConstraint("file_id", "sample_name", name="uq_filesample_file_sample"),
+        UniqueConstraint("file_id", "sample_id", name="uq_filesample_file_sample"),
     )
 
 
@@ -333,12 +335,19 @@ class FileCreate(SQLModel):
     source: str | None = None  # Origin of file record
     created_by: str | None = None
     storage_backend: str | None = None
+    project_id: str | None = None  # Required when samples are provided
     entities: List[EntityInput] | None = None
     samples: List[SampleInput] | None = None
     hashes: dict[str, str] | None = None  # {"md5": "abc...", "sha256": "def..."}
     tags: dict[str, str] | None = None  # {"type": "alignment", "format": "bam"}
 
     model_config = ConfigDict(extra="forbid")
+
+    @model_validator(mode="after")
+    def validate_project_id_with_samples(self):
+        if self.samples and not self.project_id:
+            raise ValueError("project_id is required when samples are provided")
+        return self
 
 
 class FileUploadCreate(SQLModel):
@@ -477,7 +486,7 @@ def file_to_public(file: File) -> FilePublic:
             ) for e in file.entities
         ],
         samples=[
-            FileSamplePublic(sample_name=s.sample_name, role=s.role)
+            FileSamplePublic(sample_name=s.sample.sample_id, role=s.role)
             for s in file.samples
         ],
         hashes=[
@@ -507,7 +516,7 @@ def file_to_summary(file: File) -> FileSummary:
             for t in file.tags
         ],
         samples=[
-            FileSamplePublic(sample_name=s.sample_name, role=s.role)
+            FileSamplePublic(sample_name=s.sample.sample_id, role=s.role)
             for s in file.samples
         ],
     )

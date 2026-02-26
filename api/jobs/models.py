@@ -1,12 +1,12 @@
 """
 Models for the Jobs API
 """
-from typing import Optional
+from typing import Any, Optional
 import uuid
 from datetime import datetime, timezone
 from enum import Enum
 from sqlmodel import SQLModel, Field
-from pydantic import ConfigDict
+from pydantic import BaseModel, ConfigDict
 
 
 class JobStatus(str, Enum):
@@ -96,3 +96,20 @@ class AwsBatchConfig(SQLModel):
 class BatchJobSubmit(AwsBatchConfig):
     """Schema for submitting a new batch job to AWS Batch (extends AwsBatchConfig)"""
     user: str
+
+
+class BatchJobConfigInput(BaseModel):
+    """
+    This is used to interpolate values into the AWS Batch
+    job configuration when submitting a job
+    """
+    name: str
+    desc: str
+    type: str
+    required: bool
+    default: Optional[Any] = None
+
+
+class VendorIngestionConfig(SQLModel):
+    inputs: list[BatchJobConfigInput]
+    aws_batch: AwsBatchConfig

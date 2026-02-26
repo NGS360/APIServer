@@ -3,22 +3,22 @@ Services for the Project API
 """
 
 from datetime import datetime
-from typing import Literal, TYPE_CHECKING
+from typing import Literal
+import boto3
 from fastapi import HTTPException, status
 from pydantic import PositiveInt
 from pytz import timezone
 from sqlmodel import Session, func, select
 from opensearchpy import OpenSearch
+import yaml
 
-from api.settings.services import get_setting_value
+from api.jobs.models import BatchJob, VendorIngestionConfig
+from api.settings.services import get_setting, get_setting_value
 from api.actions.services import get_all_action_configs
 from api.actions.models import ActionOption, ActionPlatform
 from api.jobs.services import submit_batch_job
 
 from core.utils import define_search_body, interpolate
-
-if TYPE_CHECKING:
-    from api.jobs.models import BatchJob
 
 from api.project.models import (
     Project,
@@ -356,7 +356,7 @@ def submit_pipeline_job(
     reference: str | None = None,
     auto_release: bool | None = None,
     s3_client=None
-) -> "BatchJob":
+) -> BatchJob:
     """
     Submit a pipeline job to AWS Batch.
 
@@ -729,4 +729,62 @@ def update_sample_in_project(
         attributes=[
             Attribute(key=attr.key, value=attr.value) for attr in (sample.attributes or [])
         ] if sample.attributes else []
+    )
+
+
+def ingest_vendor_data(
+    session: Session,
+    project: Project,
+    user: str,
+    files_uri: str,
+    manifest_uri: str,
+    s3_client=None
+):
+    """
+    Invoke the vendor ingestion process.
+    """
+    vendor_ingest_config_uri = get_setting(session, key='VENDOR_INGESTION_CONFIG')
+    if not vendor_ingest_config_uri:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Vendor ingestion configuration not found"
+        )
+    # Parse S3 URI to get bucket and prefix
+    s3_path = vendor_ingest_config_uri.replace("s3://", "")
+    bucket = s3_path.split("/")[0]
+    prefix = "/".join(s3_path.split("/")[1:])
+
+    # Read the vendor ingestion configuration from S3
+    try:
+        if s3_client is None:
+            s3_client = boto3.client("s3")
+        response = s3_client.get_object(Bucket=bucket, Key=prefix)
+        config_content = response["Body"].read().decode("utf-8")
+        config = yaml.safe_load(config_content)
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to read vendor ingestion configuration from S3: {str(e)}"
+        ) from e
+    config_data = VendorIngestionConfig(**config)
+
+    # Prepare template context with all variables needed for interpolation
+    template_context = {
+        "files_uri": files_uri,
+        "projectid": project.project_id,
+        "manifest_uri": manifest_uri,
+        "user": user
+    }
+    command = interpolate(config_data.aws_batch.command, template_context)
+
+    # Submit job to AWS Batch
+    return submit_batch_job(
+        session=session,
+        job_name=f"vendor-ingestion-{project.project_id}",
+        container_overrides={
+            "command": command,
+        },
+        job_def=config_data.aws_batch.job_definition,
+        job_queue=config_data.aws_batch.job_queue,
+        user=user
     )
