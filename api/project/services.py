@@ -749,8 +749,14 @@ def ingest_vendor_data(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Vendor ingestion configuration not found"
         )
+    if vendor_ingest_config_uri.value == '':
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Vendor ingestion configuration URI is empty"
+        )
+
     # Parse S3 URI to get bucket and prefix
-    s3_path = vendor_ingest_config_uri.replace("s3://", "")
+    s3_path = vendor_ingest_config_uri.value.replace("s3://", "")
     bucket = s3_path.split("/")[0]
     prefix = "/".join(s3_path.split("/")[1:])
 
@@ -782,7 +788,7 @@ def ingest_vendor_data(
         session=session,
         job_name=f"vendor-ingestion-{project.project_id}",
         container_overrides={
-            "command": command,
+            "command": command.split(),
         },
         job_def=config_data.aws_batch.job_definition,
         job_queue=config_data.aws_batch.job_queue,
