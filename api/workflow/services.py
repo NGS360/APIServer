@@ -116,8 +116,7 @@ def workflow_to_public(workflow: Workflow) -> WorkflowPublic:
                 id=r.id,
                 workflow_id=r.workflow_id,
                 engine=r.engine,
-                engine_id=r.engine_id,
-                engine_version=r.engine_version,
+                external_id=r.external_id,
                 created_at=r.created_at,
                 created_by=r.created_by,
             )
@@ -175,8 +174,7 @@ def create_workflow_registration(
     registration = WorkflowRegistration(
         workflow_id=workflow.id,
         engine=registration_in.engine,
-        engine_id=registration_in.engine_id,
-        engine_version=registration_in.engine_version,
+        external_id=registration_in.external_id,
         created_by=created_by,
     )
 

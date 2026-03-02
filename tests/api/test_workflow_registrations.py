@@ -33,8 +33,7 @@ def test_create_registration(client: TestClient, session: Session):
 
     body = {
         "engine": "Arvados",
-        "engine_id": "arvados-wf-abc123",
-        "engine_version": "2.7.0",
+        "external_id": "arvados-wf-abc123",
     }
     resp = client.post(f"/api/v1/workflows/{wf_id}/registrations", json=body)
     assert resp.status_code == 201
@@ -42,32 +41,31 @@ def test_create_registration(client: TestClient, session: Session):
 
     assert data["workflow_id"] == wf_id
     assert data["engine"] == "Arvados"
-    assert data["engine_id"] == "arvados-wf-abc123"
-    assert data["engine_version"] == "2.7.0"
+    assert data["external_id"] == "arvados-wf-abc123"
     assert data["created_by"] == "testuser"
     assert "id" in data
     assert "created_at" in data
 
 
-def test_create_registration_without_engine_version(client: TestClient, session: Session):
-    """engine_version is optional."""
+def test_create_registration_minimal(client: TestClient, session: Session):
+    """Only engine and external_id are required."""
     wf_id = _create_workflow(session)
 
-    body = {"engine": "SevenBridges", "engine_id": "sb-app-xyz"}
+    body = {"engine": "SevenBridges", "external_id": "sb-app-xyz"}
     resp = client.post(f"/api/v1/workflows/{wf_id}/registrations", json=body)
     assert resp.status_code == 201
-    assert resp.json()["engine_version"] is None
+    assert resp.json()["external_id"] == "sb-app-xyz"
 
 
 def test_create_registration_duplicate_engine_conflict(client: TestClient, session: Session):
     """Duplicate (workflow_id, engine) pair returns 409."""
     wf_id = _create_workflow(session)
 
-    body = {"engine": "Arvados", "engine_id": "arvados-wf-1"}
+    body = {"engine": "Arvados", "external_id": "arvados-wf-1"}
     resp1 = client.post(f"/api/v1/workflows/{wf_id}/registrations", json=body)
     assert resp1.status_code == 201
 
-    body2 = {"engine": "Arvados", "engine_id": "arvados-wf-2"}
+    body2 = {"engine": "Arvados", "external_id": "arvados-wf-2"}
     resp2 = client.post(f"/api/v1/workflows/{wf_id}/registrations", json=body2)
     assert resp2.status_code == 409
 
@@ -75,7 +73,7 @@ def test_create_registration_duplicate_engine_conflict(client: TestClient, sessi
 def test_create_registration_workflow_not_found(client: TestClient):
     """Registration on a non-existent workflow returns 404."""
     fake_id = "00000000-0000-0000-0000-000000000000"
-    body = {"engine": "Arvados", "engine_id": "x"}
+    body = {"engine": "Arvados", "external_id": "x"}
     resp = client.post(f"/api/v1/workflows/{fake_id}/registrations", json=body)
     assert resp.status_code == 404
 
@@ -98,11 +96,11 @@ def test_get_registrations_multiple(client: TestClient, session: Session):
 
     client.post(
         f"/api/v1/workflows/{wf_id}/registrations",
-        json={"engine": "Arvados", "engine_id": "arv-1"},
+        json={"engine": "Arvados", "external_id": "arv-1"},
     )
     client.post(
         f"/api/v1/workflows/{wf_id}/registrations",
-        json={"engine": "SevenBridges", "engine_id": "sb-1"},
+        json={"engine": "SevenBridges", "external_id": "sb-1"},
     )
 
     resp = client.get(f"/api/v1/workflows/{wf_id}/registrations")
@@ -123,7 +121,7 @@ def test_delete_registration(client: TestClient, session: Session):
 
     create_resp = client.post(
         f"/api/v1/workflows/{wf_id}/registrations",
-        json={"engine": "Arvados", "engine_id": "arv-1"},
+        json={"engine": "Arvados", "external_id": "arv-1"},
     )
     reg_id = create_resp.json()["id"]
 
@@ -158,7 +156,7 @@ def test_workflow_public_includes_registrations(client: TestClient, session: Ses
 
     client.post(
         f"/api/v1/workflows/{wf_id}/registrations",
-        json={"engine": "Arvados", "engine_id": "arv-1"},
+        json={"engine": "Arvados", "external_id": "arv-1"},
     )
 
     resp = client.get(f"/api/v1/workflows/{wf_id}")

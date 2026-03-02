@@ -54,8 +54,7 @@ def upgrade() -> None:
         sa.Column('id', sa.Uuid(), nullable=False),
         sa.Column('workflow_id', sa.Uuid(), nullable=False),
         sa.Column('engine', sqlmodel.sql.sqltypes.AutoString(), nullable=False),
-        sa.Column('engine_id', sqlmodel.sql.sqltypes.AutoString(), nullable=False),
-        sa.Column('engine_version', sqlmodel.sql.sqltypes.AutoString(), nullable=True),
+        sa.Column('external_id', sqlmodel.sql.sqltypes.AutoString(), nullable=False),
         sa.Column('created_at', sa.DateTime(), nullable=False),
         sa.Column('created_by', sqlmodel.sql.sqltypes.AutoString(), nullable=False),
         sa.ForeignKeyConstraint(['workflow_id'], ['workflow.id']),
@@ -103,11 +102,11 @@ def upgrade() -> None:
     op.add_column('workflow', sa.Column('created_at', sa.DateTime(), nullable=False, server_default=sa.text('CURRENT_TIMESTAMP')))
     op.add_column('workflow', sa.Column('created_by', sqlmodel.sql.sqltypes.AutoString(), nullable=False, server_default=sa.text("'system'")))
 
-    # Migrate existing engine/engine_id/engine_version data to workflowregistration
+    # Migrate existing engine/engine_id data to workflowregistration
     # for any existing workflow rows that have engine data
     op.execute("""
-        INSERT INTO workflowregistration (id, workflow_id, engine, engine_id, engine_version, created_at, created_by)
-        SELECT UUID(), w.id, w.engine, w.engine_id, w.engine_version, NOW(), 'migration'
+        INSERT INTO workflowregistration (id, workflow_id, engine, external_id, created_at, created_by)
+        SELECT UUID(), w.id, w.engine, w.engine_id, NOW(), 'migration'
         FROM workflow w
         WHERE w.engine IS NOT NULL AND w.engine_id IS NOT NULL
     """)
@@ -134,15 +133,14 @@ def downgrade() -> None:
     op.execute("""
         UPDATE workflow w
         JOIN (
-            SELECT workflow_id, engine, engine_id, engine_version
+            SELECT workflow_id, engine, external_id
             FROM workflowregistration
             WHERE id IN (
                 SELECT MIN(id) FROM workflowregistration GROUP BY workflow_id
             )
         ) wr ON w.id = wr.workflow_id
         SET w.engine = wr.engine,
-            w.engine_id = wr.engine_id,
-            w.engine_version = wr.engine_version
+            w.engine_id = wr.external_id
     """)
 
     # Make engine NOT NULL again after backfill

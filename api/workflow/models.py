@@ -63,8 +63,7 @@ class WorkflowRegistration(SQLModel, table=True):
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     workflow_id: uuid.UUID = Field(foreign_key="workflow.id")
     engine: str
-    engine_id: str
-    engine_version: str | None = Field(default=None)
+    external_id: str  # Workflow identifier on the external platform
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     created_by: str
 
@@ -140,16 +139,14 @@ class WorkflowPublic(SQLModel):
 
 class WorkflowRegistrationCreate(SQLModel):
     engine: str
-    engine_id: str
-    engine_version: str | None = None
+    external_id: str
 
 
 class WorkflowRegistrationPublic(SQLModel):
     id: uuid.UUID
     workflow_id: uuid.UUID
     engine: str
-    engine_id: str
-    engine_version: str | None
+    external_id: str
     created_at: datetime
     created_by: str
 

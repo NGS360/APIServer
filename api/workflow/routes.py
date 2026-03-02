@@ -114,8 +114,7 @@ def create_workflow_registration(
         id=reg.id,
         workflow_id=reg.workflow_id,
         engine=reg.engine,
-        engine_id=reg.engine_id,
-        engine_version=reg.engine_version,
+        external_id=reg.external_id,
         created_at=reg.created_at,
         created_by=reg.created_by,
     )
@@ -138,8 +137,7 @@ def get_workflow_registrations(
             id=r.id,
             workflow_id=r.workflow_id,
             engine=r.engine,
-            engine_id=r.engine_id,
-            engine_version=r.engine_version,
+            external_id=r.external_id,
             created_at=r.created_at,
             created_by=r.created_by,
         )

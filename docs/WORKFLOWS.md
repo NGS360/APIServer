@@ -42,8 +42,7 @@ erDiagram
         uuid id PK
         uuid workflow_id FK
         string engine
-        string engine_id
-        string engine_version
+        string external_id
         datetime created_at
         string created_by
     }
@@ -71,7 +70,7 @@ erDiagram
 
 **Why separate Workflow and WorkflowRegistration?**
 
-A workflow definition (the WDL/CWL file) is conceptually the same regardless of which platform it runs on. The `Workflow` table captures this identity. The `WorkflowRegistration` table captures where and how a workflow is deployed — its engine-specific ID and version. This means:
+A workflow definition (the WDL/CWL file) is conceptually the same regardless of which platform it runs on. The `Workflow` table captures this identity. The `WorkflowRegistration` table captures where and how a workflow is deployed — its engine-specific external identifier. This means:
 
 - The same workflow can be registered on Arvados *and* SevenBridges without duplication
 - Removing one platform registration doesn't delete the workflow or its run history
@@ -116,8 +115,7 @@ Platform-specific registration of a workflow. One workflow can have at most one 
 | `id` | UUID | auto | Primary key |
 | `workflow_id` | UUID | yes | FK → `workflow.id` |
 | `engine` | string | yes | Platform name (e.g., `"arvados"`, `"sevenbridges"`) |
-| `engine_id` | string | yes | Platform-specific workflow identifier |
-| `engine_version` | string | no | Platform-specific version/revision |
+| `external_id` | string | yes | Workflow identifier on the external platform |
 | `created_at` | datetime | auto | UTC timestamp of creation |
 | `created_by` | string | yes | Username of the creator |
 
@@ -222,8 +220,7 @@ POST /workflows/{workflow_id}/registrations
 ```json
 {
   "engine": "arvados",
-  "engine_id": "zzzzz-7fd4e-abc123def456",
-  "engine_version": "v3"
+  "external_id": "zzzzz-7fd4e-abc123def456"
 }
 ```
 
@@ -234,8 +231,7 @@ POST /workflows/{workflow_id}/registrations
   "id": "...",
   "workflow_id": "a1b2c3d4-...",
   "engine": "arvados",
-  "engine_id": "zzzzz-7fd4e-abc123def456",
-  "engine_version": "v3",
+  "external_id": "zzzzz-7fd4e-abc123def456",
   "created_at": "2026-03-01T12:05:00Z",
   "created_by": "jdoe"
 }
