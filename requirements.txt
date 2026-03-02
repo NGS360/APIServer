@@ -38,7 +38,7 @@ click==8.3.1
     #   sample-sheet
     #   typer
     #   uvicorn
-cryptography==46.0.3
+cryptography==46.0.5
     # via
     #   ngs360-server (pyproject.toml)
     #   authlib
