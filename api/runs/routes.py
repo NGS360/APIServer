@@ -20,6 +20,8 @@ from core.deps import SessionDep, OpenSearchDep, get_s3_client
 from api.auth.deps import CurrentUser
 from api.runs.models import (
     IlluminaMetricsResponseModel,
+    SampleSequencingRunCreate,
+    SampleSequencingRunPublic,
     SequencingRun,
     SequencingRunCreate,
     SequencingRunPublic,
@@ -27,7 +29,7 @@ from api.runs.models import (
     SequencingRunUpdateRequest,
     IlluminaSampleSheetResponseModel,
     DemuxWorkflowConfig,
-    DemuxWorkflowSubmitBody
+    DemuxWorkflowSubmitBody,
 )
 from api.jobs.models import BatchJobPublic
 from api.runs import services
@@ -294,3 +296,69 @@ def get_run_metrics(session: SessionDep, run_barcode: str) -> IlluminaMetricsRes
     Retrieve demultiplexing metrics for a specific run.
     """
     return services.get_run_metrics(session=session, run_barcode=run_barcode)
+
+
+###############################################################################
+# Sample ↔ Run Association Endpoints
+###############################################################################
+
+
+@router.post(
+    "/{run_barcode}/samples",
+    response_model=SampleSequencingRunPublic,
+    status_code=status.HTTP_201_CREATED,
+    tags=["Run Endpoints"],
+)
+def associate_sample_with_run(
+    session: SessionDep,
+    user: CurrentUser,
+    run_barcode: str,
+    body: SampleSequencingRunCreate,
+) -> SampleSequencingRunPublic:
+    """Associate a sample with a sequencing run."""
+    assoc = services.associate_sample_with_run(
+        session=session,
+        run_barcode=run_barcode,
+        sample_id=str(body.sample_id),
+        created_by=user.username,
+    )
+    return SampleSequencingRunPublic(
+        id=assoc.id,
+        sample_id=assoc.sample_id,
+        sequencing_run_id=assoc.sequencing_run_id,
+        created_at=assoc.created_at,
+        created_by=assoc.created_by,
+    )
+
+
+@router.get(
+    "/{run_barcode}/samples",
+    response_model=list[SampleSequencingRunPublic],
+    tags=["Run Endpoints"],
+)
+def get_samples_for_run(
+    session: SessionDep,
+    run_barcode: str,
+) -> list[SampleSequencingRunPublic]:
+    """List sample associations for a sequencing run."""
+    return services.get_samples_for_run(
+        session=session, run_barcode=run_barcode
+    )
+
+
+@router.delete(
+    "/{run_barcode}/samples/{sample_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    tags=["Run Endpoints"],
+)
+def remove_sample_from_run(
+    session: SessionDep,
+    run_barcode: str,
+    sample_id: str,
+) -> None:
+    """Remove a sample association from a run."""
+    services.remove_sample_from_run(
+        session=session,
+        run_barcode=run_barcode,
+        sample_id=sample_id,
+    )

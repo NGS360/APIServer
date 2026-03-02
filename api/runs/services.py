@@ -25,11 +25,14 @@ from api.runs.models import (
     IlluminaMetricsResponseModel,
     IlluminaSampleSheetResponseModel,
     RunStatus,
+    SampleSequencingRun,
+    SampleSequencingRunPublic,
     SequencingRun,
     SequencingRunCreate,
     SequencingRunPublic,
     SequencingRunsPublic,
 )
+from api.samples.models import Sample
 from api.search.services import add_object_to_index, delete_index
 from api.search.models import (
     SearchDocument,
@@ -686,3 +689,123 @@ def submit_demux_job(
     )
 
     return BatchJobPublic.model_validate(batch_job)
+
+
+###############################################################################
+# Sample ↔ SequencingRun associations
+###############################################################################
+
+
+def associate_sample_with_run(
+    session: Session,
+    run_barcode: str,
+    sample_id: str,
+    created_by: str,
+) -> SampleSequencingRun:
+    """Create a Sample ↔ SequencingRun association."""
+    from uuid import UUID
+
+    run = get_run(session=session, run_barcode=run_barcode)
+    if run is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Run with barcode '{run_barcode}' not found.",
+        )
+
+    sample = session.exec(
+        select(Sample).where(Sample.id == UUID(sample_id))
+    ).first()
+    if not sample:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Sample with id '{sample_id}' not found.",
+        )
+
+    # Check for duplicate
+    existing = session.exec(
+        select(SampleSequencingRun).where(
+            SampleSequencingRun.sample_id == sample.id,
+            SampleSequencingRun.sequencing_run_id == run.id,
+        )
+    ).first()
+    if existing:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"Sample '{sample_id}' is already associated "
+                f"with run '{run_barcode}'."
+            ),
+        )
+
+    assoc = SampleSequencingRun(
+        sample_id=sample.id,
+        sequencing_run_id=run.id,
+        created_by=created_by,
+    )
+    session.add(assoc)
+    session.commit()
+    session.refresh(assoc)
+    return assoc
+
+
+def get_samples_for_run(
+    session: Session,
+    run_barcode: str,
+) -> list[SampleSequencingRunPublic]:
+    """List all sample associations for a run."""
+    run = get_run(session=session, run_barcode=run_barcode)
+    if run is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Run with barcode '{run_barcode}' not found.",
+        )
+
+    associations = session.exec(
+        select(SampleSequencingRun).where(
+            SampleSequencingRun.sequencing_run_id == run.id,
+        )
+    ).all()
+
+    return [
+        SampleSequencingRunPublic(
+            id=a.id,
+            sample_id=a.sample_id,
+            sequencing_run_id=a.sequencing_run_id,
+            created_at=a.created_at,
+            created_by=a.created_by,
+        )
+        for a in associations
+    ]
+
+
+def remove_sample_from_run(
+    session: Session,
+    run_barcode: str,
+    sample_id: str,
+) -> None:
+    """Remove a Sample ↔ SequencingRun association."""
+    from uuid import UUID
+
+    run = get_run(session=session, run_barcode=run_barcode)
+    if run is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Run with barcode '{run_barcode}' not found.",
+        )
+
+    assoc = session.exec(
+        select(SampleSequencingRun).where(
+            SampleSequencingRun.sample_id == UUID(sample_id),
+            SampleSequencingRun.sequencing_run_id == run.id,
+        )
+    ).first()
+    if not assoc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=(
+                f"Association between sample '{sample_id}' and "
+                f"run '{run_barcode}' not found."
+            ),
+        )
+    session.delete(assoc)
+    session.commit()
