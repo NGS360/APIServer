@@ -11,7 +11,7 @@ anyio==4.12.1
     #   httpx
     #   starlette
     #   watchfiles
-authlib==1.6.6
+authlib==1.6.9
     # via ngs360-server (pyproject.toml)
 bcrypt==4.3.0
     # via ngs360-server (pyproject.toml)
