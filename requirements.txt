@@ -13,7 +13,7 @@ anyio==4.12.1
     #   httpx
     #   starlette
     #   watchfiles
-authlib==1.6.6
+authlib==1.6.9
     # via ngs360-server (pyproject.toml)
 bcrypt==4.3.0
     # via ngs360-server (pyproject.toml)
@@ -40,7 +40,7 @@ click==8.3.1
     #   sample-sheet
     #   typer
     #   uvicorn
-cryptography==46.0.3
+cryptography==46.0.5
     # via
     #   ngs360-server (pyproject.toml)
     #   authlib
@@ -64,7 +64,7 @@ fastapi-cloud-cli==0.6.0
     # via fastapi-cli
 fastar==0.8.0
     # via fastapi-cloud-cli
-grpcio==1.76.0
+grpcio==1.78.0
     # via opensearch-protobufs
 gunicorn==23.0.0
     # via ngs360-server (pyproject.toml)
@@ -187,7 +187,7 @@ sqlalchemy==2.0.45
     # via
     #   alembic
     #   sqlmodel
-sqlmodel==0.0.27
+sqlmodel==0.0.37
     # via ngs360-server (pyproject.toml)
 starlette==0.50.0
     # via fastapi
