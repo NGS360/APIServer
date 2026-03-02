@@ -17,10 +17,16 @@ The Workflow system provides:
 
 ```mermaid
 erDiagram
+    Platform ||--o{ WorkflowRegistration : engine_FK
+    Platform ||--o{ WorkflowRun : engine_FK
     Workflow ||--o{ WorkflowAttribute : has_attributes
     Workflow ||--o{ WorkflowRegistration : registered_on
     Workflow ||--o{ WorkflowRun : executed_as
     WorkflowRun ||--o{ WorkflowRunAttribute : has_attributes
+
+    Platform {
+        string name PK
+    }
 
     Workflow {
         uuid id PK
@@ -41,7 +47,7 @@ erDiagram
     WorkflowRegistration {
         uuid id PK
         uuid workflow_id FK
-        string engine
+        string engine FK
         string external_id
         datetime created_at
         string created_by
@@ -50,7 +56,7 @@ erDiagram
     WorkflowRun {
         uuid id PK
         uuid workflow_id FK
-        string engine
+        string engine FK
         string engine_run_id
         datetime executed_at
         enum status
@@ -106,15 +112,23 @@ Key-value metadata for workflows. Extensible without schema changes.
 | `key` | string | yes | Attribute name |
 | `value` | string | yes | Attribute value |
 
+### Platform
+
+A registered workflow execution engine. Single-column reference table — the `name` is the PK. Must be created before workflows can be registered or run on a given engine.
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `name` | string | yes | Primary key — e.g., `"Arvados"`, `"SevenBridges"` |
+
 ### WorkflowRegistration
 
-Platform-specific registration of a workflow. One workflow can have at most one registration per engine.
+Platform-specific registration of a workflow. One workflow can have at most one registration per engine. The `engine` column is a FK to `platform.name`.
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `id` | UUID | auto | Primary key |
 | `workflow_id` | UUID | yes | FK → `workflow.id` |
-| `engine` | string | yes | Platform name (e.g., `"arvados"`, `"sevenbridges"`) |
+| `engine` | string | yes | FK → `platform.name` |
 | `external_id` | string | yes | Workflow identifier on the external platform |
 | `created_at` | datetime | auto | UTC timestamp of creation |
 | `created_by` | string | yes | Username of the creator |
@@ -123,13 +137,13 @@ Platform-specific registration of a workflow. One workflow can have at most one 
 
 ### WorkflowRun
 
-Execution record of a workflow. Tracks status and engine-specific run IDs.
+Execution record of a workflow. Tracks status and engine-specific run IDs. The `engine` column is a FK to `platform.name`.
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `id` | UUID | auto | Primary key |
 | `workflow_id` | UUID | yes | FK → `workflow.id` |
-| `engine` | string | yes | Which platform executed this run |
+| `engine` | string | yes | FK → `platform.name` |
 | `engine_run_id` | string | no | External run/job ID on the platform |
 | `executed_at` | datetime | auto | When the run was initiated |
 | `status` | enum | yes | One of: `PENDING`, `RUNNING`, `SUCCEEDED`, `FAILED`, `CANCELLED` |
@@ -219,10 +233,12 @@ POST /workflows/{workflow_id}/registrations
 
 ```json
 {
-  "engine": "arvados",
+  "engine": "Arvados",
   "external_id": "zzzzz-7fd4e-abc123def456"
 }
 ```
+
+> **Note:** The `engine` value must match a registered Platform `name`. Create platforms first via `POST /platforms`.
 
 **Response** (`201 Created`):
 
@@ -230,14 +246,16 @@ POST /workflows/{workflow_id}/registrations
 {
   "id": "...",
   "workflow_id": "a1b2c3d4-...",
-  "engine": "arvados",
+  "engine": "Arvados",
   "external_id": "zzzzz-7fd4e-abc123def456",
   "created_at": "2026-03-01T12:05:00Z",
   "created_by": "jdoe"
 }
 ```
 
-**Error** (`409 Conflict`): If a registration for the same engine already exists.
+**Errors:**
+- `400 Bad Request` — Engine is not a registered platform.
+- `409 Conflict` — A registration for the same engine already exists.
 
 #### List Registrations
 
@@ -361,9 +379,13 @@ Valid status values: `Pending`, `Running`, `Succeeded`, `Failed`, `Cancelled`.
 
 | File | Description |
 |------|-------------|
-| `api/workflow/models.py` | SQLModel table definitions and Pydantic request/response schemas |
-| `api/workflow/services.py` | Business logic (create, list, update, data migration helpers) |
-| `api/workflow/routes.py` | FastAPI route handlers |
+| `api/platforms/models.py` | Platform table model and schemas |
+| `api/platforms/services.py` | Platform CRUD services |
+| `api/platforms/routes.py` | Platform endpoint handlers |
+| `api/workflow/models.py` | Workflow/Registration/Run table definitions and schemas |
+| `api/workflow/services.py` | Workflow business logic (create, list, update, engine validation) |
+| `api/workflow/routes.py` | Workflow endpoint handlers |
+| `tests/api/test_platforms.py` | Platform CRUD tests |
 | `tests/api/test_workflows.py` | Workflow CRUD tests |
-| `tests/api/test_workflow_registrations.py` | Registration endpoint tests |
-| `tests/api/test_workflow_runs.py` | Workflow run endpoint tests |
+| `tests/api/test_workflow_registrations.py` | Registration endpoint tests (incl. engine validation) |
+| `tests/api/test_workflow_runs.py` | Workflow run endpoint tests (incl. engine validation) |
