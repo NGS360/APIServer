@@ -23,6 +23,7 @@ from api.workflow.models import (
     WorkflowRun, WorkflowRunAttribute,
 )
 from api.pipeline.models import Pipeline, PipelineAttribute, PipelineWorkflow
+from api.platforms.models import Platform
 from api.jobs.models import BatchJob
 from api.qcmetrics.models import QCRecord, QCRecordMetadata, QCMetric, QCMetricValue, QCMetricSample
 
