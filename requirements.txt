@@ -185,7 +185,7 @@ sqlalchemy==2.0.45
     # via
     #   alembic
     #   sqlmodel
-sqlmodel==0.0.27
+sqlmodel==0.0.37
     # via ngs360-server (pyproject.toml)
 starlette==0.50.0
     # via fastapi
