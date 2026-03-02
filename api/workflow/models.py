@@ -62,7 +62,7 @@ class WorkflowRegistration(SQLModel, table=True):
 
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     workflow_id: uuid.UUID = Field(foreign_key="workflow.id")
-    engine: str
+    engine: str = Field(foreign_key="platform.name")
     external_id: str  # Workflow identifier on the external platform
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     created_by: str
@@ -99,7 +99,7 @@ class WorkflowRun(SQLModel, table=True):
 
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     workflow_id: uuid.UUID = Field(foreign_key="workflow.id")
-    engine: str                                          # Which platform executed this run
+    engine: str = Field(foreign_key="platform.name")
     engine_run_id: str | None = Field(default=None)      # External run/job ID on that platform
     executed_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     status: WorkflowRunStatus = Field(default=WorkflowRunStatus.PENDING)

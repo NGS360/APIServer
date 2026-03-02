@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from fastapi import HTTPException, status
 from sqlmodel import Session, select, func
 
+from api.platforms.models import Platform
 from api.workflow.models import (
     Attribute,
     Workflow,
@@ -25,6 +26,22 @@ from api.workflow.models import (
     WorkflowRunsPublic,
     WorkflowRunUpdate,
 )
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _validate_engine(session: Session, engine: str) -> None:
+    """Verify that ``engine`` matches a registered Platform name."""
+    if not session.get(Platform, engine):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"Engine '{engine}' is not a registered platform. "
+                "Create it via POST /platforms first."
+            ),
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -155,6 +172,9 @@ def create_workflow_registration(
     # Verify workflow exists
     workflow = get_workflow_by_id(session, workflow_id)
 
+    # Verify engine is a registered platform
+    _validate_engine(session, registration_in.engine)
+
     # Check for duplicate (workflow_id, engine) combo
     existing = session.exec(
         select(WorkflowRegistration).where(
@@ -223,6 +243,9 @@ def create_workflow_run(
 ) -> WorkflowRun:
     """Create a workflow execution record."""
     workflow = get_workflow_by_id(session, workflow_id)
+
+    # Verify engine is a registered platform
+    _validate_engine(session, run_in.engine)
 
     workflow_run = WorkflowRun(
         workflow_id=workflow.id,
