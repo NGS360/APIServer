@@ -3,6 +3,7 @@
 from fastapi.testclient import TestClient
 from sqlmodel import Session
 
+from api.platforms.models import Platform
 from api.workflow.models import Workflow
 
 
@@ -14,7 +15,7 @@ def _create_workflow(session: Session) -> str:
     """Insert a workflow directly and return its id as str."""
     wf = Workflow(
         name="RNA-Seq Pipeline",
-        definition_uri="s3://bucket/rnaseq.wdl",
+        definition_uri="s3://bucket/rnaseq.cwl",
         created_by="testuser",
     )
     session.add(wf)
@@ -23,12 +24,22 @@ def _create_workflow(session: Session) -> str:
     return str(wf.id)
 
 
+def _seed_platforms(session: Session, extras: list[str] | None = None) -> None:
+    """Ensure Arvados, SevenBridges (and any extras) exist as platforms."""
+    for name in ["Arvados", "SevenBridges"]:
+        session.add(Platform(name=name))
+    for name in (extras or []):
+        session.add(Platform(name=name))
+    session.commit()
+
+
 # ---------------------------------------------------------------------------
 # POST /workflows/{id}/runs
 # ---------------------------------------------------------------------------
 
 def test_create_workflow_run(client: TestClient, session: Session):
     """Create a basic workflow run."""
+    _seed_platforms(session)
     wf_id = _create_workflow(session)
 
     body = {
@@ -50,8 +61,11 @@ def test_create_workflow_run(client: TestClient, session: Session):
     assert "executed_at" in data
 
 
-def test_create_workflow_run_with_attributes(client: TestClient, session: Session):
+def test_create_workflow_run_with_attributes(
+    client: TestClient, session: Session,
+):
     """Create a workflow run with key-value attributes."""
+    _seed_platforms(session)
     wf_id = _create_workflow(session)
 
     body = {
@@ -83,12 +97,24 @@ def test_create_workflow_run_workflow_not_found(client: TestClient):
     assert resp.status_code == 404
 
 
+def test_create_workflow_run_invalid_engine(
+    client: TestClient, session: Session,
+):
+    """Creating a run with an unregistered engine returns 400."""
+    wf_id = _create_workflow(session)
+
+    body = {"workflow_id": wf_id, "engine": "FakePlatform"}
+    resp = client.post(f"/api/v1/workflows/{wf_id}/runs", json=body)
+    assert resp.status_code == 400
+    assert "not a registered platform" in resp.json()["detail"]
+
+
 # ---------------------------------------------------------------------------
 # GET /workflows/{id}/runs  (paginated)
 # ---------------------------------------------------------------------------
 
 def test_get_workflow_runs_empty(client: TestClient, session: Session):
-    """Listing runs for a workflow with none returns empty paginated response."""
+    """Listing runs with none returns empty paginated response."""
     wf_id = _create_workflow(session)
     resp = client.get(f"/api/v1/workflows/{wf_id}/runs")
     assert resp.status_code == 200
@@ -104,6 +130,8 @@ def test_get_workflow_runs_empty(client: TestClient, session: Session):
 
 def test_get_workflow_runs_paginated(client: TestClient, session: Session):
     """Verify pagination metadata is correct."""
+    extras = [f"Engine{i}" for i in range(3)]
+    _seed_platforms(session, extras=extras)
     wf_id = _create_workflow(session)
 
     # Create 3 runs
@@ -115,7 +143,8 @@ def test_get_workflow_runs_paginated(client: TestClient, session: Session):
 
     # Page 1, per_page=2
     resp = client.get(
-        f"/api/v1/workflows/{wf_id}/runs", params={"per_page": 2, "page": 1}
+        f"/api/v1/workflows/{wf_id}/runs",
+        params={"per_page": 2, "page": 1},
     )
     assert resp.status_code == 200
     data = resp.json()
@@ -127,7 +156,8 @@ def test_get_workflow_runs_paginated(client: TestClient, session: Session):
 
     # Page 2
     resp2 = client.get(
-        f"/api/v1/workflows/{wf_id}/runs", params={"per_page": 2, "page": 2}
+        f"/api/v1/workflows/{wf_id}/runs",
+        params={"per_page": 2, "page": 2},
     )
     data2 = resp2.json()
     assert len(data2["data"]) == 1
@@ -141,6 +171,7 @@ def test_get_workflow_runs_paginated(client: TestClient, session: Session):
 
 def test_get_workflow_run_by_id(client: TestClient, session: Session):
     """Fetch a single workflow run by its ID."""
+    _seed_platforms(session)
     wf_id = _create_workflow(session)
 
     create_resp = client.post(
@@ -169,6 +200,7 @@ def test_get_workflow_run_not_found(client: TestClient):
 
 def test_update_workflow_run_status(client: TestClient, session: Session):
     """Update a workflow run's status."""
+    _seed_platforms(session)
     wf_id = _create_workflow(session)
 
     create_resp = client.post(
@@ -193,8 +225,11 @@ def test_update_workflow_run_status(client: TestClient, session: Session):
     assert resp2.json()["status"] == "Succeeded"
 
 
-def test_update_workflow_run_engine_run_id(client: TestClient, session: Session):
+def test_update_workflow_run_engine_run_id(
+    client: TestClient, session: Session,
+):
     """Update a workflow run's engine_run_id."""
+    _seed_platforms(session)
     wf_id = _create_workflow(session)
 
     create_resp = client.post(

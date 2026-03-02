@@ -22,6 +22,10 @@ depends_on: Union[str, Sequence[str], None] = None
 def upgrade() -> None:
     """Upgrade schema."""
     # --- New tables ---
+    op.create_table('platform',
+        sa.Column('name', sqlmodel.sql.sqltypes.AutoString(), nullable=False),
+        sa.PrimaryKeyConstraint('name')
+    )
     op.create_table('pipeline',
         sa.Column('id', sa.Uuid(), nullable=False),
         sa.Column('name', sqlmodel.sql.sqltypes.AutoString(), nullable=False),
@@ -57,6 +61,7 @@ def upgrade() -> None:
         sa.Column('external_id', sqlmodel.sql.sqltypes.AutoString(), nullable=False),
         sa.Column('created_at', sa.DateTime(), nullable=False),
         sa.Column('created_by', sqlmodel.sql.sqltypes.AutoString(), nullable=False),
+        sa.ForeignKeyConstraint(['engine'], ['platform.name']),
         sa.ForeignKeyConstraint(['workflow_id'], ['workflow.id']),
         sa.PrimaryKeyConstraint('id'),
         sa.UniqueConstraint('workflow_id', 'engine', name='uq_workflow_engine')
@@ -70,6 +75,7 @@ def upgrade() -> None:
         sa.Column('status', sa.Enum('PENDING', 'RUNNING', 'SUCCEEDED', 'FAILED', 'CANCELLED', name='workflowrunstatus'), nullable=False),
         sa.Column('created_at', sa.DateTime(), nullable=False),
         sa.Column('created_by', sqlmodel.sql.sqltypes.AutoString(), nullable=False),
+        sa.ForeignKeyConstraint(['engine'], ['platform.name']),
         sa.ForeignKeyConstraint(['workflow_id'], ['workflow.id']),
         sa.PrimaryKeyConstraint('id')
     )
@@ -94,7 +100,7 @@ def upgrade() -> None:
     )
 
     # --- Add column to sequencingrun ---
-    op.add_column('sequencingrun', sa.Column('platform', sqlmodel.sql.sqltypes.AutoString(length=50), nullable=True))
+    op.add_column('sequencingrun', sa.Column('sequencing_platform', sqlmodel.sql.sqltypes.AutoString(length=50), nullable=True))
 
     # --- Restructure workflow table ---
     # Add new columns (with server_default for existing rows)
@@ -102,13 +108,24 @@ def upgrade() -> None:
     op.add_column('workflow', sa.Column('created_at', sa.DateTime(), nullable=False, server_default=sa.text('CURRENT_TIMESTAMP')))
     op.add_column('workflow', sa.Column('created_by', sqlmodel.sql.sqltypes.AutoString(), nullable=False, server_default=sa.text("'system'")))
 
+    # Seed platform table from existing workflow engine values
+    op.execute("""
+        INSERT IGNORE INTO platform (name)
+        SELECT DISTINCT engine FROM workflow
+        WHERE engine IS NOT NULL
+    """)
+
     # Migrate existing engine/engine_id data to workflowregistration
     # for any existing workflow rows that have engine data
     op.execute("""
-        INSERT INTO workflowregistration (id, workflow_id, engine, external_id, created_at, created_by)
-        SELECT UUID(), w.id, w.engine, w.engine_id, NOW(), 'migration'
+        INSERT INTO workflowregistration
+            (id, workflow_id, engine, external_id,
+             created_at, created_by)
+        SELECT UUID(), w.id, w.engine, w.engine_id,
+               NOW(), 'migration'
         FROM workflow w
-        WHERE w.engine IS NOT NULL AND w.engine_id IS NOT NULL
+        WHERE w.engine IS NOT NULL
+          AND w.engine_id IS NOT NULL
     """)
 
     # Remove old columns
@@ -153,7 +170,7 @@ def downgrade() -> None:
     op.drop_column('workflow', 'version')
 
     # --- Remove sequencingrun column ---
-    op.drop_column('sequencingrun', 'platform')
+    op.drop_column('sequencingrun', 'sequencing_platform')
 
     # --- Drop new tables ---
     op.drop_table('workflowrunattribute')
@@ -163,3 +180,4 @@ def downgrade() -> None:
     op.drop_table('pipelineworkflow')
     op.drop_table('pipelineattribute')
     op.drop_table('pipeline')
+    op.drop_table('platform')

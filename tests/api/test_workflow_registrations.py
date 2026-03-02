@@ -3,6 +3,7 @@
 from fastapi.testclient import TestClient
 from sqlmodel import Session
 
+from api.platforms.models import Platform
 from api.workflow.models import Workflow
 
 
@@ -23,12 +24,20 @@ def _create_workflow(session: Session) -> str:
     return str(wf.id)
 
 
+def _seed_platforms(session: Session) -> None:
+    """Ensure Arvados and SevenBridges platforms exist."""
+    for name in ["Arvados", "SevenBridges"]:
+        session.add(Platform(name=name))
+    session.commit()
+
+
 # ---------------------------------------------------------------------------
 # POST /workflows/{id}/registrations
 # ---------------------------------------------------------------------------
 
 def test_create_registration(client: TestClient, session: Session):
     """Register a workflow on a platform engine."""
+    _seed_platforms(session)
     wf_id = _create_workflow(session)
 
     body = {
@@ -49,6 +58,7 @@ def test_create_registration(client: TestClient, session: Session):
 
 def test_create_registration_minimal(client: TestClient, session: Session):
     """Only engine and external_id are required."""
+    _seed_platforms(session)
     wf_id = _create_workflow(session)
 
     body = {"engine": "SevenBridges", "external_id": "sb-app-xyz"}
@@ -57,8 +67,11 @@ def test_create_registration_minimal(client: TestClient, session: Session):
     assert resp.json()["external_id"] == "sb-app-xyz"
 
 
-def test_create_registration_duplicate_engine_conflict(client: TestClient, session: Session):
+def test_create_registration_duplicate_engine_conflict(
+    client: TestClient, session: Session,
+):
     """Duplicate (workflow_id, engine) pair returns 409."""
+    _seed_platforms(session)
     wf_id = _create_workflow(session)
 
     body = {"engine": "Arvados", "external_id": "arvados-wf-1"}
@@ -78,6 +91,18 @@ def test_create_registration_workflow_not_found(client: TestClient):
     assert resp.status_code == 404
 
 
+def test_create_registration_invalid_engine(
+    client: TestClient, session: Session,
+):
+    """Registration with an unregistered engine returns 400."""
+    wf_id = _create_workflow(session)
+
+    body = {"engine": "UnknownPlatform", "external_id": "x"}
+    resp = client.post(f"/api/v1/workflows/{wf_id}/registrations", json=body)
+    assert resp.status_code == 400
+    assert "not a registered platform" in resp.json()["detail"]
+
+
 # ---------------------------------------------------------------------------
 # GET /workflows/{id}/registrations
 # ---------------------------------------------------------------------------
@@ -92,6 +117,7 @@ def test_get_registrations_empty(client: TestClient, session: Session):
 
 def test_get_registrations_multiple(client: TestClient, session: Session):
     """List registrations after adding two different engines."""
+    _seed_platforms(session)
     wf_id = _create_workflow(session)
 
     client.post(
@@ -117,6 +143,7 @@ def test_get_registrations_multiple(client: TestClient, session: Session):
 
 def test_delete_registration(client: TestClient, session: Session):
     """Delete a registration returns 204 and it's gone."""
+    _seed_platforms(session)
     wf_id = _create_workflow(session)
 
     create_resp = client.post(
@@ -135,7 +162,9 @@ def test_delete_registration(client: TestClient, session: Session):
     assert list_resp.json() == []
 
 
-def test_delete_registration_not_found(client: TestClient, session: Session):
+def test_delete_registration_not_found(
+    client: TestClient, session: Session,
+):
     """Deleting a non-existent registration returns 404."""
     wf_id = _create_workflow(session)
     fake_reg_id = "00000000-0000-0000-0000-000000000000"
@@ -150,8 +179,11 @@ def test_delete_registration_not_found(client: TestClient, session: Session):
 # Workflow GET response includes registrations
 # ---------------------------------------------------------------------------
 
-def test_workflow_public_includes_registrations(client: TestClient, session: Session):
+def test_workflow_public_includes_registrations(
+    client: TestClient, session: Session,
+):
     """GET /workflows/{id} includes nested registration data."""
+    _seed_platforms(session)
     wf_id = _create_workflow(session)
 
     client.post(
