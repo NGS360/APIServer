@@ -24,6 +24,16 @@ class MockOpenSearchClient:
         self.documents[index][id] = body
         return {"_id": id, "_index": index, "result": "created"}
 
+    def delete(self, index: str, id: str, ignore=None):
+        """Mock delete document operation"""
+        ignore = ignore or []
+        if index in self.documents and id in self.documents[index]:
+            del self.documents[index][id]
+            return {"_id": id, "_index": index, "result": "deleted"}
+        if 404 not in ignore:
+            raise Exception(f"Document {id} not found in index {index}")
+        return {"_id": id, "_index": index, "result": "not_found"}
+
     def search(self, index: str, body: dict):
         """Mock search operation"""
         if index not in self.documents:
@@ -139,6 +149,15 @@ class MockIndices:
     def refresh(self, index: str):
         """Mock index refresh"""
         return {"_shards": {"total": 1, "successful": 1, "failed": 0}}
+
+    def delete(self, index: str, ignore=None):
+        """Mock index deletion"""
+        ignore = ignore or []
+        if index in self.client.documents:
+            del self.client.documents[index]
+        if index in self.client.indices_data:
+            del self.client.indices_data[index]
+        return {"acknowledged": True}
 
 
 class MockS3Paginator:
