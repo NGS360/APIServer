@@ -4,7 +4,6 @@ Workflow Service
 CRUD operations for Workflow, WorkflowRegistration, and WorkflowRun entities.
 """
 from uuid import UUID
-from datetime import datetime, timezone
 
 from fastapi import HTTPException, status
 from sqlmodel import Session, select, func
@@ -24,7 +23,6 @@ from api.workflow.models import (
     WorkflowRunCreate,
     WorkflowRunPublic,
     WorkflowRunsPublic,
-    WorkflowRunUpdate,
 )
 
 
@@ -241,7 +239,7 @@ def create_workflow_run(
     run_in: WorkflowRunCreate,
     created_by: str,
 ) -> WorkflowRun:
-    """Create a workflow execution record."""
+    """Create a workflow provenance record."""
     workflow = get_workflow_by_id(session, workflow_id)
 
     # Verify engine is a registered platform
@@ -250,9 +248,7 @@ def create_workflow_run(
     workflow_run = WorkflowRun(
         workflow_id=workflow.id,
         engine=run_in.engine,
-        engine_run_id=run_in.engine_run_id,
-        executed_at=run_in.executed_at or datetime.now(timezone.utc),
-        status=run_in.status,
+        external_run_id=run_in.external_run_id,
         created_by=created_by,
     )
 
@@ -285,8 +281,6 @@ def get_workflow_runs(
 
     valid_sort_fields = {
         "created_at": WorkflowRun.created_at,
-        "executed_at": WorkflowRun.executed_at,
-        "status": WorkflowRun.status,
     }
     if sort_by not in valid_sort_fields:
         raise HTTPException(
@@ -338,25 +332,6 @@ def get_workflow_run_by_id(session: Session, run_id: str) -> WorkflowRun:
     return workflow_run
 
 
-def update_workflow_run(
-    session: Session,
-    run_id: str,
-    run_update: WorkflowRunUpdate,
-) -> WorkflowRun:
-    """Update a workflow run's status and/or engine_run_id."""
-    workflow_run = get_workflow_run_by_id(session, run_id)
-
-    if run_update.status is not None:
-        workflow_run.status = run_update.status
-    if run_update.engine_run_id is not None:
-        workflow_run.engine_run_id = run_update.engine_run_id
-
-    session.add(workflow_run)
-    session.commit()
-    session.refresh(workflow_run)
-    return workflow_run
-
-
 def workflow_run_to_public(run: WorkflowRun) -> WorkflowRunPublic:
     """Convert a WorkflowRun ORM object to its public representation."""
     attributes = None
@@ -370,9 +345,7 @@ def workflow_run_to_public(run: WorkflowRun) -> WorkflowRunPublic:
         workflow_id=run.workflow_id,
         workflow_name=workflow_name,
         engine=run.engine,
-        engine_run_id=run.engine_run_id,
-        executed_at=run.executed_at,
-        status=run.status,
+        external_run_id=run.external_run_id,
         created_at=run.created_at,
         created_by=run.created_by,
         attributes=attributes,

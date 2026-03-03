@@ -17,7 +17,6 @@ from api.workflow.models import (
     WorkflowRunCreate,
     WorkflowRunPublic,
     WorkflowRunsPublic,
-    WorkflowRunUpdate,
 )
 
 from api.workflow import services
@@ -236,18 +235,3 @@ def get_workflow_run_by_id(
     return services.workflow_run_to_public(run)
 
 
-@run_router.put(
-    "/{run_id}",
-    response_model=WorkflowRunPublic,
-    tags=["Workflow Endpoints"],
-)
-def update_workflow_run(
-    session: SessionDep,
-    run_id: str,
-    run_update: WorkflowRunUpdate,
-) -> WorkflowRunPublic:
-    """Update a workflow run's status and/or engine_run_id."""
-    run = services.update_workflow_run(
-        session=session, run_id=run_id, run_update=run_update
-    )
-    return services.workflow_run_to_public(run)

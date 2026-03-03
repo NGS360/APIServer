@@ -8,7 +8,6 @@ WorkflowAttribute / WorkflowRunAttribute — Key-value metadata
 """
 import uuid
 from datetime import datetime, timezone
-from enum import Enum
 from typing import List
 
 from sqlmodel import Field, Relationship, SQLModel, UniqueConstraint
@@ -71,15 +70,6 @@ class WorkflowRegistration(SQLModel, table=True):
     workflow: Workflow = Relationship(back_populates="registrations")
 
 
-class WorkflowRunStatus(str, Enum):
-    """Status of a workflow execution."""
-    PENDING = "Pending"
-    RUNNING = "Running"
-    SUCCEEDED = "Succeeded"
-    FAILED = "Failed"
-    CANCELLED = "Cancelled"
-
-
 class WorkflowRunAttribute(SQLModel, table=True):
     """Key-value metadata for a workflow run."""
     __tablename__ = "workflowrunattribute"
@@ -94,15 +84,13 @@ class WorkflowRunAttribute(SQLModel, table=True):
 
 
 class WorkflowRun(SQLModel, table=True):
-    """Execution record of a workflow on a specific platform."""
+    """Provenance record — links a workflow to an external execution."""
     __tablename__ = "workflowrun"
 
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     workflow_id: uuid.UUID = Field(foreign_key="workflow.id")
     engine: str = Field(foreign_key="platform.name")
-    engine_run_id: str | None = Field(default=None)      # External run/job ID on that platform
-    executed_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    status: WorkflowRunStatus = Field(default=WorkflowRunStatus.PENDING)
+    external_run_id: str  # External run/job ID on the platform (required)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     created_by: str
 
@@ -158,15 +146,8 @@ class WorkflowRegistrationPublic(SQLModel):
 class WorkflowRunCreate(SQLModel):
     workflow_id: uuid.UUID
     engine: str
-    engine_run_id: str | None = None
-    executed_at: datetime | None = None
-    status: WorkflowRunStatus = WorkflowRunStatus.PENDING
+    external_run_id: str
     attributes: List[Attribute] | None = None
-
-
-class WorkflowRunUpdate(SQLModel):
-    status: WorkflowRunStatus | None = None
-    engine_run_id: str | None = None
 
 
 class WorkflowRunPublic(SQLModel):
@@ -174,9 +155,7 @@ class WorkflowRunPublic(SQLModel):
     workflow_id: uuid.UUID
     workflow_name: str | None = None
     engine: str
-    engine_run_id: str | None
-    executed_at: datetime
-    status: WorkflowRunStatus
+    external_run_id: str
     created_at: datetime
     created_by: str
     attributes: List[Attribute] | None = None
