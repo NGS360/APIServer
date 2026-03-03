@@ -233,5 +233,3 @@ def get_workflow_run_by_id(
     """Get a single workflow run by its ID."""
     run = services.get_workflow_run_by_id(session=session, run_id=run_id)
     return services.workflow_run_to_public(run)
-
-

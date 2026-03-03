@@ -189,5 +189,3 @@ def test_get_workflow_run_not_found(client: TestClient):
     fake_id = "00000000-0000-0000-0000-000000000000"
     resp = client.get(f"/api/v1/workflow-runs/{fake_id}")
     assert resp.status_code == 404
-
-
