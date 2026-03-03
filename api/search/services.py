@@ -45,6 +45,28 @@ def delete_index(client: OpenSearch, index: str) -> None:
     client.indices.delete(index=index, ignore=[400, 404])
 
 
+def delete_document_from_index(
+    client: OpenSearch, document_id: str, index: str
+) -> None:
+    """
+    Delete a single document from an OpenSearch index.
+
+    Args:
+        client: OpenSearch client
+        document_id: The document ID to delete
+        index: The index name
+    """
+    if client is None:
+        logger.warning("OpenSearch client is not available.")
+        return
+
+    try:
+        client.delete(index=index, id=document_id, ignore=[404])
+        client.indices.refresh(index=index)
+    except Exception as e:
+        logger.warning("Failed to delete document %s from index %s: %s", document_id, index, e)
+
+
 def search(
     client: OpenSearch, session: Session, query: str, n_results: int = 5
 ) -> SearchResponse:
