@@ -8,7 +8,7 @@ The Workflow system provides:
 
 - **Platform-agnostic workflow definitions**: Define a workflow once with a name, version, and definition URI (e.g., a WDL/CWL/Nextflow file)
 - **Cross-platform registration**: Register the same workflow on multiple execution engines (Arvados, SevenBridges, AWS Batch, etc.)
-- **Execution tracking**: Record workflow runs with status lifecycle, engine-specific run IDs, and key-value attributes
+- **Execution provenance**: Record workflow runs with engine-specific run IDs and key-value attributes for file/QC provenance tracking
 - **Provenance**: All entities track `created_at` and `created_by` for audit trails
 
 ## Architecture
@@ -57,9 +57,7 @@ erDiagram
         uuid id PK
         uuid workflow_id FK
         string engine FK
-        string engine_run_id
-        datetime executed_at
-        enum status
+        string external_run_id
         datetime created_at
         string created_by
     }
@@ -137,16 +135,14 @@ Platform-specific registration of a workflow. One workflow can have at most one 
 
 ### WorkflowRun
 
-Execution record of a workflow. Tracks status and engine-specific run IDs. The `engine` column is a FK to `platform.name`.
+Provenance record linking a workflow to an external execution. Status tracking is handled by a separate execution service; this table stores the identifier for file and QC metric provenance. The `engine` column is a FK to `platform.name`.
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `id` | UUID | auto | Primary key |
 | `workflow_id` | UUID | yes | FK → `workflow.id` |
 | `engine` | string | yes | FK → `platform.name` |
-| `engine_run_id` | string | no | External run/job ID on the platform |
-| `executed_at` | datetime | auto | When the run was initiated |
-| `status` | enum | yes | One of: `PENDING`, `RUNNING`, `SUCCEEDED`, `FAILED`, `CANCELLED` |
+| `external_run_id` | string | yes | External run/job ID on the platform |
 | `created_at` | datetime | auto | UTC timestamp of creation |
 | `created_by` | string | yes | Username of the creator |
 
@@ -286,9 +282,8 @@ POST /workflows/{workflow_id}/runs
 ```json
 {
   "workflow_id": "a1b2c3d4-...",
-  "engine": "arvados",
-  "engine_run_id": "zzzzz-xvhdp-run123",
-  "status": "Running",
+  "engine": "Arvados",
+  "external_run_id": "zzzzz-xvhdp-run123",
   "attributes": [
     {"key": "sample_id", "value": "sample-001"},
     {"key": "input_bam", "value": "s3://data/sample-001.bam"}
@@ -303,10 +298,8 @@ POST /workflows/{workflow_id}/runs
   "id": "...",
   "workflow_id": "a1b2c3d4-...",
   "workflow_name": "variant-calling-wf",
-  "engine": "arvados",
-  "engine_run_id": "zzzzz-xvhdp-run123",
-  "executed_at": "2026-03-01T14:00:00Z",
-  "status": "Running",
+  "engine": "Arvados",
+  "external_run_id": "zzzzz-xvhdp-run123",
   "created_at": "2026-03-01T14:00:00Z",
   "created_by": "jdoe",
   "attributes": [
@@ -343,37 +336,6 @@ GET /workflow-runs/{run_id}
 ```
 
 Note: This uses a top-level `/workflow-runs` path (not nested under a workflow) for convenience.
-
-#### Update Run
-
-```
-PUT /workflow-runs/{run_id}
-```
-
-**Request Body** (partial update — either or both fields):
-
-```json
-{
-  "status": "Succeeded",
-  "engine_run_id": "zzzzz-xvhdp-run123-completed"
-}
-```
-
-**Response:** Updated `WorkflowRunPublic` object.
-
-## Status Lifecycle
-
-```mermaid
-stateDiagram-v2
-    [*] --> Pending
-    Pending --> Running
-    Running --> Succeeded
-    Running --> Failed
-    Running --> Cancelled
-    Pending --> Cancelled
-```
-
-Valid status values: `Pending`, `Running`, `Succeeded`, `Failed`, `Cancelled`.
 
 ## Source Files
 
