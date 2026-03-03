@@ -45,6 +45,7 @@ def test_create_workflow_run(client: TestClient, session: Session):
     body = {
         "workflow_id": wf_id,
         "engine": "Arvados",
+        "external_run_id": "arvados-run-001",
     }
     resp = client.post(f"/api/v1/workflows/{wf_id}/runs", json=body)
     assert resp.status_code == 201
@@ -53,12 +54,10 @@ def test_create_workflow_run(client: TestClient, session: Session):
     assert data["workflow_id"] == wf_id
     assert data["workflow_name"] == "RNA-Seq Pipeline"
     assert data["engine"] == "Arvados"
-    assert data["status"] == "Pending"
+    assert data["external_run_id"] == "arvados-run-001"
     assert data["created_by"] == "testuser"
-    assert data["engine_run_id"] is None
     assert "id" in data
     assert "created_at" in data
-    assert "executed_at" in data
 
 
 def test_create_workflow_run_with_attributes(
@@ -71,8 +70,7 @@ def test_create_workflow_run_with_attributes(
     body = {
         "workflow_id": wf_id,
         "engine": "SevenBridges",
-        "engine_run_id": "sb-task-001",
-        "status": "Running",
+        "external_run_id": "sb-task-001",
         "attributes": [
             {"key": "sample_count", "value": "42"},
             {"key": "priority", "value": "high"},
@@ -82,8 +80,7 @@ def test_create_workflow_run_with_attributes(
     assert resp.status_code == 201
     data = resp.json()
 
-    assert data["engine_run_id"] == "sb-task-001"
-    assert data["status"] == "Running"
+    assert data["external_run_id"] == "sb-task-001"
     assert len(data["attributes"]) == 2
     attr_keys = {a["key"] for a in data["attributes"]}
     assert attr_keys == {"sample_count", "priority"}
@@ -92,7 +89,7 @@ def test_create_workflow_run_with_attributes(
 def test_create_workflow_run_workflow_not_found(client: TestClient):
     """Creating a run for a non-existent workflow returns 404."""
     fake_id = "00000000-0000-0000-0000-000000000000"
-    body = {"workflow_id": fake_id, "engine": "Arvados"}
+    body = {"workflow_id": fake_id, "engine": "Arvados", "external_run_id": "x"}
     resp = client.post(f"/api/v1/workflows/{fake_id}/runs", json=body)
     assert resp.status_code == 404
 
@@ -103,7 +100,7 @@ def test_create_workflow_run_invalid_engine(
     """Creating a run with an unregistered engine returns 400."""
     wf_id = _create_workflow(session)
 
-    body = {"workflow_id": wf_id, "engine": "FakePlatform"}
+    body = {"workflow_id": wf_id, "engine": "FakePlatform", "external_run_id": "x"}
     resp = client.post(f"/api/v1/workflows/{wf_id}/runs", json=body)
     assert resp.status_code == 400
     assert "not a registered platform" in resp.json()["detail"]
@@ -138,7 +135,7 @@ def test_get_workflow_runs_paginated(client: TestClient, session: Session):
     for i in range(3):
         client.post(
             f"/api/v1/workflows/{wf_id}/runs",
-            json={"workflow_id": wf_id, "engine": f"Engine{i}"},
+            json={"workflow_id": wf_id, "engine": f"Engine{i}", "external_run_id": f"run-{i}"},
         )
 
     # Page 1, per_page=2
@@ -176,7 +173,7 @@ def test_get_workflow_run_by_id(client: TestClient, session: Session):
 
     create_resp = client.post(
         f"/api/v1/workflows/{wf_id}/runs",
-        json={"workflow_id": wf_id, "engine": "Arvados"},
+        json={"workflow_id": wf_id, "engine": "Arvados", "external_run_id": "arv-run-1"},
     )
     run_id = create_resp.json()["id"]
 
@@ -194,63 +191,3 @@ def test_get_workflow_run_not_found(client: TestClient):
     assert resp.status_code == 404
 
 
-# ---------------------------------------------------------------------------
-# PUT /workflow-runs/{run_id}
-# ---------------------------------------------------------------------------
-
-def test_update_workflow_run_status(client: TestClient, session: Session):
-    """Update a workflow run's status."""
-    _seed_platforms(session)
-    wf_id = _create_workflow(session)
-
-    create_resp = client.post(
-        f"/api/v1/workflows/{wf_id}/runs",
-        json={"workflow_id": wf_id, "engine": "Arvados"},
-    )
-    run_id = create_resp.json()["id"]
-
-    resp = client.put(
-        f"/api/v1/workflow-runs/{run_id}",
-        json={"status": "Running"},
-    )
-    assert resp.status_code == 200
-    assert resp.json()["status"] == "Running"
-
-    # Update again to Succeeded
-    resp2 = client.put(
-        f"/api/v1/workflow-runs/{run_id}",
-        json={"status": "Succeeded"},
-    )
-    assert resp2.status_code == 200
-    assert resp2.json()["status"] == "Succeeded"
-
-
-def test_update_workflow_run_engine_run_id(
-    client: TestClient, session: Session,
-):
-    """Update a workflow run's engine_run_id."""
-    _seed_platforms(session)
-    wf_id = _create_workflow(session)
-
-    create_resp = client.post(
-        f"/api/v1/workflows/{wf_id}/runs",
-        json={"workflow_id": wf_id, "engine": "Arvados"},
-    )
-    run_id = create_resp.json()["id"]
-
-    resp = client.put(
-        f"/api/v1/workflow-runs/{run_id}",
-        json={"engine_run_id": "arvados-job-99"},
-    )
-    assert resp.status_code == 200
-    assert resp.json()["engine_run_id"] == "arvados-job-99"
-
-
-def test_update_workflow_run_not_found(client: TestClient):
-    """Updating a non-existent workflow run returns 404."""
-    fake_id = "00000000-0000-0000-0000-000000000000"
-    resp = client.put(
-        f"/api/v1/workflow-runs/{fake_id}",
-        json={"status": "Failed"},
-    )
-    assert resp.status_code == 404
