@@ -333,3 +333,12 @@ class SampleSequencingRunPublic(SQLModel):
     sequencing_run_id: uuid.UUID
     created_at: datetime
     created_by: str
+
+
+class RunSampleCleanupResponse(SQLModel):
+    """Response model for bulk sample/file cleanup on a run (re-demux scenario)."""
+    run_barcode: str
+    associations_removed: int
+    files_deleted: int
+    samples_deleted: int
+    samples_preserved: int
