@@ -126,7 +126,7 @@ def reindex_projects(
 ###############################################################################
 
 
-@router.get("/{project_id}", response_model=ProjectPublic, tags=["Project Endpoints"])
+@router.get("/{project_id}", tags=["Project Endpoints"])
 def get_project_by_project_id(session: SessionDep, project: ProjectDep) -> ProjectPublic:
     """
     Returns a single project by its project_id.
