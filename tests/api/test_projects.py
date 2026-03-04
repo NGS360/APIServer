@@ -968,7 +968,8 @@ def test_ingest_vendor_data(
     """Test the ingest vendor data endpoint"""
     # Set up test parameters
     # Set up supporting mocks
-    mock_get_setting.return_value = "s3://config_bucket/configs/vendor_ingestion.yaml"
+    from api.settings.models import Setting
+    mock_get_setting.return_value = Setting(value="s3://config_bucket/configs/vendor_ingestion.yaml")
 
     mock_batch = MagicMock()
     mock_batch.submit_job.return_value = {
