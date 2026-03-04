@@ -139,11 +139,49 @@ DELETE /runs/{run_barcode}/samples/{sample_id}
 
 **Error** (`404 Not Found`): If the association does not exist.
 
+### Clear All Samples for a Run (Re-demux Cleanup)
+
+```
+DELETE /runs/{run_barcode}/samples
+```
+
+This bulk endpoint is designed for the **re-demultiplexing scenario**: when a sequencing run is re-demultiplexed (e.g., after correcting a wrong project ID on the samplesheet), the batch job calls this endpoint to clean up stale data before creating new samples and associations.
+
+**Cleanup Steps (in order):**
+
+1. **Delete run-level File records** — All `File` rows whose `FileEntity` links them to this run (`entity_type=RUN`) are deleted. Cascade deletes remove associated `FileEntity`, `FileHash`, `FileTag`,tests/conftest.py and `FileSample` rows. The corresponding S3 objects are assumed to already be deleted by the batch job.
+
+2. **Remove all SampleSequencingRun associations** — Every `SampleSequencingRun` row for this run is deleted.
+
+3. **Smart-cascade delete orphaned Samples** — For each sample that was associated with the run, the service checks whether the sample still has any remaining ties:
+   - Other `SampleSequencingRun` associations (i.e., the sample appears on another run)
+   - `FileSample` links (i.e., the sample has files not from this run)
+   - `QCMetricSample` links (i.e., the sample has QC data)
+
+   If **none** of these exist, the sample is considered orphaned and is deleted along with its `SampleAttribute` rows and its OpenSearch index entry. If **any** ties remain, the sample is preserved.
+
+**Response** (`200 OK`):
+
+```json
+{
+  "run_barcode": "240315_A00001_0001_BHXXXXXXX",
+  "associations_removed": 5,
+  "files_deleted": 12,
+  "samples_deleted": 4,
+  "samples_preserved": 1
+}
+```
+
+**Error** (`404 Not Found`): If the run barcode does not exist.
+
+**Typical Caller:** The demultiplexing batch job, immediately before re-creating samples and associations for the corrected samplesheet.
+
 ## Source Files
 
 | File | Description |
 |------|-------------|
-| `api/runs/models.py` | `SampleSequencingRun` table definition, `SampleSequencingRunCreate` and `SampleSequencingRunPublic` schemas |
-| `api/runs/services.py` | `associate_sample_with_run()`, `get_samples_for_run()`, `remove_sample_from_run()` |
+| `api/runs/models.py` | `SampleSequencingRun` table, `SampleSequencingRunCreate`, `SampleSequencingRunPublic`, and `RunSampleCleanupResponse` schemas |
+| `api/runs/services.py` | `associate_sample_with_run()`, `get_samples_for_run()`, `remove_sample_from_run()`, `clear_samples_for_run()` |
 | `api/runs/routes.py` | Route handlers under `/runs/{run_barcode}/samples` |
-| `tests/api/test_sample_run_association.py` | Association endpoint tests (9 tests) |
+| `api/search/services.py` | `delete_document_from_index()` — removes sample entries from OpenSearch on cleanup |
+| `tests/api/test_sample_run_association.py` | Association and cleanup endpoint tests (17 tests) |

@@ -20,6 +20,7 @@ from core.deps import SessionDep, OpenSearchDep, get_s3_client
 from api.auth.deps import CurrentUser
 from api.runs.models import (
     IlluminaMetricsResponseModel,
+    RunSampleCleanupResponse,
     SampleSequencingRunCreate,
     SampleSequencingRunPublic,
     SequencingRun,
@@ -347,6 +348,33 @@ def get_samples_for_run(
 
 
 @router.delete(
+    "/{run_barcode}/samples",
+    response_model=RunSampleCleanupResponse,
+    status_code=status.HTTP_200_OK,
+    tags=["Run Endpoints"],
+)
+def clear_samples_for_run(
+    session: SessionDep,
+    opensearch_client: OpenSearchDep,
+    user: CurrentUser,
+    run_barcode: str,
+) -> RunSampleCleanupResponse:
+    """
+    Remove all sample associations, run-linked files, and orphaned samples for a run.
+
+    Used before re-demultiplexing to clean up database records from a previous
+    (possibly incorrect) demux. Deletes File records associated with the run,
+    removes all SampleSequencingRun associations, and deletes orphaned Sample
+    records that have no other associations.
+    """
+    return services.clear_samples_for_run(
+        session=session,
+        run_barcode=run_barcode,
+        opensearch_client=opensearch_client,
+    )
+
+
+@router.delete(
     "/{run_barcode}/samples/{sample_id}",
     status_code=status.HTTP_204_NO_CONTENT,
     tags=["Run Endpoints"],
@@ -356,7 +384,7 @@ def remove_sample_from_run(
     run_barcode: str,
     sample_id: str,
 ) -> None:
-    """Remove a sample association from a run."""
+    """Remove a single sample association from a run."""
     services.remove_sample_from_run(
         session=session,
         run_barcode=run_barcode,
