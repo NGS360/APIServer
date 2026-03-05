@@ -31,8 +31,7 @@ from api.files.models import (
     FileHash,
     FileTag,
     FileSample,
-    FileEntity,
-    FileEntityType,
+    FileQCRecord,
     FileCreate,
     FileSummary,
     HashPublic,
@@ -105,8 +104,7 @@ def create_qcrecord(
         for file_create in qcrecord_create.output_files:
             _create_file_for_qcrecord(
                 session,
-                entity_type=FileEntityType.QCRECORD,
-                entity_id=qcrecord.id,
+                qcrecord_id=qcrecord.id,
                 file_create=file_create,
                 project_id=qcrecord_create.project_id,
             )
@@ -198,12 +196,11 @@ def _create_metric(
 
 def _create_file_for_qcrecord(
     session: Session,
-    entity_type: str,
-    entity_id,
+    qcrecord_id,
     file_create: FileCreate,
     project_id: str,
 ) -> File:
-    """Create a file record with its hashes, tags, samples, and entity association."""
+    """Create a file record with its hashes, tags, samples, and QCRecord association."""
     file_record = File(
         uri=file_create.uri,
         size=file_create.size,
@@ -212,13 +209,13 @@ def _create_file_for_qcrecord(
     session.add(file_record)
     session.flush()
 
-    # Add entity association
-    entity_assoc = FileEntity(
+    # Add typed QCRecord association (replaces polymorphic FileEntity)
+    qcrecord_assoc = FileQCRecord(
         file_id=file_record.id,
-        entity_type=entity_type,
-        entity_id=str(entity_id),  # Convert UUID to string
+        qcrecord_id=qcrecord_id,
+        role="output",
     )
-    session.add(entity_assoc)
+    session.add(qcrecord_assoc)
 
     # Add hashes (dictionary: {"algorithm": "value"})
     if file_create.hashes:
@@ -413,17 +410,16 @@ def delete_qcrecord(session: Session, qcrecord_id: str) -> dict:
             detail=f"QC record not found: {qcrecord_id}"
         )
 
-    # Delete associated file records via FileEntity junction table
-    file_entities = session.exec(
-        select(FileEntity).where(
-            FileEntity.entity_type == FileEntityType.QCRECORD,
-            FileEntity.entity_id == str(record_uuid)
+    # Delete associated file records via FileQCRecord junction table
+    file_qcrecords = session.exec(
+        select(FileQCRecord).where(
+            FileQCRecord.qcrecord_id == record_uuid
         )
     ).all()
 
-    for file_entity in file_entities:
-        # Get the file and delete it (cascades to hashes, tags, samples, entities)
-        file_record = session.get(File, file_entity.file_id)
+    for fqr in file_qcrecords:
+        # Get the file and delete it (cascades to hashes, tags, samples, junction rows)
+        file_record = session.get(File, fqr.file_id)
         if file_record:
             session.delete(file_record)
 
@@ -500,17 +496,16 @@ def _qcrecord_to_public(session: Session, record: QCRecord) -> QCRecordPublic:
             ],
         ))
 
-    # Get file records via FileEntity junction table
-    file_entities = session.exec(
-        select(FileEntity).where(
-            FileEntity.entity_type == FileEntityType.QCRECORD,
-            FileEntity.entity_id == str(record.id)
+    # Get file records via FileQCRecord junction table
+    file_qcrecords = session.exec(
+        select(FileQCRecord).where(
+            FileQCRecord.qcrecord_id == record.id
         )
     ).all()
 
     output_files = []
-    for file_entity in file_entities:
-        file_record = session.get(File, file_entity.file_id)
+    for fqr in file_qcrecords:
+        file_record = session.get(File, fqr.file_id)
         if not file_record:
             continue
 

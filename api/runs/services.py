@@ -34,7 +34,7 @@ from api.runs.models import (
     SequencingRunsPublic,
 )
 from api.samples.models import Sample, SampleAttribute
-from api.files.models import File, FileEntity, FileSample
+from api.files.models import File, FileSequencingRun, FileSample
 from api.qcmetrics.models import QCMetricSample
 from api.search.services import add_object_to_index, delete_index, delete_document_from_index
 from api.search.models import (
@@ -827,9 +827,9 @@ def clear_samples_for_run(
     cleans up the corresponding database records.
 
     Steps:
-        1. Delete File records associated with this run (via FileEntity where
-           entity_type=RUN). SQLAlchemy cascades handle FileHash, FileTag,
-           FileSample, and FileEntity child rows.
+        1. Delete File records associated with this run (via FileSequencingRun
+           junction table). SQLAlchemy cascades handle FileHash, FileTag,
+           FileSample, and other junction table child rows.
         2. Remove all SampleSequencingRun associations for this run.
         3. For each affected Sample, check if it is now orphaned (no other run
            associations, no remaining file associations, no QC metric associations).
@@ -851,18 +851,17 @@ def clear_samples_for_run(
         )
 
     # ── Step 1: Delete File records associated with this run ──────────
-    file_entities = session.exec(
-        select(FileEntity).where(
-            FileEntity.entity_type == "RUN",
-            FileEntity.entity_id == run_barcode,
+    file_run_assocs = session.exec(
+        select(FileSequencingRun).where(
+            FileSequencingRun.sequencing_run_id == run.id,
         )
     ).all()
 
     files_deleted = 0
-    for fe in file_entities:
-        file_record = session.get(File, fe.file_id)
+    for fsr in file_run_assocs:
+        file_record = session.get(File, fsr.file_id)
         if file_record:
-            session.delete(file_record)  # cascades to hashes, tags, samples, entities
+            session.delete(file_record)  # cascades to hashes, tags, samples, junction rows
             files_deleted += 1
 
     # ── Step 2: Remove SampleSequencingRun associations ───────────────
