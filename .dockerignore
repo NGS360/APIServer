@@ -1,0 +1,28 @@
+# Python virtual environment — host venv is macOS; container needs Linux
+.venv/
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+
+# IDE / editor
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Git
+.git/
+.gitignore
+
+# Docker
+docker-compose.yml
+Dockerfile
+
+# OS
+.DS_Store
+
+# Test / coverage artifacts
+.pytest_cache/
+htmlcov/
+.coverage
