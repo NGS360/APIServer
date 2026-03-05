@@ -126,13 +126,13 @@ def reindex_projects(
 ###############################################################################
 
 
-@router.get("/{project_id}", response_model=ProjectPublic, tags=["Project Endpoints"])
-def get_project_by_project_id(session: SessionDep, project: ProjectDep) -> ProjectPublic:
+@router.get("/{project_id}", tags=["Project Endpoints"])
+def get_project_by_project_id(session: SessionDep, project_id: str) -> ProjectPublic:
     """
     Returns a single project by its project_id.
     Note: This is different from its internal "id".
     """
-    return services.get_project_by_project_id(session=session, project_id=project.project_id)
+    return services.get_project_by_project_id(session=session, project_id=project_id)
 
 
 @router.put(

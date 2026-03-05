@@ -3,9 +3,9 @@ Models for the Runs API
 """
 from typing import List, Optional, Any, Dict
 import uuid
-from datetime import datetime, date
+from datetime import datetime, date, timezone
 from enum import Enum
-from sqlmodel import SQLModel, Field
+from sqlmodel import SQLModel, Field, UniqueConstraint
 from pydantic import ConfigDict, computed_field, field_validator, BaseModel, model_validator
 
 from api.jobs.models import AwsBatchConfig
@@ -38,6 +38,7 @@ class SequencingRun(SQLModel, table=True):
     run_folder_uri: str | None = Field(default=None, max_length=255)
     status: RunStatus | None = Field(default=None)
     run_time: str | None = Field(default=None, max_length=4)
+    sequencing_platform: str | None = Field(default=None, max_length=50)  # e.g., "Illumina", "ONT"
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -302,3 +303,42 @@ class DemuxWorkflowSubmitBody(BaseModel):
     workflow_id: str
     run_barcode: str
     inputs: Dict[str, Any]
+
+
+# ---------------------------------------------------------------------------
+# Sample ↔ SequencingRun junction table (Phase 1)
+# ---------------------------------------------------------------------------
+
+class SampleSequencingRun(SQLModel, table=True):
+    """Many-to-many junction between Sample and SequencingRun."""
+    __tablename__ = "samplesequencingrun"
+    __table_args__ = (
+        UniqueConstraint("sample_id", "sequencing_run_id", name="uq_sample_seqrun"),
+    )
+
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    sample_id: uuid.UUID = Field(foreign_key="sample.id")
+    sequencing_run_id: uuid.UUID = Field(foreign_key="sequencingrun.id")
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    created_by: str
+
+
+class SampleSequencingRunCreate(SQLModel):
+    sample_id: uuid.UUID
+
+
+class SampleSequencingRunPublic(SQLModel):
+    id: uuid.UUID
+    sample_id: uuid.UUID
+    sequencing_run_id: uuid.UUID
+    created_at: datetime
+    created_by: str
+
+
+class RunSampleCleanupResponse(SQLModel):
+    """Response model for bulk sample/file cleanup on a run (re-demux scenario)."""
+    run_barcode: str
+    associations_removed: int
+    files_deleted: int
+    samples_deleted: int
+    samples_preserved: int
