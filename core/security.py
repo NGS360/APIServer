@@ -3,6 +3,7 @@ Security utilities for password hashing and JWT token management
 """
 from datetime import datetime, timedelta, timezone
 from typing import Any
+import hashlib
 import secrets
 
 import bcrypt
@@ -161,6 +162,33 @@ def generate_secure_token(length: int = 32) -> str:
         URL-safe token string
     """
     return secrets.token_urlsafe(length)
+
+
+def generate_api_key() -> tuple[str, str, str]:
+    """
+    Generate a new API key with prefix, hash, and display prefix.
+
+    Returns:
+        Tuple of (raw_key, hashed_key, key_prefix)
+    """
+    random_part = secrets.token_urlsafe(32)
+    raw_key = f"ngs360_{random_part}"
+    hashed_key = hash_api_key(raw_key)
+    key_prefix = raw_key[:12]
+    return raw_key, hashed_key, key_prefix
+
+
+def hash_api_key(raw_key: str) -> str:
+    """
+    Hash an API key using SHA-256 for O(1) lookup.
+
+    Args:
+        raw_key: The raw API key string
+
+    Returns:
+        SHA-256 hex digest
+    """
+    return hashlib.sha256(raw_key.encode("utf-8")).hexdigest()
 
 
 def validate_password_strength(password: str) -> tuple[bool, str | None]:

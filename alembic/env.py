@@ -10,7 +10,7 @@ from core.config import get_settings
 # Import all models here so that they are registered with SQLModel metadata
 from api.auth.models import (
     User, RefreshToken, PasswordResetToken, EmailVerificationToken,
-    OAuthProvider, OAuthProviderName
+    OAuthProvider, OAuthProviderName, APIKey
 )
 from api.files.models import File, FileSample, FileEntity, FileHash, FileTag
 from api.samples.models import Sample, SampleAttribute
