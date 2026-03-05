@@ -9,7 +9,7 @@ from api.project.models import Project
 from api.project.services import generate_project_id
 from api.runs.models import SequencingRun, SampleSequencingRun
 from api.samples.models import Sample, SampleAttribute
-from api.files.models import File, FileEntity, FileSample, FileHash, FileTag
+from api.files.models import File, FileSequencingRun, FileSample, FileHash, FileTag
 from api.qcmetrics.models import QCMetric, QCMetricSample, QCRecord
 
 
@@ -30,6 +30,22 @@ def _create_run(session: Session) -> str:
     session.commit()
     session.refresh(run)
     return run.barcode
+
+
+def _get_run_id(session: Session, barcode: str):
+    """Get the UUID of a sequencing run from its barcode."""
+    (run_date, run_time, machine_id, run_number, flowcell_id) = (
+        SequencingRun.parse_barcode(barcode)
+    )
+    run = session.exec(
+        select(SequencingRun).where(
+            SequencingRun.run_date == run_date,
+            SequencingRun.machine_id == machine_id,
+            SequencingRun.run_number == run_number,
+            SequencingRun.flowcell_id == flowcell_id,
+        )
+    ).one()
+    return run.id
 
 
 def _create_sample(session: Session) -> str:
@@ -291,19 +307,13 @@ def test_clear_samples_preserves_sample_with_other_files(client: TestClient, ses
 
     from uuid import UUID
 
-    # Create a file associated with a different entity (not this run)
+    # Create a file not associated with this run, but linked to the sample via FileSample
     other_file = File(
         uri="s3://bucket/other/file.bam",
         created_on=datetime.now(timezone.utc),
     )
     session.add(other_file)
     session.flush()
-    other_entity = FileEntity(
-        file_id=other_file.id,
-        entity_type="PROJECT",
-        entity_id="P-99999",
-    )
-    session.add(other_entity)
     other_file_sample = FileSample(
         file_id=other_file.id,
         sample_id=UUID(sample_id),
@@ -363,14 +373,16 @@ def test_clear_samples_preserves_sample_with_qc_data(client: TestClient, session
 
 
 def test_clear_samples_deletes_run_files(client: TestClient, session: Session):
-    """File records associated with the run via FileEntity are deleted."""
+    """File records associated with the run via FileSequencingRun are deleted."""
     barcode = _create_run(session)
     sample_id = _create_sample(session)
     _associate(session, sample_id, barcode)
 
     from uuid import UUID
 
-    # Create files associated with this run
+    run_id = _get_run_id(session, barcode)
+
+    # Create files associated with this run via FileSequencingRun
     file1 = File(
         uri=f"s3://bucket/runs/{barcode}/SampleA.fastq.gz",
         created_on=datetime.now(timezone.utc),
@@ -378,8 +390,10 @@ def test_clear_samples_deletes_run_files(client: TestClient, session: Session):
     session.add(file1)
     session.flush()
 
-    fe1 = FileEntity(file_id=file1.id, entity_type="RUN", entity_id=barcode)
-    session.add(fe1)
+    fsr1 = FileSequencingRun(
+        file_id=file1.id, sequencing_run_id=run_id,
+    )
+    session.add(fsr1)
 
     fh1 = FileHash(file_id=file1.id, algorithm="md5", value="abc123")
     session.add(fh1)
@@ -396,8 +410,10 @@ def test_clear_samples_deletes_run_files(client: TestClient, session: Session):
     )
     session.add(file2)
     session.flush()
-    fe2 = FileEntity(file_id=file2.id, entity_type="RUN", entity_id=barcode)
-    session.add(fe2)
+    fsr2 = FileSequencingRun(
+        file_id=file2.id, sequencing_run_id=run_id,
+    )
+    session.add(fsr2)
 
     session.commit()
 
@@ -411,7 +427,7 @@ def test_clear_samples_deletes_run_files(client: TestClient, session: Session):
     assert data["files_deleted"] == 2
     assert data["samples_deleted"] == 1  # sample is now orphaned (FileSample was cascaded)
 
-    # Verify files are gone (cascade deleted hashes, tags, samples, entities too)
+    # Verify files are gone (cascade deleted hashes, tags, samples, junction rows too)
     assert session.get(File, file1.id) is None
     assert session.get(File, file2.id) is None
 
@@ -419,7 +435,9 @@ def test_clear_samples_deletes_run_files(client: TestClient, session: Session):
     assert session.exec(select(FileHash).where(FileHash.file_id == file1.id)).first() is None
     assert session.exec(select(FileTag).where(FileTag.file_id == file1.id)).first() is None
     assert session.exec(select(FileSample).where(FileSample.file_id == file1.id)).first() is None
-    assert session.exec(select(FileEntity).where(FileEntity.file_id == file1.id)).first() is None
+    assert session.exec(
+        select(FileSequencingRun).where(FileSequencingRun.file_id == file1.id)
+    ).first() is None
 
 
 def test_clear_samples_deletes_sample_attributes(client: TestClient, session: Session):
