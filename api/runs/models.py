@@ -5,7 +5,7 @@ from typing import List, Optional, Any, Dict
 import uuid
 from datetime import datetime, date, timezone
 from enum import Enum
-from sqlmodel import SQLModel, Field, UniqueConstraint
+from sqlmodel import SQLModel, Field, Relationship, UniqueConstraint
 from pydantic import ConfigDict, computed_field, field_validator, BaseModel, model_validator
 
 from api.jobs.models import AwsBatchConfig
@@ -39,6 +39,9 @@ class SequencingRun(SQLModel, table=True):
     status: RunStatus | None = Field(default=None)
     run_time: str | None = Field(default=None, max_length=4)
     sequencing_platform: str | None = Field(default=None, max_length=50)  # e.g., "Illumina", "ONT"
+
+    # Relationships
+    qcrecords: List["QCRecord"] = Relationship(back_populates="sequencing_run")
 
     model_config = ConfigDict(from_attributes=True)
 

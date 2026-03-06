@@ -196,6 +196,9 @@ class QCRecord(SQLModel, table=True):
     # Relationship back to project (nullable for run-scoped records)
     project: "Project" = Relationship(back_populates="qcrecords")
 
+    # Relationship back to sequencing run (nullable for project-scoped records)
+    sequencing_run: "SequencingRun" = Relationship(back_populates="qcrecords")
+
     model_config = ConfigDict(from_attributes=True)
 
 
