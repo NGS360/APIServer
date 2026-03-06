@@ -120,6 +120,12 @@ def create_qcrecord(
 def search_qcrecords_get(
     session: SessionDep,
     project_id: Optional[str] = Query(None, description="Filter by project ID"),
+    workflow_run_id: Optional[str] = Query(
+        None, description="Filter by workflow run ID (provenance)"
+    ),
+    sequencing_run_id: Optional[str] = Query(
+        None, description="Filter by sequencing run ID"
+    ),
     latest: bool = Query(True, description="Return only newest record per project"),
     page: int = Query(1, ge=1, description="Page number"),
     per_page: int = Query(100, ge=1, le=1000, description="Results per page"),
@@ -129,6 +135,8 @@ def search_qcrecords_get(
 
     **Parameters:**
     - `project_id`: Filter to specific project(s)
+    - `workflow_run_id`: Filter by the workflow run that produced the QC data
+    - `sequencing_run_id`: Filter by sequencing run associated with metrics
     - `latest`: If true (default), returns only the most recent QC record per project
     - `page`: Page number for pagination (starts at 1)
     - `per_page`: Number of results per page (max 1000)
@@ -136,11 +144,17 @@ def search_qcrecords_get(
     **Example:**
     ```
     GET /api/v1/qcmetrics/search?project_id=P-1234&latest=true
+    GET /api/v1/qcmetrics/search?workflow_run_id=<uuid>&latest=false
+    GET /api/v1/qcmetrics/search?sequencing_run_id=<uuid>
     ```
     """
     filter_on = {}
     if project_id:
         filter_on["project_id"] = project_id
+    if workflow_run_id:
+        filter_on["workflow_run_id"] = workflow_run_id
+    if sequencing_run_id:
+        filter_on["sequencing_run_id"] = sequencing_run_id
 
     return services.search_qcrecords(
         session,

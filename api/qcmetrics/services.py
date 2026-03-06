@@ -40,6 +40,8 @@ from api.files.models import (
 )
 from api.samples.services import resolve_or_create_sample
 from api.samples.models import Sample
+from api.runs.models import SequencingRun
+from api.workflow.models import WorkflowRun
 
 
 logger = logging.getLogger(__name__)
@@ -75,11 +77,21 @@ def create_qcrecord(
             is_duplicate=True,
         )
 
+    # Validate workflow_run_id FK if provided
+    if qcrecord_create.workflow_run_id:
+        wf_run = session.get(WorkflowRun, qcrecord_create.workflow_run_id)
+        if not wf_run:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"WorkflowRun not found: {qcrecord_create.workflow_run_id}"
+            )
+
     # Create main QC record
     qcrecord = QCRecord(
         created_on=datetime.now(timezone.utc),
         created_by=created_by,
         project_id=qcrecord_create.project_id,
+        workflow_run_id=qcrecord_create.workflow_run_id,
     )
     session.add(qcrecord)
     session.flush()  # Get the ID
@@ -124,6 +136,7 @@ def create_qcrecord(
         created_on=qcrecord.created_on,
         created_by=qcrecord.created_by,
         project_id=qcrecord.project_id,
+        workflow_run_id=qcrecord.workflow_run_id,
         is_duplicate=False,
     )
 
@@ -135,9 +148,31 @@ def _create_metric(
     project_id: str,
 ) -> QCMetric:
     """Create a metric group with its samples and values."""
+    # Validate sequencing_run_id FK if provided
+    sr_id = metric_input.sequencing_run_id
+    if sr_id:
+        sr = session.get(SequencingRun, sr_id)
+        if not sr:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"SequencingRun not found: {sr_id}"
+            )
+
+    # Validate workflow_run_id FK if provided
+    wr_id = metric_input.workflow_run_id
+    if wr_id:
+        wr = session.get(WorkflowRun, wr_id)
+        if not wr:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"WorkflowRun not found: {wr_id}"
+            )
+
     metric = QCMetric(
         qcrecord_id=qcrecord_id,
         name=metric_input.name,
+        sequencing_run_id=sr_id,
+        workflow_run_id=wr_id,
     )
     session.add(metric)
     session.flush()
@@ -329,6 +364,24 @@ def search_qcrecords(
         else:
             stmt = stmt.where(QCRecord.project_id == project_ids)
 
+    # Filter by workflow_run_id (provenance)
+    if "workflow_run_id" in filter_on:
+        wf_run_id = filter_on["workflow_run_id"]
+        if isinstance(wf_run_id, str):
+            wf_run_id = uuid_module.UUID(wf_run_id)
+        stmt = stmt.where(QCRecord.workflow_run_id == wf_run_id)
+
+    # Filter by sequencing_run_id (via QCMetric.sequencing_run_id direct FK)
+    if "sequencing_run_id" in filter_on:
+        sr_id_val = filter_on["sequencing_run_id"]
+        if isinstance(sr_id_val, str):
+            sr_id_val = uuid_module.UUID(sr_id_val)
+        sr_subq = (
+            select(QCMetric.qcrecord_id)
+            .where(QCMetric.sequencing_run_id == sr_id_val)
+        )
+        stmt = stmt.where(col(QCRecord.id).in_(sr_subq))
+
     # Handle metadata filtering
     if "metadata" in filter_on and isinstance(filter_on["metadata"], dict):
         for key, value in filter_on["metadata"].items():
@@ -485,6 +538,8 @@ def _qcrecord_to_public(session: Session, record: QCRecord) -> QCRecordPublic:
         metrics.append(MetricPublic(
             name=metric.name,
             samples=metric_sample_publics,
+            sequencing_run_id=metric.sequencing_run_id,
+            workflow_run_id=metric.workflow_run_id,
             values=[
                 MetricValuePublic(
                     key=v.key,
@@ -556,6 +611,7 @@ def _qcrecord_to_public(session: Session, record: QCRecord) -> QCRecordPublic:
         created_on=record.created_on,
         created_by=record.created_by,
         project_id=record.project_id,
+        workflow_run_id=record.workflow_run_id,
         metadata=metadata,
         metrics=metrics,
         output_files=output_files,

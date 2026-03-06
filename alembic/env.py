@@ -28,7 +28,9 @@ from api.workflow.models import (
 from api.pipeline.models import Pipeline, PipelineAttribute, PipelineWorkflow
 from api.platforms.models import Platform
 from api.jobs.models import BatchJob
-from api.qcmetrics.models import QCRecord, QCRecordMetadata, QCMetric, QCMetricValue, QCMetricSample
+from api.qcmetrics.models import (
+    QCRecord, QCRecordMetadata, QCMetric, QCMetricValue, QCMetricSample,
+)
 
 # Import Base from your SQLModel setup
 #from core.db import Base
