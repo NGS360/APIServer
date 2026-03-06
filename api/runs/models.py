@@ -342,3 +342,4 @@ class RunSampleCleanupResponse(SQLModel):
     files_deleted: int
     samples_deleted: int
     samples_preserved: int
+    qcrecords_deleted: int = 0
