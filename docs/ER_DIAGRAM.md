@@ -101,6 +101,7 @@ erDiagram
     %% ==========================================
     
     SequencingRun ||--o{ SampleSequencingRun : "contains"
+    SequencingRun ||--o{ QCRecord : "has QC data"
     
     SequencingRun {
         uuid id PK
@@ -255,11 +256,16 @@ erDiagram
     QCRecord ||--o{ QCMetric : "contains"
     WorkflowRun ||--o{ QCRecord : "produces"
     
+    Project ||--o{ QCRecord : "has QC data"
+    SequencingRun ||--o{ QCMetric : "has QC metrics"
+    WorkflowRun ||--o{ QCMetric : "has QC metrics"
+    
     QCRecord {
         uuid id PK
         datetime created_on
         string created_by
-        string project_id
+        string project_id FK "nullable — CHECK exactly one scope"
+        uuid sequencing_run_id FK "nullable — CHECK exactly one scope"
         uuid workflow_run_id FK "nullable — provenance"
     }
     
@@ -272,15 +278,13 @@ erDiagram
     
     QCMetric ||--o{ QCMetricValue : "has"
     QCMetric ||--o{ QCMetricSample : "associated with"
-    QCMetric ||--o{ QCMetricSequencingRun : "scoped to run"
-    QCMetric ||--o{ QCMetricWorkflowRun : "scoped to execution"
-    SequencingRun ||--o{ QCMetricSequencingRun : "has QC metrics"
-    WorkflowRun ||--o{ QCMetricWorkflowRun : "has QC metrics"
     
     QCMetric {
         uuid id PK
         uuid qcrecord_id FK
         string name
+        uuid sequencing_run_id FK "nullable — direct FK"
+        uuid workflow_run_id FK "nullable — direct FK"
     }
     
     QCMetricValue {
@@ -297,18 +301,6 @@ erDiagram
         uuid qc_metric_id FK
         uuid sample_id FK
         string role
-    }
-    
-    QCMetricSequencingRun {
-        uuid id PK
-        uuid qc_metric_id FK
-        uuid sequencing_run_id FK
-    }
-    
-    QCMetricWorkflowRun {
-        uuid id PK
-        uuid qc_metric_id FK
-        uuid workflow_run_id FK
     }
     
     %% ==========================================
@@ -427,13 +419,11 @@ erDiagram
 
 ### QC Metrics & Records
 
-- **QCRecord**: Main QC record entity - one per pipeline execution per project. Optional `workflow_run_id` FK for provenance (which execution produced this data)
+- **QCRecord**: Main QC record entity - one per pipeline execution per scope. Dual scoping via CHECK constraint (`ck_qcrecord_scope`): exactly one of `project_id` or `sequencing_run_id` must be non-NULL. `project_id` FK to `project.project_id` (referential integrity). `sequencing_run_id` FK to `sequencingrun.id` (for run-scoped records like demux stats). Optional `workflow_run_id` FK for provenance (which execution produced this data)
 - **QCRecordMetadata**: Pipeline-level metadata (pipeline name, version, configuration)
-- **QCMetric**: Named groups of metrics within a QC record
+- **QCMetric**: Named groups of metrics within a QC record. Direct nullable FKs: `sequencing_run_id` (what sequencing run the metric is about) and `workflow_run_id` (what workflow execution the metric is about)
 - **QCMetricValue**: Individual metric key-value pairs (stores both string and numeric values)
 - **QCMetricSample**: Associates samples with metrics (supports workflow-level, single-sample, and multi-sample metrics)
-- **QCMetricSequencingRun**: Typed junction table associating metrics with sequencing runs (e.g., demux stats, per-lane yield)
-- **QCMetricWorkflowRun**: Typed junction table associating metrics with workflow run executions (e.g., runtime, peak memory)
 
 ### Workflows & Platforms
 
@@ -458,10 +448,12 @@ erDiagram
 6. **File → FileQCRecord → QCRecord**: Many-to-many (files can belong to QC records)
 7. **File → FileWorkflowRun → WorkflowRun**: Many-to-many (files can belong to workflow runs)
 8. **File → FilePipeline → Pipeline**: Many-to-many (files can belong to pipelines)
-9. **QCRecord → QCMetric → QCMetricSample → Sample**: QC metrics are organized hierarchically and can be associated with samples
-9b. **QCRecord.workflow_run_id → WorkflowRun**: Provenance link — which workflow execution produced this QC data
-9c. **QCMetric → QCMetricSequencingRun → SequencingRun**: Metric-level scoping to sequencing runs
-9d. **QCMetric → QCMetricWorkflowRun → WorkflowRun**: Metric-level scoping to workflow executions
+9. **Project → QCRecord**: One-to-many (a project can have multiple QC records, enforced by FK on `qcrecord.project_id`). Nullable — run-scoped records have no project
+9a. **SequencingRun → QCRecord**: One-to-many (a sequencing run can have multiple QC records, enforced by FK on `qcrecord.sequencing_run_id`). Nullable — project-scoped records have no run. CHECK constraint ensures exactly one scope
+9b. **QCRecord → QCMetric → QCMetricSample → Sample**: QC metrics are organized hierarchically and can be associated with samples
+9c. **QCRecord.workflow_run_id → WorkflowRun**: Provenance link — which workflow execution produced this QC data
+9d. **QCMetric.sequencing_run_id → SequencingRun**: Direct FK — which sequencing run the metric is about (e.g., demux stats)
+9e. **QCMetric.workflow_run_id → WorkflowRun**: Direct FK — which workflow execution the metric is about (e.g., runtime stats)
 10. **User → Authentication Tokens**: One-to-many (users can have multiple active sessions and tokens)
 11. **Workflow → WorkflowRegistration → Platform**: Many-to-many (workflows can be registered on multiple platforms)
 12. **Workflow → WorkflowRun**: One-to-many (workflows have multiple execution instances)
@@ -479,8 +471,6 @@ erDiagram
 - **FilePipeline**: `(file_id, pipeline_id)` - Prevents duplicate file-pipeline associations
 - **FileSample**: `(file_id, sample_id)` - Prevents duplicate file-sample associations
 - **QCMetricSample**: `(qc_metric_id, sample_id)` - Prevents duplicate metric-sample associations
-- **QCMetricSequencingRun**: `(qc_metric_id, sequencing_run_id)` - Prevents duplicate metric-run associations
-- **QCMetricWorkflowRun**: `(qc_metric_id, workflow_run_id)` - Prevents duplicate metric-execution associations
 - **SampleSequencingRun**: `(sample_id, sequencing_run_id)` - Prevents duplicate sample-run associations
 - **WorkflowRegistration**: `(workflow_id, engine)` - One registration per workflow per platform
 - **ProjectAttribute**: `(project_id, key)` - One value per key per project
@@ -495,8 +485,9 @@ Key indexes are created on:
 - `qc_metric_id` and `sample_id` in QCMetricSample for efficient queries
 - `qcrecord_id` and `name` in QCMetric for metric lookups
 - `workflow_run_id` in QCRecord for provenance lookups
-- `qc_metric_id` and `sequencing_run_id` in QCMetricSequencingRun
-- `qc_metric_id` and `workflow_run_id` in QCMetricWorkflowRun
+- `sequencing_run_id` in QCRecord for run-scoped lookups
+- `sequencing_run_id` in QCMetric for metric-level run association
+- `workflow_run_id` in QCMetric for metric-level workflow association
 
 ## Notable Features
 
@@ -522,3 +513,10 @@ Multiple tables use key-value pairs for extensible metadata:
 The system supports multi-sample analyses through role-based associations:
 - **FileSample**: Files can be linked to multiple samples with roles (e.g., tumor/normal)
 - **QCMetricSample**: Metrics can be associated with multiple samples with roles
+
+### Dual-Scoped QC Records
+QCRecords support two mutually exclusive scoping modes:
+- **Project-scoped**: Traditional QC records tied to a project (e.g., alignment stats, variant QC). `project_id` is non-NULL, `sequencing_run_id` is NULL
+- **Run-scoped**: QC records tied to a sequencing run (e.g., demux stats). `sequencing_run_id` is non-NULL, `project_id` is NULL
+- The CHECK constraint `ck_qcrecord_scope` enforces exactly one scope is set
+- Re-demux cleanup (`clear_samples_for_run`) deletes run-scoped QCRecords before re-processing
