@@ -78,6 +78,23 @@ def create_workflow(session: Session, workflow_in: WorkflowCreate, created_by: s
 
     session.commit()
     session.refresh(workflow)
+
+    # Call Lambda function to register workflow if engine is Omics
+    if workflow.engine == "AWSHealthOmics":
+        try:
+            omics_workflow_id = _register_workflow_with_omics(workflow)
+            if omics_workflow_id:
+                # Update workflow with AWS Omics workflow ID
+                workflow.engine_id = omics_workflow_id
+                session.add(workflow)
+                session.commit()
+                session.refresh(workflow)
+                logger.info(f"Successfully registered workflow {workflow.id} "
+                            f"in AWS Omics with ID: {omics_workflow_id}")
+        except Exception as e:
+            # Log error but don't fail workflow creation
+            logger.error(f"Failed to register workflow {workflow.id} in AWS Omics: {str(e)}")
+
     return workflow
 
 
