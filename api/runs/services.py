@@ -820,7 +820,8 @@ def clear_samples_for_run(
     opensearch_client: OpenSearch = None,
 ) -> RunSampleCleanupResponse:
     """
-    Remove all sample associations, run-linked files, and orphaned samples for a run.
+    Remove all sample associations, run-linked files, run-scoped QCRecords,
+    and orphaned samples for a run.
 
     Used before re-demultiplexing to clean up database records from a previous
     (possibly incorrect) demux. The batch job deletes the S3 objects; this function
@@ -830,8 +831,11 @@ def clear_samples_for_run(
         1. Delete File records associated with this run (via FileSequencingRun
            junction table). SQLAlchemy cascades handle FileHash, FileTag,
            FileSample, and other junction table child rows.
-        2. Remove all SampleSequencingRun associations for this run.
-        3. For each affected Sample, check if it is now orphaned (no other run
+        2. Delete run-scoped QCRecords (qcrecord.sequencing_run_id == run.id).
+           Cascade deletes handle metadata, metrics, metric values, samples,
+           and FileQCRecord junction rows.
+        3. Remove all SampleSequencingRun associations for this run.
+        4. For each affected Sample, check if it is now orphaned (no other run
            associations, no remaining file associations, no QC metric associations).
            If orphaned, delete the Sample and its SampleAttribute rows.
 
@@ -864,7 +868,34 @@ def clear_samples_for_run(
             session.delete(file_record)  # cascades to hashes, tags, samples, junction rows
             files_deleted += 1
 
-    # ── Step 2: Remove SampleSequencingRun associations ───────────────
+    # ── Step 2: Delete run-scoped QCRecords ───────────────────────────
+    from api.qcmetrics.models import QCRecord
+    from api.files.models import FileQCRecord
+
+    run_qcrecords = session.exec(
+        select(QCRecord).where(
+            QCRecord.sequencing_run_id == run.id,
+        )
+    ).all()
+
+    qcrecords_deleted = 0
+    for qcr in run_qcrecords:
+        # Delete associated output files (via FileQCRecord)
+        fqrs = session.exec(
+            select(FileQCRecord).where(
+                FileQCRecord.qcrecord_id == qcr.id,
+            )
+        ).all()
+        for fqr in fqrs:
+            file_record = session.get(File, fqr.file_id)
+            if file_record:
+                session.delete(file_record)
+
+        # Delete QCRecord (cascades to metadata, metrics, etc.)
+        session.delete(qcr)
+        qcrecords_deleted += 1
+
+    # ── Step 3: Remove SampleSequencingRun associations ───────────────
     associations = session.exec(
         select(SampleSequencingRun).where(
             SampleSequencingRun.sequencing_run_id == run.id,
@@ -881,7 +912,7 @@ def clear_samples_for_run(
     # SampleSequencingRun deletes are visible for orphan checks
     session.flush()
 
-    # ── Step 3: Delete orphaned samples ───────────────────────────────
+    # ── Step 4: Delete orphaned samples ───────────────────────────────
     samples_deleted = 0
     samples_preserved = 0
 
@@ -949,4 +980,5 @@ def clear_samples_for_run(
         files_deleted=files_deleted,
         samples_deleted=samples_deleted,
         samples_preserved=samples_preserved,
+        qcrecords_deleted=qcrecords_deleted,
     )
