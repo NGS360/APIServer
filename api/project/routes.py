@@ -27,7 +27,6 @@ router = APIRouter(prefix="/projects")
 
 @router.post(
     "",
-    response_model=ProjectPublic,
     tags=["Project Endpoints"],
     status_code=status.HTTP_201_CREATED,
 )
@@ -44,7 +43,6 @@ def create_project(
 
 @router.get(
     "",
-    response_model=ProjectsPublic,
     status_code=status.HTTP_200_OK,
     tags=["Project Endpoints"],
 )
@@ -75,7 +73,6 @@ def get_projects(
 
 @router.get(
     "/search",
-    response_model=ProjectsPublic,
     status_code=status.HTTP_200_OK,
     tags=["Project Endpoints"],
 )
@@ -126,7 +123,7 @@ def reindex_projects(
 ###############################################################################
 
 
-@router.get("/{project_id}", response_model=ProjectPublic, tags=["Project Endpoints"])
+@router.get("/{project_id}", tags=["Project Endpoints"])
 def get_project_by_project_id(session: SessionDep, project: ProjectDep) -> ProjectPublic:
     """
     Returns a single project by its project_id.
@@ -137,7 +134,6 @@ def get_project_by_project_id(session: SessionDep, project: ProjectDep) -> Proje
 
 @router.put(
     "/{project_id}",
-    response_model=ProjectPublic,
     status_code=status.HTTP_200_OK,
     tags=["Project Endpoints"],
 )
@@ -164,7 +160,6 @@ def update_project(
 
 @router.post(
     "/{project_id}/samples",
-    response_model=SamplePublic,
     tags=["Project Endpoints"],
     status_code=status.HTTP_201_CREATED,
 )
@@ -186,7 +181,7 @@ def add_sample_to_project(
 
 
 @router.get(
-    "/{project_id}/samples", response_model=SamplesPublic, tags=["Project Endpoints"]
+    "/{project_id}/samples", tags=["Project Endpoints"]
 )
 def get_project_samples(
     session: SessionDep,
@@ -213,7 +208,6 @@ def get_project_samples(
 
 @router.put(
     "/{project_id}/samples/{sample_id}",
-    response_model=SamplePublic,
     tags=["Project Endpoints"],
 )
 def update_sample_in_project(
@@ -240,7 +234,6 @@ def update_sample_in_project(
 
 @router.post(
     "/{project_id}/actions/submit",
-    # response_model=BatchJobPublic,  # COMMENTED OUT FOR TESTING
     tags=["Project Endpoints"],
     status_code=status.HTTP_201_CREATED,
 )
@@ -317,5 +310,11 @@ def ingest_vendor_data(
         BatchJobPublic: The created batch job information
     """
     batch_job = services.ingest_vendor_data(
-        session, project, user.username, files_uri, manifest_uri, s3_client=s3_client)
+        session,
+        project,
+        user.username,
+        files_uri,
+        manifest_uri,
+        s3_client=s3_client
+    )
     return BatchJobPublic.model_validate(batch_job)
