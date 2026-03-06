@@ -4,6 +4,7 @@ Routes/endpoints for the Project API
 
 from typing import Literal
 from fastapi import APIRouter, Query, status, Depends
+from sentry_sdk import session
 from core.deps import SessionDep, OpenSearchDep, get_s3_client
 from api.auth.deps import CurrentUser
 from api.jobs.models import BatchJobPublic
@@ -29,6 +30,7 @@ router = APIRouter(prefix="/projects")
     "",
     tags=["Project Endpoints"],
     status_code=status.HTTP_201_CREATED,
+    response_model=ProjectPublic,
 )
 def create_project(
     session: SessionDep, opensearch_client: OpenSearchDep, project_in: ProjectCreate
@@ -45,6 +47,7 @@ def create_project(
     "",
     status_code=status.HTTP_200_OK,
     tags=["Project Endpoints"],
+    response_model=ProjectsPublic,
 )
 def get_projects(
     session: SessionDep,
@@ -75,6 +78,7 @@ def get_projects(
     "/search",
     status_code=status.HTTP_200_OK,
     tags=["Project Endpoints"],
+    response_model=ProjectsPublic,
 )
 def search_projects(
     session: SessionDep,
@@ -107,6 +111,7 @@ def search_projects(
     "/search",
     status_code=status.HTTP_201_CREATED,
     tags=["Project Endpoints"],
+    response_model=ProjectsPublic,
 )
 def reindex_projects(
     session: SessionDep,
@@ -123,7 +128,7 @@ def reindex_projects(
 ###############################################################################
 
 
-@router.get("/{project_id}", tags=["Project Endpoints"])
+@router.get("/{project_id}", tags=["Project Endpoints"], response_model=ProjectPublic)
 def get_project_by_project_id(session: SessionDep, project: ProjectDep) -> ProjectPublic:
     """
     Returns a single project by its project_id.
@@ -136,12 +141,13 @@ def get_project_by_project_id(session: SessionDep, project: ProjectDep) -> Proje
     "/{project_id}",
     status_code=status.HTTP_200_OK,
     tags=["Project Endpoints"],
+    response_model=ProjectPublic,
 )
 def update_project(
     session: SessionDep,
     opensearch_client: OpenSearchDep,
     project: ProjectDep,
-    update_request: ProjectUpdate,
+    update_request: ProjectUpdate
 ) -> ProjectPublic:
     """
     Update information about a specific project.
@@ -162,6 +168,7 @@ def update_project(
     "/{project_id}/samples",
     tags=["Project Endpoints"],
     status_code=status.HTTP_201_CREATED,
+    response_model=SamplePublic,
 )
 def add_sample_to_project(
     session: SessionDep,
@@ -181,7 +188,7 @@ def add_sample_to_project(
 
 
 @router.get(
-    "/{project_id}/samples", tags=["Project Endpoints"]
+    "/{project_id}/samples", tags=["Project Endpoints"], response_model=SamplesPublic
 )
 def get_project_samples(
     session: SessionDep,
@@ -209,6 +216,7 @@ def get_project_samples(
 @router.put(
     "/{project_id}/samples/{sample_id}",
     tags=["Project Endpoints"],
+    response_model=SamplePublic,
 )
 def update_sample_in_project(
     session: SessionDep,
@@ -236,6 +244,7 @@ def update_sample_in_project(
     "/{project_id}/actions/submit",
     tags=["Project Endpoints"],
     status_code=status.HTTP_201_CREATED,
+    response_model=BatchJobPublic,
 )
 def submit_pipeline_job(
     project: ProjectDep,
@@ -290,6 +299,7 @@ def submit_pipeline_job(
     "/{project_id}/ingest",
     tags=["Project Endpoints"],
     status_code=status.HTTP_201_CREATED,
+    response_model=BatchJobPublic,
 )
 def ingest_vendor_data(
     session: SessionDep,
