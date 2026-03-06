@@ -253,12 +253,14 @@ erDiagram
     
     QCRecord ||--o{ QCRecordMetadata : "has"
     QCRecord ||--o{ QCMetric : "contains"
+    WorkflowRun ||--o{ QCRecord : "produces"
     
     QCRecord {
         uuid id PK
         datetime created_on
         string created_by
         string project_id
+        uuid workflow_run_id FK "nullable — provenance"
     }
     
     QCRecordMetadata {
@@ -270,6 +272,10 @@ erDiagram
     
     QCMetric ||--o{ QCMetricValue : "has"
     QCMetric ||--o{ QCMetricSample : "associated with"
+    QCMetric ||--o{ QCMetricSequencingRun : "scoped to run"
+    QCMetric ||--o{ QCMetricWorkflowRun : "scoped to execution"
+    SequencingRun ||--o{ QCMetricSequencingRun : "has QC metrics"
+    WorkflowRun ||--o{ QCMetricWorkflowRun : "has QC metrics"
     
     QCMetric {
         uuid id PK
@@ -291,6 +297,18 @@ erDiagram
         uuid qc_metric_id FK
         uuid sample_id FK
         string role
+    }
+    
+    QCMetricSequencingRun {
+        uuid id PK
+        uuid qc_metric_id FK
+        uuid sequencing_run_id FK
+    }
+    
+    QCMetricWorkflowRun {
+        uuid id PK
+        uuid qc_metric_id FK
+        uuid workflow_run_id FK
     }
     
     %% ==========================================
@@ -409,11 +427,13 @@ erDiagram
 
 ### QC Metrics & Records
 
-- **QCRecord**: Main QC record entity - one per pipeline execution per project
+- **QCRecord**: Main QC record entity - one per pipeline execution per project. Optional `workflow_run_id` FK for provenance (which execution produced this data)
 - **QCRecordMetadata**: Pipeline-level metadata (pipeline name, version, configuration)
 - **QCMetric**: Named groups of metrics within a QC record
 - **QCMetricValue**: Individual metric key-value pairs (stores both string and numeric values)
 - **QCMetricSample**: Associates samples with metrics (supports workflow-level, single-sample, and multi-sample metrics)
+- **QCMetricSequencingRun**: Typed junction table associating metrics with sequencing runs (e.g., demux stats, per-lane yield)
+- **QCMetricWorkflowRun**: Typed junction table associating metrics with workflow run executions (e.g., runtime, peak memory)
 
 ### Workflows & Platforms
 
@@ -439,6 +459,9 @@ erDiagram
 7. **File → FileWorkflowRun → WorkflowRun**: Many-to-many (files can belong to workflow runs)
 8. **File → FilePipeline → Pipeline**: Many-to-many (files can belong to pipelines)
 9. **QCRecord → QCMetric → QCMetricSample → Sample**: QC metrics are organized hierarchically and can be associated with samples
+9b. **QCRecord.workflow_run_id → WorkflowRun**: Provenance link — which workflow execution produced this QC data
+9c. **QCMetric → QCMetricSequencingRun → SequencingRun**: Metric-level scoping to sequencing runs
+9d. **QCMetric → QCMetricWorkflowRun → WorkflowRun**: Metric-level scoping to workflow executions
 10. **User → Authentication Tokens**: One-to-many (users can have multiple active sessions and tokens)
 11. **Workflow → WorkflowRegistration → Platform**: Many-to-many (workflows can be registered on multiple platforms)
 12. **Workflow → WorkflowRun**: One-to-many (workflows have multiple execution instances)
@@ -456,6 +479,8 @@ erDiagram
 - **FilePipeline**: `(file_id, pipeline_id)` - Prevents duplicate file-pipeline associations
 - **FileSample**: `(file_id, sample_id)` - Prevents duplicate file-sample associations
 - **QCMetricSample**: `(qc_metric_id, sample_id)` - Prevents duplicate metric-sample associations
+- **QCMetricSequencingRun**: `(qc_metric_id, sequencing_run_id)` - Prevents duplicate metric-run associations
+- **QCMetricWorkflowRun**: `(qc_metric_id, workflow_run_id)` - Prevents duplicate metric-execution associations
 - **SampleSequencingRun**: `(sample_id, sequencing_run_id)` - Prevents duplicate sample-run associations
 - **WorkflowRegistration**: `(workflow_id, engine)` - One registration per workflow per platform
 - **ProjectAttribute**: `(project_id, key)` - One value per key per project
@@ -469,6 +494,9 @@ Key indexes are created on:
 - Unique constraint columns
 - `qc_metric_id` and `sample_id` in QCMetricSample for efficient queries
 - `qcrecord_id` and `name` in QCMetric for metric lookups
+- `workflow_run_id` in QCRecord for provenance lookups
+- `qc_metric_id` and `sequencing_run_id` in QCMetricSequencingRun
+- `qc_metric_id` and `workflow_run_id` in QCMetricWorkflowRun
 
 ## Notable Features
 

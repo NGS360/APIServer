@@ -8,6 +8,8 @@ The QCMetrics system provides:
 
 - **Flexible metric storage**: Workflow-level, single-sample, and paired-sample (tumor/normal) metrics
 - **Type-preserving numeric values**: Store and query metrics with native numeric types
+- **Entity association**: Scope metrics to sequencing runs, workflow executions, and samples
+- **Provenance tracking**: Optional `workflow_run_id` FK linking a QCRecord to the execution that produced it
 - **Output file tracking**: Integration with the unified [File model](./FILE_MODEL.md)
 - **Versioning**: Multiple QC records per project with history preservation
 - **Duplicate detection**: Automatic detection of equivalent records
@@ -19,17 +21,23 @@ The QCMetrics system provides:
 ```mermaid
 erDiagram
     Project ||--o{ QCRecord : has
+    WorkflowRun ||--o{ QCRecord : "produces (provenance)"
     QCRecord ||--o{ QCRecordMetadata : has_metadata
     QCRecord ||--o{ QCMetric : has_metrics
+    QCRecord ||--o{ FileQCRecord : has_files
     QCMetric ||--o{ QCMetricValue : has_values
     QCMetric ||--o{ QCMetricSample : associated_samples
-    QCRecord ||--o{ FileEntity : has_files
+    QCMetric ||--o{ QCMetricSequencingRun : scoped_to_run
+    QCMetric ||--o{ QCMetricWorkflowRun : scoped_to_execution
+    SequencingRun ||--o{ QCMetricSequencingRun : has_qc_metrics
+    WorkflowRun ||--o{ QCMetricWorkflowRun : has_qc_metrics
 
     QCRecord {
         uuid id PK
         datetime created_on
         string created_by
         string project_id
+        uuid workflow_run_id FK "nullable"
     }
 
     QCRecordMetadata {
@@ -57,8 +65,20 @@ erDiagram
     QCMetricSample {
         uuid id PK
         uuid qc_metric_id FK
-        string sample_name
+        uuid sample_id FK
         string role
+    }
+
+    QCMetricSequencingRun {
+        uuid id PK
+        uuid qc_metric_id FK
+        uuid sequencing_run_id FK
+    }
+
+    QCMetricWorkflowRun {
+        uuid id PK
+        uuid qc_metric_id FK
+        uuid workflow_run_id FK
     }
 ```
 
@@ -66,7 +86,7 @@ erDiagram
 
 ### qcrecord
 
-Main QC record entity - one per pipeline execution per project.
+Main QC record entity — one per pipeline execution per project.
 
 | Column | Type | Constraints | Description |
 |--------|------|-------------|-------------|
@@ -74,8 +94,10 @@ Main QC record entity - one per pipeline execution per project.
 | created_on | TIMESTAMP | NOT NULL | Record creation timestamp |
 | created_by | VARCHAR(100) | NOT NULL | User who created the record |
 | project_id | VARCHAR(50) | NOT NULL, INDEX | Associated project ID |
+| workflow_run_id | UUID | FK → workflowrun.id, NULL, INDEX | Optional provenance link |
 
-**Note**: No FK to Project table to allow QC records for projects not yet in the system.
+**Note**: `project_id` has no FK to Project table to allow QC records for projects not yet in the system.
+`workflow_run_id` is an optional FK linking this QCRecord to the WorkflowRun that produced the data.
 
 ### qcrecordmetadata
 
@@ -100,19 +122,19 @@ A named group of metrics. Can be workflow-level, single-sample, or multi-sample.
 | qcrecord_id | UUID | FK → qcrecord.id, ON DELETE CASCADE, INDEX | Parent QC record |
 | name | VARCHAR(255) | NOT NULL, INDEX | Metric group name |
 
-**Note**: Multiple QCMetric rows with the same name are allowed within a QCRecord, differentiated by their sample associations. This supports per-sample metrics where each sample has its own set of QC values.
+**Note**: Multiple QCMetric rows with the same name are allowed within a QCRecord, differentiated by their sample or entity associations.
 
 **Example**: An RNA-Seq pipeline run with 2 samples creates:
 
 ```
 QCRecord (project_id="P-00000001")
 ├── QCMetric (id=1, name="sample_qc")  ← for human1
-│   ├── QCMetricSample (sample_name="human1")
+│   ├── QCMetricSample (sample_id=<uuid of human1>)
 │   ├── QCMetricValue (key="QC_AlignedReads", value_numeric=1000000)
 │   └── QCMetricValue (key="QC_FractionAligned", value_numeric=0.98)
 │
 ├── QCMetric (id=2, name="sample_qc")  ← for human2 (same name, different sample)
-│   ├── QCMetricSample (sample_name="human2")
+│   ├── QCMetricSample (sample_id=<uuid of human2>)
 │   ├── QCMetricValue (key="QC_AlignedReads", value_numeric=950000)
 │   └── QCMetricValue (key="QC_FractionAligned", value_numeric=0.96)
 │
@@ -143,21 +165,51 @@ Key-value store for individual metric values. Supports dual storage for both str
 
 ### qcmetricsample
 
-Associates samples with a metric group.
+Associates samples with a metric group via FK to the `sample` table.
 
 | Column | Type | Constraints | Description |
 |--------|------|-------------|-------------|
 | id | UUID | PK | Primary key |
 | qc_metric_id | UUID | FK → qcmetric.id, ON DELETE CASCADE | Parent metric group |
-| sample_name | VARCHAR(255) | NOT NULL, INDEX | Sample identifier |
-| role | VARCHAR(50) | | Optional role (tumor, normal, case, control) |
+| sample_id | UUID | FK → sample.id, INDEX | Resolved sample reference |
+| role | VARCHAR(50) | NULL | Optional role (tumor, normal, case, control) |
 
-**Unique constraint**: `(qc_metric_id, sample_name)`
+**Unique constraint**: `(qc_metric_id, sample_id)`
+
+Samples are resolved by `sample_name` in the request — the service layer looks up or auto-creates `Sample` records.
 
 **Sample association patterns**:
 - **Workflow-level**: No entries (e.g., overall pipeline success rate)
 - **Single sample**: One entry (e.g., Sample1 alignment rate)
 - **Sample pair**: Two entries with roles (e.g., tumor=Sample1, normal=Sample2)
+
+### qcmetricsequencingrun
+
+Typed junction table associating a QCMetric group with a SequencingRun.
+
+| Column | Type | Constraints | Description |
+|--------|------|-------------|-------------|
+| id | UUID | PK | Primary key |
+| qc_metric_id | UUID | FK → qcmetric.id, INDEX | Parent metric group |
+| sequencing_run_id | UUID | FK → sequencingrun.id, INDEX | Associated sequencing run |
+
+**Unique constraint**: `(qc_metric_id, sequencing_run_id)` — name `uq_qcmetric_seqrun`
+
+**Use cases**: Demux statistics, per-lane yield, cluster density, %Q30 — any QC metric scoped to a specific sequencing run.
+
+### qcmetricworkflowrun
+
+Typed junction table associating a QCMetric group with a WorkflowRun execution.
+
+| Column | Type | Constraints | Description |
+|--------|------|-------------|-------------|
+| id | UUID | PK | Primary key |
+| qc_metric_id | UUID | FK → qcmetric.id, INDEX | Parent metric group |
+| workflow_run_id | UUID | FK → workflowrun.id, INDEX | Associated workflow run |
+
+**Unique constraint**: `(qc_metric_id, workflow_run_id)` — name `uq_qcmetric_wfrun`
+
+**Use cases**: Runtime, peak memory, CPU hours, exit code — any QC metric scoped to a specific workflow execution.
 
 ## API Endpoints
 
@@ -169,31 +221,11 @@ Associates samples with a metric group.
 
 The `created_by` field is automatically set from the authenticated user's username.
 
-**Example curl command**:
-```bash
-curl -X POST "http://localhost:8000/api/v1/qcmetrics" \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "project_id": "P-1234",
-    "metadata": {
-      "pipeline": "RNA-Seq",
-      "version": "2.0.0"
-    },
-    "metrics": [
-      {
-        "name": "alignment_stats",
-        "samples": [{"sample_name": "Sample1"}],
-        "values": {"reads": 50000000, "alignment_rate": 95.5}
-      }
-    ]
-  }'
-```
-
 **Request Body**:
 ```json
 {
   "project_id": "P-1234",
+  "workflow_run_id": "550e8400-e29b-41d4-a716-446655440099",
   "metadata": {
     "pipeline": "RNA-Seq",
     "version": "2.0.0"
@@ -202,29 +234,21 @@ curl -X POST "http://localhost:8000/api/v1/qcmetrics" \
     {
       "name": "alignment_stats",
       "samples": [{"sample_name": "Sample1"}],
-      "values": {
-        "reads": 50000000,
-        "alignment_rate": 95.5,
-        "reference_genome": "GRCh38"
-      }
+      "values": {"reads": 50000000, "alignment_rate": 95.5}
     },
     {
-      "name": "somatic_variants",
-      "samples": [
-        {"sample_name": "Sample1", "role": "tumor"},
-        {"sample_name": "Sample2", "role": "normal"}
+      "name": "demux_stats",
+      "sequencing_runs": [
+        {"sequencing_run_id": "660e8400-e29b-41d4-a716-446655440001"}
       ],
-      "values": {
-        "snv_count": 15234,
-        "tmb": 8.5
-      }
+      "values": {"total_clusters": 500000000, "pct_q30": 92.5}
     },
     {
-      "name": "pipeline_summary",
-      "values": {
-        "total_samples": 48,
-        "runtime_hours": 12.5
-      }
+      "name": "execution_metrics",
+      "workflow_runs": [
+        {"workflow_run_id": "550e8400-e29b-41d4-a716-446655440099"}
+      ],
+      "values": {"runtime_hours": 3.5, "peak_memory_gb": 16}
     }
   ],
   "output_files": [
@@ -239,6 +263,18 @@ curl -X POST "http://localhost:8000/api/v1/qcmetrics" \
 }
 ```
 
+**Fields**:
+- `project_id` (required): Project identifier
+- `workflow_run_id` (optional): UUID of the WorkflowRun that produced this QC data (provenance)
+- `metadata` (optional): Key-value pairs for pipeline metadata
+- `metrics` (optional): List of metric groups, each with:
+  - `name` (required): Metric group name
+  - `samples` (optional): Sample associations with optional roles
+  - `sequencing_runs` (optional): SequencingRun associations (validated FK)
+  - `workflow_runs` (optional): WorkflowRun associations (validated FK)
+  - `values` (required): Metric key-value pairs (string, int, or float)
+- `output_files` (optional): Files produced by the pipeline
+
 **Response** (201 Created):
 ```json
 {
@@ -246,6 +282,7 @@ curl -X POST "http://localhost:8000/api/v1/qcmetrics" \
   "created_on": "2026-01-29T12:00:00Z",
   "created_by": "username",
   "project_id": "P-1234",
+  "workflow_run_id": "550e8400-e29b-41d4-a716-446655440099",
   "is_duplicate": false
 }
 ```
@@ -261,6 +298,7 @@ curl -X POST "http://localhost:8000/api/v1/qcmetrics" \
   "created_on": "2026-01-29T12:00:00Z",
   "created_by": "username",
   "project_id": "P-1234",
+  "workflow_run_id": "550e8400-e29b-41d4-a716-446655440099",
   "metadata": [
     {"key": "pipeline", "value": "RNA-Seq"},
     {"key": "version", "value": "2.0.0"}
@@ -269,10 +307,23 @@ curl -X POST "http://localhost:8000/api/v1/qcmetrics" \
     {
       "name": "alignment_stats",
       "samples": [{"sample_name": "Sample1", "role": null}],
+      "sequencing_runs": null,
+      "workflow_runs": null,
       "values": [
         {"key": "reads", "value": 50000000},
-        {"key": "alignment_rate", "value": 95.5},
-        {"key": "reference_genome", "value": "GRCh38"}
+        {"key": "alignment_rate", "value": 95.5}
+      ]
+    },
+    {
+      "name": "demux_stats",
+      "samples": [],
+      "sequencing_runs": [
+        {"sequencing_run_id": "660e8400-e29b-41d4-a716-446655440001"}
+      ],
+      "workflow_runs": null,
+      "values": [
+        {"key": "total_clusters", "value": 500000000},
+        {"key": "pct_q30", "value": 92.5}
       ]
     }
   ],
@@ -297,12 +348,16 @@ curl -X POST "http://localhost:8000/api/v1/qcmetrics" \
 
 Query parameters:
 - `project_id`: Filter by project ID
+- `workflow_run_id`: Filter by provenance (which WorkflowRun produced the data)
+- `sequencing_run_id`: Filter by sequencing run (finds records with metrics scoped to that run)
 - `latest`: If true (default), return only newest QCRecord per project
-- Any metadata key: e.g., `pipeline=RNA-Seq`
+- `page`, `per_page`: Pagination
 
-**Example**:
+**Examples**:
 ```
-GET /api/v1/qcmetrics/search?project_id=P-1234&pipeline=RNA-Seq&latest=true
+GET /api/v1/qcmetrics/search?project_id=P-1234&latest=true
+GET /api/v1/qcmetrics/search?workflow_run_id=<uuid>&latest=false
+GET /api/v1/qcmetrics/search?sequencing_run_id=<uuid>
 ```
 
 ### Search QC Records (POST)
@@ -315,6 +370,8 @@ For advanced filtering:
 {
   "filter_on": {
     "project_id": "P-1234",
+    "workflow_run_id": "550e8400-e29b-41d4-a716-446655440099",
+    "sequencing_run_id": "660e8400-e29b-41d4-a716-446655440001",
     "metadata": {
       "pipeline": "RNA-Seq"
     }
@@ -329,9 +386,9 @@ For advanced filtering:
 
 **DELETE /api/v1/qcmetrics/{id}**
 
-Deletes the QC record and all associated data (metadata, metrics, output files).
+Deletes the QC record and all associated data (metadata, metrics, entity associations, output files).
 
-## Sample Association Patterns
+## Entity Association Patterns
 
 ### Single-sample metrics (alignment stats)
 
@@ -377,6 +434,62 @@ Deletes the QC record and all associated data (metadata, metrics, output files).
 }
 ```
 
+### Sequencing run–scoped metrics (demux stats)
+
+```json
+{
+  "name": "demux_stats",
+  "sequencing_runs": [
+    {"sequencing_run_id": "660e8400-e29b-41d4-a716-446655440001"}
+  ],
+  "values": {
+    "total_clusters": 500000000,
+    "pct_q30": 92.5,
+    "pct_pf": 95.1
+  }
+}
+```
+
+### Workflow run–scoped metrics (execution metrics)
+
+```json
+{
+  "name": "execution_metrics",
+  "workflow_runs": [
+    {"workflow_run_id": "550e8400-e29b-41d4-a716-446655440099"}
+  ],
+  "values": {
+    "runtime_hours": 3.5,
+    "peak_memory_gb": 16,
+    "cpu_hours": 28
+  }
+}
+```
+
+### Mixed scoping (sample + run in same QCRecord)
+
+A QCRecord can contain metrics with different scoping in the same request:
+
+```json
+{
+  "project_id": "P-1234",
+  "workflow_run_id": "550e8400-...-446655440099",
+  "metrics": [
+    {
+      "name": "demux_stats",
+      "sequencing_runs": [{"sequencing_run_id": "660e8400-..."}],
+      "values": {"total_clusters": 500000000}
+    },
+    {
+      "name": "per_sample_yield",
+      "samples": [{"sample_name": "SampleA"}],
+      "sequencing_runs": [{"sequencing_run_id": "660e8400-..."}],
+      "values": {"reads": 25000000, "pct_q30": 95.3}
+    }
+  ]
+}
+```
+
 ## Versioning
 
 Multiple QC records per project are allowed (history is kept). The `created_on` timestamp differentiates versions.
@@ -393,18 +506,19 @@ ORDER BY project_id, created_on DESC
 
 When creating a QC record, the system checks if an equivalent record exists:
 1. Query for existing records with same `project_id`
-2. Compare metadata, metrics, and output_files
+2. Compare metadata keys and values
 3. If equivalent, return existing record info with `is_duplicate: true`
 
 ## Cascade Deletes
 
 All child tables cascade delete when parent is deleted:
 - `qcrecord` → `qcrecordmetadata`, `qcmetric`
-- `qcmetric` → `qcmetricvalue`, `qcmetricsample`
+- `qcmetric` → `qcmetricvalue`, `qcmetricsample`, `qcmetricsequencingrun`, `qcmetricworkflowrun`
 
 When a QCRecord is deleted:
-1. FileEntity associations are automatically deleted (via CASCADE)
-2. File records are explicitly deleted (service layer)
+1. All junction table rows (metrics, samples, entity associations) cascade automatically
+2. FileQCRecord associations are automatically deleted (via CASCADE)
+3. File records are explicitly deleted (service layer)
 
 ## Code Reference
 
@@ -412,36 +526,40 @@ When a QCRecord is deleted:
 
 Defined in [`api/qcmetrics/models.py`](../api/qcmetrics/models.py):
 
-- [`QCRecord`](../api/qcmetrics/models.py:128) - Main QC record entity
-- [`QCRecordMetadata`](../api/qcmetrics/models.py:25) - Pipeline metadata
-- [`QCMetric`](../api/qcmetrics/models.py:97) - Metric group
-- [`QCMetricValue`](../api/qcmetrics/models.py:45) - Individual metric values
-- [`QCMetricSample`](../api/qcmetrics/models.py:73) - Sample associations
+- [`QCRecord`](../api/qcmetrics/models.py:188) — Main QC record entity (with `workflow_run_id` FK)
+- [`QCRecordMetadata`](../api/qcmetrics/models.py:25) — Pipeline metadata
+- [`QCMetric`](../api/qcmetrics/models.py:149) — Metric group (with relationships to entity junction tables)
+- [`QCMetricValue`](../api/qcmetrics/models.py:45) — Individual metric values
+- [`QCMetricSample`](../api/qcmetrics/models.py:73) — Sample associations
+- [`QCMetricSequencingRun`](../api/qcmetrics/models.py:97) — SequencingRun associations
+- [`QCMetricWorkflowRun`](../api/qcmetrics/models.py:123) — WorkflowRun associations
 
 ### Services
 
 Business logic in [`api/qcmetrics/services.py`](../api/qcmetrics/services.py):
 
-- Create QC record with duplicate detection
-- Search and pagination
+- Create QC record with duplicate detection and FK validation
+- Entity association creation (samples, sequencing runs, workflow runs)
+- Search with filtering by `project_id`, `workflow_run_id`, `sequencing_run_id`, metadata
 - Type preservation for numeric values
+- Pagination
 
 ### Routes
 
 API endpoints in [`api/qcmetrics/routes.py`](../api/qcmetrics/routes.py):
 
-- `POST /api/v1/qcmetrics` - Create
-- `GET /api/v1/qcmetrics/search` - Search (query params)
-- `POST /api/v1/qcmetrics/search` - Search (JSON body)
-- `GET /api/v1/qcmetrics/{id}` - Get by ID
-- `DELETE /api/v1/qcmetrics/{id}` - Delete
+- `POST /api/v1/qcmetrics` — Create
+- `GET /api/v1/qcmetrics/search` — Search (query params: `project_id`, `workflow_run_id`, `sequencing_run_id`, `latest`)
+- `POST /api/v1/qcmetrics/search` — Search (JSON body)
+- `GET /api/v1/qcmetrics/{id}` — Get by ID
+- `DELETE /api/v1/qcmetrics/{id}` — Delete
 
 ## Integration with File Model
 
 Output files from pipeline executions use the unified [File model](./FILE_MODEL.md). When creating a QCRecord:
 
 1. File records are created with the provided metadata
-2. FileEntity associations link files to the QCRecord
+2. FileQCRecord junction rows link files to the QCRecord
 3. FileSample associations link files to samples (if specified)
 
 See [FILE_MODEL.md](./FILE_MODEL.md) for details on the unified file model architecture.
