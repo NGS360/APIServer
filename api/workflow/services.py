@@ -64,7 +64,8 @@ def create_workflow(session: Session, workflow_in: WorkflowCreate) -> Workflow:
                 session.add(workflow)
                 session.commit()
                 session.refresh(workflow)
-                logger.info(f"Successfully registered workflow {workflow.id} in AWS Omics with ID: {omics_workflow_id}")
+                logger.info(f"Successfully registered workflow {workflow.id} "
+                            f"in AWS Omics with ID: {omics_workflow_id}")
         except Exception as e:
             # Log error but don't fail workflow creation
             logger.error(f"Failed to register workflow {workflow.id} in AWS Omics: {str(e)}")
