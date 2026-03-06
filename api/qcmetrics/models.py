@@ -111,6 +111,20 @@ class QCMetric(SQLModel, table=True):
     qcrecord_id: uuid.UUID = Field(foreign_key="qcrecord.id", nullable=False, index=True)
     name: str = Field(max_length=255, nullable=False, index=True)
 
+    # Optional entity scoping — what this metric is *about*
+    sequencing_run_id: uuid.UUID | None = Field(
+        default=None,
+        foreign_key="sequencingrun.id",
+        nullable=True,
+        index=True,
+    )
+    workflow_run_id: uuid.UUID | None = Field(
+        default=None,
+        foreign_key="workflowrun.id",
+        nullable=True,
+        index=True,
+    )
+
     # Relationships to child tables
     values: List["QCMetricValue"] = Relationship(
         back_populates="qc_metric",
@@ -142,6 +156,14 @@ class QCRecord(SQLModel, table=True):
     )
     created_by: str = Field(max_length=100, nullable=False)
     project_id: str = Field(max_length=50, nullable=False, index=True)
+
+    # Optional provenance link to the execution that produced this data
+    workflow_run_id: uuid.UUID | None = Field(
+        default=None,
+        foreign_key="workflowrun.id",
+        nullable=True,
+        index=True,
+    )
 
     # Relationships to child tables
     pipeline_metadata: List["QCRecordMetadata"] = Relationship(
@@ -183,6 +205,8 @@ class MetricInput(SQLModel):
     """Input model for a metric group."""
     name: str
     samples: List[MetricSampleInput] | None = None
+    sequencing_run_id: uuid.UUID | None = None
+    workflow_run_id: uuid.UUID | None = None
     values: dict[str, str | int | float]  # {"reads": 50000000, "alignment_rate": 95.5}
 
 
@@ -194,6 +218,7 @@ class QCRecordCreate(BaseModel):
     workflow-level, single-sample, and paired-sample (tumor/normal) metrics.
     """
     project_id: str
+    workflow_run_id: uuid.UUID | None = None  # Optional provenance link
     metadata: dict[str, str] | None = None  # {"pipeline": "RNA-Seq", "version": "2.0"}
     metrics: List[MetricInput] | None = None  # Metrics with explicit sample associations
     output_files: List[FileCreate] | None = None
@@ -229,6 +254,8 @@ class MetricPublic(SQLModel):
     """Public representation of a metric group."""
     name: str
     samples: List[MetricSamplePublic]
+    sequencing_run_id: uuid.UUID | None = None
+    workflow_run_id: uuid.UUID | None = None
     values: List[MetricValuePublic]
 
 
@@ -238,6 +265,7 @@ class QCRecordPublic(BaseModel):
     created_on: datetime
     created_by: str
     project_id: str
+    workflow_run_id: uuid.UUID | None = None
     metadata: List[MetadataKeyValue]
     metrics: List[MetricPublic]
     output_files: List[FileSummary]
@@ -254,6 +282,7 @@ class QCRecordCreated(SQLModel):
     created_on: datetime
     created_by: str
     project_id: str
+    workflow_run_id: uuid.UUID | None = None
     is_duplicate: bool = False
 
 
