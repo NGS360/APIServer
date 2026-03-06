@@ -797,11 +797,12 @@ def ingest_vendor_data(
         'user': user
     }
     command = interpolate(config_data.aws_batch.command, template_context)
-
+    job_name = interpolate(config_data.aws_batch.job_name, template_context)
+    
     # Submit job to AWS Batch
     return submit_batch_job(
         session=session,
-        job_name=f"vendor-ingestion-{project.project_id}",
+        job_name=job_name,
         container_overrides={
             "command": command.split(),
         },
