@@ -732,17 +732,11 @@ def update_sample_in_project(
     )
 
 
-def ingest_vendor_data(
-    session: Session,
-    project: Project,
-    user: str,
-    files_uri: str,
-    manifest_uri: str,
-    s3_client=None
-):
-    """
-    Invoke the vendor ingestion process.
-    """
+def _read_vendor_config_yaml(session: Session, s3_client=None) -> VendorIngestionConfig:
+    '''
+    Read the Vendor Ingestion configuration YAML file from S3
+    and parse it into a VendorIngestionConfig object.
+    '''
     vendor_ingest_config_uri = get_setting(session, key='VENDOR_INGESTION_CONFIG')
     if not vendor_ingest_config_uri:
         raise HTTPException(
@@ -773,13 +767,34 @@ def ingest_vendor_data(
             detail=f"Failed to read vendor ingestion configuration from S3: {str(e)}"
         ) from e
     config_data = VendorIngestionConfig(**config)
+    return config_data
+
+
+def ingest_vendor_data(
+    session: Session,
+    project: Project,
+    user: str,
+    vendor_bucket: str,
+    manifest_uri: str,
+    s3_client=None
+):
+    """
+    Invoke the vendor ingestion process.
+    """
+    # Read vendor ingestion configuration from S3
+    config_data = _read_vendor_config_yaml(session, s3_client)
+
+    if vendor_bucket.startswith("s3://"):
+        vendor_bucket = vendor_bucket.replace("s3://", "")
 
     # Prepare template context with all variables needed for interpolation
+    # This should be built dynamically from the inputs section of the config file and
+    # available session variables.  We should not be hard-coding anything here.
     template_context = {
-        "files_uri": files_uri,
-        "projectid": project.project_id,
-        "manifest_uri": manifest_uri,
-        "user": user
+        'vendor_bucket': vendor_bucket,
+        'projectid': project.project_id,
+        'manifest_uri': manifest_uri,
+        'user': user
     }
     command = interpolate(config_data.aws_batch.command, template_context)
 
