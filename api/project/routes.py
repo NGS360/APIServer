@@ -4,7 +4,6 @@ Routes/endpoints for the Project API
 
 from typing import Literal
 from fastapi import APIRouter, Query, status, Depends
-from sentry_sdk import session
 from core.deps import SessionDep, OpenSearchDep, get_s3_client
 from api.auth.deps import CurrentUser
 from api.jobs.models import BatchJobPublic
