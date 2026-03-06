@@ -49,6 +49,7 @@ services:
       - OAUTH_GITHUB_CLIENT_SECRET=${OAUTH_GITHUB_CLIENT_SECRET:-test}
     volumes: # this allows live reloading of the backend code
       - ${PWD}:/app
+      - /app/.venv  # isolate container venv from host
  
   opensearch:
     image: opensearchproject/opensearch:2.19.3

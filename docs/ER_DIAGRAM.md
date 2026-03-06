@@ -168,7 +168,17 @@ erDiagram
     File ||--o{ FileHash : "has"
     File ||--o{ FileTag : "tagged with"
     File ||--o{ FileSample : "linked to"
-    File ||--o{ FileEntity : "associated with"
+    File ||--o{ FileProject : "belongs to project"
+    File ||--o{ FileSequencingRun : "belongs to run"
+    File ||--o{ FileQCRecord : "belongs to qcrecord"
+    File ||--o{ FileWorkflowRun : "belongs to workflow run"
+    File ||--o{ FilePipeline : "belongs to pipeline"
+    
+    Project ||--o{ FileProject : "has files"
+    SequencingRun ||--o{ FileSequencingRun : "has files"
+    QCRecord ||--o{ FileQCRecord : "has files"
+    WorkflowRun ||--o{ FileWorkflowRun : "has files"
+    Pipeline ||--o{ FilePipeline : "has files"
     
     File {
         uuid id PK
@@ -202,11 +212,38 @@ erDiagram
         string role
     }
     
-    FileEntity {
+    FileProject {
         uuid id PK
         uuid file_id FK
-        enum entity_type
-        string entity_id
+        uuid project_id FK
+        string role
+    }
+    
+    FileSequencingRun {
+        uuid id PK
+        uuid file_id FK
+        uuid sequencing_run_id FK
+        string role
+    }
+    
+    FileQCRecord {
+        uuid id PK
+        uuid file_id FK
+        uuid qcrecord_id FK
+        string role
+    }
+    
+    FileWorkflowRun {
+        uuid id PK
+        uuid file_id FK
+        uuid workflow_run_id FK
+        string role
+    }
+    
+    FilePipeline {
+        uuid id PK
+        uuid file_id FK
+        uuid pipeline_id FK
         string role
     }
     
@@ -364,7 +401,11 @@ erDiagram
 - **FileHash**: Hash values for files (supports multiple algorithms: md5, sha256, etag)
 - **FileTag**: Flexible key-value metadata tags for files
 - **FileSample**: Many-to-many relationship between files and samples (supports roles for paired analysis)
-- **FileEntity**: Many-to-many relationship between files and entities (projects, runs, samples, qcrecords)
+- **FileProject**: Junction table linking files to projects (with optional role)
+- **FileSequencingRun**: Junction table linking files to sequencing runs (with optional role)
+- **FileQCRecord**: Junction table linking files to QC records (with optional role)
+- **FileWorkflowRun**: Junction table linking files to workflow runs (with optional role)
+- **FilePipeline**: Junction table linking files to pipelines (with optional role)
 
 ### QC Metrics & Records
 
@@ -392,19 +433,27 @@ erDiagram
 1. **Project → Sample**: One-to-many (a project contains multiple samples)
 2. **Sample → FileSample → File**: Many-to-many (samples can have multiple files, files can belong to multiple samples)
 3. **Sample → SampleSequencingRun → SequencingRun**: Many-to-many (samples can be in multiple runs, runs contain multiple samples)
-4. **File → FileEntity**: One-to-many (files can be associated with multiple entities: projects, runs, samples, qcrecords)
-5. **QCRecord → QCMetric → QCMetricSample → Sample**: QC metrics are organized hierarchically and can be associated with samples
-6. **User → Authentication Tokens**: One-to-many (users can have multiple active sessions and tokens)
-7. **Workflow → WorkflowRegistration → Platform**: Many-to-many (workflows can be registered on multiple platforms)
-8. **Workflow → WorkflowRun**: One-to-many (workflows have multiple execution instances)
-9. **Platform → WorkflowRegistration**: One-to-many (platforms host multiple workflow registrations)
-10. **Platform → WorkflowRun**: One-to-many (platforms execute multiple workflow runs)
+4. **File → FileProject → Project**: Many-to-many (files can belong to projects via typed junction table)
+5. **File → FileSequencingRun → SequencingRun**: Many-to-many (files can belong to sequencing runs)
+6. **File → FileQCRecord → QCRecord**: Many-to-many (files can belong to QC records)
+7. **File → FileWorkflowRun → WorkflowRun**: Many-to-many (files can belong to workflow runs)
+8. **File → FilePipeline → Pipeline**: Many-to-many (files can belong to pipelines)
+9. **QCRecord → QCMetric → QCMetricSample → Sample**: QC metrics are organized hierarchically and can be associated with samples
+10. **User → Authentication Tokens**: One-to-many (users can have multiple active sessions and tokens)
+11. **Workflow → WorkflowRegistration → Platform**: Many-to-many (workflows can be registered on multiple platforms)
+12. **Workflow → WorkflowRun**: One-to-many (workflows have multiple execution instances)
+13. **Platform → WorkflowRegistration**: One-to-many (platforms host multiple workflow registrations)
+14. **Platform → WorkflowRun**: One-to-many (platforms execute multiple workflow runs)
 
 ## Unique Constraints
 
 - **File**: `(uri, created_on)` - Enables file versioning
 - **Sample**: `(sample_id, project_id)` - Sample IDs are unique within projects
-- **FileEntity**: `(file_id, entity_type, entity_id)` - Prevents duplicate file-entity associations
+- **FileProject**: `(file_id, project_id)` - Prevents duplicate file-project associations
+- **FileSequencingRun**: `(file_id, sequencing_run_id)` - Prevents duplicate file-run associations
+- **FileQCRecord**: `(file_id, qcrecord_id)` - Prevents duplicate file-qcrecord associations
+- **FileWorkflowRun**: `(file_id, workflow_run_id)` - Prevents duplicate file-workflowrun associations
+- **FilePipeline**: `(file_id, pipeline_id)` - Prevents duplicate file-pipeline associations
 - **FileSample**: `(file_id, sample_id)` - Prevents duplicate file-sample associations
 - **QCMetricSample**: `(qc_metric_id, sample_id)` - Prevents duplicate metric-sample associations
 - **SampleSequencingRun**: `(sample_id, sequencing_run_id)` - Prevents duplicate sample-run associations

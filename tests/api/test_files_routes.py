@@ -9,8 +9,7 @@ def test_create_file_via_api_with_subdirectory(client: TestClient, test_project)
         "/api/v1/files/upload",
         data={
             "filename": "test.txt",
-            "entity_type": "project",
-            "entity_id": test_project.project_id,
+            "project_id": test_project.project_id,
             "relative_path": "raw_data/sample1",
             "description": "Test file in subdirectory",
         },
@@ -29,8 +28,7 @@ def test_create_file_via_api_at_root(client: TestClient, test_project):
         "/api/v1/files/upload",
         data={
             "filename": "report.pdf",
-            "entity_type": "project",
-            "entity_id": test_project.project_id,
+            "project_id": test_project.project_id,
             # relative_path not provided - file goes to root
             "description": "Project report",
         },
@@ -50,8 +48,7 @@ def test_create_file_with_path_traversal(client: TestClient, test_project):
         "/api/v1/files/upload",
         data={
             "filename": "malicious.txt",
-            "entity_type": "project",
-            "entity_id": test_project.project_id,
+            "project_id": test_project.project_id,
             "relative_path": "../../../etc/passwd",
         },
         files={"content": ("malicious.txt", b"attack", "text/plain")},
