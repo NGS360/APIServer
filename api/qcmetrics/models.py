@@ -7,7 +7,7 @@ supporting workflow-level, single-sample, and multi-sample (paired) metrics.
 
 import uuid
 from datetime import datetime, timezone
-from typing import List
+from typing import List, TYPE_CHECKING
 from sqlmodel import SQLModel, Field, Relationship, UniqueConstraint
 from pydantic import BaseModel, ConfigDict, model_validator
 
@@ -155,7 +155,12 @@ class QCRecord(SQLModel, table=True):
         nullable=False
     )
     created_by: str = Field(max_length=100, nullable=False)
-    project_id: str = Field(max_length=50, nullable=False, index=True)
+    project_id: str = Field(
+        max_length=50,
+        nullable=False,
+        index=True,
+        foreign_key="project.project_id",
+    )
 
     # Optional provenance link to the execution that produced this data
     workflow_run_id: uuid.UUID | None = Field(
@@ -174,6 +179,9 @@ class QCRecord(SQLModel, table=True):
         back_populates="qcrecord",
         sa_relationship_kwargs={"cascade": "all, delete-orphan"}
     )
+
+    # Relationship back to project
+    project: "Project" = Relationship(back_populates="qcrecords")
 
     model_config = ConfigDict(from_attributes=True)
 
