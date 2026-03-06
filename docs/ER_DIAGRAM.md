@@ -317,6 +317,7 @@ erDiagram
     Workflow ||--o{ WorkflowAttribute : "has"
     Workflow ||--o{ WorkflowRegistration : "registered on"
     Workflow ||--o{ WorkflowRun : "has executions"
+    Workflow ||--o{ PipelineWorkflow : "member of"
     
     Workflow {
         uuid id PK
@@ -359,6 +360,36 @@ erDiagram
         uuid workflow_run_id FK
         string key
         string value
+    }
+    
+    %% ==========================================
+    %% Pipelines
+    %% ==========================================
+    
+    Pipeline ||--o{ PipelineAttribute : "has"
+    Pipeline ||--o{ PipelineWorkflow : "contains"
+    
+    Pipeline {
+        uuid id PK
+        string name
+        string version
+        datetime created_at
+        string created_by
+    }
+    
+    PipelineAttribute {
+        uuid id PK
+        uuid pipeline_id FK
+        string key
+        string value
+    }
+    
+    PipelineWorkflow {
+        uuid id PK
+        uuid pipeline_id FK
+        uuid workflow_id FK
+        datetime created_at
+        string created_by
     }
     
     %% ==========================================
