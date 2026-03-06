@@ -40,7 +40,10 @@ def create_qcrecord(
 
     **Authentication required:** Bearer token must be provided.
 
-    **Example curl command:**
+    **Scoping:** Provide exactly one of `project_id` (project-scoped) or
+    `sequencing_run_barcode` (run-scoped, e.g. demux stats).
+
+    **Example — project-scoped:**
 
     ```bash
     curl -X POST "http://localhost:8000/api/v1/qcmetrics" \\
@@ -48,65 +51,40 @@ def create_qcrecord(
       -H "Content-Type: application/json" \\
       -d '{
         "project_id": "P-1234",
-        "metadata": {
-          "pipeline": "RNA-Seq",
-          "version": "2.0.0"
-        },
-        "metrics": [
-          {
-            "name": "alignment_stats",
-            "samples": [{"sample_name": "Sample1"}],
-            "values": {"reads": "50000000", "alignment_rate": "95.5"}
-          }
-        ],
-        "output_files": [
-          {
-            "uri": "s3://bucket/path/file.bam",
-            "size": 123456789,
-            "samples": [{"sample_name": "Sample1"}],
-            "hash": {"md5": "abc123def456"},
-            "tags": {"type": "alignment"}
-          }
-        ]
+        "metadata": { "pipeline": "RNA-Seq", "version": "2.0.0" },
+        "metrics": [{
+          "name": "alignment_stats",
+          "samples": [{"sample_name": "Sample1"}],
+          "values": {"reads": 50000000, "alignment_rate": 95.5}
+        }]
       }'
     ```
 
-    **Request body format:**
+    **Example — run-scoped (demux stats):**
 
-    ```json
-    {
-      "project_id": "P-1234",
-      "metadata": {
-        "pipeline": "RNA-Seq",
-        "version": "2.0.0"
-      },
-      "metrics": [
-        {
-          "name": "alignment_stats",
-          "samples": [{"sample_name": "Sample1"}],
-          "values": {"reads": "50000000", "alignment_rate": "95.5"}
-        }
-      ],
-      "output_files": [
-        {
-          "uri": "s3://bucket/path/file.bam",
-          "size": 123456789,
-          "samples": [{"sample_name": "Sample1"}],
-          "hash": {"md5": "abc123..."},
-          "tags": {"type": "alignment"}
-        }
-      ]
-    }
+    ```bash
+    curl -X POST "http://localhost:8000/api/v1/qcmetrics" \\
+      -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \\
+      -H "Content-Type: application/json" \\
+      -d '{
+        "sequencing_run_barcode": "240101_A00000_0001_FLOWCELLID",
+        "metadata": { "pipeline": "bcl-convert", "version": "4.3" },
+        "metrics": [{
+          "name": "demux_summary",
+          "values": {"total_reads": 800000000, "pf_reads": 750000000}
+        }]
+      }'
     ```
 
     **Sample association patterns:**
     - **Workflow-level**: Omit `samples` array (applies to entire pipeline run)
     - **Single sample**: One entry in `samples` array
     - **Sample pair**: Two entries with roles, e.g.,
-        `[{"sample_name": "T1", "role": "tumor"}, {"sample_name": "N1", "role": "normal"}]`
+        `[{"sample_name": "T1", "role": "tumor"},
+          {"sample_name": "N1", "role": "normal"}]`
 
     **Duplicate detection:**
-    If an equivalent record already exists for the project (same metadata),
+    If an equivalent record already exists for the same scope (same metadata),
     the existing record is returned instead of creating a duplicate.
     """
     return services.create_qcrecord(session, qcrecord_create, current_user.username)
@@ -120,13 +98,21 @@ def create_qcrecord(
 def search_qcrecords_get(
     session: SessionDep,
     project_id: Optional[str] = Query(None, description="Filter by project ID"),
+    sequencing_run_barcode: Optional[str] = Query(
+        None,
+        description="Filter by sequencing run barcode (run-scoped records)",
+    ),
     workflow_run_id: Optional[str] = Query(
         None, description="Filter by workflow run ID (provenance)"
     ),
     sequencing_run_id: Optional[str] = Query(
-        None, description="Filter by sequencing run ID"
+        None,
+        description="Filter by sequencing run UUID (metric-level)",
     ),
-    latest: bool = Query(True, description="Return only newest record per project"),
+    latest: bool = Query(
+        True,
+        description="Return only newest record per scope (project or run)",
+    ),
     page: int = Query(1, ge=1, description="Page number"),
     per_page: int = Query(100, ge=1, le=1000, description="Results per page"),
 ) -> QCRecordsPublic:
@@ -134,16 +120,18 @@ def search_qcrecords_get(
     Search QC records using query parameters.
 
     **Parameters:**
-    - `project_id`: Filter to specific project(s)
+    - `project_id`: Filter to records scoped to a specific project
+    - `sequencing_run_barcode`: Filter to records scoped to a sequencing run
     - `workflow_run_id`: Filter by the workflow run that produced the QC data
-    - `sequencing_run_id`: Filter by sequencing run associated with metrics
-    - `latest`: If true (default), returns only the most recent QC record per project
+    - `sequencing_run_id`: Filter by sequencing run UUID (record or metric level)
+    - `latest`: If true (default), returns only the most recent record per scope
     - `page`: Page number for pagination (starts at 1)
     - `per_page`: Number of results per page (max 1000)
 
     **Example:**
     ```
     GET /api/v1/qcmetrics/search?project_id=P-1234&latest=true
+    GET /api/v1/qcmetrics/search?sequencing_run_barcode=240101_A00000_0001_XYZ
     GET /api/v1/qcmetrics/search?workflow_run_id=<uuid>&latest=false
     GET /api/v1/qcmetrics/search?sequencing_run_id=<uuid>
     ```
@@ -151,6 +139,8 @@ def search_qcrecords_get(
     filter_on = {}
     if project_id:
         filter_on["project_id"] = project_id
+    if sequencing_run_barcode:
+        filter_on["sequencing_run_barcode"] = sequencing_run_barcode
     if workflow_run_id:
         filter_on["workflow_run_id"] = workflow_run_id
     if sequencing_run_id:
@@ -195,6 +185,7 @@ def search_qcrecords_post(
 
     **Filter options:**
     - `project_id`: Single value or list of project IDs
+    - `sequencing_run_barcode`: Filter to records scoped to a sequencing run
     - `metadata`: Key-value pairs to match against pipeline metadata
 
     **Pagination:**
@@ -202,7 +193,7 @@ def search_qcrecords_post(
     - `per_page`: Results per page (max 1000)
 
     **Latest filtering:**
-    - `latest: true` (default): Returns only the newest QC record per project
+    - `latest: true` (default): Returns only the newest QC record per scope
     - `latest: false`: Returns all matching records (full history)
     """
     return services.search_qcrecords(
