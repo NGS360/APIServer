@@ -798,7 +798,7 @@ def ingest_vendor_data(
     }
     command = interpolate(config_data.aws_batch.command, template_context)
     job_name = interpolate(config_data.aws_batch.job_name, template_context)
-    
+
     # Submit job to AWS Batch
     return submit_batch_job(
         session=session,
