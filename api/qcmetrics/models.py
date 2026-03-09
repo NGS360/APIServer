@@ -16,6 +16,10 @@ from api.files.models import (
     FileSummary,
 )
 
+if TYPE_CHECKING:
+    from api.project.models import Project  # noqa: F401
+    from api.runs.models import SequencingRun  # noqa: F401
+
 
 # ============================================================================
 # Database Tables

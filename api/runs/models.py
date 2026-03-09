@@ -1,7 +1,7 @@
 """
 Models for the Runs API
 """
-from typing import List, Optional, Any, Dict
+from typing import List, Optional, Any, Dict, TYPE_CHECKING
 import uuid
 from datetime import datetime, date, timezone
 from enum import Enum
@@ -9,6 +9,9 @@ from sqlmodel import SQLModel, Field, Relationship, UniqueConstraint
 from pydantic import ConfigDict, computed_field, field_validator, BaseModel, model_validator
 
 from api.jobs.models import AwsBatchConfig
+
+if TYPE_CHECKING:
+    from api.qcmetrics.models import QCRecord  # noqa: F401
 
 
 class RunStatus(str, Enum):
