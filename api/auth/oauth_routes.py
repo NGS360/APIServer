@@ -11,6 +11,7 @@ from core.config import get_settings
 from api.auth.models import TokenResponse, OAuthLinkRequest, AvailableProvidersResponse
 from api.auth.deps import CurrentUser
 import api.auth.oauth2_service as oauth2_service
+from api.auth.services import update_last_login
 
 logger = logging.getLogger(__name__)
 
@@ -152,6 +153,9 @@ async def oauth_callback(
             refresh_token_oauth
         )
 
+        # Update last login timestamp
+        update_last_login(session, user.id)
+
         # Create our own JWT tokens
         jwt_access_token = create_access_token({"sub": str(user.id)})
         jwt_refresh_token = create_refresh_token(
@@ -241,6 +245,9 @@ async def link_oauth_provider(
             access_token,
             refresh_token
         )
+
+        # Update last login timestamp
+        update_last_login(session, current_user.id)
 
         return {"message": f"{provider.title()} account linked successfully"}
 
