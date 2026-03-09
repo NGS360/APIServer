@@ -428,6 +428,23 @@ class FileCreate(SQLModel):
     model_config = ConfigDict(extra="forbid")
 
     @model_validator(mode="after")
+    def validate_at_least_one_entity(self):
+        """Ensure at least one entity association is provided (prevent orphan files)."""
+        entities = [
+            self.project_id,
+            self.sequencing_run_id,
+            self.qcrecord_id,
+            self.workflow_run_id,
+            self.pipeline_id,
+        ]
+        if not any(e is not None for e in entities):
+            raise ValueError(
+                "At least one entity association is required "
+                "(project_id, sequencing_run_id, qcrecord_id, workflow_run_id, or pipeline_id)"
+            )
+        return self
+
+    @model_validator(mode="after")
     def validate_project_id_with_samples(self):
         if self.samples and not self.project_id:
             raise ValueError("project_id is required when samples are provided")
