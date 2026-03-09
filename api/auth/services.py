@@ -436,9 +436,9 @@ def verify_email(session: Session, token_str: str) -> bool:
     return True
 
 
-def update_last_login(session: Session, username: str) -> None:
+def update_last_login(session: Session, user_id: str) -> None:
     """Update user's last login timestamp"""
-    user = session.get(User, username)
+    user = session.get(User, user_id)
     if user:
         user.last_login = datetime.now(timezone.utc)
         session.add(user)
