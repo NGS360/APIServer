@@ -131,11 +131,13 @@ class TestFileCreateSchema:
     """Test FileCreate schema validation."""
 
     def test_minimal_file_create(self):
-        """Test creating FileCreate with minimal fields."""
+        """Test creating FileCreate with minimal fields (uri + one entity)."""
         file_create = FileCreate(
             uri="s3://bucket/file.txt",
+            project_id="P-123",
         )
         assert file_create.uri == "s3://bucket/file.txt"
+        assert file_create.project_id == "P-123"
         assert file_create.size is None
         assert file_create.hashes is None
         assert file_create.tags is None
@@ -144,6 +146,13 @@ class TestFileCreateSchema:
         assert file_create.qcrecord_id is None
         assert file_create.workflow_run_id is None
         assert file_create.pipeline_id is None
+
+    def test_file_create_requires_entity(self):
+        """Test that at least one entity association is required (no orphan files)."""
+        with pytest.raises(ValueError, match="At least one entity association is required"):
+            FileCreate(
+                uri="s3://bucket/orphan.txt",
+            )
 
     def test_full_file_create(self):
         """Test creating FileCreate with all fields."""
@@ -169,6 +178,15 @@ class TestFileCreateSchema:
     def test_file_create_project_id_required_with_samples(self):
         """Test that project_id is required when samples are provided."""
         with pytest.raises(ValueError, match="project_id is required"):
+            FileCreate(
+                uri="s3://bucket/file.txt",
+                sequencing_run_id=uuid.uuid4(),
+                samples=[SampleInput(sample_name="sample1")],
+            )
+
+    def test_file_create_no_entity_with_samples_rejected(self):
+        """Test that no entity + samples is rejected (entity check fires first)."""
+        with pytest.raises(ValueError, match="At least one entity association is required"):
             FileCreate(
                 uri="s3://bucket/file.txt",
                 samples=[SampleInput(sample_name="sample1")],
