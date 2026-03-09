@@ -1,11 +1,18 @@
 """
 Workflow Service
 """
+import json
+import logging
+import os
 from uuid import UUID
 from fastapi import HTTPException, status
 from sqlmodel import Session, select
+import boto3
 
 from api.workflow.models import WorkflowCreate, Workflow, WorkflowAttribute
+from core.config import get_settings
+
+logger = logging.getLogger(__name__)
 
 
 def create_workflow(session: Session, workflow_in: WorkflowCreate) -> Workflow:
@@ -47,9 +54,67 @@ def create_workflow(session: Session, workflow_in: WorkflowCreate) -> Workflow:
     session.commit()
     session.refresh(workflow)
 
-    # TBD: A notification should be sent to something (SNS/Lambda?)
-    # to trigger workflow registration in the engine
+    # Call Lambda function to register workflow if engine is Omics
+    if workflow.engine == "AWSHealthOmics":
+        try:
+            omics_workflow_id = _register_workflow_with_omics(workflow)
+            if omics_workflow_id:
+                # Update workflow with AWS Omics workflow ID
+                workflow.engine_id = omics_workflow_id
+                session.add(workflow)
+                session.commit()
+                session.refresh(workflow)
+                logger.info(f"Successfully registered workflow {workflow.id} "
+                            f"in AWS Omics with ID: {omics_workflow_id}")
+        except Exception as e:
+            # Log error but don't fail workflow creation
+            logger.error(f"Failed to register workflow {workflow.id} in AWS Omics: {str(e)}")
+
     return workflow
+
+
+def _register_workflow_with_omics(workflow: Workflow) -> str | None:
+    """
+    Register workflow with AWS Omics via Lambda function.
+
+    Args:
+        workflow: The workflow to register
+
+    Returns:
+        AWS Omics workflow ID if successful, None if failed
+    """
+    # Prepare payload for Lambda function
+    lambda_payload = {
+        "source": "ngs360",
+        "action": "register_workflow",
+        "cwl_s3_path": workflow.definition_uri,
+        "name": workflow.name,
+        "id": workflow.id
+    }
+
+    try:
+        # Create Lambda client
+        lambda_client = boto3.client("lambda", region_name=get_settings().AWS_REGION)
+
+        # Invoke Lambda function synchronously
+        omics_lambda_name = os.getenv('OMICS_LAMBDA')
+        response = lambda_client.invoke(
+            FunctionName=omics_lambda_name,
+            InvocationType="RequestResponse",
+            Payload=json.dumps(lambda_payload)
+        )
+        response_payload = json.loads(response["Payload"].read().decode('utf-8'))
+
+        # Check if registration was successful
+        if response_payload.get("statusCode") == 200:
+            return response_payload.get("workflow_id")
+        else:
+            error_msg = response_payload.get("message", "Unknown error")
+            logger.error(f"Lambda function failed to register workflow {workflow.id}: {error_msg}")
+            return None
+    except Exception as e:
+        logger.error(f"Failed to register workflow {workflow.id} with AWS Omics: {str(e)}")
+        return None
 
 
 def get_workflows(
