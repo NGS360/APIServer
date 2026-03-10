@@ -185,7 +185,7 @@ class OAuthLinkRequest(SQLModel):
 
 class UserPublic(SQLModel):
     """Public user information"""
-    email: str
+    email: str | None
     username: str
     full_name: str | None
     is_active: bool
