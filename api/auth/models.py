@@ -223,3 +223,58 @@ class AvailableProvidersResponse(SQLModel):
     """Available OAuth providers response"""
     count: int
     providers: list[OAuthProviderInfo]
+
+
+class APIKey(SQLModel, table=True):
+    """User-generated API key for programmatic access"""
+
+    __tablename__ = "api_keys"
+
+    id: uuid.UUID | None = Field(default_factory=uuid.uuid4, primary_key=True)
+    user_id: uuid.UUID = Field(foreign_key="users.id", index=True)
+    name: str = Field(max_length=100)
+    key_prefix: str = Field(max_length=12)
+    hashed_key: str = Field(unique=True, index=True, max_length=64)
+    expires_at: datetime | None = Field(default=None)
+    is_active: bool = Field(default=True)
+    last_used_at: datetime | None = Field(default=None)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    revoked_at: datetime | None = Field(default=None)
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class APIKeyCreate(SQLModel):
+    """Request to create a new API key"""
+    name: str = Field(min_length=1, max_length=100)
+    expires_at: datetime | None = None
+
+
+class APIKeyCreateResponse(SQLModel):
+    """Response after creating an API key (includes raw key, shown only once)"""
+    id: uuid.UUID
+    name: str
+    key: str
+    key_prefix: str
+    expires_at: datetime | None
+    created_at: datetime
+
+
+class APIKeyPublic(SQLModel):
+    """Public API key info (no raw key)"""
+    id: uuid.UUID
+    name: str
+    key_prefix: str
+    expires_at: datetime | None
+    is_active: bool
+    last_used_at: datetime | None
+    created_at: datetime
+    revoked_at: datetime | None
+
+
+class APIKeysPublic(SQLModel):
+    """Paginated API keys response"""
+    data: list[APIKeyPublic]
+    count: int
+    page: int
+    per_page: int

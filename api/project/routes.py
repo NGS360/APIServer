@@ -27,9 +27,9 @@ router = APIRouter(prefix="/projects")
 
 @router.post(
     "",
-    response_model=ProjectPublic,
     tags=["Project Endpoints"],
     status_code=status.HTTP_201_CREATED,
+    response_model=ProjectPublic,
 )
 def create_project(
     session: SessionDep, opensearch_client: OpenSearchDep, project_in: ProjectCreate
@@ -44,9 +44,9 @@ def create_project(
 
 @router.get(
     "",
-    response_model=ProjectsPublic,
     status_code=status.HTTP_200_OK,
     tags=["Project Endpoints"],
+    response_model=ProjectsPublic,
 )
 def get_projects(
     session: SessionDep,
@@ -75,9 +75,9 @@ def get_projects(
 
 @router.get(
     "/search",
-    response_model=ProjectsPublic,
     status_code=status.HTTP_200_OK,
     tags=["Project Endpoints"],
+    response_model=ProjectsPublic,
 )
 def search_projects(
     session: SessionDep,
@@ -110,6 +110,7 @@ def search_projects(
     "/search",
     status_code=status.HTTP_201_CREATED,
     tags=["Project Endpoints"],
+    response_model=ProjectsPublic,
 )
 def reindex_projects(
     session: SessionDep,
@@ -141,15 +142,15 @@ def get_project_by_project_id(session: SessionDep, project: ProjectDep) -> Proje
 
 @router.put(
     "/{project_id}",
-    response_model=ProjectPublic,
     status_code=status.HTTP_200_OK,
     tags=["Project Endpoints"],
+    response_model=ProjectPublic,
 )
 def update_project(
     session: SessionDep,
     opensearch_client: OpenSearchDep,
     project: ProjectDep,
-    update_request: ProjectUpdate,
+    update_request: ProjectUpdate
 ) -> ProjectPublic:
     """
     Update information about a specific project.
@@ -168,9 +169,9 @@ def update_project(
 
 @router.post(
     "/{project_id}/samples",
-    response_model=SamplePublic,
     tags=["Project Endpoints"],
     status_code=status.HTTP_201_CREATED,
+    response_model=SamplePublic,
 )
 def add_sample_to_project(
     session: SessionDep,
@@ -190,7 +191,7 @@ def add_sample_to_project(
 
 
 @router.get(
-    "/{project_id}/samples", response_model=SamplesPublic, tags=["Project Endpoints"]
+    "/{project_id}/samples", tags=["Project Endpoints"], response_model=SamplesPublic
 )
 def get_project_samples(
     session: SessionDep,
@@ -217,8 +218,8 @@ def get_project_samples(
 
 @router.put(
     "/{project_id}/samples/{sample_id}",
-    response_model=SamplePublic,
     tags=["Project Endpoints"],
+    response_model=SamplePublic,
 )
 def update_sample_in_project(
     session: SessionDep,
@@ -244,9 +245,9 @@ def update_sample_in_project(
 
 @router.post(
     "/{project_id}/actions/submit",
-    # response_model=BatchJobPublic,  # COMMENTED OUT FOR TESTING
     tags=["Project Endpoints"],
     status_code=status.HTTP_201_CREATED,
+    response_model=BatchJobPublic,
 )
 def submit_pipeline_job(
     project: ProjectDep,
@@ -301,6 +302,7 @@ def submit_pipeline_job(
     "/{project_id}/ingest",
     tags=["Project Endpoints"],
     status_code=status.HTTP_201_CREATED,
+    response_model=BatchJobPublic,
 )
 def ingest_vendor_data(
     session: SessionDep,
@@ -321,5 +323,11 @@ def ingest_vendor_data(
         BatchJobPublic: The created batch job information
     """
     batch_job = services.ingest_vendor_data(
-        session, project, user.username, files_uri, manifest_uri, s3_client=s3_client)
+        session,
+        project,
+        user.username,
+        files_uri,
+        manifest_uri,
+        s3_client=s3_client
+    )
     return BatchJobPublic.model_validate(batch_job)

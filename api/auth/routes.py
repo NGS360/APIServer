@@ -14,7 +14,8 @@ from core.config import get_settings
 from api.auth.models import (
     User, UserRegister, UserPublic, TokenResponse,
     RefreshTokenRequest, PasswordResetRequest, PasswordResetConfirm,
-    EmailVerificationRequest, ResendVerificationRequest, PasswordChange
+    EmailVerificationRequest, ResendVerificationRequest, PasswordChange,
+    APIKeyCreate, APIKeyCreateResponse, APIKeyPublic, APIKeysPublic,
 )
 from api.auth.deps import CurrentUser, CurrentActiveUser
 import api.auth.services as auth_services
@@ -351,3 +352,76 @@ def resend_verification(
 
     auth_services.create_and_send_verification_email(session, user)
     return {"message": "Verification email sent"}
+
+
+# --- API Key Management ---
+
+
+@router.post(
+    "/api-keys",
+    response_model=APIKeyCreateResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_api_key(
+    session: SessionDep,
+    current_user: CurrentActiveUser,
+    data: APIKeyCreate,
+) -> APIKeyCreateResponse:
+    """Create a new API key for the authenticated user."""
+    api_key, raw_key = auth_services.create_user_api_key(
+        session, current_user, data
+    )
+    return APIKeyCreateResponse(
+        id=api_key.id,
+        name=api_key.name,
+        key=raw_key,
+        key_prefix=api_key.key_prefix,
+        expires_at=api_key.expires_at,
+        created_at=api_key.created_at,
+    )
+
+
+@router.get("/api-keys", response_model=APIKeysPublic)
+def list_api_keys(
+    session: SessionDep,
+    current_user: CurrentActiveUser,
+    page: int = 1,
+    per_page: int = 20,
+) -> APIKeysPublic:
+    """List API keys for the authenticated user."""
+    keys, count = auth_services.list_user_api_keys(
+        session, current_user, page, per_page
+    )
+    return APIKeysPublic(
+        data=[APIKeyPublic.model_validate(k) for k in keys],
+        count=count,
+        page=page,
+        per_page=per_page,
+    )
+
+
+@router.delete(
+    "/api-keys/{key_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def delete_api_key(
+    session: SessionDep,
+    current_user: CurrentActiveUser,
+    key_id: str,
+) -> None:
+    """Delete an API key."""
+    auth_services.delete_user_api_key(session, current_user, key_id)
+
+
+@router.post(
+    "/api-keys/{key_id}/revoke",
+    response_model=APIKeyPublic,
+)
+def revoke_api_key(
+    session: SessionDep,
+    current_user: CurrentActiveUser,
+    key_id: str,
+) -> APIKeyPublic:
+    """Revoke an API key (soft-disable)."""
+    api_key = auth_services.revoke_user_api_key(session, current_user, key_id)
+    return APIKeyPublic.model_validate(api_key)

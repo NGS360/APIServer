@@ -5,15 +5,16 @@ from datetime import datetime, timedelta, timezone
 import logging
 
 from fastapi import HTTPException, status
-from sqlmodel import Session, select
+from sqlmodel import Session, select, func
 
 from api.auth.models import (
     User, UserRegister, RefreshToken, PasswordResetToken,
-    EmailVerificationToken
+    EmailVerificationToken, APIKey, APIKeyCreate
 )
 from core.security import (
     hash_password, verify_password, create_access_token,
-    create_refresh_token, generate_secure_token, validate_password_strength
+    create_refresh_token, generate_secure_token, validate_password_strength,
+    generate_api_key,
 )
 from core.config import get_settings
 from core.email import send_password_reset_email, send_verification_email
@@ -435,9 +436,9 @@ def verify_email(session: Session, token_str: str) -> bool:
     return True
 
 
-def update_last_login(session: Session, username: str) -> None:
+def update_last_login(session: Session, user_id: str) -> None:
     """Update user's last login timestamp"""
-    user = session.get(User, username)
+    user = session.get(User, user_id)
     if user:
         user.last_login = datetime.now(timezone.utc)
         session.add(user)
@@ -476,3 +477,126 @@ def get_user_by_email(session: Session, email: str) -> User | None:
     """Get user by email"""
     statement = select(User).where(User.email == email)
     return session.exec(statement).first()
+
+
+MAX_API_KEYS_PER_USER = 25
+
+
+def create_user_api_key(
+    session: Session, user: User, data: APIKeyCreate
+) -> tuple[APIKey, str]:
+    """
+    Create a new API key for the user.
+
+    Returns:
+        Tuple of (APIKey record, raw_key)
+    """
+    active_count = session.exec(
+        select(func.count()).select_from(APIKey).where(
+            APIKey.user_id == user.id,
+            APIKey.is_active.is_(True),
+        )
+    ).one()
+
+    if active_count >= MAX_API_KEYS_PER_USER:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Maximum of {MAX_API_KEYS_PER_USER} active API keys allowed",
+        )
+
+    raw_key, hashed_key, key_prefix = generate_api_key()
+
+    api_key = APIKey(
+        user_id=user.id,
+        name=data.name,
+        key_prefix=key_prefix,
+        hashed_key=hashed_key,
+        expires_at=data.expires_at,
+    )
+
+    session.add(api_key)
+    session.commit()
+    session.refresh(api_key)
+
+    return api_key, raw_key
+
+
+def list_user_api_keys(
+    session: Session, user: User, page: int = 1, per_page: int = 20
+) -> tuple[list[APIKey], int]:
+    """List API keys for a user (paginated)."""
+    count = session.exec(
+        select(func.count()).select_from(APIKey).where(APIKey.user_id == user.id)
+    ).one()
+
+    offset = (page - 1) * per_page
+    keys = session.exec(
+        select(APIKey)
+        .where(APIKey.user_id == user.id)
+        .order_by(APIKey.created_at.desc())
+        .offset(offset)
+        .limit(per_page)
+    ).all()
+
+    return list(keys), count
+
+
+def revoke_user_api_key(
+    session: Session, user: User, key_id: str
+) -> APIKey:
+    """Revoke an API key (soft-disable)."""
+    import uuid as _uuid
+
+    try:
+        key_uuid = _uuid.UUID(key_id)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="API key not found",
+        )
+
+    api_key = session.exec(
+        select(APIKey).where(APIKey.id == key_uuid, APIKey.user_id == user.id)
+    ).first()
+
+    if not api_key:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="API key not found",
+        )
+
+    api_key.is_active = False
+    api_key.revoked_at = datetime.now(timezone.utc)
+    session.add(api_key)
+    session.commit()
+    session.refresh(api_key)
+
+    return api_key
+
+
+def delete_user_api_key(
+    session: Session, user: User, key_id: str
+) -> None:
+    """Hard-delete an API key."""
+    import uuid as _uuid
+
+    try:
+        key_uuid = _uuid.UUID(key_id)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="API key not found",
+        )
+
+    api_key = session.exec(
+        select(APIKey).where(APIKey.id == key_uuid, APIKey.user_id == user.id)
+    ).first()
+
+    if not api_key:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="API key not found",
+        )
+
+    session.delete(api_key)
+    session.commit()
