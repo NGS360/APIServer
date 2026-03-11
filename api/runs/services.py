@@ -24,13 +24,19 @@ from api.runs.models import (
     DemuxWorkflowSubmitBody,
     IlluminaMetricsResponseModel,
     IlluminaSampleSheetResponseModel,
+    RunSampleCleanupResponse,
     RunStatus,
+    SampleSequencingRun,
+    SampleSequencingRunPublic,
     SequencingRun,
     SequencingRunCreate,
     SequencingRunPublic,
     SequencingRunsPublic,
 )
-from api.search.services import add_object_to_index, delete_index
+from api.samples.models import Sample, SampleAttribute
+from api.files.models import File, FileSequencingRun, FileSample
+from api.qcmetrics.models import QCMetricSample
+from api.search.services import add_object_to_index, delete_index, delete_document_from_index
 from api.search.models import (
     SearchDocument,
 )
@@ -686,3 +692,293 @@ def submit_demux_job(
     )
 
     return BatchJobPublic.model_validate(batch_job)
+
+
+###############################################################################
+# Sample ↔ SequencingRun associations
+###############################################################################
+
+
+def associate_sample_with_run(
+    session: Session,
+    run_barcode: str,
+    sample_id: str,
+    created_by: str,
+) -> SampleSequencingRun:
+    """Create a Sample ↔ SequencingRun association."""
+    from uuid import UUID
+
+    run = get_run(session=session, run_barcode=run_barcode)
+    if run is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Run with barcode '{run_barcode}' not found.",
+        )
+
+    sample = session.exec(
+        select(Sample).where(Sample.id == UUID(sample_id))
+    ).first()
+    if not sample:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Sample with id '{sample_id}' not found.",
+        )
+
+    # Check for duplicate
+    existing = session.exec(
+        select(SampleSequencingRun).where(
+            SampleSequencingRun.sample_id == sample.id,
+            SampleSequencingRun.sequencing_run_id == run.id,
+        )
+    ).first()
+    if existing:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"Sample '{sample_id}' is already associated "
+                f"with run '{run_barcode}'."
+            ),
+        )
+
+    assoc = SampleSequencingRun(
+        sample_id=sample.id,
+        sequencing_run_id=run.id,
+        created_by=created_by,
+    )
+    session.add(assoc)
+    session.commit()
+    session.refresh(assoc)
+    return assoc
+
+
+def get_samples_for_run(
+    session: Session,
+    run_barcode: str,
+) -> list[SampleSequencingRunPublic]:
+    """List all sample associations for a run."""
+    run = get_run(session=session, run_barcode=run_barcode)
+    if run is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Run with barcode '{run_barcode}' not found.",
+        )
+
+    associations = session.exec(
+        select(SampleSequencingRun).where(
+            SampleSequencingRun.sequencing_run_id == run.id,
+        )
+    ).all()
+
+    return [
+        SampleSequencingRunPublic(
+            id=a.id,
+            sample_id=a.sample_id,
+            sequencing_run_id=a.sequencing_run_id,
+            created_at=a.created_at,
+            created_by=a.created_by,
+        )
+        for a in associations
+    ]
+
+
+def remove_sample_from_run(
+    session: Session,
+    run_barcode: str,
+    sample_id: str,
+) -> None:
+    """Remove a Sample ↔ SequencingRun association."""
+    from uuid import UUID
+
+    run = get_run(session=session, run_barcode=run_barcode)
+    if run is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Run with barcode '{run_barcode}' not found.",
+        )
+
+    assoc = session.exec(
+        select(SampleSequencingRun).where(
+            SampleSequencingRun.sample_id == UUID(sample_id),
+            SampleSequencingRun.sequencing_run_id == run.id,
+        )
+    ).first()
+    if not assoc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=(
+                f"Association between sample '{sample_id}' and "
+                f"run '{run_barcode}' not found."
+            ),
+        )
+    session.delete(assoc)
+    session.commit()
+
+
+def clear_samples_for_run(
+    session: Session,
+    run_barcode: str,
+    opensearch_client: OpenSearch = None,
+) -> RunSampleCleanupResponse:
+    """
+    Remove all sample associations, run-linked files, run-scoped QCRecords,
+    and orphaned samples for a run.
+
+    Used before re-demultiplexing to clean up database records from a previous
+    (possibly incorrect) demux. The batch job deletes the S3 objects; this function
+    cleans up the corresponding database records.
+
+    Steps:
+        1. Delete File records associated with this run (via FileSequencingRun
+           junction table). SQLAlchemy cascades handle FileHash, FileTag,
+           FileSample, and other junction table child rows.
+        2. Delete run-scoped QCRecords (qcrecord.sequencing_run_id == run.id).
+           Cascade deletes handle metadata, metrics, metric values, samples,
+           and FileQCRecord junction rows.
+        3. Remove all SampleSequencingRun associations for this run.
+        4. For each affected Sample, check if it is now orphaned (no other run
+           associations, no remaining file associations, no QC metric associations).
+           If orphaned, delete the Sample and its SampleAttribute rows.
+
+    Args:
+        session: Database session
+        run_barcode: The run barcode identifying the sequencing run
+        opensearch_client: Optional OpenSearch client for index cleanup
+
+    Returns:
+        RunSampleCleanupResponse with counts of what was removed/preserved
+    """
+    run = get_run(session=session, run_barcode=run_barcode)
+    if run is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Run with barcode '{run_barcode}' not found.",
+        )
+
+    # ── Step 1: Delete File records associated with this run ──────────
+    file_run_assocs = session.exec(
+        select(FileSequencingRun).where(
+            FileSequencingRun.sequencing_run_id == run.id,
+        )
+    ).all()
+
+    files_deleted = 0
+    for fsr in file_run_assocs:
+        file_record = session.get(File, fsr.file_id)
+        if file_record:
+            session.delete(file_record)  # cascades to hashes, tags, samples, junction rows
+            files_deleted += 1
+
+    # ── Step 2: Delete run-scoped QCRecords ───────────────────────────
+    from api.qcmetrics.models import QCRecord
+    from api.files.models import FileQCRecord
+
+    run_qcrecords = session.exec(
+        select(QCRecord).where(
+            QCRecord.sequencing_run_id == run.id,
+        )
+    ).all()
+
+    qcrecords_deleted = 0
+    for qcr in run_qcrecords:
+        # Delete associated output files (via FileQCRecord)
+        fqrs = session.exec(
+            select(FileQCRecord).where(
+                FileQCRecord.qcrecord_id == qcr.id,
+            )
+        ).all()
+        for fqr in fqrs:
+            file_record = session.get(File, fqr.file_id)
+            if file_record:
+                session.delete(file_record)
+
+        # Delete QCRecord (cascades to metadata, metrics, etc.)
+        session.delete(qcr)
+        qcrecords_deleted += 1
+
+    # ── Step 3: Remove SampleSequencingRun associations ───────────────
+    associations = session.exec(
+        select(SampleSequencingRun).where(
+            SampleSequencingRun.sequencing_run_id == run.id,
+        )
+    ).all()
+
+    affected_sample_ids = {a.sample_id for a in associations}
+    associations_removed = len(associations)
+
+    for assoc in associations:
+        session.delete(assoc)
+
+    # Flush so that cascaded FileSample deletes (from step 1) and
+    # SampleSequencingRun deletes are visible for orphan checks
+    session.flush()
+
+    # ── Step 4: Delete orphaned samples ───────────────────────────────
+    samples_deleted = 0
+    samples_preserved = 0
+
+    for sample_id in affected_sample_ids:
+        # Check for other run associations
+        other_run_assoc = session.exec(
+            select(SampleSequencingRun).where(
+                SampleSequencingRun.sample_id == sample_id,
+            )
+        ).first()
+        if other_run_assoc:
+            samples_preserved += 1
+            continue
+
+        # Check for remaining file associations
+        remaining_file_assoc = session.exec(
+            select(FileSample).where(
+                FileSample.sample_id == sample_id,
+            )
+        ).first()
+        if remaining_file_assoc:
+            samples_preserved += 1
+            continue
+
+        # Check for QC metric associations
+        qc_assoc = session.exec(
+            select(QCMetricSample).where(
+                QCMetricSample.sample_id == sample_id,
+            )
+        ).first()
+        if qc_assoc:
+            samples_preserved += 1
+            continue
+
+        # Sample is fully orphaned — delete it
+        # First delete SampleAttribute rows
+        attrs = session.exec(
+            select(SampleAttribute).where(
+                SampleAttribute.sample_id == sample_id,
+            )
+        ).all()
+        for attr in attrs:
+            session.delete(attr)
+
+        sample = session.get(Sample, sample_id)
+        if sample:
+            session.delete(sample)
+
+            # Remove from OpenSearch index
+            if opensearch_client:
+                try:
+                    delete_document_from_index(
+                        opensearch_client, str(sample_id), "samples"
+                    )
+                except Exception:
+                    pass  # Best-effort index cleanup
+
+            samples_deleted += 1
+
+    session.commit()
+
+    return RunSampleCleanupResponse(
+        run_barcode=run_barcode,
+        associations_removed=associations_removed,
+        files_deleted=files_deleted,
+        samples_deleted=samples_deleted,
+        samples_preserved=samples_preserved,
+        qcrecords_deleted=qcrecords_deleted,
+    )

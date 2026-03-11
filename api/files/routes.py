@@ -52,7 +52,11 @@ def create_file(
     - **uri**: Required. File location (s3://, file://, etc.)
     - **original_filename**: Optional. Original filename before any renaming
     - **source**: Where this file record originated from
-    - **entities**: Entity associations (QCRECORD, SAMPLE, PROJECT, RUN)
+    - **project_id**: Project business key (string)
+    - **sequencing_run_id**: SequencingRun UUID
+    - **qcrecord_id**: QCRecord UUID
+    - **workflow_run_id**: WorkflowRun UUID
+    - **pipeline_id**: Pipeline UUID
     - **samples**: Sample associations with optional roles (tumor/normal)
     - **hashes**: Hash values by algorithm (md5, sha256, etc.)
     - **tags**: Key-value metadata (type, format, description, etc.)
@@ -73,8 +77,11 @@ def create_file(
 def upload_file(
     session: SessionDep,
     filename: str = Form(...),
-    entity_type: str = Form(...),
-    entity_id: str = Form(...),
+    project_id: Optional[str] = Form(None, description="Project business key"),
+    sequencing_run_id: Optional[uuid.UUID] = Form(None, description="SequencingRun UUID"),
+    qcrecord_id: Optional[uuid.UUID] = Form(None, description="QCRecord UUID"),
+    workflow_run_id: Optional[uuid.UUID] = Form(None, description="WorkflowRun UUID"),
+    pipeline_id: Optional[uuid.UUID] = Form(None, description="Pipeline UUID"),
     relative_path: Optional[str] = Form(None),
     overwrite: bool = Form(False),
     description: Optional[str] = Form(None),
@@ -88,8 +95,11 @@ def upload_file(
     Upload a file with optional content.
 
     - **filename**: Name of the file
-    - **entity_type**: Entity type (PROJECT, RUN)
-    - **entity_id**: ID of the entity this file belongs to
+    - **project_id**: Project business key (exactly one entity ID required)
+    - **sequencing_run_id**: SequencingRun UUID
+    - **qcrecord_id**: QCRecord UUID
+    - **workflow_run_id**: WorkflowRun UUID
+    - **pipeline_id**: Pipeline UUID
     - **relative_path**: Optional subdirectory path within entity folder
     - **overwrite**: If True, creates a new version if file exists
     - **description**: Optional file description
@@ -108,8 +118,11 @@ def upload_file(
     file_upload = FileUploadCreate(
         filename=filename,
         description=description,
-        entity_type=entity_type.upper(),
-        entity_id=entity_id,
+        project_id=project_id,
+        sequencing_run_id=sequencing_run_id,
+        qcrecord_id=qcrecord_id,
+        workflow_run_id=workflow_run_id,
+        pipeline_id=pipeline_id,
         is_public=is_public,
         created_by=created_by,
         relative_path=relative_path,
@@ -140,7 +153,10 @@ def list_files(
     ),
     entity_type: Optional[str] = Query(
         None,
-        description="Filter by entity type (PROJECT, RUN, SAMPLE, QCRECORD)"
+        description=(
+            "Filter by entity type "
+            "(PROJECT, RUN, SEQUENCING_RUN, SAMPLE, QCRECORD, WORKFLOW_RUN, PIPELINE)"
+        )
     ),
     entity_id: Optional[str] = Query(
         None,

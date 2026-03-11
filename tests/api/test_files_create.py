@@ -1,12 +1,12 @@
 """Tests for unified file model."""
 
 import pytest
+import uuid
 from datetime import datetime, timezone
 from api.files.models import (
     File,
-    FileEntityType,
     FileCreate,
-    EntityInput,
+    FileUploadCreate,
     SampleInput,
 )
 
@@ -127,33 +127,36 @@ class TestFileMimeType:
         assert mime_type == "application/octet-stream"
 
 
-class TestFileEntityType:
-    """Test FileEntityType constants."""
-
-    def test_entity_types_exist(self):
-        """Test that all entity types are defined."""
-        assert FileEntityType.PROJECT == "PROJECT"
-        assert FileEntityType.SAMPLE == "SAMPLE"
-        assert FileEntityType.QCRECORD == "QCRECORD"
-
-
 class TestFileCreateSchema:
     """Test FileCreate schema validation."""
 
     def test_minimal_file_create(self):
-        """Test creating FileCreate with minimal fields."""
+        """Test creating FileCreate with minimal fields (uri + one entity)."""
         file_create = FileCreate(
             uri="s3://bucket/file.txt",
+            project_id="P-123",
         )
         assert file_create.uri == "s3://bucket/file.txt"
+        assert file_create.project_id == "P-123"
         assert file_create.size is None
         assert file_create.hashes is None
         assert file_create.tags is None
         assert file_create.samples is None
-        assert file_create.entities is None
+        assert file_create.sequencing_run_id is None
+        assert file_create.qcrecord_id is None
+        assert file_create.workflow_run_id is None
+        assert file_create.pipeline_id is None
+
+    def test_file_create_requires_entity(self):
+        """Test that at least one entity association is required (no orphan files)."""
+        with pytest.raises(ValueError, match="At least one entity association is required"):
+            FileCreate(
+                uri="s3://bucket/orphan.txt",
+            )
 
     def test_full_file_create(self):
         """Test creating FileCreate with all fields."""
+        test_run_id = uuid.uuid4()
         file_create = FileCreate(
             uri="s3://bucket/file.txt",
             size=1024,
@@ -161,8 +164,8 @@ class TestFileCreateSchema:
             hashes={"sha256": "abc123", "md5": "def456"},
             tags={"type": "raw_data", "format": "fastq"},
             project_id="P-123",
+            sequencing_run_id=test_run_id,
             samples=[SampleInput(sample_name="sample1", role="tumor")],
-            entities=[EntityInput(entity_type="PROJECT", entity_id="P-123")],
         )
         assert file_create.uri == "s3://bucket/file.txt"
         assert file_create.size == 1024
@@ -170,7 +173,75 @@ class TestFileCreateSchema:
         assert file_create.hashes["sha256"] == "abc123"
         assert file_create.tags["type"] == "raw_data"
         assert len(file_create.samples) == 1
-        assert len(file_create.entities) == 1
+        assert file_create.sequencing_run_id == test_run_id
+
+    def test_file_create_project_id_required_with_samples(self):
+        """Test that project_id is required when samples are provided."""
+        with pytest.raises(ValueError, match="project_id is required"):
+            FileCreate(
+                uri="s3://bucket/file.txt",
+                sequencing_run_id=uuid.uuid4(),
+                samples=[SampleInput(sample_name="sample1")],
+            )
+
+    def test_file_create_no_entity_with_samples_rejected(self):
+        """Test that no entity + samples is rejected (entity check fires first)."""
+        with pytest.raises(ValueError, match="At least one entity association is required"):
+            FileCreate(
+                uri="s3://bucket/file.txt",
+                samples=[SampleInput(sample_name="sample1")],
+            )
+
+    def test_file_create_rejects_extra_fields(self):
+        """Test that extra fields are rejected."""
+        with pytest.raises(Exception):
+            FileCreate(
+                uri="s3://bucket/file.txt",
+                entities=[{"entity_type": "PROJECT", "entity_id": "P-123"}],
+            )
+
+
+class TestFileUploadCreateSchema:
+    """Test FileUploadCreate schema validation."""
+
+    def test_upload_create_with_project(self):
+        """Test FileUploadCreate with a project entity."""
+        upload = FileUploadCreate(
+            filename="test.txt",
+            project_id="P-123",
+            role="samplesheet",
+        )
+        assert upload.project_id == "P-123"
+        assert upload.entity_type_for_uri == "project"
+        assert upload.entity_id_for_uri == "P-123"
+
+    def test_upload_create_with_sequencing_run(self):
+        """Test FileUploadCreate with a sequencing run entity."""
+        run_id = uuid.uuid4()
+        upload = FileUploadCreate(
+            filename="stats.json",
+            sequencing_run_id=run_id,
+            role="stats",
+        )
+        assert upload.sequencing_run_id == run_id
+        assert upload.entity_type_for_uri == "run"
+        assert upload.entity_id_for_uri == str(run_id)
+
+    def test_upload_create_requires_entity(self):
+        """Test that at least one entity is required."""
+        with pytest.raises(ValueError, match="At least one entity"):
+            FileUploadCreate(
+                filename="test.txt",
+            )
+
+    def test_upload_create_rejects_multiple_entities(self):
+        """Test that only one entity is allowed."""
+        with pytest.raises(ValueError, match="Only one entity"):
+            FileUploadCreate(
+                filename="test.txt",
+                project_id="P-123",
+                sequencing_run_id=uuid.uuid4(),
+            )
 
 
 class TestFileFilenameProperty:

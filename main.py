@@ -24,6 +24,9 @@ from api.search.routes import router as search_router
 from api.settings.routes import router as settings_router
 from api.vendors.routes import router as vendors_router
 from api.workflow.routes import router as workflow_router
+from api.workflow.routes import run_router as workflow_run_router
+from api.pipeline.routes import router as pipeline_router
+from api.platforms.routes import router as platforms_router
 
 
 # Customize route id's
@@ -133,6 +136,9 @@ app.include_router(search_router, prefix=API_PREFIX)
 app.include_router(settings_router, prefix=API_PREFIX)
 app.include_router(vendors_router, prefix=API_PREFIX)
 app.include_router(workflow_router, prefix=API_PREFIX)
+app.include_router(workflow_run_router, prefix=API_PREFIX)
+app.include_router(pipeline_router, prefix=API_PREFIX)
+app.include_router(platforms_router, prefix=API_PREFIX)
 
 
 if __name__ == "__main__":

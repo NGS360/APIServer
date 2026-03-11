@@ -7,7 +7,7 @@ supporting workflow-level, single-sample, and multi-sample (paired) metrics.
 
 import uuid
 from datetime import datetime, timezone
-from typing import List
+from typing import List, TYPE_CHECKING
 from sqlmodel import SQLModel, Field, Relationship, UniqueConstraint
 from pydantic import BaseModel, ConfigDict, model_validator
 
@@ -15,6 +15,10 @@ from api.files.models import (
     FileCreate,
     FileSummary,
 )
+
+if TYPE_CHECKING:
+    from api.project.models import Project  # noqa: F401
+    from api.runs.models import SequencingRun  # noqa: F401
 
 
 # ============================================================================
@@ -111,6 +115,20 @@ class QCMetric(SQLModel, table=True):
     qcrecord_id: uuid.UUID = Field(foreign_key="qcrecord.id", nullable=False, index=True)
     name: str = Field(max_length=255, nullable=False, index=True)
 
+    # Optional entity scoping — what this metric is *about*
+    sequencing_run_id: uuid.UUID | None = Field(
+        default=None,
+        foreign_key="sequencingrun.id",
+        nullable=True,
+        index=True,
+    )
+    workflow_run_id: uuid.UUID | None = Field(
+        default=None,
+        foreign_key="workflowrun.id",
+        nullable=True,
+        index=True,
+    )
+
     # Relationships to child tables
     values: List["QCMetricValue"] = Relationship(
         back_populates="qc_metric",
@@ -127,9 +145,13 @@ class QCMetric(SQLModel, table=True):
 
 class QCRecord(SQLModel, table=True):
     """
-    Main QC record entity - one per pipeline execution per project.
+    Main QC record entity - one per pipeline execution per scope.
 
-    Multiple records per project are allowed for versioning (history).
+    Scoping: A QCRecord is scoped to either a project (project_id) or a
+    sequencing run (sequencing_run_id), but not both.  The DB-level CHECK
+    constraint enforces exactly one of the two is non-NULL.
+
+    Multiple records per scope are allowed for versioning (history).
     The created_on timestamp differentiates versions.
     """
     __tablename__ = "qcrecord"
@@ -141,7 +163,29 @@ class QCRecord(SQLModel, table=True):
         nullable=False
     )
     created_by: str = Field(max_length=100, nullable=False)
-    project_id: str = Field(max_length=50, nullable=False, index=True)
+    project_id: str | None = Field(
+        default=None,
+        max_length=50,
+        nullable=True,
+        index=True,
+        foreign_key="project.project_id",
+    )
+
+    # Run-scoped: which sequencing run this QCRecord is about (e.g., demux stats)
+    sequencing_run_id: uuid.UUID | None = Field(
+        default=None,
+        foreign_key="sequencingrun.id",
+        nullable=True,
+        index=True,
+    )
+
+    # Optional provenance link to the execution that produced this data
+    workflow_run_id: uuid.UUID | None = Field(
+        default=None,
+        foreign_key="workflowrun.id",
+        nullable=True,
+        index=True,
+    )
 
     # Relationships to child tables
     pipeline_metadata: List["QCRecordMetadata"] = Relationship(
@@ -152,6 +196,12 @@ class QCRecord(SQLModel, table=True):
         back_populates="qcrecord",
         sa_relationship_kwargs={"cascade": "all, delete-orphan"}
     )
+
+    # Relationship back to project (nullable for run-scoped records)
+    project: "Project" = Relationship(back_populates="qcrecords")
+
+    # Relationship back to sequencing run (nullable for project-scoped records)
+    sequencing_run: "SequencingRun" = Relationship(back_populates="qcrecords")
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -183,6 +233,9 @@ class MetricInput(SQLModel):
     """Input model for a metric group."""
     name: str
     samples: List[MetricSampleInput] | None = None
+    # Human-readable barcode, resolved to UUID at service layer
+    sequencing_run_barcode: str | None = None
+    workflow_run_id: uuid.UUID | None = None
     values: dict[str, str | int | float]  # {"reads": 50000000, "alignment_rate": 95.5}
 
 
@@ -190,10 +243,16 @@ class QCRecordCreate(BaseModel):
     """
     Request model for creating a QC record.
 
+    Scoping: Provide exactly one of project_id or sequencing_run_barcode.
+    - project_id: Project-scoped record (e.g., alignment QC, variant QC)
+    - sequencing_run_barcode: Run-scoped record (e.g., demux stats)
+
     Uses the explicit metrics format with sample associations supporting
     workflow-level, single-sample, and paired-sample (tumor/normal) metrics.
     """
-    project_id: str
+    project_id: str | None = None
+    sequencing_run_barcode: str | None = None  # Human-readable barcode, resolved to UUID
+    workflow_run_id: uuid.UUID | None = None  # Optional provenance link
     metadata: dict[str, str] | None = None  # {"pipeline": "RNA-Seq", "version": "2.0"}
     metrics: List[MetricInput] | None = None  # Metrics with explicit sample associations
     output_files: List[FileCreate] | None = None
@@ -202,15 +261,44 @@ class QCRecordCreate(BaseModel):
 
     @model_validator(mode="before")
     @classmethod
-    def propagate_project_id_to_files(cls, data):
-        """Propagate project_id to nested FileCreate objects before validation."""
+    def propagate_ids(cls, data):
+        """
+        Auto-propagate record-level identifiers to nested objects.
+
+        1. Propagate project_id to output_files (FileCreate needs an entity).
+        2. Propagate sequencing_run_barcode to metrics that omit it.
+        """
         if isinstance(data, dict):
+            # Propagate project_id to output_files
             project_id = data.get("project_id")
             if project_id and data.get("output_files"):
                 for f in data["output_files"]:
                     if isinstance(f, dict) and not f.get("project_id"):
                         f["project_id"] = project_id
+
+            # Propagate sequencing_run_barcode to metrics
+            run_barcode = data.get("sequencing_run_barcode")
+            if run_barcode and data.get("metrics"):
+                for m in data["metrics"]:
+                    if isinstance(m, dict) and not m.get("sequencing_run_barcode"):
+                        m["sequencing_run_barcode"] = run_barcode
         return data
+
+    @model_validator(mode="after")
+    def validate_scope(self):
+        """Ensure exactly one of project_id or sequencing_run_barcode is provided."""
+        has_project = self.project_id is not None
+        has_run = self.sequencing_run_barcode is not None
+        if not has_project and not has_run:
+            raise ValueError(
+                "Either project_id or sequencing_run_barcode must be provided"
+            )
+        if has_project and has_run:
+            raise ValueError(
+                "Cannot provide both project_id and sequencing_run_barcode; "
+                "a QCRecord is scoped to one or the other"
+            )
+        return self
 
 
 class MetricValuePublic(SQLModel):
@@ -229,6 +317,9 @@ class MetricPublic(SQLModel):
     """Public representation of a metric group."""
     name: str
     samples: List[MetricSamplePublic]
+    sequencing_run_id: uuid.UUID | None = None
+    sequencing_run_barcode: str | None = None
+    workflow_run_id: uuid.UUID | None = None
     values: List[MetricValuePublic]
 
 
@@ -237,7 +328,10 @@ class QCRecordPublic(BaseModel):
     id: uuid.UUID
     created_on: datetime
     created_by: str
-    project_id: str
+    project_id: str | None = None
+    sequencing_run_id: uuid.UUID | None = None
+    sequencing_run_barcode: str | None = None
+    workflow_run_id: uuid.UUID | None = None
     metadata: List[MetadataKeyValue]
     metrics: List[MetricPublic]
     output_files: List[FileSummary]
@@ -253,7 +347,10 @@ class QCRecordCreated(SQLModel):
     id: uuid.UUID
     created_on: datetime
     created_by: str
-    project_id: str
+    project_id: str | None = None
+    sequencing_run_id: uuid.UUID | None = None
+    sequencing_run_barcode: str | None = None
+    workflow_run_id: uuid.UUID | None = None
     is_duplicate: bool = False
 
 
@@ -270,6 +367,6 @@ class QCRecordSearchRequest(SQLModel):
     filter_on: dict | None = None  # Flexible filtering
     page: int = 1
     per_page: int = 100
-    latest: bool = True  # Return only newest version per project
+    latest: bool = True  # Return only newest version per scope (project or run)
 
     model_config = ConfigDict(extra="forbid")
