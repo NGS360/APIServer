@@ -67,6 +67,167 @@ def test_get_projects_with_data(client: TestClient, session: Session):
     assert attribute_dict["Priority"] == "High"
 
 
+def test_get_project_with_sequencing_runs(client: TestClient, session: Session):
+    """Test that GET /api/projects/<project_id> includes associated sequencing runs"""
+    from datetime import date
+    from api.project.models import Project
+    from api.project.services import generate_project_id
+    from api.samples.models import Sample
+    from api.runs.models import SequencingRun, SampleSequencingRun, RunStatus
+    
+    # Create a project
+    project = Project(name="Test Project with Runs")
+    project.project_id = generate_project_id(session=session)
+    session.add(project)
+    session.flush()
+    
+    # Create samples for the project
+    sample1 = Sample(sample_id="SAMPLE-001", project_id=project.project_id)
+    sample2 = Sample(sample_id="SAMPLE-002", project_id=project.project_id)
+    session.add(sample1)
+    session.add(sample2)
+    session.flush()
+    
+    # Create sequencing runs
+    run1 = SequencingRun(
+        run_date=date(2024, 1, 15),
+        machine_id="M12345",
+        run_number=100,
+        flowcell_id="FC001",
+        experiment_name="Experiment-001",
+        run_folder_uri="s3://runs/run1/",
+        status=RunStatus.READY
+    )
+    run2 = SequencingRun(
+        run_date=date(2024, 2, 20),
+        machine_id="M67890",
+        run_number=200,
+        flowcell_id="FC002",
+        experiment_name="Experiment-002",
+        run_folder_uri="s3://runs/run2/",
+        status=RunStatus.UPLOADING
+    )
+    session.add(run1)
+    session.add(run2)
+    session.flush()
+    
+    # Associate samples with sequencing runs
+    # sample1 is on both runs, sample2 is only on run2
+    assoc1 = SampleSequencingRun(
+        sample_id=sample1.id,
+        sequencing_run_id=run1.id,
+        created_by="testuser"
+    )
+    assoc2 = SampleSequencingRun(
+        sample_id=sample1.id,
+        sequencing_run_id=run2.id,
+        created_by="testuser"
+    )
+    assoc3 = SampleSequencingRun(
+        sample_id=sample2.id,
+        sequencing_run_id=run2.id,
+        created_by="testuser"
+    )
+    session.add(assoc1)
+    session.add(assoc2)
+    session.add(assoc3)
+    session.commit()
+    
+    # Get the project
+    response = client.get(f"/api/v1/projects/{project.project_id}")
+    assert response.status_code == 200
+    response_json = response.json()
+    
+    # Verify basic project details
+    assert response_json["name"] == "Test Project with Runs"
+    assert response_json["project_id"] == project.project_id
+    
+    # Verify sequencing_runs field exists
+    assert "sequencing_runs" in response_json
+    assert response_json["sequencing_runs"] is not None
+    
+    # Should have 2 distinct sequencing runs
+    sequencing_runs = response_json["sequencing_runs"]
+    assert len(sequencing_runs) == 2
+    
+    # Sort by run_number for predictable ordering
+    sequencing_runs.sort(key=lambda r: r["run_number"])
+    
+    # Verify first run details
+    assert sequencing_runs[0]["machine_id"] == "M12345"
+    assert sequencing_runs[0]["run_number"] == 100
+    assert sequencing_runs[0]["flowcell_id"] == "FC001"
+    assert sequencing_runs[0]["experiment_name"] == "Experiment-001"
+    assert sequencing_runs[0]["status"] == "Ready"
+    assert sequencing_runs[0]["barcode"] == "240115_M12345_0100_FC001"
+    
+    # Verify second run details
+    assert sequencing_runs[1]["machine_id"] == "M67890"
+    assert sequencing_runs[1]["run_number"] == 200
+    assert sequencing_runs[1]["flowcell_id"] == "FC002"
+    assert sequencing_runs[1]["experiment_name"] == "Experiment-002"
+    assert sequencing_runs[1]["status"] == "Uploading"
+    assert sequencing_runs[1]["barcode"] == "240220_M67890_0200_FC002"
+
+
+def test_get_project_without_sequencing_runs(client: TestClient, session: Session):
+    """Test that GET /api/projects/<project_id> returns empty list when no sequencing runs"""
+    from api.project.models import Project
+    from api.project.services import generate_project_id
+    
+    # Create a project with no samples or runs
+    project = Project(name="Project Without Runs")
+    project.project_id = generate_project_id(session=session)
+    session.add(project)
+    session.commit()
+    
+    # Get the project
+    response = client.get(f"/api/v1/projects/{project.project_id}")
+    assert response.status_code == 200
+    response_json = response.json()
+    
+    # Verify project details
+    assert response_json["name"] == "Project Without Runs"
+    assert response_json["project_id"] == project.project_id
+    
+    # Verify sequencing_runs field exists and is empty
+    assert "sequencing_runs" in response_json
+    assert response_json["sequencing_runs"] is not None
+    assert len(response_json["sequencing_runs"]) == 0
+
+
+def test_get_project_with_samples_but_no_runs(client: TestClient, session: Session):
+    """Test project with samples but no associated sequencing runs"""
+    from api.project.models import Project
+    from api.project.services import generate_project_id
+    from api.samples.models import Sample
+    
+    # Create a project with samples but no runs
+    project = Project(name="Project With Samples No Runs")
+    project.project_id = generate_project_id(session=session)
+    session.add(project)
+    session.flush()
+    
+    # Create samples but don't associate them with any runs
+    sample1 = Sample(sample_id="SAMPLE-A", project_id=project.project_id)
+    sample2 = Sample(sample_id="SAMPLE-B", project_id=project.project_id)
+    session.add(sample1)
+    session.add(sample2)
+    session.commit()
+    
+    # Get the project
+    response = client.get(f"/api/v1/projects/{project.project_id}")
+    assert response.status_code == 200
+    response_json = response.json()
+    
+    # Verify project details
+    assert response_json["name"] == "Project With Samples No Runs"
+    
+    # Should have empty sequencing runs list
+    assert "sequencing_runs" in response_json
+    assert response_json["sequencing_runs"] == []
+
+
 def test_create_project(client: TestClient):
     """Test that we can add a project"""
     data = {
