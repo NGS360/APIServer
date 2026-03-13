@@ -124,12 +124,17 @@ pydantic==2.12.5
     #   ngs360-server (pyproject.toml)
     #   fastapi
     #   fastapi-cloud-cli
+    #   pydantic-extra-types
     #   pydantic-settings
     #   sqlmodel
 pydantic-core==2.41.5
     # via pydantic
+pydantic-extra-types==2.11.0
+    # via fastapi
 pydantic-settings==2.12.0
-    # via ngs360-server (pyproject.toml)
+    # via
+    #   ngs360-server (pyproject.toml)
+    #   fastapi
 pygments==2.19.2
     # via rich
 pymysql==1.1.2
@@ -206,11 +211,13 @@ typing-extensions==4.15.0
     #   grpcio
     #   pydantic
     #   pydantic-core
+    #   pydantic-extra-types
     #   rich-toolkit
     #   sqlalchemy
     #   typing-inspection
 typing-inspection==0.4.2
     # via
+    #   fastapi
     #   pydantic
     #   pydantic-settings
 urllib3==2.6.3
