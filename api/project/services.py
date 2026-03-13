@@ -166,7 +166,7 @@ def get_projects(
             data_folder_uri=f"{data_bucket}/{project.project_id}/",
             results_folder_uri=f"{results_bucket}/{project.project_id}/",
             attributes=project.attributes,
-            sequencing_runs=None  # Sequencing runs are not included in list view for performance reasons
+            sequencing_runs=None  # Sequencing runs are not included for performance reasons
         )
         for project in projects
     ]
