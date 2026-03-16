@@ -233,9 +233,11 @@ class TestJobsAPI:
         call_args = mock_batch.submit_job.call_args[1]
         assert "containerOverrides" in call_args
         env = call_args["containerOverrides"]["environment"]
-        assert len(env) == 2
-        assert env[0]["name"] == "VAR1"
-        assert env[1]["value"] == "value2"
+        # Explicit env vars + auto-injected NGS360_API_ENDPOINT
+        env_dict = {e["name"]: e["value"] for e in env}
+        assert env_dict["VAR1"] == "value1"
+        assert env_dict["VAR2"] == "value2"
+        assert "NGS360_API_ENDPOINT" in env_dict
 
     def test_get_jobs_empty(self, client: TestClient):
         """Test getting jobs when none exist"""
@@ -693,3 +695,66 @@ class TestJobsServices:
                 user="testuser",
             )
         assert exc_info.value.status_code == 500
+
+    @patch("api.jobs.services.boto3.client")
+    def test_submit_batch_job_injects_api_endpoint(self, mock_boto_client, session: Session):
+        """Test that submit_batch_job auto-injects NGS360_API_ENDPOINT from FRONTEND_URL"""
+        from api.jobs.services import submit_batch_job
+
+        mock_batch = MagicMock()
+        mock_batch.submit_job.return_value = {
+            "jobId": "aws-job-789",
+            "jobName": "test-job",
+        }
+        mock_boto_client.return_value = mock_batch
+
+        # Submit with no explicit environment
+        container_overrides = {"command": ["echo", "hello"]}
+        submit_batch_job(
+            session=session,
+            job_name="test-job",
+            container_overrides=container_overrides,
+            job_def="test-def:1",
+            job_queue="test-queue",
+            user="testuser",
+        )
+
+        # Verify NGS360_API_ENDPOINT was injected into containerOverrides
+        call_args = mock_batch.submit_job.call_args[1]
+        env = call_args["containerOverrides"]["environment"]
+        env_dict = {e["name"]: e["value"] for e in env}
+        assert "NGS360_API_ENDPOINT" in env_dict
+        assert env_dict["NGS360_API_ENDPOINT"] == "http://localhost:3000"
+
+    @patch("api.jobs.services.boto3.client")
+    def test_submit_batch_job_injects_alongside_existing_env(
+        self, mock_boto_client, session: Session
+    ):
+        """Test that auto-injected NGS360_API_ENDPOINT coexists with explicit env vars"""
+        from api.jobs.services import submit_batch_job
+
+        mock_batch = MagicMock()
+        mock_batch.submit_job.return_value = {
+            "jobId": "aws-job-101",
+            "jobName": "test-job",
+        }
+        mock_boto_client.return_value = mock_batch
+
+        container_overrides = {
+            "command": ["echo", "hello"],
+            "environment": [{"name": "MY_VAR", "value": "my_value"}],
+        }
+        submit_batch_job(
+            session=session,
+            job_name="test-job",
+            container_overrides=container_overrides,
+            job_def="test-def:1",
+            job_queue="test-queue",
+            user="testuser",
+        )
+
+        call_args = mock_batch.submit_job.call_args[1]
+        env = call_args["containerOverrides"]["environment"]
+        env_dict = {e["name"]: e["value"] for e in env}
+        assert env_dict["MY_VAR"] == "my_value"
+        assert env_dict["NGS360_API_ENDPOINT"] == "http://localhost:3000"
