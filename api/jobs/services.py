@@ -184,8 +184,15 @@ def submit_batch_job(
     # Extract command from container overrides (expecting list)
     command = " ".join(container_overrides.get("command", []))
 
+    # Auto-inject API endpoint so worker containers know where to call back
+    settings = get_settings()
+    container_overrides.setdefault("environment", [])
+    container_overrides["environment"].append(
+        {"name": "NGS360_API_ENDPOINT", "value": settings.FRONTEND_URL}
+    )
+
     try:
-        batch_client = boto3.client("batch", region_name=get_settings().AWS_REGION)
+        batch_client = boto3.client("batch", region_name=settings.AWS_REGION)
         response = batch_client.submit_job(
             jobName=job_name,
             jobQueue=job_queue,
