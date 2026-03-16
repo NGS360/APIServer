@@ -1414,9 +1414,11 @@ aws_batch:
         assert data["name"] == "no-env-job"
         assert data["user"] == test_user.username
 
-        # Verify environment is empty list
+        # Verify environment contains only the auto-injected API endpoint
         overrides = captured_submit_args["containerOverrides"]
-        assert overrides["environment"] == []
+        env_dict = {e["name"]: e["value"] for e in overrides["environment"]}
+        assert len(overrides["environment"]) == 1
+        assert "NGS360_API_ENDPOINT" in env_dict
 
     def test_submit_job_invalid_request_body(self, client: TestClient, test_user):
         """Test job submission with invalid request body"""
