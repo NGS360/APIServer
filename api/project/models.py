@@ -10,6 +10,8 @@ from pydantic import ConfigDict
 if TYPE_CHECKING:
     from api.samples.models import Sample
 
+from api.runs.models import SequencingRunPublic
+
 
 class Attribute(SQLModel):
     key: str | None
@@ -58,6 +60,7 @@ class ProjectPublic(SQLModel):
     data_folder_uri: str | None
     results_folder_uri: str | None
     attributes: List[Attribute] | None
+    sequencing_runs: List[SequencingRunPublic] | None = None
 
 
 class ProjectsPublic(SQLModel):

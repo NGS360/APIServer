@@ -38,6 +38,7 @@ from api.samples.models import (
     SamplesPublic,
     Attribute,
 )
+from api.runs.models import SequencingRun, SequencingRunPublic, SampleSequencingRun
 
 
 def generate_project_id(*, session: Session) -> str:
@@ -120,6 +121,7 @@ def create_project(
         data_folder_uri=f"{data_bucket}/{project.project_id}/",
         results_folder_uri=f"{results_bucket}/{project.project_id}/",
         attributes=project.attributes,
+        sequencing_runs=None  # No sequencing runs at time of project creation
     )
 
 
@@ -164,6 +166,7 @@ def get_projects(
             data_folder_uri=f"{data_bucket}/{project.project_id}/",
             results_folder_uri=f"{results_bucket}/{project.project_id}/",
             attributes=project.attributes,
+            sequencing_runs=None  # Sequencing runs are not included for performance reasons
         )
         for project in projects
     ]
@@ -194,6 +197,32 @@ def get_project_by_project_id(session: Session, project_id: str) -> ProjectPubli
             detail=f"Project {project_id} not found.",
         )
 
+    # Query sequencing runs associated with this project through samples
+    sequencing_runs_query = (
+        select(SequencingRun)
+        .join(SampleSequencingRun, SampleSequencingRun.sequencing_run_id == SequencingRun.id)
+        .join(Sample, Sample.id == SampleSequencingRun.sample_id)
+        .where(Sample.project_id == project.project_id)
+        .distinct()
+    )
+    sequencing_runs = session.exec(sequencing_runs_query).all()
+
+    # Convert to public model
+    sequencing_runs_public = [
+        SequencingRunPublic(
+            run_date=run.run_date,
+            machine_id=run.machine_id,
+            run_number=run.run_number,
+            flowcell_id=run.flowcell_id,
+            experiment_name=run.experiment_name,
+            run_folder_uri=run.run_folder_uri,
+            status=run.status,
+            run_time=run.run_time,
+            barcode=run.barcode,
+        )
+        for run in sequencing_runs
+    ]
+
     data_bucket = get_setting_value(session, "DATA_BUCKET_URI")
     results_bucket = get_setting_value(session, "RESULTS_BUCKET_URI")
 
@@ -203,6 +232,7 @@ def get_project_by_project_id(session: Session, project_id: str) -> ProjectPubli
         data_folder_uri=f"{data_bucket}/{project.project_id}/",
         results_folder_uri=f"{results_bucket}/{project.project_id}/",
         attributes=project.attributes,
+        sequencing_runs=sequencing_runs_public,
     )
 
 
@@ -281,6 +311,7 @@ def update_project(
         data_folder_uri=f"{data_bucket}/{project.project_id}/",
         results_folder_uri=f"{results_bucket}/{project.project_id}/",
         attributes=project.attributes,
+        sequencing_runs=None  # Sequencing runs are not included in list view for performance reasons
     )
 
 
