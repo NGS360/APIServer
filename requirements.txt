@@ -113,7 +113,7 @@ packaging==26.0
     # via gunicorn
 protobuf==6.33.5
     # via opensearch-protobufs
-pyasn1==0.6.2
+pyasn1==0.6.3
     # via
     #   python-jose
     #   rsa
