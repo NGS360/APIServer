@@ -19,6 +19,7 @@ from api.auth.models import (
 )
 from api.auth.deps import CurrentUser, CurrentActiveUser
 import api.auth.services as auth_services
+from api.auth.oauth2_service import get_user_oauth_providers
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
@@ -160,14 +161,16 @@ def logout(
 
 @router.get("/me", response_model=UserPublic)
 def get_current_user_info(
+    session: SessionDep,
     current_user: CurrentUser
-) -> User:
+) -> UserPublic:
     """
     Get current user profile
 
     Returns information about the authenticated user.
 
     Args:
+        session: Database session
         current_user: Current authenticated user
 
     Returns:
@@ -176,7 +179,19 @@ def get_current_user_info(
     Raises:
         401: Not authenticated
     """
-    return current_user
+    oauth_providers = get_user_oauth_providers(session, current_user)
+    user_info = UserPublic(
+        email=current_user.email,
+        username=current_user.username,
+        full_name=current_user.full_name,
+        is_active=current_user.is_active,
+        is_verified=current_user.is_verified,
+        is_superuser=current_user.is_superuser,
+        created_at=current_user.created_at,
+        last_login=current_user.last_login,
+        oauth_providers=oauth_providers
+    )
+    return user_info
 
 
 @router.post("/password-reset/request")
