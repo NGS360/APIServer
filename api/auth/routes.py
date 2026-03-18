@@ -161,7 +161,7 @@ def logout(
 @router.get("/me", response_model=UserPublic)
 def get_current_user_info(
     current_user: CurrentUser
-) -> User:
+) -> UserPublic:
     """
     Get current user profile
 
