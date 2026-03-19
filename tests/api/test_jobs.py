@@ -18,6 +18,7 @@ from api.jobs.models import (
     AwsBatchEnvironment,
     AwsBatchConfig,
 )
+from core.config import get_settings
 
 
 ###############################################################################
@@ -700,7 +701,6 @@ class TestJobsServices:
     def test_submit_batch_job_injects_api_endpoint(self, mock_boto_client, session: Session):
         """Test that submit_batch_job auto-injects NGS360_API_ENDPOINT from FRONTEND_URL"""
         from api.jobs.services import submit_batch_job
-        from core.config import get_settings
 
         mock_batch = MagicMock()
         mock_batch.submit_job.return_value = {
@@ -758,4 +758,4 @@ class TestJobsServices:
         env = call_args["containerOverrides"]["environment"]
         env_dict = {e["name"]: e["value"] for e in env}
         assert env_dict["MY_VAR"] == "my_value"
-        assert env_dict["NGS360_API_ENDPOINT"] == "http://localhost:3000"
+        assert env_dict["NGS360_API_ENDPOINT"] == get_settings().client_origin
