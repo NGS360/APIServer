@@ -84,7 +84,7 @@ def _create_sequencing_run(session: Session) -> tuple[str, str]:
         id=uuid4(),
         run_date=date(2024, 6, 15),
         machine_id="M00001",
-        run_number=42,
+        run_number="0042",
         flowcell_id=f"H{uuid4().hex[:8].upper()}",
     )
     session.add(sr)

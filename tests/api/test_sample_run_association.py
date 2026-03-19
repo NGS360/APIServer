@@ -22,7 +22,7 @@ def _create_run(session: Session) -> str:
     run = SequencingRun(
         run_date=date(2024, 3, 15),
         machine_id="M00001",
-        run_number=42,
+        run_number="0042",
         flowcell_id="HXXXXXXXXX",
         experiment_name="TestExp",
     )
@@ -201,7 +201,7 @@ def _create_second_run(session: Session) -> str:
     run = SequencingRun(
         run_date=date(2024, 4, 20),
         machine_id="M00002",
-        run_number=99,
+        run_number="0099",
         flowcell_id="HYYYYYYYYY",
         experiment_name="SecondExp",
     )
