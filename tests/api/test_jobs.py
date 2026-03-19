@@ -700,6 +700,7 @@ class TestJobsServices:
     def test_submit_batch_job_injects_api_endpoint(self, mock_boto_client, session: Session):
         """Test that submit_batch_job auto-injects NGS360_API_ENDPOINT from FRONTEND_URL"""
         from api.jobs.services import submit_batch_job
+        from core.config import get_settings
 
         mock_batch = MagicMock()
         mock_batch.submit_job.return_value = {
@@ -710,6 +711,7 @@ class TestJobsServices:
 
         # Submit with no explicit environment
         container_overrides = {"command": ["echo", "hello"]}
+        breakpoint()
         submit_batch_job(
             session=session,
             job_name="test-job",
@@ -724,7 +726,7 @@ class TestJobsServices:
         env = call_args["containerOverrides"]["environment"]
         env_dict = {e["name"]: e["value"] for e in env}
         assert "NGS360_API_ENDPOINT" in env_dict
-        assert env_dict["NGS360_API_ENDPOINT"] == "http://localhost:3000"
+        assert env_dict["NGS360_API_ENDPOINT"] == get_settings().client_origin
 
     @patch("api.jobs.services.boto3.client")
     def test_submit_batch_job_injects_alongside_existing_env(
