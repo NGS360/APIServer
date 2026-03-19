@@ -1185,10 +1185,10 @@ aws_batch:
         assert "containerOverrides" in captured_submit_args
         overrides = captured_submit_args["containerOverrides"]
         assert overrides["command"] == ["run.sh", "5000"]
-        assert len(overrides["environment"]) == 2
         env_dict = {e["name"]: e["value"] for e in overrides["environment"]}
         assert env_dict["S3_PATH"] == "s3://bucket/folder/subfolder/file.txt"
         assert env_dict["MAX_READS"] == "5000"
+        assert "NGS360_API_ENDPOINT" in env_dict
 
     def test_submit_job_tool_not_found(
         self, client: TestClient, test_user
@@ -1414,9 +1414,11 @@ aws_batch:
         assert data["name"] == "no-env-job"
         assert data["user"] == test_user.username
 
-        # Verify environment is empty list
+        # Verify environment contains only the auto-injected API endpoint
         overrides = captured_submit_args["containerOverrides"]
-        assert overrides["environment"] == []
+        env_dict = {e["name"]: e["value"] for e in overrides["environment"]}
+        assert len(overrides["environment"]) == 1
+        assert "NGS360_API_ENDPOINT" in env_dict
 
     def test_submit_job_invalid_request_body(self, client: TestClient, test_user):
         """Test job submission with invalid request body"""
