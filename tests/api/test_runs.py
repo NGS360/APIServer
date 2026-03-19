@@ -54,7 +54,7 @@ def test_add_run(client: TestClient):
     new_run = {
         "run_date": "2019-01-10",
         "machine_id": "MACHINE123",
-        "run_number": 1,
+        "run_number": "0001",
         "flowcell_id": "FLOWCELL123",
         "experiment_name": "Test Experiment",
         "run_folder_uri": "s3://bucket/path/to/run",
@@ -65,7 +65,7 @@ def test_add_run(client: TestClient):
     data = response.json()
     assert data["run_date"] == "2019-01-10"
     assert data["machine_id"] == "MACHINE123"
-    assert data["run_number"] == 1
+    assert data["run_number"] == "0001"
     assert data["flowcell_id"] == "FLOWCELL123"
     assert data["experiment_name"] == "Test Experiment"
     assert data["run_folder_uri"] == "s3://bucket/path/to/run"
@@ -76,7 +76,7 @@ def test_add_run(client: TestClient):
     new_run = {
         "run_date": "2019-01-10",
         "machine_id": "MACHINE123",
-        "run_number": 2,
+        "run_number": "0002",
         "flowcell_id": "FLOWCELL123",
         "experiment_name": "Test Experiment",
         "run_folder_uri": "s3://bucket/path/to/run",
@@ -93,7 +93,7 @@ def test_add_run(client: TestClient):
     new_run = {
         "run_date": "2019-01-10",
         "machine_id": "MACHINE123",
-        "run_number": 3,
+        "run_number": "0003",
         "flowcell_id": "FLOWCELL123",
         "experiment_name": "Test Experiment",
         "run_folder_uri": "s3://bucket/path/to/run",
@@ -107,7 +107,7 @@ def test_add_run(client: TestClient):
     new_run = {
         "run_date": "2019-01-10",
         "machine_id": "MACHINE123",
-        "run_number": 4,
+        "run_number": "0004",
         "flowcell_id": "FLOWCELL123",
         "experiment_name": "Test Experiment",
         "run_folder_uri": "s3://bucket/path/to/run",
@@ -121,7 +121,7 @@ def test_add_run(client: TestClient):
     new_run = {
         "run_date": "2019-01-10",
         "machine_id": "MACHINE123",
-        "run_number": 4,
+        "run_number": "0004",
         "flowcell_id": "FLOWCELL123",
         "experiment_name": "Test Experiment",
         "run_folder_uri": "s3://bucket/path/to/run",
@@ -152,7 +152,7 @@ def test_get_runs(client: TestClient, session: Session):
         id=uuid4(),
         run_date=datetime.date(2019, 1, 10),
         machine_id="MACHINE123",
-        run_number=1,
+        run_number="0001",
         flowcell_id="FLOWCELL123",
         experiment_name="Test Experiment",
         run_folder_uri="/dir/path/to/run",
@@ -167,7 +167,7 @@ def test_get_runs(client: TestClient, session: Session):
     data = response.json()
     assert data["total_items"] == 1
     assert data["data"][0]["machine_id"] == "MACHINE123"
-    assert data["data"][0]["run_number"] == 1
+    assert data["data"][0]["run_number"] == "0001"
     assert data["data"][0]["flowcell_id"] == "FLOWCELL123"
     assert data["data"][0]["experiment_name"] == "Test Experiment"
     assert data["data"][0]["run_folder_uri"] == "/dir/path/to/run"
@@ -181,7 +181,7 @@ def test_get_runs(client: TestClient, session: Session):
     data = response.json()
     assert data["run_date"] == "2019-01-10"
     assert data["machine_id"] == "MACHINE123"
-    assert data["run_number"] == 1
+    assert data["run_number"] == "0001"
     assert data["flowcell_id"] == "FLOWCELL123"
     assert data["experiment_name"] == "Test Experiment"
     assert data["run_folder_uri"] == "/dir/path/to/run"
@@ -211,7 +211,7 @@ def test_get_run_samplesheet(client: TestClient, session: Session):
         id=uuid4(),
         run_date=datetime.date(2019, 1, 10),
         machine_id="MACHINE123",
-        run_number=1,
+        run_number="0001",
         flowcell_id="FLOWCELL123",
         experiment_name="Test Experiment",
         run_folder_uri=run_folder.as_posix(),
@@ -227,7 +227,7 @@ def test_get_run_samplesheet(client: TestClient, session: Session):
     data = response.json()
     assert data["Summary"]["run_date"] == "2019-01-10"
     assert data["Summary"]["machine_id"] == "MACHINE123"
-    assert data["Summary"]["run_number"] == "1"
+    assert data["Summary"]["run_number"] == "0001"
     assert data["Summary"]["run_time"] == ""
     assert data["Summary"]["flowcell_id"] == "FLOWCELL123"
     assert data["Summary"]["experiment_name"] == "Test Experiment"
@@ -250,7 +250,7 @@ def test_get_run_samplesheet_no_result(client: TestClient, session: Session):
         id=uuid4(),
         run_date=datetime.date(2019, 1, 10),
         machine_id="MACHINE123",
-        run_number=2,
+        run_number="0002",
         flowcell_id="FLOWCELL123",
         experiment_name="Test Experiment",
         run_folder_uri=run_folder.as_posix(),
@@ -282,7 +282,7 @@ def test_get_run_samplesheet_no_s3_credentials(
         id=uuid4(),
         run_date=datetime.date(2019, 1, 10),
         machine_id="MACHINE123",
-        run_number=1,
+        run_number="0001",
         flowcell_id="FLOWCELL123",
         experiment_name="Test Experiment",
         run_folder_uri=run_folder,
@@ -325,7 +325,7 @@ def test_get_run_metrics(client: TestClient, session: Session):
         id=uuid4(),
         run_date=datetime.date(2019, 1, 10),
         machine_id="MACHINE123",
-        run_number=1,
+        run_number="0001",
         flowcell_id="FLOWCELL123",
         experiment_name="Test Experiment",
         run_folder_uri=run_folder.as_posix(),
@@ -356,7 +356,7 @@ def test_get_run_metrics_no_result(client: TestClient, session: Session):
         id=uuid4(),
         run_date=datetime.date(2019, 1, 10),
         machine_id="MACHINE123",
-        run_number=2,
+        run_number="0002",
         flowcell_id="FLOWCELL123",
         experiment_name="Test Experiment",
         run_folder_uri=run_folder.as_posix(),
@@ -379,7 +379,7 @@ def test_update_run_status(client: TestClient, session: Session):
         id=uuid4(),
         run_date=datetime.date(2019, 1, 10),
         machine_id="MACHINE123",
-        run_number=1,
+        run_number="0001",
         flowcell_id="FLOWCELL123",
         experiment_name="Test Experiment",
         run_folder_uri="/dir/path/to/run",
@@ -414,7 +414,7 @@ def test_upload_run_samplesheet(client: TestClient, session: Session, tmp_path: 
         id=uuid4(),
         run_date=datetime.date(2019, 1, 10),
         machine_id="MACHINE123",
-        run_number=1,
+        run_number="0001",
         flowcell_id="FLOWCELL123",
         experiment_name="Test Experiment",
         run_folder_uri=run_folder.as_posix(),
@@ -446,7 +446,7 @@ def test_search_runs(client: TestClient):
     new_run = {
         "run_date": "2019-01-10",
         "machine_id": "MACHINE123",
-        "run_number": 1,
+        "run_number": "0001",
         "flowcell_id": "FLOWCELL123",
         "experiment_name": "Test Experiment AI",
         "run_folder_uri": "s3://bucket/path/to/run",
@@ -467,7 +467,7 @@ def test_search_runs(client: TestClient):
                 "barcode": "190110_MACHINE123_0001_FLOWCELL123",
                 "run_date": "2019-01-10",
                 "machine_id": "MACHINE123",
-                "run_number": 1,
+                "run_number": "0001",
                 "flowcell_id": "FLOWCELL123",
                 "experiment_name": "Test Experiment AI",
                 "run_folder_uri": "s3://bucket/path/to/run",
@@ -493,7 +493,7 @@ def test_search_runs_db_opensearch_out_of_sync(client: TestClient, session: Sess
     new_run = {
         "run_date": "2019-01-10",
         "machine_id": "MACHINE123",
-        "run_number": 1,
+        "run_number": "0001",
         "flowcell_id": "FLOWCELL123",
         "experiment_name": "Test Experiment AI",
         "run_folder_uri": "s3://bucket/path/to/run",

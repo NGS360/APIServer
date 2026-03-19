@@ -35,7 +35,7 @@ class SequencingRun(SQLModel, table=True):
     id: uuid.UUID | None = Field(default_factory=uuid.uuid4, primary_key=True)
     run_date: date
     machine_id: str = Field(max_length=25)
-    run_number: int
+    run_number: str = Field(max_length=50)
     flowcell_id: str = Field(max_length=25)
     experiment_name: str | None = Field(default=None, max_length=255)
     run_folder_uri: str | None = Field(default=None, max_length=255)
@@ -103,9 +103,11 @@ class SequencingRun(SQLModel, table=True):
     def barcode(self) -> str:
         ''' Generates a barcode from the run fields '''
         if self.run_time is None:
+            # Illumina: run_number is numeric, zero-pad to 4 digits
             run_number = str(self.run_number).zfill(4)
             run_date = self.run_date.strftime("%y%m%d")
             return f"{run_date}_{self.machine_id}_{run_number}_{self.flowcell_id}"
+        # ONT: run_number may be an arbitrary string
         run_date = self.run_date.strftime("%Y%m%d")
         return f"{run_date}_{self.run_time}_{self.machine_id}_{self.flowcell_id}_{self.run_number}"
 
@@ -137,7 +139,7 @@ class SequencingRun(SQLModel, table=True):
 class SequencingRunCreate(SQLModel):
     run_date: date
     machine_id: str
-    run_number: int
+    run_number: str
     flowcell_id: str
     experiment_name: str | None = None
     run_folder_uri: str | None = None
@@ -177,7 +179,7 @@ class SequencingRunUpdateRequest(SQLModel):
 class SequencingRunPublic(SQLModel):
     run_date: date
     machine_id: str
-    run_number: int
+    run_number: str
     flowcell_id: str
     experiment_name: str | None
     run_folder_uri: str | None
