@@ -711,7 +711,6 @@ class TestJobsServices:
 
         # Submit with no explicit environment
         container_overrides = {"command": ["echo", "hello"]}
-        breakpoint()
         submit_batch_job(
             session=session,
             job_name="test-job",
