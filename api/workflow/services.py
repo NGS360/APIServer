@@ -1,7 +1,7 @@
 """
 Workflow Service
 
-CRUD operations for Workflow, WorkflowRegistration, and WorkflowRun entities.
+CRUD operations for Workflow and WorkflowRun entities.
 """
 from uuid import UUID
 
@@ -15,9 +15,6 @@ from api.workflow.models import (
     WorkflowAttribute,
     WorkflowCreate,
     WorkflowPublic,
-    WorkflowRegistration,
-    WorkflowRegistrationCreate,
-    WorkflowRegistrationPublic,
     WorkflowRun,
     WorkflowRunAttribute,
     WorkflowRunCreate,
@@ -124,20 +121,6 @@ def get_workflow_by_id(session: Session, workflow_id: str) -> Workflow:
 
 def workflow_to_public(workflow: Workflow) -> WorkflowPublic:
     """Convert a Workflow ORM object to its public representation."""
-    registrations = None
-    if workflow.registrations:
-        registrations = [
-            WorkflowRegistrationPublic(
-                id=r.id,
-                workflow_id=r.workflow_id,
-                engine=r.engine,
-                external_id=r.external_id,
-                created_at=r.created_at,
-                created_by=r.created_by,
-            )
-            for r in workflow.registrations
-        ]
-
     attributes = None
     if workflow.attributes:
         attributes = [
@@ -152,81 +135,7 @@ def workflow_to_public(workflow: Workflow) -> WorkflowPublic:
         created_at=workflow.created_at,
         created_by=workflow.created_by,
         attributes=attributes,
-        registrations=registrations,
     )
-
-
-# ---------------------------------------------------------------------------
-# WorkflowRegistration CRUD
-# ---------------------------------------------------------------------------
-
-def create_workflow_registration(
-    session: Session,
-    workflow_id: str,
-    registration_in: WorkflowRegistrationCreate,
-    created_by: str,
-) -> WorkflowRegistration:
-    """Register a workflow on a specific platform."""
-    # Verify workflow exists
-    workflow = get_workflow_by_id(session, workflow_id)
-
-    # Verify engine is a registered platform
-    _validate_engine(session, registration_in.engine)
-
-    # Check for duplicate (workflow_id, engine) combo
-    existing = session.exec(
-        select(WorkflowRegistration).where(
-            WorkflowRegistration.workflow_id == workflow.id,
-            WorkflowRegistration.engine == registration_in.engine,
-        )
-    ).first()
-    if existing:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=(
-                f"Workflow '{workflow_id}' is already registered "
-                f"on engine '{registration_in.engine}'."
-            ),
-        )
-
-    registration = WorkflowRegistration(
-        workflow_id=workflow.id,
-        engine=registration_in.engine,
-        external_id=registration_in.external_id,
-        created_by=created_by,
-    )
-
-    session.add(registration)
-    session.commit()
-    session.refresh(registration)
-    return registration
-
-
-def get_workflow_registrations(session: Session, workflow_id: str) -> list[WorkflowRegistration]:
-    """List all platform registrations for a workflow."""
-    workflow = get_workflow_by_id(session, workflow_id)
-    registrations = session.exec(
-        select(WorkflowRegistration).where(WorkflowRegistration.workflow_id == workflow.id)
-    ).all()
-    return registrations
-
-
-def delete_workflow_registration(session: Session, workflow_id: str, registration_id: str) -> None:
-    """Remove a workflow platform registration."""
-    workflow = get_workflow_by_id(session, workflow_id)
-    registration = session.exec(
-        select(WorkflowRegistration).where(
-            WorkflowRegistration.id == UUID(registration_id),
-            WorkflowRegistration.workflow_id == workflow.id,
-        )
-    ).first()
-    if not registration:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Registration '{registration_id}' not found for workflow '{workflow_id}'.",
-        )
-    session.delete(registration)
-    session.commit()
 
 
 # ---------------------------------------------------------------------------

@@ -2,7 +2,6 @@
 Workflow Models
 
 Workflow — Platform-agnostic workflow definition
-WorkflowRegistration — Platform-specific registration of a workflow
 WorkflowRun — Execution record of a workflow on a specific platform
 WorkflowAttribute / WorkflowRunAttribute — Key-value metadata
 """
@@ -10,7 +9,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import List
 
-from sqlmodel import Field, Relationship, SQLModel, UniqueConstraint
+from sqlmodel import Field, Relationship, SQLModel
 
 
 # ---------------------------------------------------------------------------
@@ -48,26 +47,7 @@ class Workflow(SQLModel, table=True):
 
     # Relationships
     attributes: List[WorkflowAttribute] | None = Relationship(back_populates="workflow")
-    registrations: List["WorkflowRegistration"] | None = Relationship(back_populates="workflow")
     runs: List["WorkflowRun"] | None = Relationship(back_populates="workflow")
-
-
-class WorkflowRegistration(SQLModel, table=True):
-    """Platform-specific registration of a workflow (e.g., on Arvados or SevenBridges)."""
-    __tablename__ = "workflowregistration"
-    __table_args__ = (
-        UniqueConstraint("workflow_id", "engine", name="uq_workflow_engine"),
-    )
-
-    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
-    workflow_id: uuid.UUID = Field(foreign_key="workflow.id")
-    engine: str = Field(foreign_key="platform.name")
-    external_id: str  # Workflow identifier on the external platform
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    created_by: str
-
-    # Relationships
-    workflow: Workflow = Relationship(back_populates="registrations")
 
 
 class WorkflowRunAttribute(SQLModel, table=True):
@@ -118,25 +98,6 @@ class WorkflowPublic(SQLModel):
     created_at: datetime
     created_by: str
     attributes: List[Attribute] | None = None
-    registrations: List["WorkflowRegistrationPublic"] | None = None
-
-
-# ---------------------------------------------------------------------------
-# Request / Response models — WorkflowRegistration
-# ---------------------------------------------------------------------------
-
-class WorkflowRegistrationCreate(SQLModel):
-    engine: str
-    external_id: str
-
-
-class WorkflowRegistrationPublic(SQLModel):
-    id: uuid.UUID
-    workflow_id: uuid.UUID
-    engine: str
-    external_id: str
-    created_at: datetime
-    created_by: str
 
 
 # ---------------------------------------------------------------------------

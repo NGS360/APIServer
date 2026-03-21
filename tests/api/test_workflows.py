@@ -32,7 +32,6 @@ def test_get_workflows(client: TestClient, session: Session):
     assert wf["definition_uri"] == "s3://my-bucket/workflows/test-workflow.zip"
     assert wf["created_by"] == "testuser"
     assert "version" in wf
-    assert "registrations" in wf
 
 
 def test_get_workflow_by_id(client: TestClient, session: Session):

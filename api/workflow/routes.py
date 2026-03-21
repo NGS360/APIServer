@@ -1,7 +1,7 @@
 """
 Routes/endpoints for the Workflows API
 
-Covers Workflow CRUD, WorkflowRegistration, and WorkflowRun endpoints.
+Covers Workflow CRUD and WorkflowRun endpoints.
 """
 
 from typing import List, Literal
@@ -12,8 +12,6 @@ from api.auth.deps import CurrentUser
 from api.workflow.models import (
     WorkflowCreate,
     WorkflowPublic,
-    WorkflowRegistrationCreate,
-    WorkflowRegistrationPublic,
     WorkflowRunCreate,
     WorkflowRunPublic,
     WorkflowRunsPublic,
@@ -84,82 +82,6 @@ def get_workflow_by_id(
         session=session, workflow_id=workflow_id
     )
     return services.workflow_to_public(workflow)
-
-
-# ---------------------------------------------------------------------------
-# WorkflowRegistration
-# ---------------------------------------------------------------------------
-
-@router.post(
-    "/{workflow_id}/registrations",
-    response_model=WorkflowRegistrationPublic,
-    tags=["Workflow Endpoints"],
-    status_code=status.HTTP_201_CREATED,
-)
-def create_workflow_registration(
-    session: SessionDep,
-    user: CurrentUser,
-    workflow_id: str,
-    registration_in: WorkflowRegistrationCreate,
-) -> WorkflowRegistrationPublic:
-    """Register a workflow on a specific platform."""
-    reg = services.create_workflow_registration(
-        session=session,
-        workflow_id=workflow_id,
-        registration_in=registration_in,
-        created_by=user.username,
-    )
-    return WorkflowRegistrationPublic(
-        id=reg.id,
-        workflow_id=reg.workflow_id,
-        engine=reg.engine,
-        external_id=reg.external_id,
-        created_at=reg.created_at,
-        created_by=reg.created_by,
-    )
-
-
-@router.get(
-    "/{workflow_id}/registrations",
-    response_model=List[WorkflowRegistrationPublic],
-    tags=["Workflow Endpoints"],
-)
-def get_workflow_registrations(
-    session: SessionDep, workflow_id: str
-) -> List[WorkflowRegistrationPublic]:
-    """List platform registrations for a workflow."""
-    regs = services.get_workflow_registrations(
-        session=session, workflow_id=workflow_id
-    )
-    return [
-        WorkflowRegistrationPublic(
-            id=r.id,
-            workflow_id=r.workflow_id,
-            engine=r.engine,
-            external_id=r.external_id,
-            created_at=r.created_at,
-            created_by=r.created_by,
-        )
-        for r in regs
-    ]
-
-
-@router.delete(
-    "/{workflow_id}/registrations/{registration_id}",
-    status_code=status.HTTP_204_NO_CONTENT,
-    tags=["Workflow Endpoints"],
-)
-def delete_workflow_registration(
-    session: SessionDep,
-    workflow_id: str,
-    registration_id: str,
-) -> None:
-    """Remove a platform registration."""
-    services.delete_workflow_registration(
-        session=session,
-        workflow_id=workflow_id,
-        registration_id=registration_id,
-    )
 
 
 # ---------------------------------------------------------------------------
