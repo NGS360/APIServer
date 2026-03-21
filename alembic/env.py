@@ -22,7 +22,7 @@ from api.project.models import Project
 from api.runs.models import SequencingRun, SampleSequencingRun
 from api.vendors.models import Vendor
 from api.workflow.models import (
-    Workflow, WorkflowAttribute, WorkflowRegistration,
+    Workflow, WorkflowAttribute,
     WorkflowRun, WorkflowRunAttribute,
 )
 from api.pipeline.models import Pipeline, PipelineAttribute, PipelineWorkflow
