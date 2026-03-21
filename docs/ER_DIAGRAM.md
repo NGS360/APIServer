@@ -307,7 +307,6 @@ erDiagram
     %% Workflows & Platforms
     %% ==========================================
     
-    Platform ||--o{ WorkflowRegistration : "hosts"
     Platform ||--o{ WorkflowRun : "executes"
     
     Platform {
@@ -315,7 +314,6 @@ erDiagram
     }
     
     Workflow ||--o{ WorkflowAttribute : "has"
-    Workflow ||--o{ WorkflowRegistration : "registered on"
     Workflow ||--o{ WorkflowRun : "has executions"
     Workflow ||--o{ PipelineWorkflow : "member of"
     
@@ -333,15 +331,6 @@ erDiagram
         uuid workflow_id FK
         string key
         string value
-    }
-    
-    WorkflowRegistration {
-        uuid id PK
-        uuid workflow_id FK
-        string engine FK
-        string external_id
-        datetime created_at
-        string created_by
     }
     
     WorkflowRun ||--o{ WorkflowRunAttribute : "has"
@@ -461,7 +450,6 @@ erDiagram
 - **Platform**: Registered workflow execution platforms (e.g., Arvados, SevenBridges)
 - **Workflow**: Platform-agnostic workflow definitions
 - **WorkflowAttribute**: Key-value attributes for workflows
-- **WorkflowRegistration**: Platform-specific registrations of workflows (links workflow to platform)
 - **WorkflowRun**: Execution records of workflows on specific platforms (provenance tracking)
 - **WorkflowRunAttribute**: Key-value metadata for workflow runs
 
@@ -486,10 +474,8 @@ erDiagram
 9d. **QCMetric.sequencing_run_id → SequencingRun**: Direct FK — which sequencing run the metric is about (e.g., demux stats)
 9e. **QCMetric.workflow_run_id → WorkflowRun**: Direct FK — which workflow execution the metric is about (e.g., runtime stats)
 10. **User → Authentication Tokens**: One-to-many (users can have multiple active sessions and tokens)
-11. **Workflow → WorkflowRegistration → Platform**: Many-to-many (workflows can be registered on multiple platforms)
-12. **Workflow → WorkflowRun**: One-to-many (workflows have multiple execution instances)
-13. **Platform → WorkflowRegistration**: One-to-many (platforms host multiple workflow registrations)
-14. **Platform → WorkflowRun**: One-to-many (platforms execute multiple workflow runs)
+11. **Workflow → WorkflowRun**: One-to-many (workflows have multiple execution instances)
+12. **Platform → WorkflowRun**: One-to-many (platforms execute multiple workflow runs)
 
 ## Unique Constraints
 
@@ -503,7 +489,6 @@ erDiagram
 - **FileSample**: `(file_id, sample_id)` - Prevents duplicate file-sample associations
 - **QCMetricSample**: `(qc_metric_id, sample_id)` - Prevents duplicate metric-sample associations
 - **SampleSequencingRun**: `(sample_id, sequencing_run_id)` - Prevents duplicate sample-run associations
-- **WorkflowRegistration**: `(workflow_id, engine)` - One registration per workflow per platform
 - **ProjectAttribute**: `(project_id, key)` - One value per key per project
 - **SampleAttribute**: `(sample_id, key)` - One value per key per sample
 
@@ -531,7 +516,6 @@ The **SampleSequencingRun** junction table tracks which samples were processed i
 ### Workflow Provenance
 The workflow system supports full provenance tracking:
 - **Workflow**: Platform-agnostic definition
-- **WorkflowRegistration**: Links workflows to specific platforms (e.g., workflow X registered on Arvados)
 - **WorkflowRun**: Records each execution with platform-specific external IDs and metadata
 
 ### Flexible Metadata
