@@ -670,6 +670,7 @@ def get_project_samples(
     # Map to public samples
     public_samples = [
         SamplePublic(
+            id=sample.id,
             sample_id=sample.sample_id,
             project_id=sample.project_id,
             attributes=sample.attributes,
@@ -755,6 +756,7 @@ def update_sample_in_project(
     session.refresh(sample)
 
     return SamplePublic(
+        id=sample.id,
         sample_id=sample.sample_id,
         project_id=sample.project_id,
         attributes=[

@@ -154,6 +154,10 @@ def test_add_sample_to_project(client: TestClient, session: Session):
     )
     assert response.status_code == 201
     assert response.json()["sample_id"] == "Sample_1"
+    assert "id" in response.json()
+    # Verify the id is a valid UUID string
+    import uuid
+    uuid.UUID(response.json()["id"])
 
 
 def test_fail_to_add__sample_with_duplicate_attributes(
