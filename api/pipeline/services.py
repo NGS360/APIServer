@@ -248,7 +248,7 @@ def pipeline_to_public(session: Session, pipeline: Pipeline) -> PipelinePublic:
             select(Workflow).where(Workflow.id.in_(wf_ids))
         ).all()
         workflows = [
-            WorkflowSummary(id=wf.id, name=wf.name, version=wf.version)
+            WorkflowSummary(id=wf.id, name=wf.name)
             for wf in wf_rows
         ]
 
