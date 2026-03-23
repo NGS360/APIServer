@@ -315,15 +315,16 @@ erDiagram
     }
     
     Workflow ||--o{ WorkflowAttribute : "has"
-    Workflow ||--o{ WorkflowRegistration : "registered on"
-    Workflow ||--o{ WorkflowRun : "has executions"
+    Workflow ||--o{ WorkflowVersion : "has versions"
+    Workflow ||--o{ WorkflowVersionAlias : "has aliases"
     Workflow ||--o{ PipelineWorkflow : "member of"
+    WorkflowVersion ||--o{ WorkflowRegistration : "registered on"
+    WorkflowVersion ||--o{ WorkflowRun : "has executions"
+    WorkflowVersionAlias }o--|| WorkflowVersion : "points to"
     
     Workflow {
         uuid id PK
         string name
-        string version
-        string definition_uri
         datetime created_at
         string created_by
     }
@@ -335,9 +336,27 @@ erDiagram
         string value
     }
     
-    WorkflowRegistration {
+    WorkflowVersion {
         uuid id PK
         uuid workflow_id FK
+        string version
+        string definition_uri
+        datetime created_at
+        string created_by
+    }
+    
+    WorkflowVersionAlias {
+        uuid id PK
+        uuid workflow_id FK
+        enum alias
+        uuid workflow_version_id FK
+        datetime created_at
+        string created_by
+    }
+    
+    WorkflowRegistration {
+        uuid id PK
+        uuid workflow_version_id FK
         string engine FK
         string external_id
         datetime created_at
@@ -348,7 +367,7 @@ erDiagram
     
     WorkflowRun {
         uuid id PK
-        uuid workflow_id FK
+        uuid workflow_version_id FK
         string engine FK
         string external_run_id
         datetime created_at
@@ -459,10 +478,12 @@ erDiagram
 ### Workflows & Platforms
 
 - **Platform**: Registered workflow execution platforms (e.g., Arvados, SevenBridges)
-- **Workflow**: Platform-agnostic workflow definitions
+- **Workflow**: Platform-agnostic workflow identity (name only)
 - **WorkflowAttribute**: Key-value attributes for workflows
-- **WorkflowRegistration**: Platform-specific registrations of workflows (links workflow to platform)
-- **WorkflowRun**: Execution records of workflows on specific platforms (provenance tracking)
+- **WorkflowVersion**: Versioned workflow definitions (version string + definition URI)
+- **WorkflowVersionAlias**: Named pointers (production/development) to specific versions
+- **WorkflowRegistration**: Platform-specific registrations of workflow versions (links version to platform)
+- **WorkflowRun**: Execution records of workflow versions on specific platforms (provenance tracking)
 - **WorkflowRunAttribute**: Key-value metadata for workflow runs
 
 ### Batch Jobs
@@ -486,10 +507,13 @@ erDiagram
 9d. **QCMetric.sequencing_run_id → SequencingRun**: Direct FK — which sequencing run the metric is about (e.g., demux stats)
 9e. **QCMetric.workflow_run_id → WorkflowRun**: Direct FK — which workflow execution the metric is about (e.g., runtime stats)
 10. **User → Authentication Tokens**: One-to-many (users can have multiple active sessions and tokens)
-11. **Workflow → WorkflowRegistration → Platform**: Many-to-many (workflows can be registered on multiple platforms)
-12. **Workflow → WorkflowRun**: One-to-many (workflows have multiple execution instances)
-13. **Platform → WorkflowRegistration**: One-to-many (platforms host multiple workflow registrations)
-14. **Platform → WorkflowRun**: One-to-many (platforms execute multiple workflow runs)
+11. **Workflow → WorkflowVersion**: One-to-many (a workflow has multiple versions)
+12. **WorkflowVersion → WorkflowVersionAlias**: One-to-many (a version can hold aliases such as `production` or `development`)
+13. **WorkflowVersion → WorkflowRegistration → Platform**: Many-to-many (versions are registered on specific platforms)
+14. **WorkflowVersion → WorkflowRun**: One-to-many (runs execute a specific version)
+15. **Platform → WorkflowRegistration**: One-to-many (platforms host multiple workflow registrations)
+16. **Platform → WorkflowRun**: One-to-many (platforms execute multiple workflow runs)
+17. **Pipeline → PipelineWorkflow → Workflow**: Many-to-many (version-agnostic grouping)
 
 ## Unique Constraints
 
@@ -503,7 +527,8 @@ erDiagram
 - **FileSample**: `(file_id, sample_id)` - Prevents duplicate file-sample associations
 - **QCMetricSample**: `(qc_metric_id, sample_id)` - Prevents duplicate metric-sample associations
 - **SampleSequencingRun**: `(sample_id, sequencing_run_id)` - Prevents duplicate sample-run associations
-- **WorkflowRegistration**: `(workflow_id, engine)` - One registration per workflow per platform
+- **WorkflowRegistration**: `(workflow_version_id, engine)` - One registration per version per platform
+- **WorkflowVersionAlias**: `(workflow_id, alias)` - One alias name per workflow
 - **ProjectAttribute**: `(project_id, key)` - One value per key per project
 - **SampleAttribute**: `(sample_id, key)` - One value per key per sample
 
@@ -530,9 +555,11 @@ The **SampleSequencingRun** junction table tracks which samples were processed i
 
 ### Workflow Provenance
 The workflow system supports full provenance tracking:
-- **Workflow**: Platform-agnostic definition
-- **WorkflowRegistration**: Links workflows to specific platforms (e.g., workflow X registered on Arvados)
-- **WorkflowRun**: Records each execution with platform-specific external IDs and metadata
+- **Workflow**: Platform-agnostic identity (name + attributes)
+- **WorkflowVersion**: Immutable snapshot with a `version` string and `definition_uri`
+- **WorkflowVersionAlias**: Labels a specific version as `production` or `development` (re-pointable)
+- **WorkflowRegistration**: Links a version to a specific platform (e.g., version 1.2.0 registered on Arvados)
+- **WorkflowRun**: Records each execution against a specific version, with platform-specific external IDs and metadata
 
 ### Flexible Metadata
 Multiple tables use key-value pairs for extensible metadata:

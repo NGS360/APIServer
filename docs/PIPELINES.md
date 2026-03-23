@@ -56,9 +56,9 @@ The relationship between Pipeline and Workflow is many-to-many: a workflow can b
 
 Pipeline membership is currently unordered — the workflows in a pipeline are a **set**, not a sequence. This simplifies the initial implementation. If workflow ordering within a pipeline is needed in the future, a `position` column can be added to `PipelineWorkflow`.
 
-**Relationship to Workflow Registrations and Runs**
+**Relationship to Workflow Versions, Registrations, and Runs**
 
-Pipelines are purely organizational. They do not directly affect how workflows are registered on platforms or how runs are tracked. A pipeline groups workflows; each workflow independently manages its own registrations and runs. See [WORKFLOWS.md](./WORKFLOWS.md) for details on registrations and runs.
+Pipelines are purely organizational and **version-agnostic** — a pipeline references workflows, not specific workflow versions. They do not directly affect how workflow versions are registered on platforms or how runs are tracked. A pipeline groups workflows; each workflow independently manages its own versions, aliases, registrations, and runs. See [WORKFLOWS.md](./WORKFLOWS.md) for details on versions, aliases, registrations, and runs.
 
 ## Database Models
 
