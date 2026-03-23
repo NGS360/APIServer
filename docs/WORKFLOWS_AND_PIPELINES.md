@@ -1,6 +1,6 @@
 # Workflows, Pipelines & Execution Provenance
 
-This document describes the Workflow and Pipeline systems — how bioinformatics workflows are defined, versioned, registered on compute platforms, executed, and organised into named collections.
+This document describes the Workflow and Pipeline systems — how bioinformatics workflows are defined, versioned, deployed on compute platforms, executed, and organised into named collections.
 
 ## Overview
 
@@ -9,7 +9,7 @@ The system provides:
 - **Platform-agnostic workflow identity**: Define a workflow once by name
 - **Explicit versioning**: Each version carries its own `definition_uri` (WDL/CWL/Nextflow file) and semantic version string
 - **Version aliases**: Mark specific versions as `production` or `development` — like AWS Lambda aliases
-- **Cross-platform registration**: Register a specific workflow version on multiple execution engines (Arvados, SevenBridges, AWS Batch, etc.)
+- **Cross-platform deployment**: Register a specific workflow version on multiple execution engines (Arvados, SevenBridges, AWS Batch, etc.)
 - **Execution provenance**: Record workflow runs with engine-specific run IDs and key-value attributes for file/QC provenance tracking
 - **Pipeline grouping**: Organise related workflows into named, versioned pipelines (version-agnostic — pipelines reference workflows, not specific versions)
 - **Flexible metadata**: Key-value attributes on workflows, workflow runs, and pipelines
@@ -22,19 +22,19 @@ The system provides:
 
 ```mermaid
 erDiagram
-    Workflow ||--o{ WorkflowVersion : has_versions
     Workflow ||--o{ WorkflowAttribute : has_attributes
+    Workflow ||--o{ WorkflowVersion : has_versions
     Workflow ||--o{ WorkflowVersionAlias : has_aliases
     WorkflowVersionAlias }o--|| WorkflowVersion : points_to
-    WorkflowVersion ||--o{ WorkflowRegistration : registered_on
+    WorkflowVersion ||--o{ WorkflowDeployment : deployed_on
     WorkflowVersion ||--o{ WorkflowRun : executed_as
-    Platform ||--o{ WorkflowRegistration : engine_FK
+    Platform ||--o{ WorkflowDeployment : engine_FK
     Platform ||--o{ WorkflowRun : engine_FK
     WorkflowRun ||--o{ WorkflowRunAttribute : has_attributes
 
-    Pipeline ||--o{ PipelineAttribute : has_attributes
     Pipeline ||--o{ PipelineWorkflow : contains
     Workflow ||--o{ PipelineWorkflow : belongs_to
+    Pipeline ||--o{ PipelineAttribute : has_attributes
 
     Platform {
         string name PK
@@ -72,7 +72,7 @@ erDiagram
         string created_by
     }
 
-    WorkflowRegistration {
+    WorkflowDeployment {
         uuid id PK
         uuid workflow_version_id FK
         string engine FK
@@ -135,7 +135,7 @@ A workflow definition evolves over time. The `Workflow` table captures the logic
 
 Aliases like `production` and `development` let teams mark which version should be used without hardcoding version strings. The `WorkflowVersionAlias` table uses a fixed enum (`production`, `development`) with a `UNIQUE(workflow_id, alias)` constraint — each workflow can have at most one production pointer and one development pointer. Moving an alias is an upsert, providing an audit trail of who changed it and when.
 
-**Why do WorkflowRegistration and WorkflowRun point to WorkflowVersion?**
+**Why do WorkflowDeployment and WorkflowRun point to WorkflowVersion?**
 
 You register and execute a *specific version* of a workflow. Different versions may have different external IDs on the same platform. The FK to `workflowversion.id` captures this precisely. You can still navigate to the parent workflow via `WorkflowVersion.workflow_id`.
 
@@ -153,7 +153,7 @@ Pipeline membership is currently unordered — the workflows in a pipeline are a
 
 **Pipelines are version-agnostic**
 
-Pipelines are purely organisational — a pipeline references workflows, not specific workflow versions. They do not directly affect how workflow versions are registered on platforms or how runs are tracked. A pipeline groups workflows; each workflow independently manages its own versions, aliases, registrations, and runs.
+Pipelines are purely organisational — a pipeline references workflows, not specific workflow versions. They do not directly affect how workflow versions are deployed on platforms or how runs are tracked. A pipeline groups workflows; each workflow independently manages its own versions, aliases, deployments, and runs.
 
 ## Database Models
 
@@ -211,15 +211,15 @@ Named pointer to a specific workflow version.
 
 ### Platform
 
-A registered workflow execution engine. Single-column reference table — the `name` is the PK. Must be created before workflows can be registered or run on a given engine.
+A registered workflow execution engine. Single-column reference table — the `name` is the PK. Must be created before workflows can be deployed or run on a given engine.
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `name` | string | yes | Primary key — e.g., `"Arvados"`, `"SevenBridges"` |
 
-### WorkflowRegistration
+### WorkflowDeployment
 
-Platform-specific registration of a workflow version. The `engine` column is a FK to `platform.name`.
+Platform-specific deployment of a workflow version. The `engine` column is a FK to `platform.name`.
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
@@ -230,7 +230,7 @@ Platform-specific registration of a workflow version. The `engine` column is a F
 | `created_at` | datetime | auto | UTC timestamp of creation |
 | `created_by` | string | yes | Username of the creator |
 
-**Constraints:** `UNIQUE(workflow_version_id, engine)` — one registration per engine per version.
+**Constraints:** `UNIQUE(workflow_version_id, engine)` — one deployment per engine per version.
 
 ### WorkflowRun
 
@@ -379,7 +379,7 @@ POST /workflows/{workflow_id}/versions
   "definition_uri": "s3://workflows/variant-calling-v2.1.wdl",
   "created_at": "2026-03-01T12:05:00Z",
   "created_by": "jdoe",
-  "registrations": []
+  "deployments": []
 }
 ```
 
@@ -401,7 +401,7 @@ Returns all versions of a workflow, ordered by creation date (newest first).
 GET /workflows/{workflow_id}/versions/{version_id}
 ```
 
-Returns a single version with its registrations.
+Returns a single version with its deployments.
 
 ### WorkflowVersionAlias Endpoints
 
@@ -445,9 +445,16 @@ Moving an alias (e.g., changing production from v2.0 to v2.1) is an upsert — s
 
 ```
 GET /workflows/{workflow_id}/aliases
+GET /workflows/{workflow_id}/aliases?alias=production
 ```
 
-Returns all aliases for a workflow.
+Returns aliases for a workflow. Optional query parameter:
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `alias` | `VersionAlias` | no | Filter to a specific alias (`production` or `development`) |
+
+When `alias` is provided, the response contains 0 or 1 elements.
 
 #### Delete Alias
 
@@ -457,14 +464,57 @@ DELETE /workflows/{workflow_id}/aliases/{alias}
 
 **Response:** `204 No Content`
 
-### WorkflowRegistration Endpoints
+### WorkflowDeployment Endpoints
 
-Registrations are nested under a specific version.
-
-#### Register Version on Platform
+#### List Deployments (Workflow-Level, with Filters)
 
 ```
-POST /workflows/{workflow_id}/versions/{version_id}/registrations
+GET /workflows/{workflow_id}/deployments
+GET /workflows/{workflow_id}/deployments?alias=production
+GET /workflows/{workflow_id}/deployments?engine=Arvados
+GET /workflows/{workflow_id}/deployments?alias=production&engine=Arvados
+```
+
+List deployments across all versions of a workflow. Optional query parameters allow server-side filtering:
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `alias` | `VersionAlias` | no | Resolve alias to its version, return only that version's deployments |
+| `engine` | `str` | no | Filter by engine/platform name |
+
+**Behavior matrix:**
+
+| alias | engine | Result |
+|-------|--------|--------|
+| omitted | omitted | All deployments across all versions |
+| `production` | omitted | All deployments for the production version |
+| omitted | `Arvados` | All Arvados deployments across all versions |
+| `production` | `Arvados` | The single Arvados deployment for production (0 or 1 items) |
+
+**Response** (`200 OK`):
+
+```json
+[
+  {
+    "id": "...",
+    "workflow_version_id": "v1v2v3v4-...",
+    "engine": "Arvados",
+    "external_id": "zzzzz-7fd4e-abc123def456",
+    "created_at": "2026-03-01T12:05:00Z",
+    "created_by": "jdoe"
+  }
+]
+```
+
+**Errors:**
+- `404 Not Found` — Workflow does not exist, or `alias` is specified but not set for this workflow.
+
+#### Deploy Version on Platform (Nested Under Version)
+
+Deployments can also be created and managed under a specific version.
+
+```
+POST /workflows/{workflow_id}/versions/{version_id}/deployments
 ```
 
 **Request Body:**
@@ -493,20 +543,25 @@ POST /workflows/{workflow_id}/versions/{version_id}/registrations
 
 **Errors:**
 - `400 Bad Request` — Engine is not a registered platform.
-- `409 Conflict` — A registration for the same engine already exists for this version.
+- `409 Conflict` — A deployment for the same engine already exists for this version.
 
-#### List Registrations
-
-```
-GET /workflows/{workflow_id}/versions/{version_id}/registrations
-```
-
-Returns all platform registrations for a version.
-
-#### Delete Registration
+#### List Deployments (Version-Level)
 
 ```
-DELETE /workflows/{workflow_id}/versions/{version_id}/registrations/{registration_id}
+GET /workflows/{workflow_id}/versions/{version_id}/deployments
+GET /workflows/{workflow_id}/versions/{version_id}/deployments?engine=Arvados
+```
+
+Returns platform deployments for a version. Optional query parameter:
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `engine` | `str` | no | Filter by engine/platform name |
+
+#### Delete Deployment
+
+```
+DELETE /workflows/{workflow_id}/versions/{version_id}/deployments/{deployment_id}
 ```
 
 **Response:** `204 No Content`
@@ -706,7 +761,7 @@ DELETE /pipelines/{pipeline_id}/workflows/{workflow_id}
 | `api/platforms/models.py` | Platform table model and schemas |
 | `api/platforms/services.py` | Platform CRUD services |
 | `api/platforms/routes.py` | Platform endpoint handlers |
-| `api/workflow/models.py` | Workflow/Version/Alias/Registration/Run table definitions and schemas |
+| `api/workflow/models.py` | Workflow/Version/Alias/Deployment/Run table definitions and schemas |
 | `api/workflow/services.py` | Workflow business logic (create, list, version/alias CRUD, engine validation) |
 | `api/workflow/routes.py` | Workflow endpoint handlers |
 | `api/pipeline/models.py` | Pipeline/PipelineAttribute/PipelineWorkflow tables and schemas |
@@ -716,6 +771,6 @@ DELETE /pipelines/{pipeline_id}/workflows/{workflow_id}
 | `tests/api/test_workflows.py` | Workflow CRUD tests |
 | `tests/api/test_workflow_versions.py` | Version CRUD tests |
 | `tests/api/test_workflow_aliases.py` | Alias CRUD tests |
-| `tests/api/test_workflow_registrations.py` | Registration endpoint tests (incl. engine validation) |
+| `tests/api/test_workflow_deployments.py` | Deployment endpoint tests (incl. engine validation) |
 | `tests/api/test_workflow_runs.py` | Workflow run endpoint tests (incl. engine validation) |
 | `tests/api/test_pipeline_entity.py` | Pipeline CRUD and workflow association tests (13 tests) |

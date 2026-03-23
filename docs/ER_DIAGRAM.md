@@ -307,7 +307,7 @@ erDiagram
     %% Workflows & Platforms
     %% ==========================================
     
-    Platform ||--o{ WorkflowRegistration : "hosts"
+    Platform ||--o{ WorkflowDeployment : "hosts"
     Platform ||--o{ WorkflowRun : "executes"
     
     Platform {
@@ -318,7 +318,7 @@ erDiagram
     Workflow ||--o{ WorkflowVersion : "has versions"
     Workflow ||--o{ WorkflowVersionAlias : "has aliases"
     Workflow ||--o{ PipelineWorkflow : "member of"
-    WorkflowVersion ||--o{ WorkflowRegistration : "registered on"
+    WorkflowVersion ||--o{ WorkflowDeployment : "deployed on"
     WorkflowVersion ||--o{ WorkflowRun : "has executions"
     WorkflowVersionAlias }o--|| WorkflowVersion : "points to"
     
@@ -354,7 +354,7 @@ erDiagram
         string created_by
     }
     
-    WorkflowRegistration {
+    WorkflowDeployment {
         uuid id PK
         uuid workflow_version_id FK
         string engine FK
@@ -482,7 +482,7 @@ erDiagram
 - **WorkflowAttribute**: Key-value attributes for workflows
 - **WorkflowVersion**: Versioned workflow definitions (version string + definition URI)
 - **WorkflowVersionAlias**: Named pointers (production/development) to specific versions
-- **WorkflowRegistration**: Platform-specific registrations of workflow versions (links version to platform)
+- **WorkflowDeployment**: Platform-specific deployments of workflow versions (links version to platform)
 - **WorkflowRun**: Execution records of workflow versions on specific platforms (provenance tracking)
 - **WorkflowRunAttribute**: Key-value metadata for workflow runs
 
@@ -509,9 +509,9 @@ erDiagram
 10. **User → Authentication Tokens**: One-to-many (users can have multiple active sessions and tokens)
 11. **Workflow → WorkflowVersion**: One-to-many (a workflow has multiple versions)
 12. **WorkflowVersion → WorkflowVersionAlias**: One-to-many (a version can hold aliases such as `production` or `development`)
-13. **WorkflowVersion → WorkflowRegistration → Platform**: Many-to-many (versions are registered on specific platforms)
+13. **WorkflowVersion → WorkflowDeployment → Platform**: Many-to-many (versions are deployed on specific platforms)
 14. **WorkflowVersion → WorkflowRun**: One-to-many (runs execute a specific version)
-15. **Platform → WorkflowRegistration**: One-to-many (platforms host multiple workflow registrations)
+15. **Platform → WorkflowDeployment**: One-to-many (platforms host multiple workflow deployments)
 16. **Platform → WorkflowRun**: One-to-many (platforms execute multiple workflow runs)
 17. **Pipeline → PipelineWorkflow → Workflow**: Many-to-many (version-agnostic grouping)
 
@@ -527,7 +527,7 @@ erDiagram
 - **FileSample**: `(file_id, sample_id)` - Prevents duplicate file-sample associations
 - **QCMetricSample**: `(qc_metric_id, sample_id)` - Prevents duplicate metric-sample associations
 - **SampleSequencingRun**: `(sample_id, sequencing_run_id)` - Prevents duplicate sample-run associations
-- **WorkflowRegistration**: `(workflow_version_id, engine)` - One registration per version per platform
+- **WorkflowDeployment**: `(workflow_version_id, engine)` - One deployment per version per platform
 - **WorkflowVersionAlias**: `(workflow_id, alias)` - One alias name per workflow
 - **ProjectAttribute**: `(project_id, key)` - One value per key per project
 - **SampleAttribute**: `(sample_id, key)` - One value per key per sample
@@ -558,7 +558,7 @@ The workflow system supports full provenance tracking:
 - **Workflow**: Platform-agnostic identity (name + attributes)
 - **WorkflowVersion**: Immutable snapshot with a `version` string and `definition_uri`
 - **WorkflowVersionAlias**: Labels a specific version as `production` or `development` (re-pointable)
-- **WorkflowRegistration**: Links a version to a specific platform (e.g., version 1.2.0 registered on Arvados)
+- **WorkflowDeployment**: Links a version to a specific platform (e.g., version 1.2.0 deployed on Arvados)
 - **WorkflowRun**: Records each execution against a specific version, with platform-specific external IDs and metadata
 
 ### Flexible Metadata

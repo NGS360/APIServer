@@ -2,7 +2,7 @@
 Workflow Service
 
 CRUD operations for Workflow, WorkflowVersion, WorkflowVersionAlias,
-WorkflowRegistration, and WorkflowRun entities.
+WorkflowDeployment, and WorkflowRun entities.
 """
 from uuid import UUID
 
@@ -18,9 +18,9 @@ from api.workflow.models import (
     WorkflowAliasSummary,
     WorkflowCreate,
     WorkflowPublic,
-    WorkflowRegistration,
-    WorkflowRegistrationCreate,
-    WorkflowRegistrationPublic,
+    WorkflowDeployment,
+    WorkflowDeploymentCreate,
+    WorkflowDeploymentPublic,
     WorkflowRun,
     WorkflowRunAttribute,
     WorkflowRunCreate,
@@ -274,10 +274,10 @@ def workflow_version_to_public(
     version: WorkflowVersion,
 ) -> WorkflowVersionPublic:
     """Convert a WorkflowVersion ORM object to public."""
-    registrations = None
-    if version.registrations:
-        registrations = [
-            WorkflowRegistrationPublic(
+    deployments = None
+    if version.deployments:
+        deployments = [
+            WorkflowDeploymentPublic(
                 id=r.id,
                 workflow_version_id=r.workflow_version_id,
                 engine=r.engine,
@@ -285,7 +285,7 @@ def workflow_version_to_public(
                 created_at=r.created_at,
                 created_by=r.created_by,
             )
-            for r in version.registrations
+            for r in version.deployments
         ]
 
     return WorkflowVersionPublic(
@@ -295,7 +295,7 @@ def workflow_version_to_public(
         definition_uri=version.definition_uri,
         created_at=version.created_at,
         created_by=version.created_by,
-        registrations=registrations,
+        deployments=deployments,
     )
 
 
@@ -359,15 +359,18 @@ def set_workflow_version_alias(
 
 
 def get_workflow_version_aliases(
-    session: Session, workflow_id: str,
+    session: Session,
+    workflow_id: str,
+    alias: VersionAlias | None = None,
 ) -> list[WorkflowVersionAlias]:
-    """List all aliases for a workflow."""
+    """List aliases for a workflow, optionally filtered by alias name."""
     workflow = get_workflow_by_id(session, workflow_id)
-    aliases = session.exec(
-        select(WorkflowVersionAlias).where(
-            WorkflowVersionAlias.workflow_id == workflow.id,
-        )
-    ).all()
+    stmt = select(WorkflowVersionAlias).where(
+        WorkflowVersionAlias.workflow_id == workflow.id,
+    )
+    if alias is not None:
+        stmt = stmt.where(WorkflowVersionAlias.alias == alias)
+    aliases = session.exec(stmt).all()
     return aliases
 
 
@@ -412,17 +415,17 @@ def alias_to_public(
 
 
 # ---------------------------------------------------------------------------
-# WorkflowRegistration CRUD
+# WorkflowDeployment CRUD
 # ---------------------------------------------------------------------------
 
-def create_workflow_registration(
+def create_workflow_deployment(
     session: Session,
     workflow_id: str,
     version_id: str,
-    registration_in: WorkflowRegistrationCreate,
+    deployment_in: WorkflowDeploymentCreate,
     created_by: str,
-) -> WorkflowRegistration:
-    """Register a workflow version on a specific platform."""
+) -> WorkflowDeployment:
+    """Deploy a workflow version on a specific platform."""
     # Verify workflow exists
     workflow = get_workflow_by_id(session, workflow_id)
 
@@ -443,71 +446,44 @@ def create_workflow_registration(
         )
 
     # Verify engine is a registered platform
-    _validate_engine(session, registration_in.engine)
+    _validate_engine(session, deployment_in.engine)
 
     # Check for duplicate (version_id, engine)
     existing = session.exec(
-        select(WorkflowRegistration).where(
-            WorkflowRegistration.workflow_version_id == version.id,
-            WorkflowRegistration.engine == registration_in.engine,
+        select(WorkflowDeployment).where(
+            WorkflowDeployment.workflow_version_id == version.id,
+            WorkflowDeployment.engine == deployment_in.engine,
         )
     ).first()
     if existing:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=(
-                f"Version '{version_id}' is already registered "
-                f"on engine '{registration_in.engine}'."
+                f"Version '{version_id}' is already deployed "
+                f"on engine '{deployment_in.engine}'."
             ),
         )
 
-    registration = WorkflowRegistration(
+    deployment = WorkflowDeployment(
         workflow_version_id=version.id,
-        engine=registration_in.engine,
-        external_id=registration_in.external_id,
+        engine=deployment_in.engine,
+        external_id=deployment_in.external_id,
         created_by=created_by,
     )
 
-    session.add(registration)
+    session.add(deployment)
     session.commit()
-    session.refresh(registration)
-    return registration
+    session.refresh(deployment)
+    return deployment
 
 
-def get_workflow_registrations(
-    session: Session, workflow_id: str, version_id: str,
-) -> list[WorkflowRegistration]:
-    """List platform registrations for a workflow version."""
-    workflow = get_workflow_by_id(session, workflow_id)
-    version = session.exec(
-        select(WorkflowVersion).where(
-            WorkflowVersion.id == UUID(version_id),
-            WorkflowVersion.workflow_id == workflow.id,
-        )
-    ).first()
-    if not version:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=(
-                f"Version '{version_id}' not found "
-                f"for workflow '{workflow_id}'."
-            ),
-        )
-    registrations = session.exec(
-        select(WorkflowRegistration).where(
-            WorkflowRegistration.workflow_version_id == version.id,
-        )
-    ).all()
-    return registrations
-
-
-def delete_workflow_registration(
+def get_workflow_deployments(
     session: Session,
     workflow_id: str,
     version_id: str,
-    registration_id: str,
-) -> None:
-    """Remove a workflow platform registration."""
+    engine: str | None = None,
+) -> list[WorkflowDeployment]:
+    """List platform deployments for a workflow version."""
     workflow = get_workflow_by_id(session, workflow_id)
     version = session.exec(
         select(WorkflowVersion).where(
@@ -523,21 +499,102 @@ def delete_workflow_registration(
                 f"for workflow '{workflow_id}'."
             ),
         )
-    registration = session.exec(
-        select(WorkflowRegistration).where(
-            WorkflowRegistration.id == UUID(registration_id),
-            WorkflowRegistration.workflow_version_id == version.id,
+    stmt = select(WorkflowDeployment).where(
+        WorkflowDeployment.workflow_version_id == version.id,
+    )
+    if engine is not None:
+        stmt = stmt.where(WorkflowDeployment.engine == engine)
+    deployments = session.exec(stmt).all()
+    return deployments
+
+
+def get_workflow_deployments_for_workflow(
+    session: Session,
+    workflow_id: str,
+    alias: VersionAlias | None = None,
+    engine: str | None = None,
+) -> list[WorkflowDeployment]:
+    """List deployments across versions of a workflow.
+
+    Optional filters:
+    - alias: resolve the alias to a version and restrict to that version
+    - engine: restrict to a specific platform
+    """
+    workflow = get_workflow_by_id(session, workflow_id)
+
+    if alias is not None:
+        # Resolve alias → version_id
+        alias_record = session.exec(
+            select(WorkflowVersionAlias).where(
+                WorkflowVersionAlias.workflow_id == workflow.id,
+                WorkflowVersionAlias.alias == alias,
+            )
+        ).first()
+        if not alias_record:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=(
+                    f"Alias '{alias.value}' is not set "
+                    f"for workflow '{workflow_id}'."
+                ),
+            )
+        version_ids = [alias_record.workflow_version_id]
+    else:
+        # All versions of this workflow
+        version_ids = session.exec(
+            select(WorkflowVersion.id).where(
+                WorkflowVersion.workflow_id == workflow.id,
+            )
+        ).all()
+        if not version_ids:
+            return []
+
+    stmt = select(WorkflowDeployment).where(
+        WorkflowDeployment.workflow_version_id.in_(version_ids),
+    )
+    if engine is not None:
+        stmt = stmt.where(WorkflowDeployment.engine == engine)
+
+    return session.exec(stmt).all()
+
+
+def delete_workflow_deployment(
+    session: Session,
+    workflow_id: str,
+    version_id: str,
+    deployment_id: str,
+) -> None:
+    """Remove a workflow platform deployment."""
+    workflow = get_workflow_by_id(session, workflow_id)
+    version = session.exec(
+        select(WorkflowVersion).where(
+            WorkflowVersion.id == UUID(version_id),
+            WorkflowVersion.workflow_id == workflow.id,
         )
     ).first()
-    if not registration:
+    if not version:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=(
-                f"Registration '{registration_id}' not found "
+                f"Version '{version_id}' not found "
+                f"for workflow '{workflow_id}'."
+            ),
+        )
+    deployment = session.exec(
+        select(WorkflowDeployment).where(
+            WorkflowDeployment.id == UUID(deployment_id),
+            WorkflowDeployment.workflow_version_id == version.id,
+        )
+    ).first()
+    if not deployment:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=(
+                f"Deployment '{deployment_id}' not found "
                 f"for version '{version_id}'."
             ),
         )
-    session.delete(registration)
+    session.delete(deployment)
     session.commit()
 
 

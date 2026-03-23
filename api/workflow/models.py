@@ -4,7 +4,7 @@ Workflow Models
 Workflow — Platform-agnostic workflow identity
 WorkflowVersion — Versioned definition of a workflow (holds version + definition_uri)
 WorkflowVersionAlias — Named pointer (production/development) to a specific version
-WorkflowRegistration — Platform-specific registration of a workflow version
+WorkflowDeployment — Platform-specific deployment of a workflow version
 WorkflowRun — Execution record of a workflow version on a specific platform
 WorkflowAttribute / WorkflowRunAttribute — Key-value metadata
 """
@@ -79,7 +79,7 @@ class WorkflowVersion(SQLModel, table=True):
 
     # Relationships
     workflow: Workflow = Relationship(back_populates="versions")
-    registrations: List["WorkflowRegistration"] | None = Relationship(
+    deployments: List["WorkflowDeployment"] | None = Relationship(
         back_populates="workflow_version",
     )
     runs: List["WorkflowRun"] | None = Relationship(back_populates="workflow_version")
@@ -104,9 +104,9 @@ class WorkflowVersionAlias(SQLModel, table=True):
     workflow_version: WorkflowVersion = Relationship()
 
 
-class WorkflowRegistration(SQLModel, table=True):
-    """Platform-specific registration of a workflow version (e.g., on Arvados or SevenBridges)."""
-    __tablename__ = "workflowregistration"
+class WorkflowDeployment(SQLModel, table=True):
+    """Platform-specific deployment of a workflow version (e.g., on Arvados or SevenBridges)."""
+    __tablename__ = "workflowdeployment"
     __table_args__ = (
         UniqueConstraint("workflow_version_id", "engine", name="uq_workflowversion_engine"),
     )
@@ -119,7 +119,7 @@ class WorkflowRegistration(SQLModel, table=True):
     created_by: str
 
     # Relationships
-    workflow_version: WorkflowVersion = Relationship(back_populates="registrations")
+    workflow_version: WorkflowVersion = Relationship(back_populates="deployments")
 
 
 class WorkflowRunAttribute(SQLModel, table=True):
@@ -201,7 +201,7 @@ class WorkflowVersionPublic(SQLModel):
     definition_uri: str
     created_at: datetime
     created_by: str
-    registrations: List["WorkflowRegistrationPublic"] | None = None
+    deployments: List["WorkflowDeploymentPublic"] | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -224,15 +224,15 @@ class WorkflowVersionAliasPublic(SQLModel):
 
 
 # ---------------------------------------------------------------------------
-# Request / Response models — WorkflowRegistration
+# Request / Response models — WorkflowDeployment
 # ---------------------------------------------------------------------------
 
-class WorkflowRegistrationCreate(SQLModel):
+class WorkflowDeploymentCreate(SQLModel):
     engine: str
     external_id: str
 
 
-class WorkflowRegistrationPublic(SQLModel):
+class WorkflowDeploymentPublic(SQLModel):
     id: uuid.UUID
     workflow_version_id: uuid.UUID
     engine: str

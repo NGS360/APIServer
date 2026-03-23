@@ -2,7 +2,7 @@
 Routes/endpoints for the Workflows API
 
 Covers Workflow CRUD, WorkflowVersion, WorkflowVersionAlias,
-WorkflowRegistration, and WorkflowRun endpoints.
+WorkflowDeployment, and WorkflowRun endpoints.
 """
 
 from typing import List, Literal
@@ -18,8 +18,8 @@ from api.workflow.models import (
     WorkflowVersionPublic,
     WorkflowVersionAliasPublic,
     WorkflowVersionAliasSet,
-    WorkflowRegistrationCreate,
-    WorkflowRegistrationPublic,
+    WorkflowDeploymentCreate,
+    WorkflowDeploymentPublic,
     WorkflowRunCreate,
     WorkflowRunPublic,
     WorkflowRunsPublic,
@@ -198,11 +198,15 @@ def set_workflow_version_alias(
     tags=["Workflow Endpoints"],
 )
 def get_workflow_version_aliases(
-    session: SessionDep, workflow_id: str,
+    session: SessionDep,
+    workflow_id: str,
+    alias: VersionAlias | None = Query(
+        None, description="Filter to a specific alias",
+    ),
 ) -> List[WorkflowVersionAliasPublic]:
-    """List all aliases for a workflow."""
+    """List aliases for a workflow, optionally filtered by alias name."""
     aliases = services.get_workflow_version_aliases(
-        session=session, workflow_id=workflow_id,
+        session=session, workflow_id=workflow_id, alias=alias,
     )
     return [services.alias_to_public(a) for a in aliases]
 
@@ -226,58 +230,48 @@ def delete_workflow_version_alias(
 
 
 # ---------------------------------------------------------------------------
-# WorkflowRegistration (nested under version)
+# WorkflowDeployment (workflow-level with filters)
 # ---------------------------------------------------------------------------
 
-@router.post(
-    "/{workflow_id}/versions/{version_id}/registrations",
-    response_model=WorkflowRegistrationPublic,
-    tags=["Workflow Endpoints"],
-    status_code=status.HTTP_201_CREATED,
-)
-def create_workflow_registration(
-    session: SessionDep,
-    user: CurrentUser,
-    workflow_id: str,
-    version_id: str,
-    registration_in: WorkflowRegistrationCreate,
-) -> WorkflowRegistrationPublic:
-    """Register a workflow version on a specific platform."""
-    reg = services.create_workflow_registration(
-        session=session,
-        workflow_id=workflow_id,
-        version_id=version_id,
-        registration_in=registration_in,
-        created_by=user.username,
-    )
-    return WorkflowRegistrationPublic(
-        id=reg.id,
-        workflow_version_id=reg.workflow_version_id,
-        engine=reg.engine,
-        external_id=reg.external_id,
-        created_at=reg.created_at,
-        created_by=reg.created_by,
-    )
-
-
 @router.get(
-    "/{workflow_id}/versions/{version_id}/registrations",
-    response_model=List[WorkflowRegistrationPublic],
+    "/{workflow_id}/deployments",
+    response_model=List[WorkflowDeploymentPublic],
     tags=["Workflow Endpoints"],
 )
-def get_workflow_registrations(
+def get_workflow_deployments_for_workflow(
     session: SessionDep,
     workflow_id: str,
-    version_id: str,
-) -> List[WorkflowRegistrationPublic]:
-    """List platform registrations for a workflow version."""
-    regs = services.get_workflow_registrations(
+    alias: VersionAlias | None = Query(
+        None,
+        description=(
+            "Filter by alias (e.g. production). "
+            "Resolves the alias to its version and returns "
+            "deployments for that version only."
+        ),
+    ),
+    engine: str | None = Query(
+        None,
+        description="Filter by engine/platform name",
+    ),
+) -> List[WorkflowDeploymentPublic]:
+    """List deployments across all versions of a workflow.
+
+    Optional query filters:
+    - **alias**: resolve an alias to its version, return only
+      that version's deployments
+    - **engine**: restrict results to a specific platform
+
+    Combine both to get a single deployment in one call, e.g.
+    ``?alias=production&engine=Arvados``.
+    """
+    deps = services.get_workflow_deployments_for_workflow(
         session=session,
         workflow_id=workflow_id,
-        version_id=version_id,
+        alias=alias,
+        engine=engine,
     )
     return [
-        WorkflowRegistrationPublic(
+        WorkflowDeploymentPublic(
             id=r.id,
             workflow_version_id=r.workflow_version_id,
             engine=r.engine,
@@ -285,28 +279,97 @@ def get_workflow_registrations(
             created_at=r.created_at,
             created_by=r.created_by,
         )
-        for r in regs
+        for r in deps
+    ]
+
+
+# ---------------------------------------------------------------------------
+# WorkflowDeployment (nested under version)
+# ---------------------------------------------------------------------------
+
+@router.post(
+    "/{workflow_id}/versions/{version_id}/deployments",
+    response_model=WorkflowDeploymentPublic,
+    tags=["Workflow Endpoints"],
+    status_code=status.HTTP_201_CREATED,
+)
+def create_workflow_deployment(
+    session: SessionDep,
+    user: CurrentUser,
+    workflow_id: str,
+    version_id: str,
+    deployment_in: WorkflowDeploymentCreate,
+) -> WorkflowDeploymentPublic:
+    """Deploy a workflow version on a specific platform."""
+    dep = services.create_workflow_deployment(
+        session=session,
+        workflow_id=workflow_id,
+        version_id=version_id,
+        deployment_in=deployment_in,
+        created_by=user.username,
+    )
+    return WorkflowDeploymentPublic(
+        id=dep.id,
+        workflow_version_id=dep.workflow_version_id,
+        engine=dep.engine,
+        external_id=dep.external_id,
+        created_at=dep.created_at,
+        created_by=dep.created_by,
+    )
+
+
+@router.get(
+    "/{workflow_id}/versions/{version_id}/deployments",
+    response_model=List[WorkflowDeploymentPublic],
+    tags=["Workflow Endpoints"],
+)
+def get_workflow_deployments(
+    session: SessionDep,
+    workflow_id: str,
+    version_id: str,
+    engine: str | None = Query(
+        None,
+        description="Filter by engine/platform name",
+    ),
+) -> List[WorkflowDeploymentPublic]:
+    """List platform deployments for a workflow version."""
+    deps = services.get_workflow_deployments(
+        session=session,
+        workflow_id=workflow_id,
+        version_id=version_id,
+        engine=engine,
+    )
+    return [
+        WorkflowDeploymentPublic(
+            id=r.id,
+            workflow_version_id=r.workflow_version_id,
+            engine=r.engine,
+            external_id=r.external_id,
+            created_at=r.created_at,
+            created_by=r.created_by,
+        )
+        for r in deps
     ]
 
 
 @router.delete(
     "/{workflow_id}/versions/{version_id}"
-    "/registrations/{registration_id}",
+    "/deployments/{deployment_id}",
     status_code=status.HTTP_204_NO_CONTENT,
     tags=["Workflow Endpoints"],
 )
-def delete_workflow_registration(
+def delete_workflow_deployment(
     session: SessionDep,
     workflow_id: str,
     version_id: str,
-    registration_id: str,
+    deployment_id: str,
 ) -> None:
-    """Remove a platform registration."""
-    services.delete_workflow_registration(
+    """Remove a platform deployment."""
+    services.delete_workflow_deployment(
         session=session,
         workflow_id=workflow_id,
         version_id=version_id,
-        registration_id=registration_id,
+        deployment_id=deployment_id,
     )
 
 

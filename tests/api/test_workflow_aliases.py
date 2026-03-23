@@ -226,6 +226,54 @@ def test_delete_alias_not_found(
 
 
 # ---------------------------------------------------------------------------
+# GET /workflows/{id}/aliases?alias=
+# ---------------------------------------------------------------------------
+
+def test_get_aliases_filter_by_alias(
+    client: TestClient, session: Session,
+):
+    """Filter aliases by alias name returns only that alias."""
+    wf_id, ver_id = _create_workflow_and_version(session)
+
+    client.put(
+        f"/api/v1/workflows/{wf_id}/aliases/production",
+        json={"workflow_version_id": ver_id},
+    )
+    client.put(
+        f"/api/v1/workflows/{wf_id}/aliases/development",
+        json={"workflow_version_id": ver_id},
+    )
+
+    resp = client.get(
+        f"/api/v1/workflows/{wf_id}/aliases"
+        f"?alias=production",
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data) == 1
+    assert data[0]["alias"] == "production"
+
+
+def test_get_aliases_filter_no_match(
+    client: TestClient, session: Session,
+):
+    """Filter by alias that isn't set returns empty list."""
+    wf_id, ver_id = _create_workflow_and_version(session)
+
+    client.put(
+        f"/api/v1/workflows/{wf_id}/aliases/production",
+        json={"workflow_version_id": ver_id},
+    )
+
+    resp = client.get(
+        f"/api/v1/workflows/{wf_id}/aliases"
+        f"?alias=development",
+    )
+    assert resp.status_code == 200
+    assert resp.json() == []
+
+
+# ---------------------------------------------------------------------------
 # Workflow GET includes aliases
 # ---------------------------------------------------------------------------
 
