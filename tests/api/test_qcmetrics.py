@@ -20,7 +20,7 @@ from sqlmodel import Session, select
 
 from api.project.models import Project
 from api.runs.models import SequencingRun
-from api.workflow.models import Workflow, WorkflowRun
+from api.workflow.models import Workflow, WorkflowVersion, WorkflowRun
 from api.platforms.models import Platform
 
 
@@ -52,8 +52,6 @@ def _create_workflow(session: Session) -> Workflow:
     """Create a minimal Workflow and return it."""
     wf = Workflow(
         name="RNA-Seq Pipeline",
-        version="1.0",
-        definition_uri="https://github.com/test/rna-seq.wdl",
         created_by="testuser",
     )
     session.add(wf)
@@ -62,11 +60,19 @@ def _create_workflow(session: Session) -> Workflow:
 
 
 def _create_workflow_run(session: Session) -> str:
-    """Create Platform → Workflow → WorkflowRun chain; return run ID as str."""
+    """Create Platform → Workflow → Version → WorkflowRun; return run ID."""
     engine = _ensure_platform(session)
     wf = _create_workflow(session)
-    wr = WorkflowRun(
+    ver = WorkflowVersion(
         workflow_id=wf.id,
+        version="1.0",
+        definition_uri="https://github.com/test/rna-seq.wdl",
+        created_by="testuser",
+    )
+    session.add(ver)
+    session.flush()
+    wr = WorkflowRun(
+        workflow_version_id=ver.id,
         engine=engine,
         external_run_id=f"ext-run-{uuid4().hex[:8]}",
         created_by="testuser",
