@@ -23,7 +23,7 @@ botocore==1.42.68
     # via
     #   boto3
     #   s3transfer
-certifi==2025.11.12
+certifi==2026.2.25
     # via
     #   httpcore
     #   httpx
@@ -62,7 +62,7 @@ fastapi-cli==0.0.23
     # via fastapi
 fastapi-cloud-cli==0.6.0
     # via fastapi-cli
-fastar==0.8.0
+fastar==0.9.0
     # via fastapi-cloud-cli
 grpcio==1.78.0
     # via opensearch-protobufs
@@ -111,7 +111,7 @@ opensearch-py==3.1.0
     # via ngs360-server (pyproject.toml)
 packaging==26.0
     # via gunicorn
-protobuf==6.33.5
+protobuf==7.34.1
     # via opensearch-protobufs
 pyasn1==0.6.3
     # via
@@ -236,7 +236,7 @@ uvloop==0.22.1
     # via uvicorn
 watchfiles==1.1.1
     # via uvicorn
-websockets==15.0.1
+websockets==16.0
     # via uvicorn
 wrapt==2.1.1
     # via smart-open
