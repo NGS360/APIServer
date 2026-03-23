@@ -78,7 +78,6 @@ def create_workflow(session: Session, workflow_in: WorkflowCreate, created_by: s
 
     session.commit()
     session.refresh(workflow)
-
     return workflow
 
 
