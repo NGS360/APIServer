@@ -111,7 +111,7 @@ opensearch-py==3.1.0
     # via ngs360-server (pyproject.toml)
 packaging==26.0
     # via gunicorn
-protobuf==6.33.5
+protobuf==7.34.1
     # via opensearch-protobufs
 pyasn1==0.6.3
     # via
