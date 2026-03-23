@@ -68,17 +68,18 @@ def test_set_alias_development(
     assert resp.json()["alias"] == "development"
 
 
-def test_set_alias_invalid_value(
+def test_set_alias_custom_value(
     client: TestClient, session: Session,
 ):
-    """Invalid alias value is rejected by the enum."""
+    """Any free-text alias value is accepted."""
     wf_id, ver_id = _create_workflow_and_version(session)
 
     resp = client.put(
         f"/api/v1/workflows/{wf_id}/aliases/staging",
         json={"workflow_version_id": ver_id},
     )
-    assert resp.status_code == 422
+    assert resp.status_code == 200
+    assert resp.json()["alias"] == "staging"
 
 
 def test_move_alias_to_different_version(

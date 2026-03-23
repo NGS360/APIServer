@@ -348,7 +348,7 @@ erDiagram
     WorkflowVersionAlias {
         uuid id PK
         uuid workflow_id FK
-        enum alias
+        string alias
         uuid workflow_version_id FK
         datetime created_at
         string created_by
@@ -481,7 +481,7 @@ erDiagram
 - **Workflow**: Platform-agnostic workflow identity (name only)
 - **WorkflowAttribute**: Key-value attributes for workflows
 - **WorkflowVersion**: Versioned workflow definitions (version string + definition URI)
-- **WorkflowVersionAlias**: Named pointers (production/development) to specific versions
+- **WorkflowVersionAlias**: Named pointers (e.g. production, development) to specific versions
 - **WorkflowDeployment**: Platform-specific deployments of workflow versions (links version to platform)
 - **WorkflowRun**: Execution records of workflow versions on specific platforms (provenance tracking)
 - **WorkflowRunAttribute**: Key-value metadata for workflow runs
@@ -557,7 +557,7 @@ The **SampleSequencingRun** junction table tracks which samples were processed i
 The workflow system supports full provenance tracking:
 - **Workflow**: Platform-agnostic identity (name + attributes)
 - **WorkflowVersion**: Immutable snapshot with a `version` string and `definition_uri`
-- **WorkflowVersionAlias**: Labels a specific version as `production` or `development` (re-pointable)
+- **WorkflowVersionAlias**: Labels a specific version with a free-text alias name (re-pointable)
 - **WorkflowDeployment**: Links a version to a specific platform (e.g., version 1.2.0 deployed on Arvados)
 - **WorkflowRun**: Records each execution against a specific version, with platform-specific external IDs and metadata
 

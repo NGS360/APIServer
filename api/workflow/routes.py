@@ -11,7 +11,6 @@ from core.deps import SessionDep
 from api.auth.deps import CurrentUser
 
 from api.workflow.models import (
-    VersionAlias,
     WorkflowCreate,
     WorkflowPublic,
     WorkflowVersionCreate,
@@ -178,7 +177,7 @@ def set_workflow_version_alias(
     session: SessionDep,
     user: CurrentUser,
     workflow_id: str,
-    alias: VersionAlias,
+    alias: str,
     alias_in: WorkflowVersionAliasSet,
 ) -> WorkflowVersionAliasPublic:
     """Set or update an alias to point to a workflow version."""
@@ -200,7 +199,7 @@ def set_workflow_version_alias(
 def get_workflow_version_aliases(
     session: SessionDep,
     workflow_id: str,
-    alias: VersionAlias | None = Query(
+    alias: str | None = Query(
         None, description="Filter to a specific alias",
     ),
 ) -> List[WorkflowVersionAliasPublic]:
@@ -219,7 +218,7 @@ def get_workflow_version_aliases(
 def delete_workflow_version_alias(
     session: SessionDep,
     workflow_id: str,
-    alias: VersionAlias,
+    alias: str,
 ) -> None:
     """Remove an alias from a workflow."""
     services.delete_workflow_version_alias(
@@ -241,7 +240,7 @@ def delete_workflow_version_alias(
 def get_workflow_deployments_for_workflow(
     session: SessionDep,
     workflow_id: str,
-    alias: VersionAlias | None = Query(
+    alias: str | None = Query(
         None,
         description=(
             "Filter by alias (e.g. production). "

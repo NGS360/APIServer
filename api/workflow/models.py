@@ -3,27 +3,16 @@ Workflow Models
 
 Workflow — Platform-agnostic workflow identity
 WorkflowVersion — Versioned definition of a workflow (holds version + definition_uri)
-WorkflowVersionAlias — Named pointer (production/development) to a specific version
+WorkflowVersionAlias — Named pointer (e.g. production, development) to a specific version
 WorkflowDeployment — Platform-specific deployment of a workflow version
 WorkflowRun — Execution record of a workflow version on a specific platform
 WorkflowAttribute / WorkflowRunAttribute — Key-value metadata
 """
-import enum
 import uuid
 from datetime import datetime, timezone
 from typing import List
 
 from sqlmodel import Field, Relationship, SQLModel, UniqueConstraint
-
-
-# ---------------------------------------------------------------------------
-# Enums
-# ---------------------------------------------------------------------------
-
-class VersionAlias(str, enum.Enum):
-    """Fixed set of alias labels for workflow versions."""
-    production = "production"
-    development = "development"
 
 
 # ---------------------------------------------------------------------------
@@ -94,7 +83,7 @@ class WorkflowVersionAlias(SQLModel, table=True):
 
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     workflow_id: uuid.UUID = Field(foreign_key="workflow.id")
-    alias: VersionAlias
+    alias: str
     workflow_version_id: uuid.UUID = Field(foreign_key="workflowversion.id")
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     created_by: str
@@ -170,7 +159,7 @@ class WorkflowVersionSummary(SQLModel):
 
 class WorkflowAliasSummary(SQLModel):
     """Alias info included in workflow responses."""
-    alias: VersionAlias
+    alias: str
     workflow_version_id: uuid.UUID
     version: str  # Resolved version string for convenience
 
@@ -216,7 +205,7 @@ class WorkflowVersionAliasSet(SQLModel):
 class WorkflowVersionAliasPublic(SQLModel):
     id: uuid.UUID
     workflow_id: uuid.UUID
-    alias: VersionAlias
+    alias: str
     workflow_version_id: uuid.UUID
     version: str  # Resolved version string
     created_at: datetime

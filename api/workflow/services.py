@@ -12,7 +12,6 @@ from sqlmodel import Session, select, func
 from api.platforms.models import Platform
 from api.workflow.models import (
     Attribute,
-    VersionAlias,
     Workflow,
     WorkflowAttribute,
     WorkflowAliasSummary,
@@ -306,7 +305,7 @@ def workflow_version_to_public(
 def set_workflow_version_alias(
     session: Session,
     workflow_id: str,
-    alias: VersionAlias,
+    alias: str,
     alias_in: WorkflowVersionAliasSet,
     created_by: str,
 ) -> WorkflowVersionAlias:
@@ -361,7 +360,7 @@ def set_workflow_version_alias(
 def get_workflow_version_aliases(
     session: Session,
     workflow_id: str,
-    alias: VersionAlias | None = None,
+    alias: str | None = None,
 ) -> list[WorkflowVersionAlias]:
     """List aliases for a workflow, optionally filtered by alias name."""
     workflow = get_workflow_by_id(session, workflow_id)
@@ -377,7 +376,7 @@ def get_workflow_version_aliases(
 def delete_workflow_version_alias(
     session: Session,
     workflow_id: str,
-    alias: VersionAlias,
+    alias: str,
 ) -> None:
     """Remove an alias from a workflow."""
     workflow = get_workflow_by_id(session, workflow_id)
@@ -391,7 +390,7 @@ def delete_workflow_version_alias(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=(
-                f"Alias '{alias.value}' not found "
+                f"Alias '{alias}' not found "
                 f"for workflow '{workflow_id}'."
             ),
         )
@@ -511,7 +510,7 @@ def get_workflow_deployments(
 def get_workflow_deployments_for_workflow(
     session: Session,
     workflow_id: str,
-    alias: VersionAlias | None = None,
+    alias: str | None = None,
     engine: str | None = None,
 ) -> list[WorkflowDeployment]:
     """List deployments across versions of a workflow.
@@ -534,7 +533,7 @@ def get_workflow_deployments_for_workflow(
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=(
-                    f"Alias '{alias.value}' is not set "
+                    f"Alias '{alias}' is not set "
                     f"for workflow '{workflow_id}'."
                 ),
             )

@@ -66,7 +66,7 @@ erDiagram
     WorkflowVersionAlias {
         uuid id PK
         uuid workflow_id FK
-        enum alias
+        string alias
         uuid workflow_version_id FK
         datetime created_at
         string created_by
@@ -133,7 +133,7 @@ A workflow definition evolves over time. The `Workflow` table captures the logic
 
 **Why a separate alias table?**
 
-Aliases like `production` and `development` let teams mark which version should be used without hardcoding version strings. The `WorkflowVersionAlias` table uses a fixed enum (`production`, `development`) with a `UNIQUE(workflow_id, alias)` constraint — each workflow can have at most one production pointer and one development pointer. Moving an alias is an upsert, providing an audit trail of who changed it and when.
+Aliases like `production` and `development` let teams mark which version should be used without hardcoding version strings. The `WorkflowVersionAlias` table stores a free-text alias name with a `UNIQUE(workflow_id, alias)` constraint — each workflow can have at most one pointer per alias name. Moving an alias is an upsert, providing an audit trail of who changed it and when.
 
 **Why do WorkflowDeployment and WorkflowRun point to WorkflowVersion?**
 
@@ -202,12 +202,12 @@ Named pointer to a specific workflow version.
 |-------|------|----------|-------------|
 | `id` | UUID | auto | Primary key |
 | `workflow_id` | UUID | yes | FK → `workflow.id` — scopes the alias |
-| `alias` | enum | yes | Fixed enum: `production` or `development` |
+| `alias` | string | yes | Free-text alias name (e.g. `production`, `staging`) |
 | `workflow_version_id` | UUID | yes | FK → `workflowversion.id` |
 | `created_at` | datetime | auto | UTC timestamp |
 | `created_by` | string | yes | Username who set the alias |
 
-**Constraints:** `UNIQUE(workflow_id, alias)` — one alias pointer per workflow per alias type.
+**Constraints:** `UNIQUE(workflow_id, alias)` — one alias pointer per workflow per alias name.
 
 ### Platform
 
@@ -365,7 +365,7 @@ POST /workflows/{workflow_id}/versions
 ```json
 {
   "version": "2.1.0",
-  "definition_uri": "s3://workflows/variant-calling-v2.1.wdl"
+  "definition_uri": "s3://workflows/variant-calling-v2.1.cwl"
 }
 ```
 
@@ -376,7 +376,7 @@ POST /workflows/{workflow_id}/versions
   "id": "v1v2v3v4-...",
   "workflow_id": "a1b2c3d4-...",
   "version": "2.1.0",
-  "definition_uri": "s3://workflows/variant-calling-v2.1.wdl",
+  "definition_uri": "s3://workflows/variant-calling-v2.1.cwl",
   "created_at": "2026-03-01T12:05:00Z",
   "created_by": "jdoe",
   "deployments": []
@@ -452,7 +452,7 @@ Returns aliases for a workflow. Optional query parameter:
 
 | Param | Type | Required | Description |
 |-------|------|----------|-------------|
-| `alias` | `VersionAlias` | no | Filter to a specific alias (`production` or `development`) |
+| `alias` | `str` | no | Filter to a specific alias (e.g. `production`) |
 
 When `alias` is provided, the response contains 0 or 1 elements.
 
@@ -479,7 +479,7 @@ List deployments across all versions of a workflow. Optional query parameters al
 
 | Param | Type | Required | Description |
 |-------|------|----------|-------------|
-| `alias` | `VersionAlias` | no | Resolve alias to its version, return only that version's deployments |
+| `alias` | `str` | no | Resolve alias to its version, return only that version's deployments |
 | `engine` | `str` | no | Filter by engine/platform name |
 
 **Behavior matrix:**

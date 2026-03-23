@@ -52,8 +52,7 @@ def upgrade() -> None:
         sa.Column('workflow_id', sa.Uuid(), nullable=False),
         sa.Column(
             'alias',
-            sa.Enum('production', 'development', name='versionalias'),
-            nullable=False,
+            sqlmodel.sql.sqltypes.AutoString(), nullable=False,
         ),
         sa.Column('workflow_version_id', sa.Uuid(), nullable=False),
         sa.Column('created_at', sa.DateTime(), nullable=False),
