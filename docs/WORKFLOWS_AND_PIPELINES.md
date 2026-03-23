@@ -1,17 +1,20 @@
-# Workflows, Versions, Aliases, Registrations & Runs
+# Workflows, Pipelines & Execution Provenance
 
-This document describes the Workflow system for defining, versioning, registering, and tracking executions of bioinformatics workflows across multiple compute platforms.
+This document describes the Workflow and Pipeline systems — how bioinformatics workflows are defined, versioned, registered on compute platforms, executed, and organised into named collections.
 
 ## Overview
 
-The Workflow system provides:
+The system provides:
 
 - **Platform-agnostic workflow identity**: Define a workflow once by name
 - **Explicit versioning**: Each version carries its own `definition_uri` (WDL/CWL/Nextflow file) and semantic version string
 - **Version aliases**: Mark specific versions as `production` or `development` — like AWS Lambda aliases
 - **Cross-platform registration**: Register a specific workflow version on multiple execution engines (Arvados, SevenBridges, AWS Batch, etc.)
 - **Execution provenance**: Record workflow runs with engine-specific run IDs and key-value attributes for file/QC provenance tracking
+- **Pipeline grouping**: Organise related workflows into named, versioned pipelines (version-agnostic — pipelines reference workflows, not specific versions)
+- **Flexible metadata**: Key-value attributes on workflows, workflow runs, and pipelines
 - **Provenance**: All entities track `created_at` and `created_by` for audit trails
+- **Pagination**: List endpoints support pagination with configurable sorting
 
 ## Architecture
 
@@ -28,6 +31,10 @@ erDiagram
     Platform ||--o{ WorkflowRegistration : engine_FK
     Platform ||--o{ WorkflowRun : engine_FK
     WorkflowRun ||--o{ WorkflowRunAttribute : has_attributes
+
+    Pipeline ||--o{ PipelineAttribute : has_attributes
+    Pipeline ||--o{ PipelineWorkflow : contains
+    Workflow ||--o{ PipelineWorkflow : belongs_to
 
     Platform {
         string name PK
@@ -89,6 +96,29 @@ erDiagram
         string key
         string value
     }
+
+    Pipeline {
+        uuid id PK
+        string name
+        string version
+        datetime created_at
+        string created_by
+    }
+
+    PipelineAttribute {
+        uuid id PK
+        uuid pipeline_id FK
+        string key
+        string value
+    }
+
+    PipelineWorkflow {
+        uuid id PK
+        uuid pipeline_id FK
+        uuid workflow_id FK
+        datetime created_at
+        string created_by
+    }
 ```
 
 ### Design Decisions
@@ -112,6 +142,18 @@ You register and execute a *specific version* of a workflow. Different versions 
 **Why separate WorkflowRun from BatchJob?**
 
 `WorkflowRun` tracks the execution of a workflow version at the domain level, while `BatchJob` tracks infrastructure-level job submission (AWS Batch). A single `WorkflowRun` might correspond to a `BatchJob`, or it might be tracked externally (e.g., in Arvados). This separation keeps the domain model clean.
+
+**Why a separate PipelineWorkflow junction table (not a direct FK)?**
+
+The relationship between Pipeline and Workflow is many-to-many: a workflow can belong to multiple pipelines, and a pipeline can contain multiple workflows. The `PipelineWorkflow` junction table captures this with a unique constraint (`uq_pipeline_workflow`) preventing duplicate associations. See `plans/phase1-decisions-pipeline-workflow-relationships.md` for detailed rationale.
+
+**Why no ordering in the junction table?**
+
+Pipeline membership is currently unordered — the workflows in a pipeline are a **set**, not a sequence. This simplifies the initial implementation. If workflow ordering within a pipeline is needed in the future, a `position` column can be added to `PipelineWorkflow`.
+
+**Pipelines are version-agnostic**
+
+Pipelines are purely organisational — a pipeline references workflows, not specific workflow versions. They do not directly affect how workflow versions are registered on platforms or how runs are tracked. A pipeline groups workflows; each workflow independently manages its own versions, aliases, registrations, and runs.
 
 ## Database Models
 
@@ -214,9 +256,48 @@ Key-value metadata for workflow runs (e.g., input parameters, output paths).
 | `key` | string | yes | Attribute name |
 | `value` | string | yes | Attribute value |
 
+### Pipeline
+
+A named, versioned collection of workflows.
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `id` | UUID | auto | Primary key |
+| `name` | string | yes | Human-readable pipeline name |
+| `version` | string | no | Version string (e.g., `"1.0.0"`) |
+| `created_at` | datetime | auto | UTC timestamp of creation |
+| `created_by` | string | yes | Username of the creator |
+
+### PipelineAttribute
+
+Key-value metadata for pipelines.
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `id` | UUID | auto | Primary key |
+| `pipeline_id` | UUID | yes | FK → `pipeline.id` |
+| `key` | string | yes | Attribute name |
+| `value` | string | yes | Attribute value |
+
+**Constraints:** `UNIQUE(pipeline_id, key)` — one value per key per pipeline.
+
+### PipelineWorkflow
+
+Junction table linking workflows to pipelines. Each association records who created it and when.
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `id` | UUID | auto | Primary key |
+| `pipeline_id` | UUID | yes | FK → `pipeline.id` |
+| `workflow_id` | UUID | yes | FK → `workflow.id` |
+| `created_at` | datetime | auto | UTC timestamp of association |
+| `created_by` | string | yes | Username of the creator |
+
+**Constraints:** `UNIQUE(pipeline_id, workflow_id)` — a workflow can only appear once per pipeline.
+
 ## API Endpoints
 
-All workflow endpoints require authentication. The authenticated user's username is recorded as `created_by`.
+All endpoints require authentication. The authenticated user's username is recorded as `created_by`.
 
 ### Workflow CRUD
 
@@ -501,6 +582,123 @@ GET /workflow-runs/{run_id}
 
 Note: This uses a top-level `/workflow-runs` path (not nested under a workflow) for convenience.
 
+### Pipeline CRUD
+
+#### Create a Pipeline
+
+```
+POST /pipelines
+```
+
+**Request Body:**
+
+```json
+{
+  "name": "WGS Analysis Pipeline",
+  "version": "2.0.0",
+  "attributes": [
+    {"key": "description", "value": "End-to-end whole genome sequencing analysis"},
+    {"key": "department", "value": "genomics"}
+  ],
+  "workflow_ids": [
+    "a1b2c3d4-...",
+    "e5f6g7h8-..."
+  ]
+}
+```
+
+All fields except `name` are optional. `workflow_ids` associates existing workflows at creation time.
+
+**Response** (`201 Created`):
+
+```json
+{
+  "id": "p1p2p3p4-...",
+  "name": "WGS Analysis Pipeline",
+  "version": "2.0.0",
+  "created_at": "2026-03-01T12:00:00Z",
+  "created_by": "jdoe",
+  "attributes": [
+    {"key": "description", "value": "End-to-end whole genome sequencing analysis"},
+    {"key": "department", "value": "genomics"}
+  ],
+  "workflows": [
+    {"id": "a1b2c3d4-...", "name": "alignment-wf"},
+    {"id": "e5f6g7h8-...", "name": "variant-calling-wf"}
+  ]
+}
+```
+
+#### List Pipelines (Paginated)
+
+```
+GET /pipelines?page=1&per_page=20&sort_by=name&sort_order=asc
+```
+
+**Response:**
+
+```json
+{
+  "data": [
+    {
+      "id": "p1p2p3p4-...",
+      "name": "WGS Analysis Pipeline",
+      "version": "2.0.0",
+      "created_at": "2026-03-01T12:00:00Z",
+      "created_by": "jdoe",
+      "attributes": [...],
+      "workflows": [...]
+    }
+  ],
+  "total_items": 5,
+  "total_pages": 1,
+  "current_page": 1,
+  "per_page": 20,
+  "has_next": false,
+  "has_prev": false
+}
+```
+
+#### Get Pipeline by ID
+
+```
+GET /pipelines/{pipeline_id}
+```
+
+Returns a single pipeline with its attributes and workflow summaries.
+
+### Pipeline ↔ Workflow Association
+
+#### Add Workflow to Pipeline
+
+```
+POST /pipelines/{pipeline_id}/workflows?workflow_id={workflow_uuid}
+```
+
+The `workflow_id` is passed as a query parameter.
+
+**Response** (`201 Created`):
+
+```json
+{
+  "id": "junction-uuid-...",
+  "message": "Workflow added to pipeline."
+}
+```
+
+**Error** (`409 Conflict`): If the workflow is already in the pipeline.
+**Error** (`404 Not Found`): If the pipeline or workflow does not exist.
+
+#### Remove Workflow from Pipeline
+
+```
+DELETE /pipelines/{pipeline_id}/workflows/{workflow_id}
+```
+
+**Response:** `204 No Content`
+
+**Error** (`404 Not Found`): If the association does not exist.
+
 ## Source Files
 
 | File | Description |
@@ -511,9 +709,13 @@ Note: This uses a top-level `/workflow-runs` path (not nested under a workflow) 
 | `api/workflow/models.py` | Workflow/Version/Alias/Registration/Run table definitions and schemas |
 | `api/workflow/services.py` | Workflow business logic (create, list, version/alias CRUD, engine validation) |
 | `api/workflow/routes.py` | Workflow endpoint handlers |
+| `api/pipeline/models.py` | Pipeline/PipelineAttribute/PipelineWorkflow tables and schemas |
+| `api/pipeline/services.py` | Pipeline business logic (create, list, add/remove workflow, response building) |
+| `api/pipeline/routes.py` | Pipeline endpoint handlers |
 | `tests/api/test_platforms.py` | Platform CRUD tests |
 | `tests/api/test_workflows.py` | Workflow CRUD tests |
 | `tests/api/test_workflow_versions.py` | Version CRUD tests |
 | `tests/api/test_workflow_aliases.py` | Alias CRUD tests |
 | `tests/api/test_workflow_registrations.py` | Registration endpoint tests (incl. engine validation) |
 | `tests/api/test_workflow_runs.py` | Workflow run endpoint tests (incl. engine validation) |
+| `tests/api/test_pipeline_entity.py` | Pipeline CRUD and workflow association tests (13 tests) |
