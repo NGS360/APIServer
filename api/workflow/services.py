@@ -39,6 +39,17 @@ from api.workflow.models import (
 # Helpers
 # ---------------------------------------------------------------------------
 
+def _parse_uuid(value: str, label: str = "id") -> UUID:
+    """Parse a string to UUID, raising 400 on invalid format."""
+    try:
+        return UUID(value)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid UUID format for {label}: '{value}'",
+        ) from exc
+
+
 def _validate_engine(session: Session, engine: str) -> None:
     """Verify that ``engine`` matches a registered Platform name."""
     if not session.get(Platform, engine):
@@ -141,8 +152,9 @@ def get_workflow_by_id(
     session: Session, workflow_id: str,
 ) -> Workflow:
     """Returns a single workflow by its UUID."""
+    wf_uuid = _parse_uuid(workflow_id, "workflow_id")
     workflow = session.exec(
-        select(Workflow).where(Workflow.id == UUID(workflow_id))
+        select(Workflow).where(Workflow.id == wf_uuid)
     ).first()
     if not workflow:
         raise HTTPException(
@@ -254,9 +266,10 @@ def get_workflow_version_by_id(
     session: Session, version_id: str,
 ) -> WorkflowVersion:
     """Get a single workflow version by its UUID."""
+    ver_uuid = _parse_uuid(version_id, "version_id")
     version = session.exec(
         select(WorkflowVersion)
-        .where(WorkflowVersion.id == UUID(version_id))
+        .where(WorkflowVersion.id == ver_uuid)
     ).first()
     if not version:
         raise HTTPException(
@@ -429,9 +442,10 @@ def create_workflow_deployment(
     workflow = get_workflow_by_id(session, workflow_id)
 
     # Verify version exists and belongs to this workflow
+    ver_uuid = _parse_uuid(version_id, "version_id")
     version = session.exec(
         select(WorkflowVersion).where(
-            WorkflowVersion.id == UUID(version_id),
+            WorkflowVersion.id == ver_uuid,
             WorkflowVersion.workflow_id == workflow.id,
         )
     ).first()
@@ -484,9 +498,10 @@ def get_workflow_deployments(
 ) -> list[WorkflowDeployment]:
     """List platform deployments for a workflow version."""
     workflow = get_workflow_by_id(session, workflow_id)
+    ver_uuid = _parse_uuid(version_id, "version_id")
     version = session.exec(
         select(WorkflowVersion).where(
-            WorkflowVersion.id == UUID(version_id),
+            WorkflowVersion.id == ver_uuid,
             WorkflowVersion.workflow_id == workflow.id,
         )
     ).first()
@@ -565,9 +580,10 @@ def delete_workflow_deployment(
 ) -> None:
     """Remove a workflow platform deployment."""
     workflow = get_workflow_by_id(session, workflow_id)
+    ver_uuid = _parse_uuid(version_id, "version_id")
     version = session.exec(
         select(WorkflowVersion).where(
-            WorkflowVersion.id == UUID(version_id),
+            WorkflowVersion.id == ver_uuid,
             WorkflowVersion.workflow_id == workflow.id,
         )
     ).first()
@@ -579,9 +595,10 @@ def delete_workflow_deployment(
                 f"for workflow '{workflow_id}'."
             ),
         )
+    dep_uuid = _parse_uuid(deployment_id, "deployment_id")
     deployment = session.exec(
         select(WorkflowDeployment).where(
-            WorkflowDeployment.id == UUID(deployment_id),
+            WorkflowDeployment.id == dep_uuid,
             WorkflowDeployment.workflow_version_id == version.id,
         )
     ).first()
@@ -743,9 +760,10 @@ def get_workflow_run_by_id(
     session: Session, run_id: str,
 ) -> WorkflowRun:
     """Get a single workflow run by its UUID."""
+    run_uuid = _parse_uuid(run_id, "run_id")
     workflow_run = session.exec(
         select(WorkflowRun).where(
-            WorkflowRun.id == UUID(run_id),
+            WorkflowRun.id == run_uuid,
         )
     ).first()
     if not workflow_run:

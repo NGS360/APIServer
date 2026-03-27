@@ -92,3 +92,18 @@ def test_post_workflow_no_version_or_definition_uri(client: TestClient):
     # version and definition_uri are not on Workflow anymore
     assert "version" not in response_json
     assert "definition_uri" not in response_json
+
+
+def test_get_workflow_by_id_invalid_uuid(client: TestClient):
+    """An invalid (non-UUID) workflow_id must return 400, not 500."""
+    response = client.get("/api/v1/workflows/not-a-uuid")
+    assert response.status_code == 400
+    assert "Invalid UUID format" in response.json()["detail"]
+
+
+def test_get_workflow_by_id_nonexistent_uuid(client: TestClient):
+    """A valid UUID that doesn't exist must return 404."""
+    import uuid
+    fake_id = str(uuid.uuid4())
+    response = client.get(f"/api/v1/workflows/{fake_id}")
+    assert response.status_code == 404
