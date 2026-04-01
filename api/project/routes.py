@@ -3,7 +3,7 @@ Routes/endpoints for the Project API
 """
 
 from typing import Literal
-from fastapi import APIRouter, Query, status, Depends
+from fastapi import APIRouter, Query, status
 from core.deps import SessionDep, OpenSearchDep, S3ClientDep
 from api.auth.deps import CurrentUser
 from api.jobs.models import BatchJobPublic
