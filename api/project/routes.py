@@ -254,7 +254,7 @@ def submit_pipeline_job(
     request: ActionSubmitRequest,
     current_user: CurrentUser,
     session: SessionDep,
-    s3_client:S3ClientDep,
+    s3_client: S3ClientDep,
 ) -> BatchJobPublic:
     """
     Submit a pipeline job to AWS Batch for a project.
@@ -308,7 +308,7 @@ def ingest_vendor_data(
     session: SessionDep,
     project: ProjectDep,
     user: CurrentUser,
-    s3_client=Depends(get_s3_client),
+    s3_client: S3ClientDep,
     files_uri: str = Query(
         ..., description="Source Bucket/Prefix of the data to be ingested"
     ),
