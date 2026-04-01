@@ -4,7 +4,7 @@ Routes/endpoints for the Project API
 
 from typing import Literal
 from fastapi import APIRouter, Query, status, Depends
-from core.deps import SessionDep, OpenSearchDep, get_s3_client
+from core.deps import SessionDep, OpenSearchDep, S3ClientDep
 from api.auth.deps import CurrentUser
 from api.jobs.models import BatchJobPublic
 from api.project.deps import ProjectDep
@@ -254,7 +254,7 @@ def submit_pipeline_job(
     request: ActionSubmitRequest,
     current_user: CurrentUser,
     session: SessionDep,
-    s3_client=Depends(get_s3_client),
+    s3_client:S3ClientDep,
 ) -> BatchJobPublic:
     """
     Submit a pipeline job to AWS Batch for a project.
