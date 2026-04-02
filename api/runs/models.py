@@ -103,10 +103,8 @@ class SequencingRun(SQLModel, table=True):
     def barcode(self) -> str:
         ''' Generates a barcode from the run fields '''
         if self.run_time is None:
-            # Illumina: run_number is numeric, zero-pad to 4 digits
-            run_number = str(self.run_number).zfill(4)
             run_date = self.run_date.strftime("%y%m%d")
-            return f"{run_date}_{self.machine_id}_{run_number}_{self.flowcell_id}"
+            return f"{run_date}_{self.machine_id}_{self.run_number}_{self.flowcell_id}"
         # ONT: run_number may be an arbitrary string
         run_date = self.run_date.strftime("%Y%m%d")
         return f"{run_date}_{self.run_time}_{self.machine_id}_{self.flowcell_id}_{self.run_number}"
