@@ -76,7 +76,7 @@ def test_add_run(client: TestClient):
     new_run = {
         "run_date": "2019-01-10",
         "machine_id": "MACHINE123",
-        "run_number": "0002",
+        "run_number": "2",
         "flowcell_id": "FLOWCELL123",
         "experiment_name": "Test Experiment",
         "run_folder_uri": "s3://bucket/path/to/run",
@@ -87,13 +87,13 @@ def test_add_run(client: TestClient):
     assert response.status_code == 201
     data = response.json()
     assert data["run_time"] is None
-    assert data["barcode"] == "190110_MACHINE123_0002_FLOWCELL123"
+    assert data["barcode"] == "190110_MACHINE123_2_FLOWCELL123"
 
     # Try to add a run with an invalid run_time field
     new_run = {
         "run_date": "2019-01-10",
         "machine_id": "MACHINE123",
-        "run_number": "0003",
+        "run_number": "3",
         "flowcell_id": "FLOWCELL123",
         "experiment_name": "Test Experiment",
         "run_folder_uri": "s3://bucket/path/to/run",
@@ -103,11 +103,11 @@ def test_add_run(client: TestClient):
     response = client.post("/api/v1/runs", json=new_run)
     assert response.status_code == 422
 
-    # Add a run with valid run_time
+    # Add a run with valid run_time field - ONT style barcode
     new_run = {
         "run_date": "2019-01-10",
-        "machine_id": "MACHINE123",
-        "run_number": "0004",
+        "machine_id": "MACHINE-123",
+        "run_number": "04abcd",
         "flowcell_id": "FLOWCELL123",
         "experiment_name": "Test Experiment",
         "run_folder_uri": "s3://bucket/path/to/run",
@@ -116,12 +116,14 @@ def test_add_run(client: TestClient):
     }
     response = client.post("/api/v1/runs", json=new_run)
     assert response.status_code == 201
+    data = response.json()
+    assert data["barcode"] == "20190110_1230_MACHINE-123_FLOWCELL123_04abcd"
 
     # Add a run with an invalid run_time
     new_run = {
         "run_date": "2019-01-10",
         "machine_id": "MACHINE123",
-        "run_number": "0004",
+        "run_number": "4",
         "flowcell_id": "FLOWCELL123",
         "experiment_name": "Test Experiment",
         "run_folder_uri": "s3://bucket/path/to/run",
@@ -130,6 +132,7 @@ def test_add_run(client: TestClient):
     }
     response = client.post("/api/v1/runs", json=new_run)
     assert response.status_code == 422
+
 
 
 def test_get_runs(client: TestClient, session: Session):
@@ -152,7 +155,7 @@ def test_get_runs(client: TestClient, session: Session):
         id=uuid4(),
         run_date=datetime.date(2019, 1, 10),
         machine_id="MACHINE123",
-        run_number="0001",
+        run_number="1",
         flowcell_id="FLOWCELL123",
         experiment_name="Test Experiment",
         run_folder_uri="/dir/path/to/run",
@@ -167,26 +170,26 @@ def test_get_runs(client: TestClient, session: Session):
     data = response.json()
     assert data["total_items"] == 1
     assert data["data"][0]["machine_id"] == "MACHINE123"
-    assert data["data"][0]["run_number"] == "0001"
+    assert data["data"][0]["run_number"] == "1"
     assert data["data"][0]["flowcell_id"] == "FLOWCELL123"
     assert data["data"][0]["experiment_name"] == "Test Experiment"
     assert data["data"][0]["run_folder_uri"] == "/dir/path/to/run"
     assert data["data"][0]["status"] == RunStatus.READY.value
-    assert data["data"][0]["barcode"] == "190110_MACHINE123_0001_FLOWCELL123"
+    assert data["data"][0]["barcode"] == "190110_MACHINE123_1_FLOWCELL123"
 
     # Test that we can get a specific run by ID
-    run_barcode = "190110_MACHINE123_0001_FLOWCELL123"
+    run_barcode = "190110_MACHINE123_1_FLOWCELL123"
     response = client.get(f"/api/v1/runs/{run_barcode}")
     assert response.status_code == 200
     data = response.json()
     assert data["run_date"] == "2019-01-10"
     assert data["machine_id"] == "MACHINE123"
-    assert data["run_number"] == "0001"
+    assert data["run_number"] == "1"
     assert data["flowcell_id"] == "FLOWCELL123"
     assert data["experiment_name"] == "Test Experiment"
     assert data["run_folder_uri"] == "/dir/path/to/run"
     assert data["status"] == RunStatus.READY.value
-    assert data["barcode"] == "190110_MACHINE123_0001_FLOWCELL123"
+    assert data["barcode"] == "190110_MACHINE123_1_FLOWCELL123"
 
 
 def test_get_run_samplesheet_invalid_run(client: TestClient):
