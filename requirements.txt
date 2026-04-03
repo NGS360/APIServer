@@ -17,7 +17,7 @@ authlib==1.6.9
     # via ngs360-server (pyproject.toml)
 bcrypt==4.3.0
     # via ngs360-server (pyproject.toml)
-boto3==1.42.6
+boto3==1.42.78
     # via ngs360-server (pyproject.toml)
 botocore==1.42.68
     # via
