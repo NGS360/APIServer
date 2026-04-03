@@ -179,7 +179,6 @@ def submit_batch_job(
         f"Submitting job '{job_name}' to AWS Batch queue '{job_queue}' "
         f"with definition '{job_def}'"
     )
-    logger.info(f"Container overrides: {container_overrides}")
 
     # Extract command from container overrides (expecting list)
     command = " ".join(container_overrides.get("command", []))
@@ -190,6 +189,7 @@ def submit_batch_job(
     container_overrides["environment"].append(
         {"name": "NGS360_API_ENDPOINT", "value": settings.client_origin}
     )
+    logger.info(f"Container overrides: {container_overrides}")
 
     try:
         batch_client = boto3.client("batch", region_name=settings.AWS_REGION)
