@@ -192,6 +192,64 @@ def test_get_runs(client: TestClient, session: Session):
     assert data["barcode"] == "190110_MACHINE123_1_FLOWCELL123"
 
 
+def test_get_runs_ont(client: TestClient, session: Session):
+    """Test that we can get ONT runs"""
+    response = client.get("/api/v1/runs")
+    assert response.status_code == 200
+    assert response.json() == {
+        "data": [],
+        "total_items": 0,
+        "total_pages": 0,
+        "current_page": 1,
+        "per_page": 20,
+        "has_next": False,
+        "has_prev": False,
+    }
+
+    # Add a run to the database
+    new_run = SequencingRun(
+        id=uuid4(),
+        run_date=datetime.date(2019, 1, 10),
+        machine_id="MACHINE123",
+        run_number="0012efg",
+        flowcell_id="FLOWCELL123",
+        experiment_name="Test Experiment",
+        run_folder_uri="/dir/path/to/run",
+        status=RunStatus.READY,
+        run_time="1230",
+    )
+    session.add(new_run)
+    session.commit()
+
+    # Test get runs again
+    response = client.get("/api/v1/runs")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["total_items"] == 1
+    assert data["data"][0]["machine_id"] == "MACHINE123"
+    assert data["data"][0]["run_number"] == "0012efg"
+    assert data["data"][0]["flowcell_id"] == "FLOWCELL123"
+    assert data["data"][0]["experiment_name"] == "Test Experiment"
+    assert data["data"][0]["run_folder_uri"] == "/dir/path/to/run"
+    assert data["data"][0]["status"] == RunStatus.READY.value
+    assert data["data"][0]["barcode"] == "20190110_1230_MACHINE123_FLOWCELL123_0012efg"
+    assert data["data"][0]["run_time"] == "1230"
+
+    # Test that we can get a specific run by ID
+    run_barcode = "20190110_1230_MACHINE123_FLOWCELL123_0012efg"
+    response = client.get(f"/api/v1/runs/{run_barcode}")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["run_date"] == "2019-01-10"
+    assert data["machine_id"] == "MACHINE123"
+    assert data["run_number"] == "0012efg"
+    assert data["flowcell_id"] == "FLOWCELL123"
+    assert data["experiment_name"] == "Test Experiment"
+    assert data["run_folder_uri"] == "/dir/path/to/run"
+    assert data["status"] == RunStatus.READY.value
+    assert data["barcode"] == "20190110_1230_MACHINE123_FLOWCELL123_0012efg"
+
+
 def test_get_run_samplesheet_invalid_run(client: TestClient):
     """Test that we get the correct response when the run does not exist"""
     run_barcode = "NONEXISTENT_RUN"
@@ -399,6 +457,39 @@ def test_update_run_status(client: TestClient, session: Session):
     data = response.json()
     assert data["status"] == RunStatus.READY.value
     assert data["barcode"] == "190110_MACHINE123_0001_FLOWCELL123"
+
+    # Test that we can't specifiy an invalid status
+    update_data = {"run_status": "INVALID_STATUS"}
+    response = client.put(f"/api/v1/runs/{run_barcode}", json=update_data)
+    assert response.status_code == 422
+
+
+def test_update_run_status_ont(client: TestClient, session: Session):
+    """Test that we can update an ont run status"""
+
+    # Add a run to the database
+    new_run = SequencingRun(
+        id=uuid4(),
+        run_date=datetime.date(2019, 1, 10),
+        machine_id="MACHINE123",
+        run_number="0001",
+        flowcell_id="FLOWCELL123",
+        experiment_name="Test Experiment",
+        run_folder_uri="/dir/path/to/run",
+        status=RunStatus.IN_PROGRESS,
+        run_time="1230",
+    )
+    session.add(new_run)
+    session.commit()
+
+    # Test update the run status
+    run_barcode = "20190110_1230_MACHINE123_FLOWCELL123_0001"
+    update_data = {"run_status": RunStatus.READY}
+    response = client.put(f"/api/v1/runs/{run_barcode}", json=update_data)
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == RunStatus.READY.value
+    assert data["barcode"] == "20190110_1230_MACHINE123_FLOWCELL123_0001"
 
     # Test that we can't specifiy an invalid status
     update_data = {"run_status": "INVALID_STATUS"}
