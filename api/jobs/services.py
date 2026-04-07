@@ -12,12 +12,47 @@ from core.logger import logger
 
 from api.jobs.models import (
     BatchJob,
+    BatchJobCreate,
     BatchJobUpdate,
     JobStatus
 )
 
 
-def get_batch_job(session: Session, job_id: str) -> BatchJob | None:
+def create_batch_job(session: Session, job_in: BatchJobCreate) -> BatchJob:
+    """
+    Create a new batch job.
+
+    Args:
+        session: Database session
+        job_in: Job creation data
+
+    Returns:
+        Created BatchJob instance
+    """
+    job = BatchJob.model_validate(job_in)
+    session.add(job)
+    session.commit()
+    session.refresh(job)
+    logger.info(f"Created batch job: {job.id}")
+    return job
+
+
+def get_batch_job_by_aws_id(session: Session, aws_job_id: str) -> BatchJob | None:
+    """
+    Find a batch job by its AWS job ID.
+
+    Args:
+        session: Database session
+        aws_job_id: AWS job ID to search for
+
+    Returns:
+        BatchJob instance if found, otherwise None
+    """
+    statement = select(BatchJob).where(BatchJob.aws_job_id == aws_job_id)
+    return session.exec(statement).first()
+
+
+def get_batch_job(session: Session, job_id: uuid.UUID) -> BatchJob:
     """
     Retrieve a batch job by ID.
 
@@ -26,9 +61,18 @@ def get_batch_job(session: Session, job_id: str) -> BatchJob | None:
         job_id: Job UUID
 
     Returns:
-        BatchJob instance or None if not found
+        BatchJob instance
+
+    Raises:
+        HTTPException: If job not found
     """
-    return session.get(BatchJob, job_id)
+    job = session.get(BatchJob, job_id)
+    if not job:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Batch job {job_id} not found"
+        )
+    return job
 
 
 def get_batch_jobs(
@@ -79,7 +123,7 @@ def get_batch_jobs(
 
 def update_batch_job(
     session: Session,
-    job: BatchJob,
+    job_id: uuid.UUID,
     job_update: BatchJobUpdate
 ) -> BatchJob:
     """
@@ -87,7 +131,7 @@ def update_batch_job(
 
     Args:
         session: Database session
-        job: BatchJob instance to update
+        job_id: Job UUID
         job_update: Job update data
 
     Returns:
@@ -96,6 +140,8 @@ def update_batch_job(
     Raises:
         HTTPException: If job not found
     """
+    job = get_batch_job(session, job_id)
+
     update_data = job_update.model_dump(exclude_unset=True)
     for key, value in update_data.items():
         setattr(job, key, value)
@@ -103,7 +149,7 @@ def update_batch_job(
     session.add(job)
     session.commit()
     session.refresh(job)
-    logger.info(f"Updated batch job: {job.id}")
+    logger.info(f"Updated batch job: {job_id}")
     return job
 
 
@@ -133,6 +179,7 @@ def submit_batch_job(
         f"Submitting job '{job_name}' to AWS Batch queue '{job_queue}' "
         f"with definition '{job_def}'"
     )
+    logger.info(f"Container overrides: {container_overrides}")
 
     # Extract command from container overrides (expecting list)
     command = " ".join(container_overrides.get("command", []))
@@ -143,7 +190,6 @@ def submit_batch_job(
     container_overrides["environment"].append(
         {"name": "NGS360_API_ENDPOINT", "value": settings.client_origin}
     )
-    logger.info(f"Container overrides: {container_overrides}")
 
     try:
         batch_client = boto3.client("batch", region_name=settings.AWS_REGION)
@@ -160,19 +206,20 @@ def submit_batch_job(
             detail=f"Failed to submit job to AWS Batch: {err}",
         ) from err
 
-    job = BatchJob(
-        id=response.get("jobId"),
+    # Create database record with AWS job information
+    job_create = BatchJobCreate(
         name=job_name,
         command=command,
         user=user,
+        aws_job_id=response.get("jobId"),
         status=JobStatus.SUBMITTED
     )
-    session.add(job)
-    session.commit()
-    session.refresh(job)
-    logger.info(f"Created batch job: {job.id}")
 
-    return job
+    batch_job = create_batch_job(session, job_create)
+    logger.info(f"Created database record for Job {response.get('jobId')} "
+                f"/ AWS Batch job {batch_job.aws_job_id}")
+
+    return batch_job
 
 
 def get_batch_job_log(session: Session, job_id: uuid.UUID) -> list[str]:
@@ -185,10 +232,10 @@ def get_batch_job_log(session: Session, job_id: uuid.UUID) -> list[str]:
     Returns:
         Log output as a list of strings
     """
-    job = session.get(BatchJob, job_id)
+    job = get_batch_job(session, job_id)
 
-    if not job or not job.log_stream_name:
-        logger.warning(f"Job {job_id} not available or does not have a log stream name")
+    if not job.aws_job_id or not job.log_stream_name:
+        logger.warning(f"Job {job_id} does not have AWS job ID or log stream name")
         return []
 
     log_group = "/aws/batch/job"
@@ -232,3 +279,84 @@ def get_log_events(log_group, log_stream_name, start_time=None, end_time=None):
             break
         kwargs['nextToken'] = next_forward_token
     return events
+
+def submit_healthomics_run(
+    session: Session,
+    workflow_id: str,
+    role_arn: str,
+    output_uri: str,
+    parameters: Dict[str, Any],
+    run_name: str | None = None,
+    workflow_version_name: str | None = None,
+    storage_type: str = "DYNAMIC",
+    storage_capacity: int | None = None,
+) -> BatchJob:
+    """
+    Submit a workflow run to AWS HealthOmics and create a database record.
+
+    Args:
+        session: Database session
+        workflow_id: HealthOmics workflow ID
+        role_arn: IAM role ARN for the run
+        output_uri: S3 URI for run outputs
+        parameters: Workflow input parameters
+        run_name: Optional human-readable run name
+        workflow_version_name: Optional workflow version (e.g. "v1.4.0")
+        storage_type: STATIC or DYNAMIC (default DYNAMIC)
+        storage_capacity: Storage in GB (required for STATIC)
+
+    Returns:
+        BatchJob record tracking the HealthOmics run
+    """
+    settings = get_settings()
+
+    start_run_kwargs: Dict[str, Any] = {
+        "workflowId": workflow_id,
+        "roleArn": role_arn,
+        "outputUri": output_uri,
+        "parameters": parameters,
+        "storageType": storage_type,
+    }
+    if run_name:
+        start_run_kwargs["name"] = run_name
+    if workflow_version_name:
+        start_run_kwargs["workflowVersionName"] = workflow_version_name
+    if storage_type == "STATIC" and storage_capacity:
+        start_run_kwargs["storageCapacity"] = storage_capacity
+
+    logger.info(
+        f"Submitting HealthOmics run for workflow {workflow_id} "
+        f"(version={workflow_version_name})"
+    )
+
+    try:
+        omics_client = boto3.client("omics", region_name=settings.AWS_REGION)
+        response = omics_client.start_run(**start_run_kwargs)
+    except botocore.exceptions.ClientError as err:
+        logger.error(f"Failed to submit HealthOmics run: {err}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to submit HealthOmics run: {err}",
+        ) from err
+
+    omics_run_id = response.get("id", "")
+    command_summary = f"omics:start-run --workflow-id {workflow_id}"
+    if workflow_version_name:
+        command_summary += f" --version {workflow_version_name}"
+
+    job_create = BatchJobCreate(
+        name=run_name or f"omics-{workflow_id}-{omics_run_id}",
+        command=command_summary,
+        user="healthomics",
+        aws_job_id=omics_run_id,
+        status=JobStatus.SUBMITTED,
+    )
+
+    batch_job = create_batch_job(session, job_create)
+    logger.info(
+        f"Created database record for HealthOmics run {omics_run_id} "
+        f"(job record {batch_job.id})"
+    )
+
+    return batch_job
+

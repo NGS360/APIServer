@@ -20,6 +20,7 @@ from api.jobs.models import (
     JobStatus
 )
 from api.jobs import services
+import uuid
 
 router = APIRouter(prefix="/jobs", tags=["Job Endpoints"])
 
@@ -70,6 +71,41 @@ def submit_job(
         user=job_in.user,
     )
     return BatchJobPublic.model_validate(job)
+
+
+@router.put(
+    "",
+    response_model=BatchJobPublic,
+    tags=["Job Endpoints"],
+)
+def find_and_update_job(
+    session: SessionDep,
+    job_update: BatchJobUpdate,
+) -> BatchJobPublic:
+    """
+    Find and Update a batch job.
+
+    Args:
+        session: Database session
+        job_update: Job update data
+
+    Returns:
+        Updated job information
+    """
+    # Make sure there is an aws_job_id to find the job
+    if not job_update.aws_job_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="aws_job_id is required"
+        )
+    job = services.get_batch_job_by_aws_id(session, job_update.aws_job_id)
+    if not job:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"No job found with aws_job_id {job_update.aws_job_id}"
+        )
+    updated_job = services.update_batch_job(session, job.id, job_update)
+    return BatchJobPublic.model_validate(updated_job)
 
 
 @router.get(
@@ -127,24 +163,19 @@ def get_jobs(
 )
 def get_job(
     session: SessionDep,
-    job_id: str,
+    job_id: uuid.UUID,
 ) -> BatchJobPublic:
     """
     Retrieve information about a specific batch job.
 
     Args:
         session: Database session
-        job_id: string representation of the job UUID
+        job_id: Job UUID
 
     Returns:
         Job information
     """
     job = services.get_batch_job(session, job_id)
-    if not job:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"No job found with id {job_id}"
-        )
     return BatchJobPublic.model_validate(job)
 
 
@@ -155,11 +186,11 @@ def get_job(
 )
 def update_job(
     session: SessionDep,
-    job_id: str,
+    job_id: uuid.UUID,
     job_update: BatchJobUpdate,
 ) -> BatchJobPublic:
     """
-    Find and Update a batch job.
+    Update a batch job.
 
     Args:
         session: Database session
@@ -169,15 +200,8 @@ def update_job(
     Returns:
         Updated job information
     """
-    # Make sure there is an id to find the job
-    job = services.get_batch_job(session, job_id)
-    if not job:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"No job found with id {job_id}"
-        )
-    updated_job = services.update_batch_job(session, job, job_update)
-    return BatchJobPublic.model_validate(updated_job)
+    job = services.update_batch_job(session, job_id, job_update)
+    return BatchJobPublic.model_validate(job)
 
 
 @router.get(
@@ -187,7 +211,7 @@ def update_job(
 )
 def get_job_log(
     session: SessionDep,
-    job_id: str,
+    job_id: uuid.UUID,
 ) -> list[str]:
     """
     Retrieve log for a specific batch job.

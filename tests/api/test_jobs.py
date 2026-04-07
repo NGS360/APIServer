@@ -11,6 +11,7 @@ from sqlmodel import Session
 
 from api.jobs.models import (
     BatchJob,
+    BatchJobCreate,
     BatchJobUpdate,
     BatchJobSubmit,
     JobStatus,
@@ -41,7 +42,6 @@ class TestJobModels:
     def test_batch_job_model(self):
         """Test BatchJob model creation"""
         job = BatchJob(
-            id=str('21de8760-87e0-45cd-946a-ae96ab789f2a'),
             name="test-job",
             command="echo hello",
             user="testuser",
@@ -54,16 +54,30 @@ class TestJobModels:
         assert job.viewed is False
         assert job.id is not None
 
+    def test_batch_job_create_schema(self):
+        """Test BatchJobCreate schema"""
+        job_create = BatchJobCreate(
+            name="test-job",
+            command="echo hello",
+            user="testuser",
+            aws_job_id="aws-123",
+            status=JobStatus.SUBMITTED,
+        )
+        assert job_create.name == "test-job"
+        assert job_create.command == "echo hello"
+        assert job_create.user == "testuser"
+        assert job_create.aws_job_id == "aws-123"
+        assert job_create.status == JobStatus.SUBMITTED
+
     def test_batch_job_update_schema(self):
         """Test BatchJobUpdate schema with partial updates"""
         job_update = BatchJobUpdate(
             status=JobStatus.RUNNING,
             log_stream_name="test-stream",
-            viewed=False
         )
         assert job_update.status == JobStatus.RUNNING
         assert job_update.log_stream_name == "test-stream"
-        assert job_update.viewed is False
+        assert job_update.name is None
 
     def test_aws_batch_environment_model(self):
         """Test AwsBatchEnvironment model"""
@@ -182,6 +196,7 @@ class TestJobsAPI:
         data = response.json()
         assert data["name"] == "test-job"
         assert data["user"] == "testuser"
+        assert data["aws_job_id"] == "aws-job-123"
         assert data["status"] == JobStatus.SUBMITTED
         assert "id" in data
 
@@ -213,7 +228,7 @@ class TestJobsAPI:
 
         assert response.status_code == 201
         data = response.json()
-        assert data["id"] == "aws-job-456"
+        assert data["aws_job_id"] == "aws-job-456"
 
         # Verify container overrides include environment
         call_args = mock_batch.submit_job.call_args[1]
@@ -233,19 +248,27 @@ class TestJobsAPI:
         assert data["count"] == 0
         assert data["data"] == []
 
-    def test_get_jobs_with_data(self, client: TestClient, session: Session):
+    @patch("api.jobs.services.boto3.client")
+    def test_get_jobs_with_data(self, mock_boto_client, client: TestClient, session: Session):
         """Test getting list of jobs"""
-        # Add jobs to the database to ensure they are returned by the GET endpoint
+        # Mock AWS Batch
+        mock_batch = MagicMock()
+        mock_batch.submit_job.return_value = {
+            "jobId": "aws-job-123",
+            "jobName": "test-job",
+        }
+        mock_boto_client.return_value = mock_batch
+
+        # Create jobs via API
         for i in range(3):
-            job = BatchJob(
-                id=f"aws-job-{i}",
-                name=f"test-job-{i}",
-                command=f"echo hello-{i}",
-                user="testuser",
-                status=JobStatus.SUBMITTED,
-            )
-            session.add(job)
-        session.commit()
+            job_data = {
+                "job_name": f"test-job-{i}",
+                "job_definition": "test-def:1",
+                "job_queue": "test-queue",
+                "command": f"echo hello-{i}",
+                "user": "testuser",
+            }
+            client.post("/api/v1/jobs", json=job_data)
 
         # Get jobs
         response = client.get("/api/v1/jobs")
@@ -254,27 +277,31 @@ class TestJobsAPI:
         assert data["count"] == 3
         assert len(data["data"]) == 3
 
-    def test_get_jobs_with_filters(self, client: TestClient, session: Session):
+    @patch("api.jobs.services.boto3.client")
+    def test_get_jobs_with_filters(self, mock_boto_client, client: TestClient):
         """Test filtering jobs by user and status"""
-        # Create jobs for different users
-        job = BatchJob(
-            id="job-1",
-            name="user1-job",
-            command="echo hello",
-            user="user1",
-            status=JobStatus.SUBMITTED,
-        )
-        session.add(job)
+        mock_batch = MagicMock()
+        mock_batch.submit_job.return_value = {
+            "jobId": "aws-job-123",
+            "jobName": "test-job",
+        }
+        mock_boto_client.return_value = mock_batch
 
-        job = BatchJob(
-            id="job-2",
-            name="user2-job",
-            command="echo hello",
-            user="user2",
-            status=JobStatus.SUBMITTED,
-        )
-        session.add(job)
-        session.commit()
+        # Create jobs for different users
+        client.post("/api/v1/jobs", json={
+            "job_name": "user1-job",
+            "job_definition": "test-def:1",
+            "job_queue": "test-queue",
+            "command": "echo hello",
+            "user": "user1",
+        })
+        client.post("/api/v1/jobs", json={
+            "job_name": "user2-job",
+            "job_definition": "test-def:1",
+            "job_queue": "test-queue",
+            "command": "echo hello",
+            "user": "user2",
+        })
 
         # Filter by user
         response = client.get("/api/v1/jobs?user=user1")
@@ -316,19 +343,25 @@ class TestJobsAPI:
         response = client.get(f"/api/v1/jobs/{fake_id}")
         assert response.status_code == 404
 
-    def test_update_job(self, client: TestClient, session: Session):
+    @patch("api.jobs.services.boto3.client")
+    def test_update_job(self, mock_boto_client, client: TestClient):
         """Test updating a job"""
+        mock_batch = MagicMock()
+        mock_batch.submit_job.return_value = {
+            "jobId": "aws-job-123",
+            "jobName": "test-job",
+        }
+        mock_boto_client.return_value = mock_batch
 
         # Create job
-        job = BatchJob(
-            id="1",
-            name="user-job",
-            command="echo hello",
-            user="auser",
-            status=JobStatus.SUBMITTED,
-        )
-        session.add(job)
-        session.commit()
+        response = client.post("/api/v1/jobs", json={
+            "job_name": "test-job",
+            "job_definition": "test-def:1",
+            "job_queue": "test-queue",
+            "command": "echo hello",
+            "user": "testuser",
+        })
+        job_id = response.json()["id"]
 
         # Update job
         update_data = {
@@ -336,7 +369,7 @@ class TestJobsAPI:
             "log_stream_name": "test-stream",
             "viewed": True,
         }
-        response = client.put("/api/v1/jobs/1", json=update_data)
+        response = client.put(f"/api/v1/jobs/{job_id}", json=update_data)
         assert response.status_code == 200
         data = response.json()
         assert data["status"] == JobStatus.RUNNING
@@ -373,13 +406,13 @@ class TestJobsAPI:
         assert data["user"] == original_user  # Unchanged
 
     def test_lambda_update_job_log(self, session: Session, client: TestClient):
-        """Test updating job log stream name."""
+        """Test updating job log stream name.  This is what the Lambda function does."""
         # Set up test parameters
 
         # Set up supporting mocks
         job = BatchJob(
             name="test-job", command="echo hello", user="testuser",
-            id="aws-job-123", status=JobStatus.SUBMITTED
+            aws_job_id="aws-job-123", status=JobStatus.SUBMITTED
         )
         session.add(job)
         session.commit()
@@ -387,11 +420,12 @@ class TestJobsAPI:
 
         # Test
         update_data = {
+            "aws_job_id": "aws-job-123",
             "log_stream_name": "new-log-stream",
             "status": "RUNNING"
         }
         # Check results
-        response = client.put(f"/api/v1/jobs/{job.id}", json=update_data)
+        response = client.put("/api/v1/jobs", json=update_data)
 
         assert response.status_code == 200
         data = response.json()
@@ -399,20 +433,25 @@ class TestJobsAPI:
         assert data["log_stream_name"] == "new-log-stream"
         assert data["status"] == JobStatus.RUNNING
 
-    def test_jobs_pagination(self, client: TestClient, session: Session):
+    @patch("api.jobs.services.boto3.client")
+    def test_jobs_pagination(self, mock_boto_client, client: TestClient):
         """Test job list pagination"""
+        mock_batch = MagicMock()
+        mock_batch.submit_job.return_value = {
+            "jobId": "aws-job-123",
+            "jobName": "test-job",
+        }
+        mock_boto_client.return_value = mock_batch
 
-        # Create 25 mock jobs
+        # Create 25 jobs
         for i in range(25):
-            job = BatchJob(
-                id=f"job-{i}",
-                name=f"test-job-{i}",
-                command=f"echo hello-{i}",
-                user="testuser",
-                status=JobStatus.SUBMITTED,
-            )
-            session.add(job)
-        session.commit()
+            client.post("/api/v1/jobs", json={
+                "job_name": f"test-job-{i}",
+                "job_definition": "test-def:1",
+                "job_queue": "test-queue",
+                "command": f"echo hello-{i}",
+                "user": "testuser",
+            })
 
         # Get first page (default limit 100)
         response = client.get("/api/v1/jobs")
@@ -427,33 +466,41 @@ class TestJobsAPI:
         assert len(data["data"]) == 10
         assert data["count"] == 25
 
-    def test_jobs_sorting(self, client: TestClient, session: Session):
+    @patch("api.jobs.services.boto3.client")
+    def test_jobs_sorting(self, mock_boto_client, client: TestClient):
         """Test job list sorting by different fields"""
+        import time
+        mock_batch = MagicMock()
+        mock_batch.submit_job.return_value = {
+            "jobId": "aws-job-123",
+            "jobName": "test-job",
+        }
+        mock_boto_client.return_value = mock_batch
+
         # Create jobs with different names
-        job = BatchJob(
-            id="job-1",
-            name="zebra-job",
-            command="echo hello",
-            user="testuser",
-        )
-        session.add(job)
-
-        job = BatchJob(
-            id="job-2",
-            name="alpha-job",
-            command="echo hello",
-            user="testuser",
-        )
-        session.add(job)
-
-        job = BatchJob(
-            id="job-3",
-            name="beta-job",
-            command="echo hello",
-            user="testuser",
-        )
-        session.add(job)
-        session.commit()
+        client.post("/api/v1/jobs", json={
+            "job_name": "zebra-job",
+            "job_definition": "test-def:1",
+            "job_queue": "test-queue",
+            "command": "echo hello",
+            "user": "testuser",
+        })
+        time.sleep(0.01)  # Small delay to ensure different timestamps
+        client.post("/api/v1/jobs", json={
+            "job_name": "alpha-job",
+            "job_definition": "test-def:1",
+            "job_queue": "test-queue",
+            "command": "echo hello",
+            "user": "testuser",
+        })
+        time.sleep(0.01)
+        client.post("/api/v1/jobs", json={
+            "job_name": "beta-job",
+            "job_definition": "test-def:1",
+            "job_queue": "test-queue",
+            "command": "echo hello",
+            "user": "testuser",
+        })
 
         # Test default sort (submitted_on desc - most recent first)
         response = client.get("/api/v1/jobs")
@@ -495,68 +542,62 @@ class TestJobsServices:
 
     def test_create_batch_job(self, session: Session):
         """Test creating a batch job in database"""
+        from api.jobs.services import create_batch_job
 
-        job = BatchJob(
-            id=str(uuid.uuid4()),
+        job_create = BatchJobCreate(
             name="test-job",
             command="echo hello",
             user="testuser",
             aws_job_id="aws-123",
             status=JobStatus.SUBMITTED,
         )
-        session.add(job)
-        session.commit()
-        session.refresh(job)
+        job = create_batch_job(session, job_create)
 
         assert job.id is not None
         assert job.name == "test-job"
+        assert job.aws_job_id == "aws-123"
         assert job.status == JobStatus.SUBMITTED
 
     def test_get_batch_job(self, session: Session):
         """Test retrieving a batch job by ID"""
-        from api.jobs.services import get_batch_job
+        from api.jobs.services import create_batch_job, get_batch_job
 
         # Create job
-        job = BatchJob(
-            id=str(uuid.uuid4()),
+        job_create = BatchJobCreate(
             name="test-job",
             command="echo hello",
             user="testuser",
-            aws_job_id="aws-123",
-            status=JobStatus.SUBMITTED,
         )
-        session.add(job)
-        session.commit()
-        session.refresh(job)
+        created_job = create_batch_job(session, job_create)
 
         # Retrieve job
-        retrieved_job = get_batch_job(session, job.id)
-        assert retrieved_job.id == job.id
+        retrieved_job = get_batch_job(session, created_job.id)
+        assert retrieved_job.id == created_job.id
         assert retrieved_job.name == "test-job"
 
     def test_get_batch_job_not_found(self, session: Session):
-        """Test retrieving non-existent job returns None"""
+        """Test retrieving non-existent job raises HTTPException"""
         from api.jobs.services import get_batch_job
+        from fastapi import HTTPException
 
-        fake_id = str(uuid.uuid4())
-        retrieved_job = get_batch_job(session, fake_id)
-        assert retrieved_job is None
+        fake_id = uuid.uuid4()
+        with pytest.raises(HTTPException) as exc_info:
+            get_batch_job(session, fake_id)
+        assert exc_info.value.status_code == 404
 
     def test_get_batch_jobs_with_filters(self, session: Session):
         """Test getting jobs with filters"""
-        from api.jobs.services import get_batch_jobs
+        from api.jobs.services import create_batch_job, get_batch_jobs
 
         # Create multiple jobs
         for i in range(5):
-            job = BatchJob(
-                id=str(uuid.uuid4()),
+            job_create = BatchJobCreate(
                 name=f"job-{i}",
                 command=f"echo {i}",
                 user="user1" if i < 3 else "user2",
                 status=JobStatus.SUBMITTED if i < 2 else JobStatus.RUNNING,
             )
-            session.add(job)
-        session.commit()
+            create_batch_job(session, job_create)
 
         # Filter by user
         jobs, count = get_batch_jobs(session, user="user1")
@@ -574,26 +615,23 @@ class TestJobsServices:
 
     def test_update_batch_job(self, session: Session):
         """Test updating a batch job"""
-        from api.jobs.services import update_batch_job
+        from api.jobs.services import create_batch_job, update_batch_job
 
         # Create job
-        job = BatchJob(
-            id=str(uuid.uuid4()),
+        job_create = BatchJobCreate(
             name="test-job",
             command="echo hello",
             user="testuser",
             status=JobStatus.SUBMITTED,
         )
-        session.add(job)
-        session.commit()
-        session.refresh(job)
+        job = create_batch_job(session, job_create)
 
         # Update job
         job_update = BatchJobUpdate(
             status=JobStatus.RUNNING,
             log_stream_name="test-stream",
         )
-        updated_job = update_batch_job(session, job, job_update)
+        updated_job = update_batch_job(session, job.id, job_update)
 
         assert updated_job.status == JobStatus.RUNNING
         assert updated_job.log_stream_name == "test-stream"
@@ -628,6 +666,7 @@ class TestJobsServices:
 
         assert job.id is not None
         assert job.name == "test-job"
+        assert job.aws_job_id == "aws-job-123"
         assert job.status == JobStatus.SUBMITTED
         assert job.user == "testuser"
         assert "echo hello" in job.command

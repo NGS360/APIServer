@@ -579,6 +579,7 @@ def test_submit_create_project_job(
 
     # Verify response structure
     assert "id" in response_json
+    assert response_json["aws_job_id"] == "aws-batch-job-123"
     assert response_json["status"] == "SUBMITTED"
     assert response_json["user"] == "testuser"
 
@@ -662,6 +663,7 @@ def test_submit_export_results_job(
 
     assert response.status_code == 201
     response_json = response.json()
+    assert response_json["aws_job_id"] == "aws-batch-job-456"
     assert response_json["status"] == "SUBMITTED"
 
     # Verify AWS Batch was called
@@ -794,6 +796,7 @@ def test_submit_create_project_with_auto_release_ignored(
     # Should succeed and ignore auto_release
     assert response.status_code == 201
     response_json = response.json()
+    assert response_json["aws_job_id"] == "aws-batch-job-789"
     assert response_json["status"] == "SUBMITTED"
 
 
@@ -1186,4 +1189,4 @@ def test_ingest_vendor_data(
     # Check results
     assert response.status_code == 201
     response_json = response.json()
-    assert response_json["id"] == "aws-batch-job-123"
+    assert response_json["aws_job_id"] == "aws-batch-job-123"

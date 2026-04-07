@@ -36,4 +36,3 @@ def get_s3_client():
 
 SessionDep: TypeAlias = Annotated[Session, Depends(get_db)]
 OpenSearchDep: TypeAlias = Annotated[OpenSearch, Depends(get_opensearch_client)]
-S3ClientDep: TypeAlias = Annotated[object, Depends(get_s3_client)]

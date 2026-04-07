@@ -3,8 +3,8 @@ Routes/endpoints for the Project API
 """
 
 from typing import Literal
-from fastapi import APIRouter, Query, status
-from core.deps import SessionDep, OpenSearchDep, S3ClientDep
+from fastapi import APIRouter, Query, status, Depends
+from core.deps import SessionDep, OpenSearchDep, get_s3_client
 from api.auth.deps import CurrentUser
 from api.jobs.models import BatchJobPublic
 from api.project.deps import ProjectDep
@@ -254,7 +254,7 @@ def submit_pipeline_job(
     request: ActionSubmitRequest,
     current_user: CurrentUser,
     session: SessionDep,
-    s3_client: S3ClientDep,
+    s3_client=Depends(get_s3_client),
 ) -> BatchJobPublic:
     """
     Submit a pipeline job to AWS Batch for a project.
@@ -308,7 +308,7 @@ def ingest_vendor_data(
     session: SessionDep,
     project: ProjectDep,
     user: CurrentUser,
-    s3_client: S3ClientDep,
+    s3_client=Depends(get_s3_client),
     files_uri: str = Query(
         ..., description="Source Bucket/Prefix of the data to be ingested"
     ),

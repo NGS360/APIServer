@@ -24,3 +24,8 @@ wheels/
 .elasticbeanstalk/*
 !.elasticbeanstalk/*.cfg.yml
 !.elasticbeanstalk/*.global.yml
+
+# Test artifacts
+.pytest_cache/
+htmlcov/
+*.log

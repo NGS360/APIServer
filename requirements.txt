@@ -11,18 +11,31 @@ annotated-types==0.7.0
 anyio==4.12.1
     # via
     #   httpx
+    #   mcp
+    #   sse-starlette
     #   starlette
     #   watchfiles
+attrs==26.1.0
+    # via
+    #   jsonschema
+    #   referencing
 authlib==1.6.9
     # via ngs360-server (pyproject.toml)
 bcrypt==4.3.0
     # via ngs360-server (pyproject.toml)
-boto3==1.42.78
+bedrock-agentcore==1.4.7
     # via ngs360-server (pyproject.toml)
-botocore==1.42.68
+boto3==1.42.76
     # via
+    #   ngs360-server (pyproject.toml)
+    #   bedrock-agentcore
+    #   strands-agents
+botocore==1.42.77
+    # via
+    #   bedrock-agentcore
     #   boto3
     #   s3transfer
+    #   strands-agents
 certifi==2026.2.25
     # via
     #   httpcore
@@ -40,14 +53,17 @@ click==8.3.1
     #   sample-sheet
     #   typer
     #   uvicorn
-cryptography==46.0.6
+cryptography==46.0.5
     # via
     #   ngs360-server (pyproject.toml)
     #   authlib
+    #   pyjwt
     #   python-jose
 dnspython==2.8.0
     # via email-validator
-ecdsa==0.19.2
+docstring-parser==0.17.0
+    # via strands-agents
+ecdsa==0.19.1
     # via python-jose
 email-validator==2.3.0
     # via
@@ -58,7 +74,7 @@ events==0.5
     # via opensearch-py
 fastapi==0.135.1
     # via ngs360-server (pyproject.toml)
-fastapi-cli==0.0.24
+fastapi-cli==0.0.23
     # via fastapi
 fastapi-cloud-cli==0.6.0
     # via fastapi-cli
@@ -81,18 +97,29 @@ httpx==0.28.1
     #   ngs360-server (pyproject.toml)
     #   fastapi
     #   fastapi-cloud-cli
+    #   mcp
+httpx-sse==0.4.3
+    # via mcp
 idna==3.11
     # via
     #   anyio
     #   email-validator
     #   httpx
     #   requests
+importlib-metadata==8.7.1
+    # via opentelemetry-api
 jinja2==3.1.6
     # via fastapi
 jmespath==1.1.0
     # via
     #   boto3
     #   botocore
+jsonschema==4.26.0
+    # via
+    #   mcp
+    #   strands-agents
+jsonschema-specifications==2025.9.1
+    # via jsonschema
 mako==1.3.10
     # via
     #   ngs360-server (pyproject.toml)
@@ -103,14 +130,37 @@ markupsafe==3.0.3
     # via
     #   jinja2
     #   mako
+mcp==1.26.0
+    # via
+    #   ngs360-server (pyproject.toml)
+    #   strands-agents
 mdurl==0.1.2
     # via markdown-it-py
 opensearch-protobufs==0.19.0
     # via opensearch-py
 opensearch-py==3.1.0
     # via ngs360-server (pyproject.toml)
+opentelemetry-api==1.40.0
+    # via
+    #   opentelemetry-instrumentation
+    #   opentelemetry-instrumentation-threading
+    #   opentelemetry-sdk
+    #   opentelemetry-semantic-conventions
+    #   strands-agents
+opentelemetry-instrumentation==0.61b0
+    # via opentelemetry-instrumentation-threading
+opentelemetry-instrumentation-threading==0.61b0
+    # via strands-agents
+opentelemetry-sdk==1.40.0
+    # via strands-agents
+opentelemetry-semantic-conventions==0.61b0
+    # via
+    #   opentelemetry-instrumentation
+    #   opentelemetry-sdk
 packaging==26.0
-    # via gunicorn
+    # via
+    #   gunicorn
+    #   opentelemetry-instrumentation
 protobuf==7.34.1
     # via opensearch-protobufs
 pyasn1==0.6.3
@@ -122,11 +172,14 @@ pycparser==3.0
 pydantic==2.12.5
     # via
     #   ngs360-server (pyproject.toml)
+    #   bedrock-agentcore
     #   fastapi
     #   fastapi-cloud-cli
+    #   mcp
     #   pydantic-extra-types
     #   pydantic-settings
     #   sqlmodel
+    #   strands-agents
 pydantic-core==2.41.5
     # via pydantic
 pydantic-extra-types==2.11.0
@@ -135,30 +188,40 @@ pydantic-settings==2.12.0
     # via
     #   ngs360-server (pyproject.toml)
     #   fastapi
-pygments==2.20.0
+    #   mcp
+pygments==2.19.2
     # via rich
+pyjwt==2.12.1
+    # via mcp
 pymysql==1.1.2
     # via ngs360-server (pyproject.toml)
 python-dateutil==2.9.0.post0
     # via
     #   botocore
     #   opensearch-py
-python-dotenv==1.2.2
+python-dotenv==1.2.1
     # via
     #   ngs360-server (pyproject.toml)
     #   pydantic-settings
     #   uvicorn
 python-jose==3.5.0
     # via ngs360-server (pyproject.toml)
-python-multipart==0.0.24
+python-multipart==0.0.22
     # via
     #   ngs360-server (pyproject.toml)
     #   fastapi
+    #   mcp
 pytz==2026.1.post1
     # via ngs360-server (pyproject.toml)
 pyyaml==6.0.3
-    # via uvicorn
-requests==2.33.1
+    # via
+    #   strands-agents
+    #   uvicorn
+referencing==0.37.0
+    # via
+    #   jsonschema
+    #   jsonschema-specifications
+requests==2.32.5
     # via
     #   opensearch-py
     #   sample-sheet
@@ -172,6 +235,10 @@ rich-toolkit==0.17.0
     #   fastapi-cloud-cli
 rignore==0.7.6
     # via fastapi-cloud-cli
+rpds-py==0.30.0
+    # via
+    #   jsonschema
+    #   referencing
 rsa==4.9.1
     # via python-jose
 s3transfer==0.16.0
@@ -188,14 +255,22 @@ six==1.17.0
     #   python-dateutil
 smart-open==7.5.0
     # via ngs360-server (pyproject.toml)
-sqlalchemy==2.0.49
+sqlalchemy==2.0.45
     # via
     #   alembic
     #   sqlmodel
 sqlmodel==0.0.37
     # via ngs360-server (pyproject.toml)
-starlette==1.0.0
-    # via fastapi
+sse-starlette==3.3.3
+    # via mcp
+starlette==0.52.1
+    # via
+    #   bedrock-agentcore
+    #   fastapi
+    #   mcp
+    #   sse-starlette
+strands-agents==1.33.0
+    # via ngs360-server (pyproject.toml)
 tabulate==0.9.0
     # via sample-sheet
 terminaltables==3.1.10
@@ -207,21 +282,29 @@ typer==0.24.1
 typing-extensions==4.15.0
     # via
     #   alembic
+    #   bedrock-agentcore
     #   fastapi
     #   grpcio
+    #   mcp
+    #   opentelemetry-api
+    #   opentelemetry-sdk
+    #   opentelemetry-semantic-conventions
     #   pydantic
     #   pydantic-core
     #   pydantic-extra-types
     #   rich-toolkit
     #   sqlalchemy
+    #   strands-agents
     #   typing-inspection
 typing-inspection==0.4.2
     # via
     #   fastapi
+    #   mcp
     #   pydantic
     #   pydantic-settings
 urllib3==2.6.3
     # via
+    #   bedrock-agentcore
     #   botocore
     #   opensearch-py
     #   requests
@@ -229,14 +312,25 @@ urllib3==2.6.3
 uvicorn==0.38.0
     # via
     #   ngs360-server (pyproject.toml)
+    #   bedrock-agentcore
     #   fastapi
     #   fastapi-cli
     #   fastapi-cloud-cli
+    #   mcp
 uvloop==0.22.1
     # via uvicorn
+watchdog==6.0.0
+    # via strands-agents
 watchfiles==1.1.1
     # via uvicorn
 websockets==16.0
-    # via uvicorn
-wrapt==2.1.1
-    # via smart-open
+    # via
+    #   bedrock-agentcore
+    #   uvicorn
+wrapt==1.17.3
+    # via
+    #   opentelemetry-instrumentation
+    #   opentelemetry-instrumentation-threading
+    #   smart-open
+zipp==3.23.0
+    # via importlib-metadata
