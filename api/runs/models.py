@@ -41,6 +41,7 @@ class SequencingRun(SQLModel, table=True):
     run_folder_uri: str | None = Field(default=None, max_length=255)
     status: RunStatus | None = Field(default=None)
     run_time: str | None = Field(default=None, max_length=4)
+    # TBD: Convert this to an enum or separate table if we want to enforce a set of allowed platforms
     sequencing_platform: str | None = Field(default=None, max_length=50)  # e.g., "Illumina", "ONT"
 
     # Relationships
