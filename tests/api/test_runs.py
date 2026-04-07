@@ -134,7 +134,6 @@ def test_add_run(client: TestClient):
     assert response.status_code == 422
 
 
-
 def test_get_runs(client: TestClient, session: Session):
     """Test that we can get all runs"""
     # Test No projects, this also ensure we are using the test db
