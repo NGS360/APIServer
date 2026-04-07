@@ -40,14 +40,14 @@ click==8.3.1
     #   sample-sheet
     #   typer
     #   uvicorn
-cryptography==46.0.5
+cryptography==46.0.6
     # via
     #   ngs360-server (pyproject.toml)
     #   authlib
     #   python-jose
 dnspython==2.8.0
     # via email-validator
-ecdsa==0.19.1
+ecdsa==0.19.2
     # via python-jose
 email-validator==2.3.0
     # via
@@ -158,7 +158,7 @@ pytz==2026.1.post1
     # via ngs360-server (pyproject.toml)
 pyyaml==6.0.3
     # via uvicorn
-requests==2.33.0
+requests==2.33.1
     # via
     #   opensearch-py
     #   sample-sheet
