@@ -12,47 +12,12 @@ from core.logger import logger
 
 from api.jobs.models import (
     BatchJob,
-    BatchJobCreate,
     BatchJobUpdate,
     JobStatus
 )
 
 
-def create_batch_job(session: Session, job_in: BatchJobCreate) -> BatchJob:
-    """
-    Create a new batch job.
-
-    Args:
-        session: Database session
-        job_in: Job creation data
-
-    Returns:
-        Created BatchJob instance
-    """
-    job = BatchJob.model_validate(job_in)
-    session.add(job)
-    session.commit()
-    session.refresh(job)
-    logger.info(f"Created batch job: {job.id}")
-    return job
-
-
-def get_batch_job_by_aws_id(session: Session, aws_job_id: str) -> BatchJob | None:
-    """
-    Find a batch job by its AWS job ID.
-
-    Args:
-        session: Database session
-        aws_job_id: AWS job ID to search for
-
-    Returns:
-        BatchJob instance if found, otherwise None
-    """
-    statement = select(BatchJob).where(BatchJob.aws_job_id == aws_job_id)
-    return session.exec(statement).first()
-
-
-def get_batch_job(session: Session, job_id: uuid.UUID) -> BatchJob:
+def get_batch_job(session: Session, job_id: str) -> BatchJob | None:
     """
     Retrieve a batch job by ID.
 
@@ -61,18 +26,9 @@ def get_batch_job(session: Session, job_id: uuid.UUID) -> BatchJob:
         job_id: Job UUID
 
     Returns:
-        BatchJob instance
-
-    Raises:
-        HTTPException: If job not found
+        BatchJob instance or None if not found
     """
-    job = session.get(BatchJob, job_id)
-    if not job:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Batch job {job_id} not found"
-        )
-    return job
+    return session.get(BatchJob, job_id)
 
 
 def get_batch_jobs(
@@ -123,7 +79,7 @@ def get_batch_jobs(
 
 def update_batch_job(
     session: Session,
-    job_id: uuid.UUID,
+    job: BatchJob,
     job_update: BatchJobUpdate
 ) -> BatchJob:
     """
@@ -131,7 +87,7 @@ def update_batch_job(
 
     Args:
         session: Database session
-        job_id: Job UUID
+        job: BatchJob instance to update
         job_update: Job update data
 
     Returns:
@@ -140,8 +96,6 @@ def update_batch_job(
     Raises:
         HTTPException: If job not found
     """
-    job = get_batch_job(session, job_id)
-
     update_data = job_update.model_dump(exclude_unset=True)
     for key, value in update_data.items():
         setattr(job, key, value)
@@ -149,7 +103,7 @@ def update_batch_job(
     session.add(job)
     session.commit()
     session.refresh(job)
-    logger.info(f"Updated batch job: {job_id}")
+    logger.info(f"Updated batch job: {job.id}")
     return job
 
 
@@ -206,20 +160,19 @@ def submit_batch_job(
             detail=f"Failed to submit job to AWS Batch: {err}",
         ) from err
 
-    # Create database record with AWS job information
-    job_create = BatchJobCreate(
+    job = BatchJob(
+        id=response.get("jobId"),
         name=job_name,
         command=command,
         user=user,
-        aws_job_id=response.get("jobId"),
         status=JobStatus.SUBMITTED
     )
+    session.add(job)
+    session.commit()
+    session.refresh(job)
+    logger.info(f"Created batch job: {job.id}")
 
-    batch_job = create_batch_job(session, job_create)
-    logger.info(f"Created database record for Job {response.get('jobId')} "
-                f"/ AWS Batch job {batch_job.aws_job_id}")
-
-    return batch_job
+    return job
 
 
 def get_batch_job_log(session: Session, job_id: uuid.UUID) -> list[str]:
@@ -232,10 +185,10 @@ def get_batch_job_log(session: Session, job_id: uuid.UUID) -> list[str]:
     Returns:
         Log output as a list of strings
     """
-    job = get_batch_job(session, job_id)
+    job = session.get(BatchJob, job_id)
 
-    if not job.aws_job_id or not job.log_stream_name:
-        logger.warning(f"Job {job_id} does not have AWS job ID or log stream name")
+    if not job or not job.log_stream_name:
+        logger.warning(f"Job {job_id} not available or does not have a log stream name")
         return []
 
     log_group = "/aws/batch/job"
