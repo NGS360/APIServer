@@ -20,7 +20,6 @@ from api.jobs.models import (
     JobStatus
 )
 from api.jobs import services
-import uuid
 
 router = APIRouter(prefix="/jobs", tags=["Job Endpoints"])
 

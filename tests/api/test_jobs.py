@@ -454,7 +454,7 @@ class TestJobsAPI:
         )
         session.add(job)
         session.commit()
-        
+
         # Test default sort (submitted_on desc - most recent first)
         response = client.get("/api/v1/jobs")
         assert response.status_code == 200
