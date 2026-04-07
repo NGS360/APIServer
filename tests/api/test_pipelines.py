@@ -400,3 +400,107 @@ def test_get_pipeline_types_no_configs(
     response_json = response.json()
     assert isinstance(response_json, list)
     assert len(response_json) == 0
+
+
+# ---- GET /api/v1/actions/configs tests ----
+
+
+@patch("api.actions.services.get_setting_value")
+def test_get_all_configs_success(
+    mock_get_setting: MagicMock,
+    client: TestClient,
+    session: Session,
+    mock_s3_client
+):
+    """Test retrieving all action configs returns correct shape and data"""
+    mock_get_setting.return_value = "s3://ngs360-resources/pipeline_configs/"
+
+    # Setup two config files in S3
+    files = [
+        {"Key": "pipeline_configs/rna-seq_pipeline.yaml"},
+        {"Key": "pipeline_configs/wgs_pipeline.yaml"},
+    ]
+    mock_s3_client.setup_bucket("ngs360-resources", "pipeline_configs/", files, [])
+
+    rna_config = {
+        "project_type": "RNA-Seq",
+        "project_admins": ["admin1@example.com", "admin2@example.com"],
+        "platforms": {
+            "Arvados": {
+                "launchers": "rna-seq-launcher",
+                "exports": [{"Raw Counts": "raw_counts"}],
+            }
+        },
+    }
+    wgs_config = {
+        "project_type": "WGS",
+        "project_admins": ["wgs-admin@example.com"],
+        "platforms": {
+            "SevenBridges": {
+                "create_project_command": "launch-wgs",
+            }
+        },
+    }
+
+    mock_s3_client.uploaded_files["ngs360-resources"] = {
+        "pipeline_configs/rna-seq_pipeline.yaml": yaml.dump(rna_config).encode("utf-8"),
+        "pipeline_configs/wgs_pipeline.yaml": yaml.dump(wgs_config).encode("utf-8"),
+    }
+
+    response = client.get("/api/v1/actions/configs")
+    assert response.status_code == 200
+
+    data = response.json()
+    assert "configs" in data
+    assert "total" in data
+    assert data["total"] == 2
+    assert len(data["configs"]) == 2
+
+    # Verify the key fields are present in each config
+    project_types = {c["project_type"] for c in data["configs"]}
+    assert project_types == {"RNA-Seq", "WGS"}
+
+    for config in data["configs"]:
+        assert "project_type" in config
+        assert "project_admins" in config
+        assert "platforms" in config
+        assert isinstance(config["project_admins"], list)
+        assert isinstance(config["platforms"], dict)
+
+
+@patch("api.actions.services.get_setting_value")
+def test_get_all_configs_empty(
+    mock_get_setting: MagicMock,
+    client: TestClient,
+    session: Session,
+    mock_s3_client
+):
+    """Test retrieving all action configs when none exist"""
+    mock_get_setting.return_value = "s3://ngs360-resources/pipeline_configs/"
+
+    # Setup empty bucket
+    mock_s3_client.setup_bucket("ngs360-resources", "pipeline_configs/", [], [])
+
+    response = client.get("/api/v1/actions/configs")
+    assert response.status_code == 200
+
+    data = response.json()
+    assert data == {"configs": [], "total": 0}
+
+
+@patch("api.actions.services.get_setting_value")
+def test_get_all_configs_s3_error(
+    mock_get_setting: MagicMock,
+    client: TestClient,
+    session: Session,
+    mock_s3_client
+):
+    """Test that S3 errors propagate correctly from the configs endpoint"""
+    mock_get_setting.return_value = "s3://ngs360-resources/pipeline_configs/"
+
+    # Simulate S3 bucket-not-found error
+    mock_s3_client.simulate_error("NoSuchBucket")
+
+    response = client.get("/api/v1/actions/configs")
+    assert response.status_code == 404
+    assert "bucket" in response.json()["detail"].lower()
