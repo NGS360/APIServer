@@ -1,7 +1,7 @@
 """
 Services for managing batch jobs.
 """
-from typing import Any, List, Dict, Literal
+from typing import Any, List, Dict, Literal, Optional
 from sqlmodel import select, Session, func
 from fastapi import HTTPException, status
 import uuid
@@ -215,13 +215,13 @@ def get_log_events(log_group, log_stream_name, start_time=None, end_time=None):
     if end_time:
         kwargs['endTime'] = end_time
 
+    settings = get_settings()
+    logs_client = boto3.client('logs', region_name=settings.AWS_REGION)
+
     events = []
     while True:
         try:
-            resp = boto3.client(
-                'logs',
-                region_name=get_settings().AWS_REGION
-            ).get_log_events(**kwargs)
+            resp = logs_client.get_log_events(**kwargs)
         except botocore.exceptions.ClientError:
             return ["No log (yet) available"]
         for event in resp['events']:
@@ -232,3 +232,89 @@ def get_log_events(log_group, log_stream_name, start_time=None, end_time=None):
             break
         kwargs['nextToken'] = next_forward_token
     return events
+
+
+def get_batch_job_log_paginated(
+    log_stream_name: str,
+    limit: int = 1000,
+    next_token: Optional[str] = None,
+    start_from_head: bool = True
+) -> dict:
+    """
+    Retrieve paginated log output for a batch job.
+
+    Args:
+        log_stream_name: CloudWatch log stream name
+        limit: Maximum number of log events to return
+        next_token: Token for retrieving next page
+        start_from_head: Start from oldest (true) or newest (false) logs
+
+    Returns:
+        Dictionary with events, next_token, has_more, and total_events
+    """
+    log_group = "/aws/batch/job"
+    settings = get_settings()
+
+    logger.info(
+        f"Fetching paginated logs: stream={log_stream_name}, "
+        f"limit={limit}, has_token={next_token is not None}, "
+        f"start_from_head={start_from_head}"
+    )
+
+    logs_client = boto3.client('logs', region_name=settings.AWS_REGION)
+
+    kwargs = {
+        'logGroupName': log_group,
+        'logStreamName': log_stream_name,
+        'limit': limit,
+        'startFromHead': start_from_head,
+    }
+
+    # Add pagination token if provided
+    if next_token:
+        kwargs['nextToken'] = next_token
+
+    try:
+        resp = logs_client.get_log_events(**kwargs)
+    
+        events = [event['message'] for event in resp.get('events', [])]
+        returned_next_token = resp.get('nextForwardToken') if start_from_head else resp.get('nextBackwardToken')
+
+        # Determine if there are more pages
+        # If the token changed, there might be more data
+        has_more = (
+            returned_next_token is not None and 
+            returned_next_token != next_token and
+            len(events) > 0
+        )
+
+        logger.info(
+            f"Retrieved {len(events)} events, "
+            f"has_more={has_more}, "
+            f"next_token={returned_next_token[:20] if returned_next_token else None}"
+        )
+
+        return {
+            "events": events,
+            "next_token": returned_next_token if has_more else None,
+            "has_more": has_more,
+            "total_events": len(events)
+        }
+
+    except botocore.exceptions.ClientError as e:
+        error_code = e.response.get('Error', {}).get('Code', 'Unknown')
+
+        if error_code == 'ResourceNotFoundException':
+            logger.warning(f"Log stream not found: {log_stream_name}")
+            return {
+                "events": ["No logs available yet"],
+                "next_token": None,
+                "has_more": False,
+                "total_events": 0
+            }
+
+        logger.error(f"Error fetching logs: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to retrieve logs: {str(e)}"
+        ) from e

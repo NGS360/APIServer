@@ -17,7 +17,8 @@ from api.jobs.models import (
     BatchJobUpdate,
     BatchJobPublic,
     BatchJobsPublic,
-    JobStatus
+    JobStatus,
+    LogResponse
 )
 from api.jobs import services
 
@@ -180,6 +181,10 @@ def update_job(
     return BatchJobPublic.model_validate(updated_job)
 
 
+###############################################################################
+# Job Endpoints /api/v1/jobs/{job_id}/log
+###############################################################################
+
 @router.get(
     "/{job_id}/log",
     response_model=list[str],
@@ -197,7 +202,54 @@ def get_job_log(
         job_id: Job UUID
 
     Returns:
-        List of log lines
+        Log output as a list of strings
     """
     logs = services.get_batch_job_log(session, job_id)
     return logs
+
+
+@router.get(
+    "/{job_id}/log/paginated",
+    response_model=LogResponse,
+    tags=["Job Endpoints"],
+)
+def get_job_log_paginated(
+    session: SessionDep,
+    job_id: str,
+    limit: int = Query(1000, ge=1, le=10000, description="Number of log lines to return"),
+    next_token: Optional[str] = Query(None, description="Token for next page of results"),
+    start_from_head: bool = Query(True, description="Start from beginning (true) or end (false)"),
+) -> LogResponse:
+    """
+    Get paginated logs for a specific batch job.
+
+    This endpoint returns logs in pages, allowing clients to fetch large log files
+    incrementally without timeouts.
+
+    Args:
+        session: Database session
+        job_id: Job UUID
+        limit: Maximum number of log lines to return (1-10000)
+        next_token: Pagination token from previous response
+        start_from_head: If true, start from oldest logs; if false, start from newest
+
+    Returns:
+        Paginated log response with events and next_token for subsequent requests
+
+    Example usage:
+        1. First request: GET /jobs/{id}/log/paginated?limit=1000
+        2. Next page: GET /jobs/{id}/log/paginated?limit=1000&next_token={token}
+    """
+    job = services.get_batch_job(session, job_id)
+    if not job or not job.log_stream_name:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Job or log not found"
+        )
+
+    return services.get_batch_job_log_paginated(
+        log_stream_name=job.log_stream_name,
+        limit=limit,
+        next_token=next_token,
+        start_from_head=start_from_head
+    )
