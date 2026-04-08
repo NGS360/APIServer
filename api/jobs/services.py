@@ -276,14 +276,15 @@ def get_batch_job_log_paginated(
 
     try:
         resp = logs_client.get_log_events(**kwargs)
-    
+
         events = [event['message'] for event in resp.get('events', [])]
-        returned_next_token = resp.get('nextForwardToken') if start_from_head else resp.get('nextBackwardToken')
+        returned_next_token = resp.get('nextForwardToken') \
+            if start_from_head else resp.get('nextBackwardToken')
 
         # Determine if there are more pages
         # If the token changed, there might be more data
         has_more = (
-            returned_next_token is not None and 
+            returned_next_token is not None and
             returned_next_token != next_token and
             len(events) > 0
         )
