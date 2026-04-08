@@ -1,20 +1,23 @@
 import uuid
+from typing import List, Literal
 
 from fastapi import HTTPException, status
-from typing import Literal
 from pydantic import PositiveInt
-
 from sqlmodel import Session, select, func
-
+from opensearchpy import OpenSearch
 
 from api.samples.models import (
-    Sample, SampleCreate, SamplePublic, SamplesPublic, SampleAttribute
+    Sample,
+    SampleCreate,
+    SamplePublic,
+    SamplesPublic,
+    SampleAttribute,
+    BulkSampleCreateResponse,
+    BulkSampleItemResponse,
 )
 from api.project.models import Project
-from api.search.models import (
-    SearchDocument,
-)
-from opensearchpy import OpenSearch
+from api.runs.models import SequencingRun, SampleSequencingRun
+from api.search.models import SearchDocument
 from api.search.services import add_object_to_index, delete_index
 
 
@@ -230,3 +233,199 @@ def reindex_samples(session: Session, client: OpenSearch):
     for sample in samples:
         search_doc = SearchDocument(id=str(sample.id), body=sample)
         add_object_to_index(client, search_doc, index="samples")
+
+
+# ---------------------------------------------------------------------------
+# Bulk sample creation
+# ---------------------------------------------------------------------------
+
+
+def bulk_create_samples(
+    session: Session,
+    opensearch_client: OpenSearch,
+    project: Project,
+    samples_in: List[SampleCreate],
+    created_by: str,
+) -> BulkSampleCreateResponse:
+    """
+    Create multiple samples in a single atomic transaction.
+
+    Each item may optionally include a ``run_barcode`` to associate
+    the sample with a sequencing run at creation time.
+
+    All database writes happen in one transaction — if anything fails
+    the entire batch is rolled back.
+
+    Args:
+        session: Database session
+        opensearch_client: OpenSearch client for indexing
+        project: The project object (already validated by route dependency)
+        samples_in: List of SampleCreate items
+        created_by: Username recorded on any SampleSequencingRun rows
+
+    Returns:
+        BulkSampleCreateResponse with per-item details and aggregate counts
+    """
+    from api.runs.services import get_run
+
+    # ── Pre-validation ────────────────────────────────────────────────
+
+    # 1. Check for duplicate sample_ids within the request
+    seen_ids: set[str] = set()
+    duplicates: list[str] = []
+    for item in samples_in:
+        if item.sample_id in seen_ids:
+            duplicates.append(item.sample_id)
+        seen_ids.add(item.sample_id)
+    if duplicates:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                f"Duplicate sample_id(s) in request: "
+                f"{', '.join(sorted(set(duplicates)))}"
+            ),
+        )
+
+    # 2. Resolve all unique run barcodes up-front
+    unique_barcodes = {
+        item.run_barcode for item in samples_in if item.run_barcode
+    }
+    barcode_to_run: dict[str, SequencingRun] = {}
+    invalid_barcodes: list[str] = []
+    for barcode in unique_barcodes:
+        try:
+            run = get_run(session=session, run_barcode=barcode)
+        except (ValueError, Exception):
+            run = None
+        if run is None:
+            invalid_barcodes.append(barcode)
+        else:
+            barcode_to_run[barcode] = run
+
+    if invalid_barcodes:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                f"Run barcode(s) not found: "
+                f"{', '.join(sorted(invalid_barcodes))}"
+            ),
+        )
+
+    # 3. Validate no duplicate attribute keys per sample
+    for item in samples_in:
+        if item.attributes:
+            seen_keys: set[str] = set()
+            dup_keys: list[str] = []
+            for attr in item.attributes:
+                if attr.key in seen_keys:
+                    dup_keys.append(attr.key)
+                seen_keys.add(attr.key)
+            if dup_keys:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=(
+                        f"Duplicate attribute keys ({', '.join(dup_keys)}) "
+                        f"on sample '{item.sample_id}'."
+                    ),
+                )
+
+    # ── Transactional creation ────────────────────────────────────────
+
+    samples_created = 0
+    samples_existing = 0
+    associations_created = 0
+    associations_existing = 0
+    items: list[BulkSampleItemResponse] = []
+    newly_created_samples: list[Sample] = []
+
+    for item in samples_in:
+        created = False
+
+        # Resolve or create the sample
+        existing = session.exec(
+            select(Sample).where(
+                Sample.sample_id == item.sample_id,
+                Sample.project_id == project.project_id,
+            )
+        ).first()
+
+        if existing:
+            sample = existing
+            samples_existing += 1
+        else:
+            sample = Sample(
+                sample_id=item.sample_id,
+                project_id=project.project_id,
+            )
+            session.add(sample)
+            session.flush()  # get the UUID
+
+            # Create attributes
+            if item.attributes:
+                attrs = [
+                    SampleAttribute(
+                        sample_id=sample.id, key=a.key, value=a.value
+                    )
+                    for a in item.attributes
+                ]
+                session.add_all(attrs)
+
+            samples_created += 1
+            created = True
+            newly_created_samples.append(sample)
+
+        # Associate with sequencing run if requested
+        run_barcode_echo: str | None = None
+        if item.run_barcode:
+            run = barcode_to_run[item.run_barcode]
+            existing_assoc = session.exec(
+                select(SampleSequencingRun).where(
+                    SampleSequencingRun.sample_id == sample.id,
+                    SampleSequencingRun.sequencing_run_id == run.id,
+                )
+            ).first()
+
+            if existing_assoc:
+                associations_existing += 1
+            else:
+                assoc = SampleSequencingRun(
+                    sample_id=sample.id,
+                    sequencing_run_id=run.id,
+                    created_by=created_by,
+                )
+                session.add(assoc)
+                associations_created += 1
+
+            run_barcode_echo = item.run_barcode
+
+        items.append(
+            BulkSampleItemResponse(
+                sample_id=item.sample_id,
+                sample_uuid=sample.id,
+                project_id=project.project_id,
+                created=created,
+                run_barcode=run_barcode_echo,
+            )
+        )
+
+    # Single commit — all or nothing
+    session.commit()
+
+    # ── Post-commit: index newly created samples in OpenSearch ────────
+    if opensearch_client:
+        for sample in newly_created_samples:
+            session.refresh(sample)
+            search_doc = SearchDocument(id=str(sample.id), body=sample)
+            try:
+                add_object_to_index(opensearch_client, search_doc, index="samples")
+            except Exception:
+                pass  # best-effort indexing
+
+    return BulkSampleCreateResponse(
+        project_id=project.project_id,
+        samples_created=samples_created,
+        samples_existing=samples_existing,
+        associations_created=associations_created,
+        associations_existing=associations_existing,
+        items=items,
+    )
