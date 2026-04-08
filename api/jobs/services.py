@@ -250,15 +250,39 @@ def stream_batch_job_log(log_stream_name: str):
 
     logger.info(f"Starting log stream for {log_stream_name}")
     try:
+        consecutive_empty = 0
+        max_empty_attempts = 3  # Stop after 3 consecutive empty responses
+
         while True:
             resp = logs_client.get_log_events(**kwargs)
+            events = resp.get('events', [])
 
-            for event in resp['events']:
-                yield event['message'] + '\n'
+            # Yield all events
+            if events:
+                consecutive_empty = 0  # Reset counter on new events
+                for event in events:
+                    yield event['message'] + '\n'
+            else:
+                consecutive_empty += 1
+                logger.debug(f"Empty response #{consecutive_empty} for {log_stream_name}")
 
+                # Stop if we get too many empty responses
+                if consecutive_empty >= max_empty_attempts:
+                    logger.info(f"No more events after {consecutive_empty} attempts")
+                    break
+
+            # Check pagination token for next batch
             next_token = resp.get('nextForwardToken')
-            if not next_token or kwargs.get('nextToken') == next_token:
+            prev_token = kwargs.get('nextToken')
+            logger.debug(f"prev_token={prev_token}, next_token={next_token}")
+
+            # Exit conditions:
+            # 1. No next token provided
+            # 2. Token hasn't changed (no more data)
+            if not next_token or prev_token == next_token:
+                logger.info("Pagination complete (token unchanged)")
                 break
+
             kwargs['nextToken'] = next_token
 
     except botocore.exceptions.ClientError as e:
