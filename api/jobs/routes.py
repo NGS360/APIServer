@@ -125,6 +125,9 @@ def get_jobs(
     "/{job_id}",
     response_model=BatchJobPublic,
     tags=["Job Endpoints"],
+    responses={
+        404: {"description": "Job not found"}
+    }
 )
 def get_job(
     session: SessionDep,
@@ -153,6 +156,9 @@ def get_job(
     "/{job_id}",
     response_model=BatchJobPublic,
     tags=["Job Endpoints"],
+    responses={
+        404: {"description": "Job not found"}
+    }
 )
 def update_job(
     session: SessionDep,
@@ -189,6 +195,9 @@ def update_job(
     "/{job_id}/log",
     response_model=list[str],
     tags=["Job Endpoints"],
+    responses={
+        404: {"description": "Job not found"}
+    }
 )
 def get_job_log(
     session: SessionDep,
@@ -212,6 +221,9 @@ def get_job_log(
     "/{job_id}/log/paginated",
     response_model=LogResponse,
     tags=["Job Endpoints"],
+    responses={
+        404: {"description": "Job not found"}
+    }
 )
 def get_job_log_paginated(
     session: SessionDep,
