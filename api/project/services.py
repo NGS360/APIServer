@@ -567,19 +567,39 @@ def add_sample_to_project(
     opensearch_client: OpenSearch,
     project: Project,
     sample_in: SampleCreate,
+    created_by: str | None = None,
 ) -> Sample:
     """
     Create a new sample with optional attributes in a project.
+
+    If ``sample_in.run_barcode`` is provided the sample is also associated
+    with the corresponding sequencing run in the **same** transaction.
 
     Args:
         session: Database session
         opensearch_client: OpenSearch client for indexing
         project: The project object (already validated)
-        sample_in: Sample creation data
+        sample_in: Sample creation data (may include run_barcode)
+        created_by: Username recorded on any SampleSequencingRun row
 
     Returns:
         Sample instance
     """
+    from api.runs.services import get_run
+
+    # Resolve run up-front so we can fail fast before creating the sample
+    run = None
+    if sample_in.run_barcode:
+        try:
+            run = get_run(session=session, run_barcode=sample_in.run_barcode)
+        except (ValueError, Exception):
+            run = None
+        if run is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Run with barcode '{sample_in.run_barcode}' not found.",
+            )
+
     # Create initial sample
     sample = Sample(sample_id=sample_in.sample_id, project_id=project.project_id)
     session.add(sample)
@@ -605,6 +625,15 @@ def add_sample_to_project(
 
         # Update database with attribute links
         session.add_all(sample_attributes)
+
+    # Associate with sequencing run if requested
+    if run is not None:
+        assoc = SampleSequencingRun(
+            sample_id=sample.id,
+            sequencing_run_id=run.id,
+            created_by=created_by or "api",
+        )
+        session.add(assoc)
 
     session.commit()
     session.refresh(sample)
