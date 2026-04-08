@@ -4,9 +4,30 @@ from fastapi import APIRouter, Depends, Query, status
 
 from core.deps import SessionDep, get_s3_client
 from . import services
-from .models import ActionConfig, SelectOption, ActionOption, ActionPlatform
+from .models import ActionConfig, ActionConfigsResponse, SelectOption, ActionOption, ActionPlatform
 
 router = APIRouter(prefix="/actions")
+
+
+@router.get(
+    "/configs",
+    response_model=ActionConfigsResponse,
+    tags=["Action Endpoints"],
+    status_code=status.HTTP_200_OK,
+)
+def get_all_configs(
+    session: SessionDep,
+    s3_client=Depends(get_s3_client),
+) -> ActionConfigsResponse:
+    """
+    Retrieve all action configurations from S3.
+
+    Returns all parsed action configs with their project types,
+    platform configurations, and admin lists.
+    """
+    return services.get_all_action_configs(
+        session=session, s3_client=s3_client
+    )
 
 
 @router.post(
