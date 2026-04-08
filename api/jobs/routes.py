@@ -11,6 +11,7 @@ PUT    /api/v1/jobs/[id]    Update a batch job
 
 from typing import Optional, Literal
 from fastapi import APIRouter, HTTPException, Query, status
+from fastapi.responses import StreamingResponse
 from core.deps import SessionDep
 from api.jobs.models import (
     BatchJobSubmit,
@@ -124,6 +125,9 @@ def get_jobs(
     "/{job_id}",
     response_model=BatchJobPublic,
     tags=["Job Endpoints"],
+    responses={
+        404: {"description": "Job not found"}
+    }
 )
 def get_job(
     session: SessionDep,
@@ -152,6 +156,9 @@ def get_job(
     "/{job_id}",
     response_model=BatchJobPublic,
     tags=["Job Endpoints"],
+    responses={
+        404: {"description": "Job not found"}
+    }
 )
 def update_job(
     session: SessionDep,
@@ -180,24 +187,41 @@ def update_job(
     return BatchJobPublic.model_validate(updated_job)
 
 
+###############################################################################
+# Job Endpoints /api/v1/jobs/{job_id}/log
+###############################################################################
+
+
 @router.get(
     "/{job_id}/log",
-    response_model=list[str],
+    response_class=StreamingResponse,
     tags=["Job Endpoints"],
+    responses={
+        404: {"description": "Job or log stream not found"}
+    }
 )
 def get_job_log(
     session: SessionDep,
-    job_id: str,
-) -> list[str]:
+    job_id: str
+) -> StreamingResponse:
     """
-    Retrieve log for a specific batch job.
+    Stream log for a specific batch job.
 
     Args:
         session: Database session
         job_id: Job UUID
 
     Returns:
-        List of log lines
+        Stream of log lines for the specified job
+
+    Raises:
+        HTTPException: If job or log stream not found
     """
-    logs = services.get_batch_job_log(session, job_id)
-    return logs
+    job = services.get_batch_job(session, job_id)
+    if not job or not job.log_stream_name:
+        raise HTTPException(status_code=404, detail="Job or log not found")
+
+    return StreamingResponse(
+        services.stream_batch_job_log(job.log_stream_name),
+        media_type="text/plain"
+    )

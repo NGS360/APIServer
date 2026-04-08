@@ -232,3 +232,34 @@ def get_log_events(log_group, log_stream_name, start_time=None, end_time=None):
             break
         kwargs['nextToken'] = next_forward_token
     return events
+
+
+def stream_batch_job_log(log_stream_name: str):
+    """Stream log events to avoid memory buildup and timeouts."""
+    log_group = "/aws/batch/job"
+    settings = get_settings()
+
+    # Create client ONCE outside loop
+    logs_client = boto3.client('logs', region_name=settings.AWS_REGION)
+
+    kwargs = {
+        'logGroupName': log_group,
+        'logStreamName': log_stream_name,
+        'limit': 1000,  # Smaller batches for faster initial response
+        'startFromHead': True,
+    }
+
+    try:
+        while True:
+            resp = logs_client.get_log_events(**kwargs)
+
+            for event in resp['events']:
+                yield event['message'] + '\n'
+
+            next_token = resp.get('nextForwardToken')
+            if not next_token or kwargs.get('nextToken') == next_token:
+                break
+            kwargs['nextToken'] = next_token
+
+    except botocore.exceptions.ClientError as e:
+        yield f"Error retrieving logs: {str(e)}\n"
