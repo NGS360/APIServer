@@ -4,7 +4,6 @@ Services for managing batch jobs.
 from typing import Any, List, Dict, Literal
 from sqlmodel import select, Session, func
 from fastapi import HTTPException, status
-import uuid
 import boto3
 import botocore
 from core.config import get_settings
@@ -175,63 +174,63 @@ def submit_batch_job(
     return job
 
 
-def get_batch_job_log(session: Session, job_id: uuid.UUID) -> list[str]:
-    """
-    Retrieve the log output for a batch job.
+# def get_batch_job_log(session: Session, job_id: uuid.UUID) -> list[str]:
+#     """
+#     Retrieve the log output for a batch job.
 
-    Args:
-        session: Database session
-        job_id: Job UUID
-    Returns:
-        Log output as a list of strings
-    """
-    job = session.get(BatchJob, job_id)
+#     Args:
+#         session: Database session
+#         job_id: Job UUID
+#     Returns:
+#         Log output as a list of strings
+#     """
+#     job = session.get(BatchJob, job_id)
 
-    if not job or not job.log_stream_name:
-        logger.warning(f"Job {job_id} not available or does not have a log stream name")
-        return []
+#     if not job or not job.log_stream_name:
+#         logger.warning(f"Job {job_id} not available or does not have a log stream name")
+#         return []
 
-    log_group = "/aws/batch/job"
-    log_stream_name = job.log_stream_name
+#     log_group = "/aws/batch/job"
+#     log_stream_name = job.log_stream_name
 
-    logger.info(f"Retrieving logs for job {job_id} from log group '{log_group}' "
-                f"and stream '{log_stream_name}'")
-    return get_log_events(log_group, log_stream_name)
+#     logger.info(f"Retrieving logs for job {job_id} from log group '{log_group}' "
+#                 f"and stream '{log_stream_name}'")
+#     return get_log_events(log_group, log_stream_name)
 
 
-def get_log_events(log_group, log_stream_name, start_time=None, end_time=None):
-    """
-    List events from CloudWatch log
-    """
-    kwargs = {
-        'logGroupName': log_group,
-        'logStreamName': log_stream_name,
-        'limit': 10000,
-        'startFromHead': True,
-    }
+# def get_log_events(log_group, log_stream_name, start_time=None, end_time=None):
+#     """
+#     List events from CloudWatch log
+#     """
+#     kwargs = {
+#         'logGroupName': log_group,
+#         'logStreamName': log_stream_name,
+#         'limit': 10000,
+#         'startFromHead': True,
+#     }
 
-    if start_time:
-        kwargs['startTime'] = start_time
-    if end_time:
-        kwargs['endTime'] = end_time
+#     if start_time:
+#         kwargs['startTime'] = start_time
+#     if end_time:
+#         kwargs['endTime'] = end_time
 
-    events = []
-    while True:
-        try:
-            resp = boto3.client(
-                'logs',
-                region_name=get_settings().AWS_REGION
-            ).get_log_events(**kwargs)
-        except botocore.exceptions.ClientError:
-            return ["No log (yet) available"]
-        for event in resp['events']:
-            events.append(event['message'])
+#     events = []
+#     while True:
+#         try:
+#             resp = boto3.client(
+#                 'logs',
+#                 region_name=get_settings().AWS_REGION
+#             ).get_log_events(**kwargs)
+#         except botocore.exceptions.ClientError:
+#             return ["No log (yet) available"]
+#         for event in resp['events']:
+#             events.append(event['message'])
 
-        next_forward_token = resp.get('nextForwardToken')
-        if not next_forward_token or kwargs.get('nextToken') == next_forward_token:
-            break
-        kwargs['nextToken'] = next_forward_token
-    return events
+#         next_forward_token = resp.get('nextForwardToken')
+#         if not next_forward_token or kwargs.get('nextToken') == next_forward_token:
+#             break
+#         kwargs['nextToken'] = next_forward_token
+#     return events
 
 
 def stream_batch_job_log(log_stream_name: str):
@@ -249,6 +248,7 @@ def stream_batch_job_log(log_stream_name: str):
         'startFromHead': True,
     }
 
+    logger.info(f"Starting log stream for {log_stream_name}")
     try:
         while True:
             resp = logs_client.get_log_events(**kwargs)
@@ -263,3 +263,5 @@ def stream_batch_job_log(log_stream_name: str):
 
     except botocore.exceptions.ClientError as e:
         yield f"Error retrieving logs: {str(e)}\n"
+
+    logger.info(f"Completed log stream for {log_stream_name}")
