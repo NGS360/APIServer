@@ -5,7 +5,7 @@ Models for the Sample API
 import uuid
 from typing import List, TYPE_CHECKING
 from sqlmodel import SQLModel, Field, Relationship, UniqueConstraint
-from pydantic import ConfigDict
+from pydantic import ConfigDict, field_validator
 
 if TYPE_CHECKING:
     from api.project.models import Project
@@ -45,6 +45,7 @@ class Sample(SQLModel, table=True):
 class SampleCreate(SQLModel):
     sample_id: str
     attributes: List[Attribute] | None = None
+    run_barcode: str | None = None
     model_config = ConfigDict(extra="forbid")
 
 
@@ -52,6 +53,7 @@ class SamplePublic(SQLModel):
     sample_id: str
     project_id: str
     attributes: List[Attribute] | None
+    run_barcode: str | None = None
 
 
 class SamplesPublic(SQLModel):
@@ -63,3 +65,39 @@ class SamplesPublic(SQLModel):
     per_page: int
     has_next: bool
     has_prev: bool
+
+
+# ---------------------------------------------------------------------------
+# Bulk sample creation models
+# ---------------------------------------------------------------------------
+
+
+class BulkSampleCreateRequest(SQLModel):
+    """Request body for POST /projects/{project_id}/samples/bulk."""
+    samples: List[SampleCreate]
+
+    @field_validator("samples")
+    @classmethod
+    def samples_must_not_be_empty(cls, v: List[SampleCreate]) -> List[SampleCreate]:
+        if not v:
+            raise ValueError("samples list must not be empty")
+        return v
+
+
+class BulkSampleItemResponse(SQLModel):
+    """Per-item detail in the bulk creation response."""
+    sample_id: str
+    sample_uuid: uuid.UUID
+    project_id: str
+    created: bool
+    run_barcode: str | None = None
+
+
+class BulkSampleCreateResponse(SQLModel):
+    """Aggregate response for the bulk sample creation endpoint."""
+    project_id: str
+    samples_created: int
+    samples_existing: int
+    associations_created: int
+    associations_existing: int
+    items: List[BulkSampleItemResponse]
