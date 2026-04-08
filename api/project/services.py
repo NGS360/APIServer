@@ -638,10 +638,13 @@ def add_sample_to_project(
     session.commit()
     session.refresh(sample)
 
-    # Add sample to opensearch
+    # Add sample to opensearch (best-effort; DB is source of truth)
     if opensearch_client:
         search_doc = SearchDocument(id=str(sample.id), body=sample)
-        add_object_to_index(opensearch_client, search_doc, index="samples")
+        try:
+            add_object_to_index(opensearch_client, search_doc, index="samples")
+        except Exception:
+            pass  # best-effort indexing; can be resynced via /reindex
 
     return sample
 
