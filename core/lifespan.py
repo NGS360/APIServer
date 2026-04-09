@@ -114,8 +114,13 @@ async def lifespan(app: FastAPI):
     #  raise RuntimeError(f"Cannot start application: database initialization failed - {str(e)}")
 
     logger.info("Initializing OpenSearch indexes...")
-    client = get_opensearch_client()
-    init_indexes(client)
+    try:
+        client = get_opensearch_client()
+        init_indexes(client)
+        logger.info("OpenSearch indexes initialized successfully")
+    except Exception as e:
+        logger.warning(f"OpenSearch initialization failed (non-fatal): {e}")
+        logger.warning("Search functionality may be unavailable")
 
     logger.info("In lifespan...yield")
     try:

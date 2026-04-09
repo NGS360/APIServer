@@ -399,6 +399,48 @@ class Settings(BaseSettings):
         """Get Corporate OAuth scopes (comma-separated)"""
         return self._get_config_value("OAUTH_CORP_SCOPES", default="openid,email,profile")
 
+    # Bedrock / Agent Configuration
+    @computed_field
+    @property
+    def BEDROCK_MODEL_ID(self) -> str:
+        """Get Bedrock model ID for the AI chatbot agent"""
+        return self._get_config_value(
+            "BEDROCK_MODEL_ID",
+            default="anthropic.claude-3-5-sonnet-20241022-v2:0"
+        )
+
+    @computed_field
+    @property
+    def BEDROCK_REGION(self) -> str:
+        """Get AWS region for Bedrock API calls"""
+        return self._get_config_value(
+            "BEDROCK_REGION", default="us-east-1"
+        )
+
+    @computed_field
+    @property
+    def AGENTCORE_MEMORY_ID(self) -> str | None:
+        """Get AgentCore memory identifier for conversation persistence"""
+        return self._get_config_value("AGENTCORE_MEMORY_ID")
+
+    @computed_field
+    @property
+    def CHAT_TIMEOUT_SECONDS(self) -> int:
+        """Get chat request timeout in seconds"""
+        value = self._get_config_value(
+            "CHAT_TIMEOUT_SECONDS", default="60"
+        )
+        return int(value)
+
+    @computed_field
+    @property
+    def CHAT_API_BASE_URL(self) -> str:
+        """Get base URL for NGS360 API used by MCP server tools"""
+        return self._get_config_value(
+            "CHAT_API_BASE_URL",
+            default="http://localhost:3000/api/v1"
+        )
+
     # Read environment variables from .env file, if it exists
     # extra='ignore' prevents validation errors from extra env vars
     model_config = SettingsConfigDict(

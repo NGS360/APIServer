@@ -1181,12 +1181,12 @@ aws_batch:
 
         assert response.status_code == 200
         data = response.json()
+        assert data["aws_job_id"] == "test-job-123"
+        assert data["name"] == "cellranger-mkfastq-test-run"
+        assert "command" in data
+        assert data["command"] == "mkfastq.sh"
         assert "id" in data
         assert "status" in data
-        assert "command" in data
-        assert data["id"] == "test-job-123"
-        assert data["name"] == "cellranger-mkfastq-test-run"
-        assert data["command"] == "mkfastq.sh"
         assert data["user"] == test_user.username
 
     def test_submit_job_with_jinja_expressions(
@@ -1271,7 +1271,7 @@ aws_batch:
         # Verify Jinja2 expression was evaluated correctly
         assert data["name"] == "test-file.txt-5000"
         assert data["command"] == "run.sh 5000"
-        assert data["id"] == "job-456"
+        assert data["aws_job_id"] == "job-456"
         assert data["user"] == test_user.username
 
         # Verify container overrides
@@ -1359,7 +1359,7 @@ tags:
 
         assert response.status_code == 400
         data = response.json()
-        assert "not configured for AWS Batch" in data["detail"]
+        assert "no execution backend configured" in data["detail"]
 
     def test_submit_job_batch_client_error(
         self, client: TestClient, mock_s3_client, monkeypatch, test_user
@@ -1503,7 +1503,7 @@ aws_batch:
 
         assert response.status_code == 200
         data = response.json()
-        assert data["id"] == "job-789"
+        assert data["aws_job_id"] == "job-789"
         assert data["name"] == "no-env-job"
         assert data["user"] == test_user.username
 
@@ -1632,7 +1632,7 @@ aws_batch:
         assert response.status_code == 200
         data = response.json()
         assert data["name"] == "complex-test_string-42"
-        assert data["id"] == "job-complex"
+        assert data["aws_job_id"] == "job-complex"
         assert data["user"] == test_user.username
 
         # Verify environment variables have correct values

@@ -295,6 +295,18 @@ class DemuxWorkflowTag(BaseModel):
     name: str
 
 
+class HealthOmicsConfig(BaseModel):
+    """Configuration for submitting a workflow run to AWS HealthOmics."""
+    workflow_id: str
+    workflow_version_name: Optional[str] = None
+    role_arn: str
+    output_uri: str
+    storage_type: str = "DYNAMIC"
+    storage_capacity: Optional[int] = None
+    run_name: Optional[str] = None
+    parameters: Optional[Dict[str, Any]] = None
+
+
 class DemuxWorkflowConfig(BaseModel):
     version: int
     workflow_id: str
@@ -304,12 +316,14 @@ class DemuxWorkflowConfig(BaseModel):
     help: str
     tags: List[DemuxWorkflowTag]
     aws_batch: Optional[AwsBatchConfig] = None
+    healthomics: Optional[HealthOmicsConfig] = None
 
 
 class DemuxWorkflowSubmitBody(BaseModel):
     workflow_id: str
     run_barcode: str
     inputs: Dict[str, Any]
+    backend: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------

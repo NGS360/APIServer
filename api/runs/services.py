@@ -40,7 +40,7 @@ from api.search.services import add_object_to_index, delete_index, delete_docume
 from api.search.models import (
     SearchDocument,
 )
-from api.jobs.services import submit_batch_job
+from api.jobs.services import submit_batch_job, submit_healthomics_run
 from api.jobs.models import BatchJobPublic
 from api.settings.services import get_setting_value
 
@@ -639,36 +639,70 @@ def submit_demux_job(
     session: Session, workflow_body: DemuxWorkflowSubmitBody, username: str, s3_client=None
 ) -> BatchJobPublic:
     """
-    Submit an AWS Batch job for the specified demultiplex workflow.
+    Submit a demultiplex workflow job to AWS Batch or HealthOmics.
+
+    The backend is chosen by:
+      1. Explicit ``workflow_body.backend`` ("aws_batch" or "healthomics")
+      2. Auto-detect from the YAML config (healthomics preferred when both present)
 
     Args:
         session: Database session
         workflow_body: The demultiplex workflow execution request containing workflow_id,
-                   run_barcode, and inputs
+                   run_barcode, inputs, and optional backend
+        username: Authenticated user's username
         s3_client: Optional boto3 S3 client
     Returns:
-        BatchJobPublic: The created batch job with AWS job information.
+        BatchJobPublic: The created job record.
     """
-    # Get tool config
     tool_config = get_demux_workflow_config(
         session=session, workflow_id=workflow_body.workflow_id, s3_client=s3_client
     )
 
-    # Interpolate inputs with aws_batch schema definition
+    # Determine backend
+    backend = workflow_body.backend
+    if backend is None:
+        if tool_config.healthomics:
+            backend = "healthomics"
+        elif tool_config.aws_batch:
+            backend = "aws_batch"
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    f"Demultiplex workflow '{workflow_body.workflow_id}' has no "
+                    f"execution backend configured (aws_batch or healthomics)."
+                ),
+            )
+
+    inputs = workflow_body.inputs
+    inputs["username"] = username
+
+    if backend == "healthomics":
+        return _submit_demux_healthomics(session, tool_config, inputs)
+    elif backend == "aws_batch":
+        return _submit_demux_batch(session, tool_config, inputs, username)
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Unknown backend '{backend}'. Use 'aws_batch' or 'healthomics'.",
+        )
+
+
+def _submit_demux_batch(
+    session: Session, tool_config: DemuxWorkflowConfig, inputs: dict, username: str
+) -> BatchJobPublic:
+    """Submit a demux job via AWS Batch."""
     if not tool_config.aws_batch:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=(
-                f"Demultiplex workflow '{workflow_body.workflow_id}' is not configured for "
+                f"Demultiplex workflow '{tool_config.workflow_id}' is not configured for "
                 f"AWS Batch execution."
             ),
         )
 
-    job_name = interpolate(tool_config.aws_batch.job_name, workflow_body.inputs)
-    command = interpolate(tool_config.aws_batch.command, workflow_body.inputs)
-    # Add username to inputs for interpolation
-    inputs = workflow_body.inputs
-    inputs['username'] = username
+    job_name = interpolate(tool_config.aws_batch.job_name, inputs)
+    command = interpolate(tool_config.aws_batch.command, inputs)
 
     container_overrides = {
         "command": command.split(),
@@ -681,14 +715,64 @@ def submit_demux_job(
         ],
     }
 
-    # Submit the job to AWS Batch and create database record
     batch_job = submit_batch_job(
         session=session,
         job_name=job_name,
         container_overrides=container_overrides,
         job_def=tool_config.aws_batch.job_definition,
         job_queue=tool_config.aws_batch.job_queue,
-        user=username
+        user=username,
+    )
+
+    return BatchJobPublic.model_validate(batch_job)
+
+
+def _submit_demux_healthomics(
+    session: Session, tool_config: DemuxWorkflowConfig, inputs: dict
+) -> BatchJobPublic:
+    """Submit a demux job via AWS HealthOmics."""
+    if not tool_config.healthomics:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"Demultiplex workflow '{tool_config.workflow_id}' is not configured for "
+                f"HealthOmics execution."
+            ),
+        )
+
+    ho = tool_config.healthomics
+
+    # Build HealthOmics parameters from user inputs + config defaults
+    # Each parameter value must be a JSON string for the HealthOmics API
+    omics_params = {}
+    if ho.parameters:
+        for key, tmpl in ho.parameters.items():
+            if isinstance(tmpl, str) and "{{" in tmpl:
+                omics_params[key] = interpolate(tmpl, inputs)
+            else:
+                omics_params[key] = str(tmpl) if tmpl is not None else ""
+
+    # Override / add any user-supplied inputs that match parameter names
+    for key, val in inputs.items():
+        if key == "username":
+            continue
+        if key in omics_params or ho.parameters is None:
+            omics_params[key] = str(val) if not isinstance(val, str) else val
+
+    run_name = None
+    if ho.run_name:
+        run_name = interpolate(ho.run_name, inputs)
+
+    batch_job = submit_healthomics_run(
+        session=session,
+        workflow_id=ho.workflow_id,
+        role_arn=ho.role_arn,
+        output_uri=ho.output_uri,
+        parameters=omics_params,
+        run_name=run_name,
+        workflow_version_name=ho.workflow_version_name,
+        storage_type=ho.storage_type,
+        storage_capacity=ho.storage_capacity,
     )
 
     return BatchJobPublic.model_validate(batch_job)
