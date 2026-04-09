@@ -68,6 +68,34 @@ class SamplesPublic(SQLModel):
 
 
 # ---------------------------------------------------------------------------
+# Sample-with-files response models (for ?include=files)
+# ---------------------------------------------------------------------------
+
+
+class SampleFilePublic(SQLModel):
+    """Compact file representation for sample responses."""
+    uri: str
+    tags: dict[str, str] | None = None  # Flattened from List[FileTag]
+
+
+class SampleWithFilesPublic(SamplePublic):
+    """SamplePublic extended with associated files."""
+    files: List[SampleFilePublic] | None = None
+
+
+class SamplesWithFilesPublic(SQLModel):
+    """Paginated list of samples with file data included."""
+    data: List[SampleWithFilesPublic]
+    data_cols: list[str] | None = None
+    total_items: int
+    total_pages: int
+    current_page: int
+    per_page: int
+    has_next: bool
+    has_prev: bool
+
+
+# ---------------------------------------------------------------------------
 # Bulk sample creation models
 # ---------------------------------------------------------------------------
 
