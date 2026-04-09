@@ -14,8 +14,16 @@ from api.project.models import (
     ProjectPublic,
     ProjectsPublic,
 )
-from api.samples.models import SampleCreate, SamplePublic, SamplesPublic, Attribute
+from api.samples.models import (
+    SampleCreate,
+    SamplePublic,
+    SamplesPublic,
+    Attribute,
+    BulkSampleCreateRequest,
+    BulkSampleCreateResponse,
+)
 from api.project import services
+from api.samples import services as sample_services
 from api.actions.models import ActionSubmitRequest
 
 router = APIRouter(prefix="/projects")
@@ -178,15 +186,58 @@ def add_sample_to_project(
     opensearch_client: OpenSearchDep,
     project: ProjectDep,
     sample_in: SampleCreate,
+    current_user: CurrentUser,
 ) -> SamplePublic:
     """
     Create a new sample with optional attributes.
+
+    If ``run_barcode`` is provided in the request body, the sample is also
+    associated with the specified sequencing run in the same transaction.
     """
-    return services.add_sample_to_project(
+    sample = services.add_sample_to_project(
         session=session,
         opensearch_client=opensearch_client,
         project=project,
         sample_in=sample_in,
+        created_by=current_user.username,
+    )
+    return SamplePublic(
+        sample_id=sample.sample_id,
+        project_id=sample.project_id,
+        attributes=[
+            Attribute(key=a.key, value=a.value)
+            for a in (sample.attributes or [])
+        ],
+        run_barcode=sample_in.run_barcode,
+    )
+
+
+@router.post(
+    "/{project_id}/samples/bulk",
+    tags=["Project Endpoints"],
+    status_code=status.HTTP_201_CREATED,
+    response_model=BulkSampleCreateResponse,
+)
+def bulk_create_samples(
+    session: SessionDep,
+    opensearch_client: OpenSearchDep,
+    project: ProjectDep,
+    current_user: CurrentUser,
+    body: BulkSampleCreateRequest,
+) -> BulkSampleCreateResponse:
+    """
+    Create multiple samples in a single atomic transaction.
+
+    Each sample in the list may optionally include a ``run_barcode``
+    to associate the sample with a sequencing run at creation time.
+    All samples succeed or fail together.
+    """
+    return sample_services.bulk_create_samples(
+        session=session,
+        opensearch_client=opensearch_client,
+        project=project,
+        samples_in=body.samples,
+        created_by=current_user.username,
     )
 
 
