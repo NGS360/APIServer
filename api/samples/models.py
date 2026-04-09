@@ -42,10 +42,23 @@ class Sample(SQLModel, table=True):
     __table_args__ = (UniqueConstraint("sample_id", "project_id"),)
 
 
+class SampleFileInput(SQLModel):
+    """File to create and associate with a sample during sample creation."""
+    uri: str
+    tags: dict[str, str] | None = None
+    hashes: dict[str, str] | None = None     # {"md5": "abc...", "sha256": "def..."}
+    role: str | None = None                   # FileSample.role (tumor/normal/etc.)
+    source: str | None = None
+    original_filename: str | None = None
+    size: int | None = None
+    storage_backend: str | None = None
+
+
 class SampleCreate(SQLModel):
     sample_id: str
     attributes: List[Attribute] | None = None
     run_barcode: str | None = None
+    files: List[SampleFileInput] | None = None
     model_config = ConfigDict(extra="forbid")
 
 
@@ -119,6 +132,8 @@ class BulkSampleItemResponse(SQLModel):
     project_id: str
     created: bool
     run_barcode: str | None = None
+    files_created: int = 0
+    files_skipped: int = 0
 
 
 class BulkSampleCreateResponse(SQLModel):
@@ -128,4 +143,6 @@ class BulkSampleCreateResponse(SQLModel):
     samples_existing: int
     associations_created: int
     associations_existing: int
+    files_created: int = 0
+    files_skipped: int = 0
     items: List[BulkSampleItemResponse]

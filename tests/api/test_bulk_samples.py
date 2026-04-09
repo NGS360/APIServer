@@ -9,6 +9,7 @@ from api.project.models import Project
 from api.project.services import generate_project_id
 from api.runs.models import SequencingRun, SampleSequencingRun
 from api.samples.models import Sample, SampleAttribute
+from api.files.models import File, FileSample, FileProject, FileHash, FileTag
 
 
 # ---------------------------------------------------------------------------
@@ -622,3 +623,439 @@ class TestBulkSampleCreation:
         assert items["MR1"]["run_barcode"] == barcode1
         assert items["MR2"]["run_barcode"] == barcode2
         assert items["MR3"]["run_barcode"] is None
+
+
+# ===================================================================
+# Bulk sample creation with inline files
+# ===================================================================
+
+
+class TestBulkSampleWithFiles:
+    """POST /projects/{project_id}/samples/bulk with files."""
+
+    def test_bulk_with_files_happy_path(
+        self, client: TestClient, session: Session
+    ):
+        """Create samples with files; verify File, FileSample, FileProject, tags, hashes."""
+        pid = _create_project(session)
+
+        response = client.post(
+            f"/api/v1/projects/{pid}/samples/bulk",
+            json={
+                "samples": [
+                    {
+                        "sample_id": "F001",
+                        "files": [
+                            {
+                                "uri": "s3://bucket/project/F001_R1.fastq.gz",
+                                "tags": {"read": "R1", "format": "fastq.gz"},
+                                "hashes": {"md5": "aaa111", "sha256": "bbb222"},
+                                "role": "tumor",
+                                "source": "pipeline-v1",
+                            },
+                            {
+                                "uri": "s3://bucket/project/F001_R2.fastq.gz",
+                                "tags": {"read": "R2"},
+                            },
+                        ],
+                    },
+                    {
+                        "sample_id": "F002",
+                        "files": [
+                            {
+                                "uri": "s3://bucket/project/F002_R1.fastq.gz",
+                                "hashes": {"md5": "ccc333"},
+                            },
+                        ],
+                    },
+                ]
+            },
+        )
+        assert response.status_code == 201
+        body = response.json()
+        assert body["samples_created"] == 2
+        assert body["files_created"] == 3
+        assert body["files_skipped"] == 0
+
+        items = {i["sample_id"]: i for i in body["items"]}
+        assert items["F001"]["files_created"] == 2
+        assert items["F002"]["files_created"] == 1
+
+        # Verify File records in DB
+        sample_f001 = session.exec(
+            select(Sample).where(
+                Sample.sample_id == "F001", Sample.project_id == pid
+            )
+        ).one()
+
+        file_samples = session.exec(
+            select(FileSample).where(FileSample.sample_id == sample_f001.id)
+        ).all()
+        assert len(file_samples) == 2
+
+        # Verify one of the files has correct tags and hashes
+        r1_fs = [fs for fs in file_samples if fs.role == "tumor"]
+        assert len(r1_fs) == 1
+        r1_file = session.get(File, r1_fs[0].file_id)
+        assert r1_file.uri == "s3://bucket/project/F001_R1.fastq.gz"
+        assert r1_file.source == "pipeline-v1"
+
+        # Check hashes
+        hashes = session.exec(
+            select(FileHash).where(FileHash.file_id == r1_file.id)
+        ).all()
+        hash_dict = {h.algorithm: h.value for h in hashes}
+        assert hash_dict == {"md5": "aaa111", "sha256": "bbb222"}
+
+        # Check tags
+        tags = session.exec(
+            select(FileTag).where(FileTag.file_id == r1_file.id)
+        ).all()
+        tag_dict = {t.key: t.value for t in tags}
+        assert tag_dict == {"read": "R1", "format": "fastq.gz"}
+
+        # Verify FileProject association
+        project = session.exec(
+            select(Project).where(Project.project_id == pid)
+        ).one()
+        file_projects = session.exec(
+            select(FileProject).where(FileProject.file_id == r1_file.id)
+        ).all()
+        assert len(file_projects) == 1
+        assert file_projects[0].project_id == project.id
+
+    def test_bulk_idempotent_resubmission_no_hashes(
+        self, client: TestClient, session: Session
+    ):
+        """Re-submitting same batch without hashes → files_skipped, no duplicates."""
+        pid = _create_project(session)
+
+        payload = {
+            "samples": [
+                {
+                    "sample_id": "ID001",
+                    "files": [
+                        {"uri": "s3://bucket/ID001_R1.fastq.gz"},
+                        {"uri": "s3://bucket/ID001_R2.fastq.gz"},
+                    ],
+                },
+            ]
+        }
+
+        # First submission
+        r1 = client.post(f"/api/v1/projects/{pid}/samples/bulk", json=payload)
+        assert r1.status_code == 201
+        b1 = r1.json()
+        assert b1["files_created"] == 2
+        assert b1["files_skipped"] == 0
+
+        # Second identical submission (no hashes → skip)
+        r2 = client.post(f"/api/v1/projects/{pid}/samples/bulk", json=payload)
+        assert r2.status_code == 201
+        b2 = r2.json()
+        assert b2["files_created"] == 0
+        assert b2["files_skipped"] == 2
+
+        # Verify only 2 File records exist for this sample
+        sample = session.exec(
+            select(Sample).where(
+                Sample.sample_id == "ID001", Sample.project_id == pid
+            )
+        ).one()
+        file_samples = session.exec(
+            select(FileSample).where(FileSample.sample_id == sample.id)
+        ).all()
+        assert len(file_samples) == 2
+
+    def test_bulk_idempotent_resubmission_matching_hashes(
+        self, client: TestClient, session: Session
+    ):
+        """Re-submitting with matching hashes → files_skipped."""
+        pid = _create_project(session)
+
+        payload = {
+            "samples": [
+                {
+                    "sample_id": "IH001",
+                    "files": [
+                        {
+                            "uri": "s3://bucket/IH001_R1.fastq.gz",
+                            "hashes": {"md5": "match111"},
+                        },
+                    ],
+                },
+            ]
+        }
+
+        # First submission
+        r1 = client.post(f"/api/v1/projects/{pid}/samples/bulk", json=payload)
+        assert r1.status_code == 201
+        assert r1.json()["files_created"] == 1
+
+        # Second submission with same hash
+        r2 = client.post(f"/api/v1/projects/{pid}/samples/bulk", json=payload)
+        assert r2.status_code == 201
+        b2 = r2.json()
+        assert b2["files_created"] == 0
+        assert b2["files_skipped"] == 1
+
+    def test_hash_mismatch_creates_new_version(
+        self, client: TestClient, session: Session
+    ):
+        """Same URI but different hash → new File version created."""
+        pid = _create_project(session)
+
+        # First submission
+        r1 = client.post(
+            f"/api/v1/projects/{pid}/samples/bulk",
+            json={
+                "samples": [
+                    {
+                        "sample_id": "HM001",
+                        "files": [
+                            {
+                                "uri": "s3://bucket/HM001_R1.fastq.gz",
+                                "hashes": {"md5": "version1"},
+                            },
+                        ],
+                    },
+                ]
+            },
+        )
+        assert r1.status_code == 201
+        assert r1.json()["files_created"] == 1
+
+        # Second submission with different hash for same URI
+        r2 = client.post(
+            f"/api/v1/projects/{pid}/samples/bulk",
+            json={
+                "samples": [
+                    {
+                        "sample_id": "HM001",
+                        "files": [
+                            {
+                                "uri": "s3://bucket/HM001_R1.fastq.gz",
+                                "hashes": {"md5": "version2"},
+                            },
+                        ],
+                    },
+                ]
+            },
+        )
+        assert r2.status_code == 201
+        b2 = r2.json()
+        assert b2["files_created"] == 1
+        assert b2["files_skipped"] == 0
+
+        # Verify two File records with the same URI now exist
+        sample = session.exec(
+            select(Sample).where(
+                Sample.sample_id == "HM001", Sample.project_id == pid
+            )
+        ).one()
+        file_samples = session.exec(
+            select(FileSample).where(FileSample.sample_id == sample.id)
+        ).all()
+        assert len(file_samples) == 2
+
+        # Both should have the same URI
+        file_ids = [fs.file_id for fs in file_samples]
+        files = [session.get(File, fid) for fid in file_ids]
+        uris = {f.uri for f in files}
+        assert uris == {"s3://bucket/HM001_R1.fastq.gz"}
+
+        # But different hashes
+        all_hashes = set()
+        for f in files:
+            h = session.exec(
+                select(FileHash).where(FileHash.file_id == f.id)
+            ).all()
+            for hh in h:
+                all_hashes.add(hh.value)
+        assert all_hashes == {"version1", "version2"}
+
+    def test_bulk_mixed_samples_with_and_without_files(
+        self, client: TestClient, session: Session
+    ):
+        """Some samples have files, some don't."""
+        pid = _create_project(session)
+
+        response = client.post(
+            f"/api/v1/projects/{pid}/samples/bulk",
+            json={
+                "samples": [
+                    {
+                        "sample_id": "MF001",
+                        "files": [
+                            {"uri": "s3://bucket/MF001_R1.fastq.gz"},
+                        ],
+                    },
+                    {
+                        "sample_id": "MF002",
+                        # No files
+                    },
+                    {
+                        "sample_id": "MF003",
+                        "files": [
+                            {"uri": "s3://bucket/MF003_R1.fastq.gz"},
+                            {"uri": "s3://bucket/MF003_R2.fastq.gz"},
+                        ],
+                    },
+                ]
+            },
+        )
+        assert response.status_code == 201
+        body = response.json()
+        assert body["samples_created"] == 3
+        assert body["files_created"] == 3
+        assert body["files_skipped"] == 0
+
+        items = {i["sample_id"]: i for i in body["items"]}
+        assert items["MF001"]["files_created"] == 1
+        assert items["MF002"]["files_created"] == 0
+        assert items["MF003"]["files_created"] == 2
+
+    def test_bulk_backward_compatible_no_files(
+        self, client: TestClient, session: Session
+    ):
+        """Existing payloads without files field still work; counts are 0."""
+        pid = _create_project(session)
+
+        response = client.post(
+            f"/api/v1/projects/{pid}/samples/bulk",
+            json={"samples": [{"sample_id": "BC001"}]},
+        )
+        assert response.status_code == 201
+        body = response.json()
+        assert body["files_created"] == 0
+        assert body["files_skipped"] == 0
+        assert body["items"][0]["files_created"] == 0
+        assert body["items"][0]["files_skipped"] == 0
+
+
+# ===================================================================
+# Single-sample creation with inline files
+# ===================================================================
+
+
+class TestSingleSampleWithFiles:
+    """POST /projects/{project_id}/samples with optional files."""
+
+    def test_single_sample_with_files(
+        self, client: TestClient, session: Session
+    ):
+        """Create a single sample with files attached."""
+        pid = _create_project(session)
+
+        response = client.post(
+            f"/api/v1/projects/{pid}/samples",
+            json={
+                "sample_id": "SF001",
+                "files": [
+                    {
+                        "uri": "s3://bucket/SF001_R1.fastq.gz",
+                        "tags": {"read": "R1"},
+                        "hashes": {"md5": "sf_hash_1"},
+                        "role": "normal",
+                    },
+                ],
+            },
+        )
+        assert response.status_code == 201
+        body = response.json()
+        assert body["sample_id"] == "SF001"
+        # SamplePublic doesn't include file counts — that's by design
+
+        # Verify files were created in the DB
+        sample = session.exec(
+            select(Sample).where(
+                Sample.sample_id == "SF001", Sample.project_id == pid
+            )
+        ).one()
+        file_samples = session.exec(
+            select(FileSample).where(FileSample.sample_id == sample.id)
+        ).all()
+        assert len(file_samples) == 1
+        assert file_samples[0].role == "normal"
+
+        file_record = session.get(File, file_samples[0].file_id)
+        assert file_record.uri == "s3://bucket/SF001_R1.fastq.gz"
+
+        # Check hash
+        hashes = session.exec(
+            select(FileHash).where(FileHash.file_id == file_record.id)
+        ).all()
+        assert len(hashes) == 1
+        assert hashes[0].algorithm == "md5"
+        assert hashes[0].value == "sf_hash_1"
+
+        # Check tag
+        tags = session.exec(
+            select(FileTag).where(FileTag.file_id == file_record.id)
+        ).all()
+        assert len(tags) == 1
+        assert tags[0].key == "read"
+        assert tags[0].value == "R1"
+
+    def test_single_sample_file_dedup_no_hashes(
+        self, client: TestClient, session: Session
+    ):
+        """Re-creating same sample+file (no hashes) — file already linked, silently skipped."""
+        pid = _create_project(session)
+
+        # First: create via bulk (to get the sample + file)
+        client.post(
+            f"/api/v1/projects/{pid}/samples/bulk",
+            json={
+                "samples": [
+                    {
+                        "sample_id": "SD001",
+                        "files": [
+                            {"uri": "s3://bucket/SD001_R1.fastq.gz"},
+                        ],
+                    },
+                ]
+            },
+        )
+
+        # Second: re-submit the same file via bulk
+        r2 = client.post(
+            f"/api/v1/projects/{pid}/samples/bulk",
+            json={
+                "samples": [
+                    {
+                        "sample_id": "SD001",
+                        "files": [
+                            {"uri": "s3://bucket/SD001_R1.fastq.gz"},
+                        ],
+                    },
+                ]
+            },
+        )
+        assert r2.status_code == 201
+        assert r2.json()["files_skipped"] == 1
+        assert r2.json()["files_created"] == 0
+
+        # Only 1 FileSample link should exist
+        sample = session.exec(
+            select(Sample).where(
+                Sample.sample_id == "SD001", Sample.project_id == pid
+            )
+        ).one()
+        file_samples = session.exec(
+            select(FileSample).where(FileSample.sample_id == sample.id)
+        ).all()
+        assert len(file_samples) == 1
+
+    def test_single_sample_without_files_backward_compat(
+        self, client: TestClient, session: Session
+    ):
+        """Omitting files field still works as before."""
+        pid = _create_project(session)
+
+        response = client.post(
+            f"/api/v1/projects/{pid}/samples",
+            json={"sample_id": "NOFILE001"},
+        )
+        assert response.status_code == 201
+        assert response.json()["sample_id"] == "NOFILE001"
