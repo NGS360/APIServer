@@ -36,6 +36,9 @@ from api.samples.models import (
     SampleCreate,
     SamplePublic,
     SamplesPublic,
+    SamplesWithFilesPublic,
+    SampleWithFilesPublic,
+    SampleFilePublic,
     Attribute,
 )
 from api.runs.models import SequencingRun, SequencingRunPublic, SampleSequencingRun
@@ -657,7 +660,8 @@ def get_project_samples(
     per_page: PositiveInt,
     sort_by: str,
     sort_order: Literal["asc", "desc"],
-) -> SamplesPublic:
+    include: list[str] | None = None,
+) -> SamplesPublic | SamplesWithFilesPublic:
     """
     Get a paginated list of samples for a specific project.
 
@@ -668,10 +672,17 @@ def get_project_samples(
         per_page: Number of items per page
         sort_by: Column name to sort by
         sort_order: Sort direction ('asc' or 'desc')
+        include: Optional list of related data to include (e.g. ``["files"]``)
 
     Returns:
-        SamplesPublic: Paginated list of samples for the project
+        SamplesPublic or SamplesWithFilesPublic depending on *include*
     """
+    from sqlalchemy.orm import selectinload
+
+    from api.files.models import FileSample, File
+
+    include_files = include is not None and "files" in include
+
     # Get the total count of samples for the project
     total_count = session.exec(
         select(func.count()).select_from(Sample).where(Sample.project_id == project.project_id)
@@ -686,6 +697,14 @@ def get_project_samples(
     # Build the select statement
     statement = select(Sample).where(Sample.project_id == project.project_id)
 
+    # Eagerly load file associations when requested
+    if include_files:
+        statement = statement.options(
+            selectinload(Sample.file_samples)  # type: ignore[attr-defined]
+            .selectinload(FileSample.file)  # type: ignore[attr-defined]
+            .selectinload(File.tags)  # type: ignore[attr-defined]
+        )
+
     # Add sorting
     if hasattr(Sample, sort_by):
         sort_column = getattr(Sample, sort_by)
@@ -699,16 +718,6 @@ def get_project_samples(
     # Execute the query
     samples = session.exec(statement).all()
 
-    # Map to public samples
-    public_samples = [
-        SamplePublic(
-            sample_id=sample.sample_id,
-            project_id=sample.project_id,
-            attributes=sample.attributes,
-        )
-        for sample in samples
-    ]
-
     # Collect all unique attribute keys across all samples for data_cols
     data_cols = None
     if samples:
@@ -719,8 +728,46 @@ def get_project_samples(
                     all_keys.add(attr.key)
         data_cols = sorted(list(all_keys)) if all_keys else None
 
+    # Build response with or without files
+    if include_files:
+        public_samples = []
+        for sample in samples:
+            files = []
+            for fs in sample.file_samples or []:
+                file = fs.file
+                tags_dict = {t.key: t.value for t in (file.tags or [])}
+                files.append(SampleFilePublic(uri=file.uri, tags=tags_dict or None))
+            public_samples.append(
+                SampleWithFilesPublic(
+                    sample_id=sample.sample_id,
+                    project_id=sample.project_id,
+                    attributes=sample.attributes,
+                    files=files if files else None,
+                )
+            )
+        return SamplesWithFilesPublic(
+            data=public_samples,
+            data_cols=data_cols,
+            total_items=total_count,
+            total_pages=total_pages,
+            current_page=page,
+            per_page=per_page,
+            has_next=page < total_pages,
+            has_prev=page > 1,
+        )
+
+    # Default: no files
+    public_samples_plain = [
+        SamplePublic(
+            sample_id=sample.sample_id,
+            project_id=sample.project_id,
+            attributes=sample.attributes,
+        )
+        for sample in samples
+    ]
+
     return SamplesPublic(
-        data=public_samples,
+        data=public_samples_plain,
         data_cols=data_cols,
         total_items=total_count,
         total_pages=total_pages,
