@@ -2,7 +2,7 @@
 Routes/endpoints for the Project API
 """
 
-from typing import Literal
+from typing import Literal, List as TypingList
 from fastapi import APIRouter, Query, status
 from core.deps import SessionDep, OpenSearchDep, S3ClientDep
 from api.auth.deps import CurrentUser
@@ -18,6 +18,7 @@ from api.samples.models import (
     SampleCreate,
     SamplePublic,
     SamplesPublic,
+    SamplesWithFilesPublic,
     Attribute,
     BulkSampleCreateRequest,
     BulkSampleCreateResponse,
@@ -242,7 +243,9 @@ def bulk_create_samples(
 
 
 @router.get(
-    "/{project_id}/samples", tags=["Project Endpoints"], response_model=SamplesPublic
+    "/{project_id}/samples",
+    tags=["Project Endpoints"],
+    response_model=SamplesWithFilesPublic | SamplesPublic,
 )
 def get_project_samples(
     session: SessionDep,
@@ -253,9 +256,14 @@ def get_project_samples(
     sort_order: Literal["asc", "desc"] = Query(
         "asc", description="Sort order (asc or desc)"
     ),
-) -> SamplesPublic:
+    include: TypingList[str] | None = Query(
+        None, description="Include related data: files"
+    ),
+) -> SamplesWithFilesPublic | SamplesPublic:
     """
     Returns a paginated list of samples.
+
+    Pass ``?include=files`` to eagerly load file metadata for each sample.
     """
     return services.get_project_samples(
         session=session,
@@ -264,6 +272,7 @@ def get_project_samples(
         per_page=per_page,
         sort_by=sort_by,
         sort_order=sort_order,
+        include=include,
     )
 
 
