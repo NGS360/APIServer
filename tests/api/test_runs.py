@@ -51,7 +51,7 @@ def test_add_run(client: TestClient):
     # Test
     response = client.post("/api/v1/runs", json=new_run)
 
-    # Check that the run was added    
+    # Check that the run was added
     assert response.status_code == 201
     data = response.json()
     assert data["run_date"] == "2019-01-10"
@@ -74,10 +74,10 @@ def test_add_run(client: TestClient):
         "status": RunStatus.READY,
         "run_time": "",
     }
-    
+
     # Test
     response = client.post("/api/v1/runs", json=new_run)
-    
+
     # Check that the run was added and run_time is set to None
     assert response.status_code == 201
     data = response.json()
@@ -182,8 +182,8 @@ def test_get_run_no_data(client: TestClient):
     assert response.status_code == 404
     data = response.json()
     assert data["detail"] == f"Run with barcode {run_barcode} not found"
-    
-    
+
+
 def test_get_run_by_barcode(client: TestClient, session: Session):
     # Add a run to the database
     new_run = SequencingRun(
