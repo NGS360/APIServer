@@ -70,7 +70,7 @@ def add_run(
 def get_run(
     session: Session,
     run_barcode: str,
-) -> SequencingRunPublic:
+) -> SequencingRun | None:
     """
     Retrieve a sequencing run from the database.
     """
@@ -85,10 +85,6 @@ def get_run(
             SequencingRun.flowcell_id == flowcell_id,
         )
     ).one_or_none()
-
-    if run is None:
-        return None
-
     return run
 
 
