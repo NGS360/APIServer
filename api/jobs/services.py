@@ -297,7 +297,7 @@ def get_batch_job_log_paginated(
 
         return {
             "events": events,
-            "next_token": returned_next_token if has_more else None,
+            "next_token": returned_next_token,
             "has_more": has_more,
             "total_events": len(events)
         }
