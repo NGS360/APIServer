@@ -36,6 +36,9 @@ from api.samples.models import (
     SampleCreate,
     SamplePublic,
     SamplesPublic,
+    SamplesWithFilesPublic,
+    SampleWithFilesPublic,
+    SampleFilePublic,
     Attribute,
 )
 from api.runs.models import SequencingRun, SequencingRunPublic, SampleSequencingRun
@@ -567,19 +570,39 @@ def add_sample_to_project(
     opensearch_client: OpenSearch,
     project: Project,
     sample_in: SampleCreate,
+    created_by: str | None = None,
 ) -> Sample:
     """
     Create a new sample with optional attributes in a project.
+
+    If ``sample_in.run_barcode`` is provided the sample is also associated
+    with the corresponding sequencing run in the **same** transaction.
 
     Args:
         session: Database session
         opensearch_client: OpenSearch client for indexing
         project: The project object (already validated)
-        sample_in: Sample creation data
+        sample_in: Sample creation data (may include run_barcode)
+        created_by: Username recorded on any SampleSequencingRun row
 
     Returns:
         Sample instance
     """
+    from api.runs.services import get_run
+
+    # Resolve run up-front so we can fail fast before creating the sample
+    run = None
+    if sample_in.run_barcode:
+        try:
+            run = get_run(session=session, run_barcode=sample_in.run_barcode)
+        except (ValueError, Exception):
+            run = None
+        if run is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Run with barcode '{sample_in.run_barcode}' not found.",
+            )
+
     # Create initial sample
     sample = Sample(sample_id=sample_in.sample_id, project_id=project.project_id)
     session.add(sample)
@@ -606,13 +629,25 @@ def add_sample_to_project(
         # Update database with attribute links
         session.add_all(sample_attributes)
 
+    # Associate with sequencing run if requested
+    if run is not None:
+        assoc = SampleSequencingRun(
+            sample_id=sample.id,
+            sequencing_run_id=run.id,
+            created_by=created_by or "api",
+        )
+        session.add(assoc)
+
     session.commit()
     session.refresh(sample)
 
-    # Add sample to opensearch
+    # Add sample to opensearch (best-effort; DB is source of truth)
     if opensearch_client:
         search_doc = SearchDocument(id=str(sample.id), body=sample)
-        add_object_to_index(opensearch_client, search_doc, index="samples")
+        try:
+            add_object_to_index(opensearch_client, search_doc, index="samples")
+        except Exception:
+            pass  # best-effort indexing; can be resynced via /reindex
 
     return sample
 
@@ -625,7 +660,8 @@ def get_project_samples(
     per_page: PositiveInt,
     sort_by: str,
     sort_order: Literal["asc", "desc"],
-) -> SamplesPublic:
+    include: list[str] | None = None,
+) -> SamplesPublic | SamplesWithFilesPublic:
     """
     Get a paginated list of samples for a specific project.
 
@@ -636,10 +672,17 @@ def get_project_samples(
         per_page: Number of items per page
         sort_by: Column name to sort by
         sort_order: Sort direction ('asc' or 'desc')
+        include: Optional list of related data to include (e.g. ``["files"]``)
 
     Returns:
-        SamplesPublic: Paginated list of samples for the project
+        SamplesPublic or SamplesWithFilesPublic depending on *include*
     """
+    from sqlalchemy.orm import selectinload
+
+    from api.files.models import FileSample, File
+
+    include_files = include is not None and "files" in include
+
     # Get the total count of samples for the project
     total_count = session.exec(
         select(func.count()).select_from(Sample).where(Sample.project_id == project.project_id)
@@ -654,6 +697,14 @@ def get_project_samples(
     # Build the select statement
     statement = select(Sample).where(Sample.project_id == project.project_id)
 
+    # Eagerly load file associations when requested
+    if include_files:
+        statement = statement.options(
+            selectinload(Sample.file_samples)  # type: ignore[attr-defined]
+            .selectinload(FileSample.file)  # type: ignore[attr-defined]
+            .selectinload(File.tags)  # type: ignore[attr-defined]
+        )
+
     # Add sorting
     if hasattr(Sample, sort_by):
         sort_column = getattr(Sample, sort_by)
@@ -667,16 +718,6 @@ def get_project_samples(
     # Execute the query
     samples = session.exec(statement).all()
 
-    # Map to public samples
-    public_samples = [
-        SamplePublic(
-            sample_id=sample.sample_id,
-            project_id=sample.project_id,
-            attributes=sample.attributes,
-        )
-        for sample in samples
-    ]
-
     # Collect all unique attribute keys across all samples for data_cols
     data_cols = None
     if samples:
@@ -687,8 +728,46 @@ def get_project_samples(
                     all_keys.add(attr.key)
         data_cols = sorted(list(all_keys)) if all_keys else None
 
+    # Build response with or without files
+    if include_files:
+        public_samples = []
+        for sample in samples:
+            files = []
+            for fs in sample.file_samples or []:
+                file = fs.file
+                tags_dict = {t.key: t.value for t in (file.tags or [])}
+                files.append(SampleFilePublic(uri=file.uri, tags=tags_dict or None))
+            public_samples.append(
+                SampleWithFilesPublic(
+                    sample_id=sample.sample_id,
+                    project_id=sample.project_id,
+                    attributes=sample.attributes,
+                    files=files if files else None,
+                )
+            )
+        return SamplesWithFilesPublic(
+            data=public_samples,
+            data_cols=data_cols,
+            total_items=total_count,
+            total_pages=total_pages,
+            current_page=page,
+            per_page=per_page,
+            has_next=page < total_pages,
+            has_prev=page > 1,
+        )
+
+    # Default: no files
+    public_samples_plain = [
+        SamplePublic(
+            sample_id=sample.sample_id,
+            project_id=sample.project_id,
+            attributes=sample.attributes,
+        )
+        for sample in samples
+    ]
+
     return SamplesPublic(
-        data=public_samples,
+        data=public_samples_plain,
         data_cols=data_cols,
         total_items=total_count,
         total_pages=total_pages,
