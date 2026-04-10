@@ -4,9 +4,13 @@ to a particular feature.
 """
 
 from sqlmodel import SQLModel
-from fastapi import status
 
 
 class StatusResponse(SQLModel):
-    status_code: status
+    status_code: int
     message: str | None
+
+
+class HTTPErrorResponse(SQLModel):
+    """Schema matching FastAPI's HTTPException response body."""
+    detail: str

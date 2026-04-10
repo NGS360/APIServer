@@ -12,6 +12,7 @@ PUT    /api/v1/jobs/[id]    Update a batch job
 from typing import Optional, Literal
 from fastapi import APIRouter, HTTPException, Query, status
 from core.deps import SessionDep
+from core.models import HTTPErrorResponse
 from api.jobs.models import (
     BatchJobSubmit,
     BatchJobUpdate,
@@ -126,7 +127,7 @@ def get_jobs(
     response_model=BatchJobPublic,
     tags=["Job Endpoints"],
     responses={
-        404: {"description": "Job not found"}
+        404: {"model": HTTPErrorResponse, "description": "Job not found"}
     }
 )
 def get_job(
@@ -157,7 +158,7 @@ def get_job(
     response_model=BatchJobPublic,
     tags=["Job Endpoints"],
     responses={
-        404: {"description": "Job not found"}
+        404: {"model": HTTPErrorResponse, "description": "Job not found"}
     }
 )
 def update_job(
@@ -196,7 +197,7 @@ def update_job(
     response_model=list[str],
     tags=["Job Endpoints"],
     responses={
-        404: {"description": "Job not found"}
+        404: {"model": HTTPErrorResponse, "description": "Job not found"}
     }
 )
 def get_job_log(
@@ -222,7 +223,7 @@ def get_job_log(
     response_model=LogResponse,
     tags=["Job Endpoints"],
     responses={
-        404: {"description": "Job not found"}
+        404: {"model": HTTPErrorResponse, "description": "Job not found"}
     }
 )
 def get_job_log_paginated(
