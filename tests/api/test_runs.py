@@ -37,20 +37,7 @@ def test_user_fixture(session: Session):
 
 def test_add_run(client: TestClient):
     """Test that we can add a run"""
-    # Test No runs, this also ensure we are using the test db
-    response = client.get("/api/v1/runs")
-    assert response.status_code == 200
-    assert response.json() == {
-        "data": [],
-        "total_items": 0,
-        "total_pages": 0,
-        "current_page": 1,
-        "per_page": 20,
-        "has_next": False,
-        "has_prev": False,
-    }
 
-    # Add a run to the database
     new_run = {
         "run_date": "2019-01-10",
         "machine_id": "MACHINE123",
@@ -60,7 +47,11 @@ def test_add_run(client: TestClient):
         "run_folder_uri": "s3://bucket/path/to/run",
         "status": RunStatus.READY,
     }
+
+    # Test
     response = client.post("/api/v1/runs", json=new_run)
+
+    # Check that the run was added
     assert response.status_code == 201
     data = response.json()
     assert data["run_date"] == "2019-01-10"
@@ -83,7 +74,11 @@ def test_add_run(client: TestClient):
         "status": RunStatus.READY,
         "run_time": "",
     }
+
+    # Test
     response = client.post("/api/v1/runs", json=new_run)
+
+    # Check that the run was added and run_time is set to None
     assert response.status_code == 201
     data = response.json()
     assert data["run_time"] is None
@@ -134,9 +129,9 @@ def test_add_run(client: TestClient):
     assert response.status_code == 422
 
 
-def test_get_runs(client: TestClient, session: Session):
+def test_get_runs_no_data(client: TestClient, session: Session):
     """Test that we can get all runs"""
-    # Test No projects, this also ensure we are using the test db
+    # Test GET /runs returns no runs, this also ensure we are using the test db
     response = client.get("/api/v1/runs")
     assert response.status_code == 200
     assert response.json() == {
@@ -149,6 +144,8 @@ def test_get_runs(client: TestClient, session: Session):
         "has_prev": False,
     }
 
+
+def test_get_runs_with_data(client: TestClient, session: Session):
     # Add a run to the database
     new_run = SequencingRun(
         id=uuid4(),
@@ -163,8 +160,9 @@ def test_get_runs(client: TestClient, session: Session):
     session.add(new_run)
     session.commit()
 
-    # Test get runs again
+    # Test GET /runs returns the run.
     response = client.get("/api/v1/runs")
+
     assert response.status_code == 200
     data = response.json()
     assert data["total_items"] == 1
@@ -175,6 +173,31 @@ def test_get_runs(client: TestClient, session: Session):
     assert data["data"][0]["run_folder_uri"] == "/dir/path/to/run"
     assert data["data"][0]["status"] == RunStatus.READY.value
     assert data["data"][0]["barcode"] == "190110_MACHINE123_1_FLOWCELL123"
+
+
+def test_get_run_no_data(client: TestClient):
+    """Test that we get the correct response when the run does not exist"""
+    run_barcode = "190110_MACHINE123_1_FLOWCELL123"
+    response = client.get(f"/api/v1/runs/{run_barcode}")
+    assert response.status_code == 404
+    data = response.json()
+    assert data["detail"] == f"Run with barcode {run_barcode} not found"
+
+
+def test_get_run_by_barcode(client: TestClient, session: Session):
+    # Add a run to the database
+    new_run = SequencingRun(
+        id=uuid4(),
+        run_date=datetime.date(2019, 1, 10),
+        machine_id="MACHINE123",
+        run_number="1",
+        flowcell_id="FLOWCELL123",
+        experiment_name="Test Experiment",
+        run_folder_uri="/dir/path/to/run",
+        status=RunStatus.READY,
+    )
+    session.add(new_run)
+    session.commit()
 
     # Test that we can get a specific run by ID
     run_barcode = "190110_MACHINE123_1_FLOWCELL123"

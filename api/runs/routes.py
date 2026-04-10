@@ -15,7 +15,7 @@ GET    /api/v1/runs/[id]/metrics       Retrieve demux metrics from Stat.json
 """
 
 from typing import Literal
-from fastapi import APIRouter, Query, status, UploadFile, File, Depends
+from fastapi import HTTPException, APIRouter, Query, status, UploadFile, File, Depends
 from core.deps import SessionDep, OpenSearchDep, get_s3_client
 from api.auth.deps import CurrentUser
 from api.runs.models import (
@@ -229,7 +229,10 @@ def get_run(session: SessionDep, run_barcode: str) -> SequencingRunPublic:
     """
     Retrieve a sequencing run.
     """
-    return services.get_run(session=session, run_barcode=run_barcode)
+    run = services.get_run(session=session, run_barcode=run_barcode)
+    if run is None:
+        raise HTTPException(status_code=404, detail=f"Run with barcode {run_barcode} not found")
+    return SequencingRunPublic.model_validate(run)
 
 
 @router.put(
