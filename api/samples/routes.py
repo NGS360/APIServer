@@ -2,9 +2,12 @@
 Routes/endpoints for the Samples API
 """
 
+import uuid
+
 # from typing import Literal
 from fastapi import APIRouter, status  # Query
 from core.deps import SessionDep, OpenSearchDep
+from api.auth.deps import CurrentSuperuser
 # from api.samples.models import Sample, SampleCreate, SamplePublic, SamplesPublic
 import api.samples.services as services
 
@@ -40,3 +43,24 @@ def reindex_samples(
     """
     services.reindex_samples(session, client)
     return 'OK'
+
+
+@router.delete(
+    "/{sample_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Delete a sample (admin only)",
+)
+def delete_sample(
+    sample_id: uuid.UUID,
+    session: SessionDep,
+    opensearch_client: OpenSearchDep,
+    current_user: CurrentSuperuser,
+) -> None:
+    """
+    Permanently delete a sample by UUID.
+
+    Removes the sample and all associated data (attributes,
+    run associations, file–sample links).  Requires superuser
+    privileges.
+    """
+    services.delete_sample(session, opensearch_client, sample_id)

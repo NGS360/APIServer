@@ -1,3 +1,4 @@
+import logging
 import uuid
 from typing import List, Literal
 
@@ -18,7 +19,9 @@ from api.samples.models import (
 from api.project.models import Project
 from api.runs.models import SequencingRun, SampleSequencingRun
 from api.search.models import SearchDocument
-from api.search.services import add_object_to_index, delete_index
+from api.search.services import add_object_to_index, delete_index, delete_document_from_index
+
+logger = logging.getLogger(__name__)
 
 
 def resolve_or_create_sample(
@@ -429,3 +432,76 @@ def bulk_create_samples(
         associations_existing=associations_existing,
         items=items,
     )
+
+
+# ---------------------------------------------------------------------------
+# Delete sample
+# ---------------------------------------------------------------------------
+
+
+def delete_sample(
+    session: Session,
+    opensearch_client: OpenSearch | None,
+    sample_uuid: uuid.UUID,
+) -> None:
+    """
+    Permanently delete a sample and all its associated data.
+
+    Deletes the sample record along with:
+    - SampleAttribute rows (via cascade)
+    - FileSample junction rows (via cascade from Sample side)
+    - SampleSequencingRun association rows
+
+    Also removes the sample from the OpenSearch index.
+
+    Args:
+        session: Database session
+        opensearch_client: OpenSearch client (may be None)
+        sample_uuid: UUID of the sample to delete
+
+    Raises:
+        HTTPException 404: If sample not found
+    """
+    sample = session.get(Sample, sample_uuid)
+    if not sample:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Sample not found: {sample_uuid}",
+        )
+
+    # Delete SampleSequencingRun associations
+    associations = session.exec(
+        select(SampleSequencingRun).where(
+            SampleSequencingRun.sample_id == sample_uuid
+        )
+    ).all()
+    for assoc in associations:
+        session.delete(assoc)
+
+    # Delete FileSample associations (file ↔ sample links)
+    from api.files.models import FileSample as FileSampleModel
+    file_sample_links = session.exec(
+        select(FileSampleModel).where(FileSampleModel.sample_id == sample_uuid)
+    ).all()
+    for link in file_sample_links:
+        session.delete(link)
+
+    # Delete attributes
+    if sample.attributes:
+        for attr in sample.attributes:
+            session.delete(attr)
+
+    # Delete the sample itself
+    session.delete(sample)
+    session.commit()
+
+    # Remove from OpenSearch index (best-effort)
+    if opensearch_client:
+        try:
+            delete_document_from_index(
+                opensearch_client, str(sample_uuid), "samples"
+            )
+        except Exception:
+            logger.warning(
+                "Failed to remove sample %s from OpenSearch index", sample_uuid
+            )
