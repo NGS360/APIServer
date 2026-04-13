@@ -18,6 +18,7 @@ from fastapi import APIRouter, Depends, Query, status, Form, UploadFile
 from fastapi import File as FastAPIFile
 from fastapi.responses import StreamingResponse
 
+from api.auth.deps import CurrentSuperuser
 from api.files.models import FileUploadCreate
 
 from api.files.models import (
@@ -306,3 +307,23 @@ def get_file_versions(
         page=1,
         per_page=len(versions),
     )
+
+
+@router.delete(
+    "/{file_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Delete a file record (admin only)",
+)
+def delete_file(
+    file_id: uuid.UUID,
+    session: SessionDep,
+    current_user: CurrentSuperuser,
+) -> None:
+    """
+    Permanently delete a file metadata record by UUID.
+
+    Removes the file record and all associated data (hashes, tags,
+    sample links, entity associations).  Does NOT delete the
+    physical file from storage.  Requires superuser privileges.
+    """
+    services.delete_file(session, file_id)

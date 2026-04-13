@@ -6,6 +6,7 @@ This module provides functions for:
 - Looking up files by UUID or URI (with version support)
 - Managing file uploads to S3 or local storage
 - Browsing S3 file systems
+- Deleting file records (admin-only)
 
 Phase 2 replaced polymorphic FileEntity with typed junction tables:
   FileProject, FileSequencingRun, FileQCRecord, FileWorkflowRun, FilePipeline
@@ -1041,3 +1042,42 @@ def list_s3_files(uri: str, s3_client=None) -> FileBrowserData:
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Unexpected error browsing S3: {str(exc)}",
         ) from exc
+
+
+# ============================================================================
+# File Deletion
+# ============================================================================
+
+
+def delete_file(
+    session: Session,
+    file_id: uuid_module.UUID,
+) -> None:
+    """
+    Permanently delete a file record and all its associated data.
+
+    Deletes the file along with all child rows (cascade):
+    - FileHash, FileTag, FileSample
+    - FileProject, FileSequencingRun, FileQCRecord, FileWorkflowRun, FilePipeline
+
+    Note: This does NOT delete the physical file from S3 or local storage.
+    It only removes the metadata record from the database.
+
+    Args:
+        session: Database session
+        file_id: UUID of the file to delete
+
+    Raises:
+        HTTPException 404: If file not found
+    """
+    file_record = session.get(File, file_id)
+    if not file_record:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"File not found: {file_id}",
+        )
+
+    session.delete(file_record)
+    session.commit()
+
+    logging.info("Deleted file record %s (uri=%s)", file_id, file_record.uri)
