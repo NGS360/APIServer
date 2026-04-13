@@ -638,6 +638,16 @@ def add_sample_to_project(
         )
         session.add(assoc)
 
+    # Create associated files if provided
+    if sample_in.files:
+        from api.samples.services import _create_sample_files
+        _create_sample_files(
+            session=session,
+            sample=sample,
+            project_uuid=project.id,
+            file_inputs=sample_in.files,
+        )
+
     session.commit()
     session.refresh(sample)
 

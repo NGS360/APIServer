@@ -9,12 +9,14 @@ from opensearchpy import OpenSearch
 from api.samples.models import (
     Sample,
     SampleCreate,
+    SampleFileInput,
     SamplePublic,
     SamplesPublic,
     SampleAttribute,
     BulkSampleCreateResponse,
     BulkSampleItemResponse,
 )
+from api.files.models import File, FileHash, FileTag, FileSample, FileProject
 from api.project.models import Project
 from api.runs.models import SequencingRun, SampleSequencingRun
 from api.search.models import SearchDocument
@@ -236,6 +238,124 @@ def reindex_samples(session: Session, client: OpenSearch):
 
 
 # ---------------------------------------------------------------------------
+# Sample file creation helper (hash-aware dedup)
+# ---------------------------------------------------------------------------
+
+
+def _create_sample_files(
+    session: Session,
+    sample: Sample,
+    project_uuid: uuid.UUID,
+    file_inputs: List[SampleFileInput],
+) -> tuple[int, int]:
+    """
+    Create File records and associate them with a sample, with hash-aware dedup.
+
+    For each SampleFileInput:
+    1. Check for an existing File linked to this sample via FileSample
+       with the same URI.
+    2. If found and input has no hashes → skip (assume identical).
+    3. If found and input has hashes → compare against existing FileHash
+       records. If all match → skip. If any differ → create new version.
+    4. If no existing file → create new File + associations.
+
+    Note: Does NOT commit — the caller manages the transaction.
+
+    Args:
+        session: Database session (caller manages commit)
+        sample: The Sample ORM object (must have .id set via flush)
+        project_uuid: The project's internal UUID for FileProject
+        file_inputs: List of SampleFileInput to process
+
+    Returns:
+        Tuple of (files_created, files_skipped)
+    """
+    files_created = 0
+    files_skipped = 0
+
+    for fi in file_inputs:
+        # Check for existing file linked to this sample with same URI
+        existing_file = session.exec(
+            select(File)
+            .join(FileSample, FileSample.file_id == File.id)
+            .where(
+                FileSample.sample_id == sample.id,
+                File.uri == fi.uri,
+            )
+        ).first()
+
+        if existing_file is not None:
+            if not fi.hashes:
+                # No hashes provided — assume identical, skip
+                files_skipped += 1
+                continue
+
+            # Compare provided hashes against existing FileHash records
+            existing_hashes = {
+                h.algorithm: h.value
+                for h in session.exec(
+                    select(FileHash).where(FileHash.file_id == existing_file.id)
+                ).all()
+            }
+
+            all_match = all(
+                existing_hashes.get(algo) == value
+                for algo, value in fi.hashes.items()
+            )
+
+            if all_match:
+                files_skipped += 1
+                continue
+            # Hashes differ — fall through to create a new version
+
+        # ── Create new File record ────────────────────────────────────
+        file_record = File(
+            uri=fi.uri,
+            original_filename=fi.original_filename,
+            size=fi.size,
+            source=fi.source,
+            storage_backend=fi.storage_backend,
+        )
+        session.add(file_record)
+        session.flush()  # get the file UUID
+
+        # FileProject association
+        session.add(FileProject(
+            file_id=file_record.id,
+            project_id=project_uuid,
+        ))
+
+        # FileSample association
+        session.add(FileSample(
+            file_id=file_record.id,
+            sample_id=sample.id,
+            role=fi.role,
+        ))
+
+        # FileHash records
+        if fi.hashes:
+            for algorithm, value in fi.hashes.items():
+                session.add(FileHash(
+                    file_id=file_record.id,
+                    algorithm=algorithm,
+                    value=value,
+                ))
+
+        # FileTag records
+        if fi.tags:
+            for key, value in fi.tags.items():
+                session.add(FileTag(
+                    file_id=file_record.id,
+                    key=key,
+                    value=value,
+                ))
+
+        files_created += 1
+
+    return files_created, files_skipped
+
+
+# ---------------------------------------------------------------------------
 # Bulk sample creation
 # ---------------------------------------------------------------------------
 
@@ -335,6 +455,8 @@ def bulk_create_samples(
     samples_existing = 0
     associations_created = 0
     associations_existing = 0
+    total_files_created = 0
+    total_files_skipped = 0
     items: list[BulkSampleItemResponse] = []
     newly_created_samples: list[Sample] = []
 
@@ -398,6 +520,17 @@ def bulk_create_samples(
 
             run_barcode_echo = item.run_barcode
 
+        # Create associated files if provided
+        item_files_created = 0
+        item_files_skipped = 0
+        if item.files:
+            item_files_created, item_files_skipped = _create_sample_files(
+                session=session,
+                sample=sample,
+                project_uuid=project.id,
+                file_inputs=item.files,
+            )
+
         items.append(
             BulkSampleItemResponse(
                 sample_id=item.sample_id,
@@ -405,8 +538,12 @@ def bulk_create_samples(
                 project_id=project.project_id,
                 created=created,
                 run_barcode=run_barcode_echo,
+                files_created=item_files_created,
+                files_skipped=item_files_skipped,
             )
         )
+        total_files_created += item_files_created
+        total_files_skipped += item_files_skipped
 
     # Single commit — all or nothing
     session.commit()
@@ -427,5 +564,7 @@ def bulk_create_samples(
         samples_existing=samples_existing,
         associations_created=associations_created,
         associations_existing=associations_existing,
+        files_created=total_files_created,
+        files_skipped=total_files_skipped,
         items=items,
     )
