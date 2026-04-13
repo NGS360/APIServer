@@ -97,3 +97,11 @@ class BatchJobConfigInput(BaseModel):
 class VendorIngestionConfig(SQLModel):
     inputs: list[BatchJobConfigInput]
     aws_batch: AwsBatchConfig
+
+
+class LogResponse(BaseModel):
+    """Response model for paginated log retrieval."""
+    events: list[str]
+    next_token: Optional[str] = None
+    has_more: bool = False
+    total_events: int = 0
