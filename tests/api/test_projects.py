@@ -512,6 +512,176 @@ def test_update_project_removes_all_attributes(client: TestClient, session: Sess
 
 
 ###############################################################################
+# PATCH Project Tests (merge/upsert semantics)
+###############################################################################
+
+
+def test_patch_project_merge_preserves_existing(
+    client: TestClient, session: Session
+):
+    """Test that PATCH with a new attribute preserves all existing attributes"""
+    new_project = Project(name="Test Project")
+    new_project.project_id = generate_project_id(session=session)
+    new_project.attributes = [
+        ProjectAttribute(key="project_type", value="RNA-Seq"),
+        ProjectAttribute(key="pi", value="Dr. Smith"),
+    ]
+    session.add(new_project)
+    session.commit()
+
+    # Add a single new attribute (simulates NGS-BMS worker)
+    update_data = {
+        "attributes": [
+            {"key": "xpress_project_id", "value": "-1"},
+        ]
+    }
+    response = client.patch(
+        f"/api/v1/projects/{new_project.project_id}",
+        json=update_data,
+    )
+
+    assert response.status_code == 200
+    response_json = response.json()
+
+    # All three attributes should be present
+    assert len(response_json["attributes"]) == 3
+    attr_dict = {
+        a["key"]: a["value"] for a in response_json["attributes"]
+    }
+    assert attr_dict["project_type"] == "RNA-Seq"
+    assert attr_dict["pi"] == "Dr. Smith"
+    assert attr_dict["xpress_project_id"] == "-1"
+
+
+def test_patch_project_upsert_existing_key(
+    client: TestClient, session: Session
+):
+    """Test that PATCH with an existing key updates only that value"""
+    new_project = Project(name="Test Project")
+    new_project.project_id = generate_project_id(session=session)
+    new_project.attributes = [
+        ProjectAttribute(key="project_type", value="RNA-Seq"),
+        ProjectAttribute(key="xpress_project_id", value="-1"),
+        ProjectAttribute(key="pi", value="Dr. Smith"),
+    ]
+    session.add(new_project)
+    session.commit()
+
+    update_data = {
+        "attributes": [
+            {"key": "xpress_project_id", "value": "12345"},
+        ]
+    }
+    response = client.patch(
+        f"/api/v1/projects/{new_project.project_id}",
+        json=update_data,
+    )
+
+    assert response.status_code == 200
+    response_json = response.json()
+
+    assert len(response_json["attributes"]) == 3
+    attr_dict = {
+        a["key"]: a["value"] for a in response_json["attributes"]
+    }
+    assert attr_dict["project_type"] == "RNA-Seq"
+    assert attr_dict["pi"] == "Dr. Smith"
+    assert attr_dict["xpress_project_id"] == "12345"
+
+
+def test_patch_project_empty_attributes_is_noop(
+    client: TestClient, session: Session
+):
+    """Test that PATCH with empty attributes list is a no-op"""
+    new_project = Project(name="Test Project")
+    new_project.project_id = generate_project_id(session=session)
+    new_project.attributes = [
+        ProjectAttribute(key="Department", value="R&D"),
+        ProjectAttribute(key="Priority", value="High"),
+    ]
+    session.add(new_project)
+    session.commit()
+
+    update_data = {"attributes": []}
+    response = client.patch(
+        f"/api/v1/projects/{new_project.project_id}",
+        json=update_data,
+    )
+
+    assert response.status_code == 200
+    response_json = response.json()
+
+    assert len(response_json["attributes"]) == 2
+    attr_dict = {
+        a["key"]: a["value"] for a in response_json["attributes"]
+    }
+    assert attr_dict["Department"] == "R&D"
+    assert attr_dict["Priority"] == "High"
+
+
+def test_patch_project_name_only(
+    client: TestClient, session: Session
+):
+    """Test that PATCH can update name without touching attributes"""
+    new_project = Project(name="Original Name")
+    new_project.project_id = generate_project_id(session=session)
+    new_project.attributes = [
+        ProjectAttribute(key="Department", value="R&D"),
+    ]
+    session.add(new_project)
+    session.commit()
+
+    update_data = {"name": "Updated Name"}
+    response = client.patch(
+        f"/api/v1/projects/{new_project.project_id}",
+        json=update_data,
+    )
+
+    assert response.status_code == 200
+    response_json = response.json()
+    assert response_json["name"] == "Updated Name"
+    assert len(response_json["attributes"]) == 1
+    assert response_json["attributes"][0]["key"] == "Department"
+    assert response_json["attributes"][0]["value"] == "R&D"
+
+
+def test_patch_project_not_found(client: TestClient):
+    """Test that PATCH on a non-existent project returns 404"""
+    update_data = {"name": "New Name"}
+    response = client.patch(
+        "/api/v1/projects/nonexistent-project-id",
+        json=update_data,
+    )
+    assert response.status_code == 404
+    assert "not found" in response.json()["detail"].lower()
+
+
+def test_patch_project_duplicate_attribute_keys(
+    client: TestClient, session: Session
+):
+    """Test that PATCH with duplicate attribute keys fails"""
+    new_project = Project(name="Test Project")
+    new_project.project_id = generate_project_id(session=session)
+    new_project.attributes = []
+    session.add(new_project)
+    session.commit()
+
+    update_data = {
+        "attributes": [
+            {"key": "Priority", "value": "High"},
+            {"key": "Priority", "value": "Low"},
+        ]
+    }
+    response = client.patch(
+        f"/api/v1/projects/{new_project.project_id}",
+        json=update_data,
+    )
+
+    assert response.status_code == 400
+    assert "duplicate" in response.json()["detail"].lower()
+
+
+###############################################################################
 # Pipeline Job Submission Tests
 ###############################################################################
 
