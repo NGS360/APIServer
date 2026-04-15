@@ -162,9 +162,41 @@ def update_project(
     update_request: ProjectUpdate
 ) -> ProjectPublic:
     """
-    Update information about a specific project.
+    Full replacement update of a project.
+
+    Attributes provided here **replace** all existing attributes.
+    To merge/upsert attributes without removing unmentioned ones,
+    use ``PATCH /{project_id}`` instead.
     """
     return services.update_project(
+        session=session,
+        opensearch_client=opensearch_client,
+        project_id=project.project_id,
+        update_request=update_request,
+    )
+
+
+@router.patch(
+    "/{project_id}",
+    status_code=status.HTTP_200_OK,
+    tags=["Project Endpoints"],
+    response_model=ProjectPublic,
+)
+def patch_project(
+    session: SessionDep,
+    opensearch_client: OpenSearchDep,
+    project: ProjectDep,
+    update_request: ProjectUpdate,
+) -> ProjectPublic:
+    """
+    Partially update a project using merge/upsert semantics.
+
+    Unlike PUT, this does **not** remove attributes that are absent
+    from the request.  Each supplied attribute is upserted: existing
+    keys are updated, new keys are inserted, and unmentioned keys
+    are left untouched.  An empty attributes list is a no-op.
+    """
+    return services.patch_project(
         session=session,
         opensearch_client=opensearch_client,
         project_id=project.project_id,
