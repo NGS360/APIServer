@@ -754,7 +754,17 @@ class TestManifestValidation:
 
         # Both should have the same keys
         assert set(valid_data.keys()) == set(invalid_data.keys())
-        assert set(valid_data.keys()) == {"valid", "message", "error", "warning"}
+        expected_keys = {
+            "valid", "message", "error", "warning",
+            "post_results", "post_error",
+        }
+        assert set(valid_data.keys()) == expected_keys
+
+        # New fields should be None by default (post_to_api was not passed)
+        assert valid_data["post_results"] is None
+        assert valid_data["post_error"] is None
+        assert invalid_data["post_results"] is None
+        assert invalid_data["post_error"] is None
 
         # Both should have dict types for message, error, warning
         for data in [valid_data, invalid_data]:
@@ -849,17 +859,26 @@ class TestManifestValidation:
         # Verify manifest_version was passed (uppercased) to Lambda
         last_payload = mock_lambda_client.invocations[-1]["Payload"]
         assert last_payload["manifest_version"] == "DTS12.1"
+        # default=False means key omitted from Lambda payload
+        assert "post_to_api" not in last_payload
 
-    def test_validate_manifest_with_files_bucket_and_prefix(
+    def test_validate_manifest_with_files_uri_and_post_to_api(
         self, client: TestClient, mock_lambda_client
     ):
-        """Test validation endpoint with files_bucket and files_prefix parameters"""
+        """Test validation endpoint with files_uri and post_to_api=true.
+
+        Verifies:
+        - files_uri is forwarded to Lambda payload
+        - post_to_api=true is forwarded to Lambda payload
+        - post_results from Lambda response is passed through to the API response
+        """
         mock_lambda_client.set_response({
             "success": True,
             "validation_passed": True,
             "messages": {},
             "errors": {},
             "warnings": {},
+            "post_results": {"samples_created": 5, "project": "P-00000000-0001"},
             "statusCode": 200
         })
 
@@ -867,13 +886,22 @@ class TestManifestValidation:
             "/api/v1/manifest/validate"
             "?manifest_uri=s3://test-bucket/manifest.csv"
             "&files_uri=s3://data-bucket/raw/fastq/"
+            "&post_to_api=true"
         )
 
         assert response.status_code == 200
 
-        # Verify files_bucket and files_prefix were passed to Lambda
+        # Verify files_uri was passed to Lambda
         last_payload = mock_lambda_client.invocations[-1]["Payload"]
         assert last_payload["files_uri"] == "s3://data-bucket/raw/fastq/"
+
+        # Verify post_to_api was forwarded to Lambda
+        assert last_payload["post_to_api"] is True
+
+        # Verify post_results passed through in response
+        data = response.json()
+        assert data["post_results"] == {"samples_created": 5, "project": "P-00000000-0001"}
+        assert data["post_error"] is None
 
     def test_validate_manifest_files_bucket_defaults_to_s3_path_bucket(
         self, client: TestClient, mock_lambda_client

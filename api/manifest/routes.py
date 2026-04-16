@@ -89,6 +89,9 @@ def validate_manifest(
         None, description="(S3, GS) path where files described in manifest are located "
                           "(e.g. s3://vendorbucket/path/to/files/)"
     ),
+    post_to_api: Optional[bool] = Query(
+        False, description="If true, post samples to API after successful validation"
+    ),
 ) -> ManifestValidationResponse:
     """
     Validate a manifest CSV file from S3 using the ngs360-manifest-validator Lambda.
@@ -116,5 +119,6 @@ def validate_manifest(
         manifest_uri=manifest_uri,
         files_uri=files_uri,
         manifest_version=manifest_version,
+        post_to_api=post_to_api,
     )
     return result

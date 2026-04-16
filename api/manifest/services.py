@@ -225,7 +225,8 @@ def validate_manifest_file(
     session: SessionDep,
     manifest_uri: str,
     files_uri: str,
-    manifest_version: Optional[str] = None
+    manifest_version: Optional[str] = None,
+    post_to_api: bool = False
 ) -> ManifestValidationResponse:
     """
     Validate a manifest CSV file from S3 by invoking a Lambda function.
@@ -269,6 +270,8 @@ def validate_manifest_file(
         # Add optional parameters if provided
         if manifest_version:
             payload["manifest_version"] = manifest_version
+        if post_to_api:
+            payload["post_to_api"] = True
 
         # Invoke Lambda function synchronously
         response = lambda_client.invoke(
@@ -341,7 +344,9 @@ def validate_manifest_file(
             valid=validation_result.get("validation_passed", False),
             message=validation_result.get("messages", {}),
             error=validation_result.get("errors", {}),
-            warning=validation_result.get("warnings", {})
+            warning=validation_result.get("warnings", {}),
+            post_results=validation_result.get("post_results"),
+            post_error=validation_result.get("post_error"),
         )
 
     except NoCredentialsError as exc:
