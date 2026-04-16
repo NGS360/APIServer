@@ -150,7 +150,7 @@ python-dotenv==1.2.2
     #   uvicorn
 python-jose==3.5.0
     # via ngs360-server (pyproject.toml)
-python-multipart==0.0.24
+python-multipart==0.0.26
     # via
     #   ngs360-server (pyproject.toml)
     #   fastapi
