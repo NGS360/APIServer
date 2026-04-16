@@ -318,6 +318,101 @@ def update_project(
     )
 
 
+def patch_project(
+    *,
+    session: Session,
+    opensearch_client: OpenSearch,
+    project_id: str,
+    update_request: ProjectUpdate,
+) -> ProjectPublic:
+    """
+    Partially update a project using merge/upsert semantics.
+
+    Unlike ``update_project`` (PUT), this does **not** remove attributes
+    that are absent from the request.  Each supplied attribute is upserted:
+    existing keys have their value updated, new keys are inserted, and
+    unmentioned keys are left untouched.  An empty attributes list is a
+    no-op.
+    """
+    # Fetch the project
+    project = session.exec(
+        select(Project).where(Project.project_id == project_id)
+    ).first()
+
+    if not project:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Project {project_id} not found.",
+        )
+
+    # Update name if provided
+    if update_request.name is not None:
+        project.name = update_request.name
+
+    # Merge/upsert attributes (does NOT remove unmentioned attributes)
+    if (
+        update_request.attributes is not None
+        and len(update_request.attributes) > 0
+    ):
+        # Prevent duplicate keys in the request
+        seen = set()
+        keys = [attr.key for attr in update_request.attributes]
+        dups = [k for k in keys if k in seen or seen.add(k)]
+        if dups:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    f"Duplicate keys ({', '.join(dups)}) are not "
+                    f"allowed in project attributes."
+                ),
+            )
+
+        for attr in update_request.attributes:
+            existing_attr = session.exec(
+                select(ProjectAttribute).where(
+                    ProjectAttribute.project_id == project.id,
+                    ProjectAttribute.key == attr.key,
+                )
+            ).first()
+
+            if existing_attr:
+                existing_attr.value = attr.value
+            else:
+                session.add(
+                    ProjectAttribute(
+                        project_id=project.id,
+                        key=attr.key,
+                        value=attr.value,
+                    )
+                )
+
+    session.commit()
+    session.refresh(project)
+
+    # Update project in opensearch
+    if opensearch_client:
+        search_doc = SearchDocument(
+            id=project.project_id, body=project
+        )
+        add_object_to_index(
+            opensearch_client, search_doc, index="projects"
+        )
+
+    data_bucket = get_setting_value(session, "DATA_BUCKET_URI")
+    results_bucket = get_setting_value(session, "RESULTS_BUCKET_URI")
+
+    return ProjectPublic(
+        project_id=project.project_id,
+        name=project.name,
+        data_folder_uri=f"{data_bucket}/{project.project_id}/",
+        results_folder_uri=(
+            f"{results_bucket}/{project.project_id}/"
+        ),
+        attributes=project.attributes,
+        sequencing_runs=None,
+    )
+
+
 def search_projects(
     session: Session,
     client: OpenSearch,
