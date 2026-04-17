@@ -60,7 +60,7 @@ def _resolve_barcode_to_run(
     run = get_sequencing_run(session=session, run_barcode=barcode)
     if run is None:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=f"SequencingRun not found for barcode: {barcode}"
         )
     return run
@@ -124,7 +124,7 @@ def create_qcrecord(
         ).first()
         if not project:
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail=(
                     f"Project not found: {qcrecord_create.project_id}"
                 )
@@ -137,7 +137,7 @@ def create_qcrecord(
         )
         if not wf_run:
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail=(
                     "WorkflowRun not found: "
                     f"{qcrecord_create.workflow_run_id}"
@@ -231,7 +231,7 @@ def _create_metric(
         wr = session.get(WorkflowRun, wr_id)
         if not wr:
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail=f"WorkflowRun not found: {wr_id}"
             )
 
