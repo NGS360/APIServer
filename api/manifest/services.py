@@ -245,9 +245,15 @@ def validate_manifest_file(
         get_setting_value(session, "MANIFEST_VALIDATION_LAMBDA")
         or "ngs360-manifest-validator"
     )
+    # Get Lambda qualifier (alias/version) from settings, fall back to "main"
+    lambda_qualifier = (
+        get_setting_value(session, "MANIFEST_VALIDATION_LAMBDA_QUALIFIER")
+        or "main"
+    )
     logger.info(
-        "Invoking Lambda function: %s for manifest validation of %s",
+        "Invoking Lambda function: %s (qualifier: %s) for manifest validation of %s",
         lambda_function_name,
+        lambda_qualifier,
         manifest_uri
     )
 
@@ -273,11 +279,11 @@ def validate_manifest_file(
         if post_to_api:
             payload["post_to_api"] = True
 
-        # Invoke Lambda function synchronously using the "main" alias
+        # Invoke Lambda function synchronously using the configured alias
         response = lambda_client.invoke(
             FunctionName=lambda_function_name,
             InvocationType="RequestResponse",
-            Qualifier="main",
+            Qualifier=lambda_qualifier,
             Payload=json.dumps(payload)
         )
 

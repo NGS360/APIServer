@@ -614,6 +614,12 @@ def session_fixture():
             name="Manifest Validation Lambda",
             description="Test Lambda function for manifest validation"
         ),
+        Setting(
+            key="MANIFEST_VALIDATION_LAMBDA_QUALIFIER",
+            value="main",
+            name="Manifest Validation Lambda Qualifier",
+            description="Alias or version qualifier for the manifest validation Lambda"
+        ),
     ]
     for setting in test_settings:
         session.add(setting)

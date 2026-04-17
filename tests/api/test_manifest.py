@@ -9,6 +9,7 @@ import pytest
 
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
+from sqlmodel import Session
 
 from api.manifest.services import get_latest_manifest_file
 
@@ -902,6 +903,72 @@ class TestManifestValidation:
         data = response.json()
         assert data["post_results"] == {"samples_created": 5, "project": "P-00000000-0001"}
         assert data["post_error"] is None
+
+    def test_validate_manifest_uses_qualifier_from_settings(
+        self, client: TestClient, mock_lambda_client, session: Session
+    ):
+        """Test that Lambda qualifier is read from MANIFEST_VALIDATION_LAMBDA_QUALIFIER setting.
+
+        Uses a non-default value ('staging') to prove the qualifier comes from
+        the DB setting rather than the hardcoded fallback.
+        """
+        from api.settings.models import Setting
+        from sqlmodel import select
+
+        # Update the qualifier setting to a non-default value
+        setting = session.exec(
+            select(Setting).where(Setting.key == "MANIFEST_VALIDATION_LAMBDA_QUALIFIER")
+        ).first()
+        setting.value = "staging"
+        session.add(setting)
+        session.commit()
+
+        mock_lambda_client.set_response({
+            "success": True,
+            "validation_passed": True,
+            "messages": {},
+            "errors": {},
+            "warnings": {},
+            "statusCode": 200
+        })
+
+        response = client.post(
+            "/api/v1/manifest/validate?manifest_uri=s3://test-bucket/manifest.csv"
+        )
+
+        assert response.status_code == 200
+        assert mock_lambda_client.invocations[-1]["Qualifier"] == "staging"
+
+    def test_validate_manifest_qualifier_defaults_to_main_when_setting_absent(
+        self, client: TestClient, mock_lambda_client, session: Session
+    ):
+        """Test that qualifier defaults to 'main' when setting is not in DB"""
+        from api.settings.models import Setting
+        from sqlmodel import select
+
+        # Remove the qualifier setting to test fallback
+        setting = session.exec(
+            select(Setting).where(Setting.key == "MANIFEST_VALIDATION_LAMBDA_QUALIFIER")
+        ).first()
+        if setting:
+            session.delete(setting)
+            session.commit()
+
+        mock_lambda_client.set_response({
+            "success": True,
+            "validation_passed": True,
+            "messages": {},
+            "errors": {},
+            "warnings": {},
+            "statusCode": 200
+        })
+
+        response = client.post(
+            "/api/v1/manifest/validate?manifest_uri=s3://test-bucket/manifest.csv"
+        )
+
+        assert response.status_code == 200
+        assert mock_lambda_client.invocations[-1]["Qualifier"] == "main"
 
     def test_validate_manifest_files_bucket_defaults_to_s3_path_bucket(
         self, client: TestClient, mock_lambda_client
