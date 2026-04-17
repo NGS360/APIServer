@@ -70,6 +70,7 @@ def add_run(
         run_folder_uri=run.run_folder_uri,
         status=run.status,
         run_time=run.run_time,
+        original_barcode=run.original_barcode,
         barcode=run.barcode,
     )
 

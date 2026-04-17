@@ -41,6 +41,7 @@ class SequencingRun(SQLModel, table=True):
     run_folder_uri: str | None = Field(default=None, max_length=255)
     status: RunStatus | None = Field(default=None)
     run_time: str | None = Field(default=None, max_length=4)
+    original_barcode: str | None = Field(default=None, max_length=100)
     # TBD: Convert this to an enum or separate table if we want to enforce a set of allowed platforms
     sequencing_platform: str | None = Field(default=None, max_length=50)  # e.g., "Illumina", "ONT"
 
@@ -64,6 +65,8 @@ class SequencingRun(SQLModel, table=True):
 
         :param barcode: Barcode in the form of
                      <YYMMDD>_<machineid>_<zero padded run number>_<flowcell>
+                  or newer Illumina format with 4-digit year:
+                     <YYYYMMDD>_<machineid>_<zero padded run number>_<flowcell>
                   or ONT run id in the form of
                      <YYYYMMDD>_<HHMM>_<machineid>_<flowcell>_<run string>
         :return: 5 parts (run_date, run_time, machine_id, run_number, flowcell_id) or None
@@ -76,39 +79,51 @@ class SequencingRun(SQLModel, table=True):
         if len(run_id_fields) not in [4, 5]:
             return (None, None, None, None, None)
 
-        # illumina run id has 4 fields
-        if len(run_id_fields) == 4:
-            run_date = datetime.strptime(run_id_fields[0], "%y%m%d").date()
-            machine_id = run_id_fields[1]
+        try:
+            # illumina run id has 4 fields
+            if len(run_id_fields) == 4:
+                # Support both 6-char (YYMMDD) and 8-char (YYYYMMDD) date formats
+                date_str = run_id_fields[0]
+                date_fmt = "%Y%m%d" if len(date_str) == 8 else "%y%m%d"
+                run_date = datetime.strptime(date_str, date_fmt).date()
+                machine_id = run_id_fields[1]
 
-            # Convert run_number to an integer, as it is padded with a leading zero
-            # in the run_barcode
-            # run_number = int(barcode_items[2])
-            run_number = run_id_fields[2]
+                run_number = run_id_fields[2]
 
-            flowcell_id = run_id_fields[3]
-            run_time = None
+                flowcell_id = run_id_fields[3]
+                run_time = None
 
-        # ONT will have 5 fields
-        if len(run_id_fields) == 5:
-            run_date = datetime.strptime(run_id_fields[0], "%Y%m%d").date()
-            run_time = run_id_fields[1]
-            machine_id = run_id_fields[2]
-            run_number = run_id_fields[4]
-            flowcell_id = run_id_fields[3]
+            # ONT will have 5 fields
+            if len(run_id_fields) == 5:
+                run_date = datetime.strptime(run_id_fields[0], "%Y%m%d").date()
+                run_time = run_id_fields[1]
+                machine_id = run_id_fields[2]
+                run_number = run_id_fields[4]
+                flowcell_id = run_id_fields[3]
+        except ValueError:
+            return (None, None, None, None, None)
 
         return (run_date, run_time, machine_id, run_number, flowcell_id)
 
-    @computed_field
-    @property
-    def barcode(self) -> str:
-        ''' Generates a barcode from the run fields '''
+    def _reconstruct_barcode(self) -> str:
+        """
+        Reconstruct barcode from component fields (for backward compatibility).
+        This method is called when original_barcode is NULL in the database.
+        """
         if self.run_time is None:
             run_date = self.run_date.strftime("%y%m%d")
             return f"{run_date}_{self.machine_id}_{self.run_number}_{self.flowcell_id}"
         # ONT: run_number may be an arbitrary string
         run_date = self.run_date.strftime("%Y%m%d")
         return f"{run_date}_{self.run_time}_{self.machine_id}_{self.flowcell_id}_{self.run_number}"
+
+    @computed_field
+    @property
+    def barcode(self) -> str:
+        """Return original_barcode if stored, otherwise reconstruct from fields."""
+        if self.original_barcode:
+            return self.original_barcode
+        return self._reconstruct_barcode()
 
     def to_dict(self):
         ''' Returns a dictionary representation of the object '''
@@ -144,6 +159,7 @@ class SequencingRunCreate(SQLModel):
     run_folder_uri: str | None = None
     status: RunStatus | None = None
     run_time: str | None = None
+    original_barcode: str | None = None
 
     model_config = ConfigDict(extra="forbid")
 
@@ -184,6 +200,7 @@ class SequencingRunPublic(SQLModel):
     run_folder_uri: str | None
     status: RunStatus | None
     run_time: str | None
+    original_barcode: str | None = None
     barcode: str | None
 
 

@@ -589,6 +589,7 @@ def test_search_runs(client: TestClient):
                 "run_folder_uri": "s3://bucket/path/to/run",
                 "status": "Ready",
                 "run_time": None,
+                "original_barcode": None,
             }
         ],
         "total_items": 1,
@@ -1719,3 +1720,154 @@ class TestInterpolateFunction:
         # The sandboxed environment should handle missing variables
         # gracefully
         assert "Hello" in result
+
+
+# ---------------------------------------------------------------------------
+# Tests for 8-digit (YYYYMMDD) Illumina barcode support & original_barcode
+# ---------------------------------------------------------------------------
+
+
+class TestParseBarcodeFormats:
+    """Unit tests for SequencingRun.parse_barcode with various date formats."""
+
+    def test_parse_barcode_6digit_illumina(self):
+        """Classic 6-digit YYMMDD Illumina barcode still works."""
+        result = SequencingRun.parse_barcode("190110_SH00862_0012_BFLOWCELL")
+        run_date, run_time, machine_id, run_number, flowcell_id = result
+        assert run_date == datetime.date(2019, 1, 10)
+        assert run_time is None
+        assert machine_id == "SH00862"
+        assert run_number == "0012"
+        assert flowcell_id == "BFLOWCELL"
+
+    def test_parse_barcode_8digit_illumina(self):
+        """New 8-digit YYYYMMDD Illumina barcode is parsed correctly."""
+        result = SequencingRun.parse_barcode("20260202_SH00862_0012_ASC2144730-SC3")
+        run_date, run_time, machine_id, run_number, flowcell_id = result
+        assert run_date == datetime.date(2026, 2, 2)
+        assert run_time is None
+        assert machine_id == "SH00862"
+        assert run_number == "0012"
+        assert flowcell_id == "ASC2144730-SC3"
+
+    def test_parse_barcode_ont(self):
+        """ONT 5-field barcode remains unchanged."""
+        result = SequencingRun.parse_barcode("20190110_1230_MACHINE123_FLOWCELL123_0012efg")
+        run_date, run_time, machine_id, run_number, flowcell_id = result
+        assert run_date == datetime.date(2019, 1, 10)
+        assert run_time == "1230"
+        assert machine_id == "MACHINE123"
+        assert run_number == "0012efg"
+        assert flowcell_id == "FLOWCELL123"
+
+    def test_parse_barcode_invalid(self):
+        """Invalid barcode returns all Nones."""
+        result = SequencingRun.parse_barcode("not_a_valid_barcode")
+        assert result == (None, None, None, None, None)
+
+    def test_parse_barcode_too_few_fields(self):
+        """Barcode with fewer than 4 fields returns all Nones."""
+        result = SequencingRun.parse_barcode("190110_MACHINE")
+        assert result == (None, None, None, None, None)
+
+
+class TestOriginalBarcodeProperty:
+    """Unit tests for the barcode computed property and _reconstruct_barcode."""
+
+    def test_barcode_returns_original_when_set(self):
+        """When original_barcode is populated, barcode property returns it."""
+        run = SequencingRun(
+            run_date=datetime.date(2026, 2, 2),
+            machine_id="SH00862",
+            run_number="0012",
+            flowcell_id="ASC2144730-SC3",
+            original_barcode="20260202_SH00862_0012_ASC2144730-SC3",
+        )
+        assert run.barcode == "20260202_SH00862_0012_ASC2144730-SC3"
+
+    def test_barcode_reconstructs_when_original_is_none(self):
+        """When original_barcode is None, barcode is reconstructed (YYMMDD for Illumina)."""
+        run = SequencingRun(
+            run_date=datetime.date(2019, 1, 10),
+            machine_id="MACHINE123",
+            run_number="0001",
+            flowcell_id="FLOWCELL123",
+        )
+        assert run.original_barcode is None
+        assert run.barcode == "190110_MACHINE123_0001_FLOWCELL123"
+
+    def test_barcode_reconstructs_ont_when_original_is_none(self):
+        """ONT reconstruction uses YYYYMMDD format."""
+        run = SequencingRun(
+            run_date=datetime.date(2019, 1, 10),
+            machine_id="MACHINE123",
+            run_number="0012efg",
+            flowcell_id="FLOWCELL123",
+            run_time="1230",
+        )
+        assert run.original_barcode is None
+        assert run.barcode == "20190110_1230_MACHINE123_FLOWCELL123_0012efg"
+
+
+class TestOriginalBarcodeEndToEnd:
+    """End-to-end tests for creating/retrieving runs with original_barcode."""
+
+    def test_add_run_with_original_barcode(self, client: TestClient):
+        """Creating a run with original_barcode preserves it in the response."""
+        new_run = {
+            "run_date": "2026-02-02",
+            "machine_id": "SH00862",
+            "run_number": "0012",
+            "flowcell_id": "ASC2144730-SC3",
+            "experiment_name": "Test 8-digit",
+            "run_folder_uri": "s3://bucket/20260202_SH00862_0012_ASC2144730-SC3",
+            "status": RunStatus.READY,
+            "original_barcode": "20260202_SH00862_0012_ASC2144730-SC3",
+        }
+        response = client.post("/api/v1/runs", json=new_run)
+        assert response.status_code == 201
+        data = response.json()
+        assert data["original_barcode"] == "20260202_SH00862_0012_ASC2144730-SC3"
+        assert data["barcode"] == "20260202_SH00862_0012_ASC2144730-SC3"
+        assert data["run_date"] == "2026-02-02"
+
+    def test_add_run_without_original_barcode_reconstructs(self, client: TestClient):
+        """A run without original_barcode still reconstructs barcode from fields."""
+        new_run = {
+            "run_date": "2019-01-10",
+            "machine_id": "MACHINEABC",
+            "run_number": "0099",
+            "flowcell_id": "FLOWCELLXYZ",
+            "experiment_name": "Legacy run",
+            "run_folder_uri": "s3://bucket/legacy",
+            "status": RunStatus.READY,
+        }
+        response = client.post("/api/v1/runs", json=new_run)
+        assert response.status_code == 201
+        data = response.json()
+        assert data["original_barcode"] is None
+        assert data["barcode"] == "190110_MACHINEABC_0099_FLOWCELLXYZ"
+
+    def test_get_run_by_8digit_barcode(self, client: TestClient, session: Session):
+        """Retrieve a run using an 8-digit date barcode in the URL path."""
+        run = SequencingRun(
+            id=uuid4(),
+            run_date=datetime.date(2026, 2, 2),
+            machine_id="SH00862",
+            run_number="0099",
+            flowcell_id="BFLOWCELL99",
+            experiment_name="8-digit lookup test",
+            run_folder_uri="s3://bucket/test",
+            status=RunStatus.READY,
+            original_barcode="20260202_SH00862_0099_BFLOWCELL99",
+        )
+        session.add(run)
+        session.commit()
+
+        # Retrieve by the 8-digit barcode
+        response = client.get("/api/v1/runs/20260202_SH00862_0099_BFLOWCELL99")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["barcode"] == "20260202_SH00862_0099_BFLOWCELL99"
+        assert data["run_date"] == "2026-02-02"
+        assert data["machine_id"] == "SH00862"

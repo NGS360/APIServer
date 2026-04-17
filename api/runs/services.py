@@ -140,6 +140,7 @@ def get_runs(
             run_folder_uri=run.run_folder_uri,
             status=run.status,
             run_time=run.run_time,
+            original_barcode=run.original_barcode,
             barcode=run.barcode,
         )
         for run in runs
@@ -366,6 +367,7 @@ def update_run(session: Session, run_barcode: str, run_status: RunStatus) -> Seq
         run_folder_uri=run.run_folder_uri,
         status=run.status,
         run_time=run.run_time,
+        original_barcode=run.original_barcode,
         barcode=run.barcode,
     )
 
