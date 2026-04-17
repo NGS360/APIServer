@@ -471,17 +471,20 @@ class MockLambdaClient:
         """
         self.error_mode = error_type
 
-    def invoke(self, FunctionName: str, InvocationType: str, Payload: str):
+    def invoke(self, FunctionName: str, InvocationType: str, Payload: str, Qualifier: str = None):
         """Mock Lambda invoke operation"""
         import json
         from botocore.exceptions import NoCredentialsError, ClientError
 
         # Track the invocation
-        self.invocations.append({
+        invocation = {
             "FunctionName": FunctionName,
             "InvocationType": InvocationType,
             "Payload": json.loads(Payload)
-        })
+        }
+        if Qualifier:
+            invocation["Qualifier"] = Qualifier
+        self.invocations.append(invocation)
 
         # Check for simulated errors
         if self.error_mode == "NoCredentialsError":

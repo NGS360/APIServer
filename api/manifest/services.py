@@ -273,10 +273,11 @@ def validate_manifest_file(
         if post_to_api:
             payload["post_to_api"] = True
 
-        # Invoke Lambda function synchronously
+        # Invoke Lambda function synchronously using the "main" alias
         response = lambda_client.invoke(
             FunctionName=lambda_function_name,
             InvocationType="RequestResponse",
+            Qualifier="main",
             Payload=json.dumps(payload)
         )
 
