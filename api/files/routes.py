@@ -10,13 +10,12 @@ Endpoints:
 - GET /api/files/download - Download file from S3
 """
 
-import io
 from typing import Optional
 import uuid
 
 from fastapi import APIRouter, Depends, Query, status, Form, UploadFile
 from fastapi import File as FastAPIFile
-from fastapi.responses import StreamingResponse
+from fastapi.responses import RedirectResponse
 
 from api.files.models import FileUploadCreate
 
@@ -235,6 +234,7 @@ def browse_s3(
 @router.get(
     "/download",
     summary="Download file from S3",
+    responses={307: {"description": "Redirect to presigned S3 URL"}},
 )
 def download_file(
     path: str = Query(
@@ -242,24 +242,18 @@ def download_file(
         description="S3 URI of file to download (e.g., s3://bucket/path/file.txt)"
     ),
     s3_client=Depends(get_s3_client),
-) -> StreamingResponse:
+):
     """
-    Download a file from S3.
+    Download a file from S3 via presigned URL redirect.
 
-    Returns the file as a streaming download with appropriate
-    content type and filename.
+    Returns a 307 redirect to a time-limited presigned S3 URL.
+    The client follows the redirect to download directly from S3,
+    offloading bandwidth from the API server.
     """
-    file_content, content_type, filename = services.download_file(
+    presigned_url = services.generate_presigned_url(
         s3_path=path, s3_client=s3_client
     )
-
-    return StreamingResponse(
-        io.BytesIO(file_content),
-        media_type=content_type,
-        headers={
-            "Content-Disposition": f'attachment; filename="{filename}"'
-        }
-    )
+    return RedirectResponse(url=presigned_url, status_code=307)
 
 
 @router.get(
