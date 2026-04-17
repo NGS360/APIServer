@@ -74,18 +74,21 @@ class SequencingRun(SQLModel, table=True):
         # Split the barcode into its parts
         run_id_fields = barcode.split("_")
         if len(run_id_fields) not in [4, 5]:
-            return (None, None, None, None, None)
+            return (run_date, run_time, machine_id, run_number, flowcell_id)
 
         # illumina run id has 4 fields
         if len(run_id_fields) == 4:
-            run_date = datetime.strptime(run_id_fields[0], "%y%m%d").date()
+            # Check if date is YYMMDD (6 chars) or YYYYMMDD (8 chars)
+            date_field = run_id_fields[0]
+            if len(date_field) == 6:
+                run_date = datetime.strptime(date_field, "%y%m%d").date()
+            elif len(date_field) == 8:
+                run_date = datetime.strptime(date_field, "%Y%m%d").date()
+            else:
+                return (None, None, None, None, None)
+
             machine_id = run_id_fields[1]
-
-            # Convert run_number to an integer, as it is padded with a leading zero
-            # in the run_barcode
-            # run_number = int(barcode_items[2])
-            run_number = run_id_fields[2]
-
+            run_number = int(run_id_fields[2])
             flowcell_id = run_id_fields[3]
             run_time = None
 
