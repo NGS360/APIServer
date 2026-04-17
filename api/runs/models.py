@@ -73,6 +73,7 @@ class SequencingRun(SQLModel, table=True):
 
         # Split the barcode into its parts
         run_id_fields = barcode.split("_")
+        # If we don't have the right number of fields, return None for all parts
         if len(run_id_fields) not in [4, 5]:
             return (run_date, run_time, machine_id, run_number, flowcell_id)
 
@@ -88,7 +89,7 @@ class SequencingRun(SQLModel, table=True):
                 return (None, None, None, None, None)
 
             machine_id = run_id_fields[1]
-            run_number = int(run_id_fields[2])
+            run_number = run_id_fields[2]
             flowcell_id = run_id_fields[3]
             run_time = None
 

@@ -40,17 +40,17 @@ class TestSequencingRunModel:
         assert run_date == datetime.date(2019, 1, 10)
         assert run_time is None
         assert machine_id == "MACHINE123"
-        assert run_number == 1
+        assert run_number == "1"
         assert flowcell_id == "FLOWCELL123"
 
     def test_parse_barcode_4digityear(self):
-        """Test that we can parse a barcode with a 4 digit year correctly"""
+        """Test that we can parse a barcode with a 4 digit year AND zero-padding correctly"""
         barcode = "20190110_MACHINE123_0001_FLOWCELL123"
         run_date, run_time, machine_id, run_number, flowcell_id = SequencingRun.parse_barcode(barcode)
         assert run_date == datetime.date(2019, 1, 10)
         assert run_time is None
         assert machine_id == "MACHINE123"
-        assert run_number == 1
+        assert run_number == "0001"
         assert flowcell_id == "FLOWCELL123"
 
 @pytest.fixture(name="test_user")
