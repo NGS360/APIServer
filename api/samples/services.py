@@ -399,7 +399,7 @@ def bulk_create_samples(
         seen_ids.add(item.sample_id)
     if duplicates:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=(
                 f"Duplicate sample_id(s) in request: "
                 f"{', '.join(sorted(set(duplicates)))}"
@@ -424,7 +424,7 @@ def bulk_create_samples(
 
     if invalid_barcodes:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=(
                 f"Run barcode(s) not found: "
                 f"{', '.join(sorted(invalid_barcodes))}"
