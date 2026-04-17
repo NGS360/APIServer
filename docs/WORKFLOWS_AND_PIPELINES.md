@@ -7,7 +7,7 @@ This document describes the Workflow and Pipeline systems — how bioinformatics
 The system provides:
 
 - **Platform-agnostic workflow identity**: Define a workflow once by name
-- **Explicit versioning**: Each version carries its own `definition_uri` (WDL/CWL/Nextflow file) and semantic version string
+- **Versioning**: Each version carries its own `definition_uri` (WDL/CWL/Nextflow file) and semantic version string
 - **Aliases**: Assign an alias to a specific version, e.g. `production` or `development` — like AWS Lambda aliases
 - **Cross-platform deployment**: Register a specific workflow version on multiple execution engines (Arvados, SevenBridges, AWS Batch, etc.)
 - **Execution provenance**: Record workflow runs with engine-specific run IDs and key-value attributes for file/QC provenance tracking
