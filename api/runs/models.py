@@ -63,24 +63,21 @@ class SequencingRun(SQLModel, table=True):
         Converts a barcode to its parts
 
         :param barcode: Barcode in the form of
-                     <YYMMDD>_<machineid>_<zero padded run number>_<flowcell>
-                  or ONT run id in the form of
-                     <YYYYMMDD>_<HHMM>_<machineid>_<flowcell>_<run string>
+                        Illumina: <YYMMDD>|<YYYYMMDD>_<machineid>_<zero padded run number>_<flowcell>
+                        ONT:      <YYYYMMDD>_<HHMM>_<machineid>_<flowcell>_<run hash>
         :return: 5 parts (run_date, run_time, machine_id, run_number, flowcell_id) or None
         """
         # Define (default) return values
         run_date, run_time, machine_id, run_number, flowcell_id = (None, None, None, None, None)
 
         # Split the barcode into its parts
-        run_id_fields = barcode.split("_")
-        # If we don't have the right number of fields, return None for all parts
-        if len(run_id_fields) not in [4, 5]:
-            return (run_date, run_time, machine_id, run_number, flowcell_id)
+        parts = barcode.split("_")
 
         # illumina run id has 4 fields
-        if len(run_id_fields) == 4:
+        # Illumina format is <YYMMDD>_<machineid>_<zero padded run number>_<flowcell>
+        if len(parts) == 4:
             # Check if date is YYMMDD (6 chars) or YYYYMMDD (8 chars)
-            date_field = run_id_fields[0]
+            date_field = parts[0]
             if len(date_field) == 6:
                 run_date = datetime.strptime(date_field, "%y%m%d").date()
             elif len(date_field) == 8:
@@ -88,18 +85,19 @@ class SequencingRun(SQLModel, table=True):
             else:
                 return (None, None, None, None, None)
 
-            machine_id = run_id_fields[1]
-            run_number = run_id_fields[2]
-            flowcell_id = run_id_fields[3]
+            machine_id = parts[1]
+            run_number = parts[2]
+            flowcell_id = parts[3]
             run_time = None
 
         # ONT will have 5 fields
-        if len(run_id_fields) == 5:
-            run_date = datetime.strptime(run_id_fields[0], "%Y%m%d").date()
-            run_time = run_id_fields[1]
-            machine_id = run_id_fields[2]
-            run_number = run_id_fields[4]
-            flowcell_id = run_id_fields[3]
+        # ONT format is <YYYYMMDD>_<HHMM>_<machineid>_<flowcell>_<run hash>
+        elif len(parts) == 5:
+            run_date = datetime.strptime(parts[0], "%Y%m%d").date()
+            run_time = parts[1]
+            machine_id = parts[2]
+            run_number = parts[4]
+            flowcell_id = parts[3]
 
         return (run_date, run_time, machine_id, run_number, flowcell_id)
 
