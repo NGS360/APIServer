@@ -53,6 +53,19 @@ def add_run(
     """Add a new sequencing run to the database and index it in OpenSearch."""
     # Create the SequencingRun instance
     run = SequencingRun(**sequencingrun_in.model_dump())
+    # Remove leading zeros for consistent formatting
+    # or leave as is if it cannot be converted (e.g. ONT runs)
+    try:
+        run.run_number = str(int(run.run_number))
+    except ValueError:
+        pass
+
+    existing_run = get_run(session=session, run_barcode=run.barcode)
+    if existing_run:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Run with barcode '{run.barcode}' already exists.",
+        )
 
     # Add to the database
     session.add(run)
