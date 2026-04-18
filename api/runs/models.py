@@ -78,7 +78,7 @@ class SequencingRun(SQLModel, table=True):
                 return (None, None, None, None, None)
 
             machine_id = parts[1]
-            run_number = parts[2]
+            run_number = int(parts[2])
             flowcell_id = parts[3]
             run_time = None
 
@@ -99,7 +99,8 @@ class SequencingRun(SQLModel, table=True):
         ''' Generates a barcode from the run fields '''
         if self.run_time is None:
             run_date = self.run_date.strftime("%y%m%d")
-            return f"{run_date}_{self.machine_id}_{self.run_number}_{self.flowcell_id}"
+            run_number = int(self.run_number)
+            return f"{run_date}_{self.machine_id}_{run_number}_{self.flowcell_id}"
         # ONT: run_number may be an arbitrary string
         run_date = self.run_date.strftime("%Y%m%d")
         return f"{run_date}_{self.run_time}_{self.machine_id}_{self.flowcell_id}_{self.run_number}"
@@ -119,11 +120,6 @@ class SequencingRun(SQLModel, table=True):
             "barcode": self.barcode,
         }
         return data
-
-    def from_dict(self, data):
-        ''' Updates the object from a dictionary '''
-        for field in data:
-            setattr(self, field, data[field])
 
     def __repr__(self):
         return f"<SequencingRun {self.id}>"
