@@ -1,7 +1,7 @@
 """
 Search-related services
 """
-from opensearchpy import OpenSearch
+from opensearchpy import OpenSearch, helpers
 from sqlmodel import Session
 
 from core.logger import logger
@@ -10,6 +10,56 @@ from api.search.models import (
     SearchDocument,
     SearchResponse,
 )
+
+
+def add_objects_to_index(
+    client: OpenSearch, documents: list[SearchDocument], index: str
+) -> None:
+    """
+    Add multiple documents to the OpenSearch index in one bulk operation.
+
+    Args:
+        client: OpenSearch client
+        documents: List of SearchDocument objects to index
+        index: The index name
+    """
+    if client is None:
+        logger.warning("OpenSearch client is not available.")
+        return
+
+    if not documents:
+        logger.info("No documents to index.")
+        return
+
+    # Prepare bulk actions
+    actions = []
+    for document in documents:
+        payload = {}
+        for field in document.body.__searchable__:
+            value = getattr(document.body, field)
+            if value:
+                payload[field] = value
+
+        action = {
+            "_index": index,
+            "_id": str(document.id),
+            "_source": payload
+        }
+        actions.append(action)
+
+    # Perform bulk indexing
+    try:
+        success, failed = helpers.bulk(
+            client, actions, raise_on_error=False, stats_only=False)
+        logger.info(f"Bulk indexed {success} documents successfully")
+        if failed:
+            logger.warning(f"Failed to index {len(failed)} documents")
+
+        # Refresh the index once after bulk operation
+        client.indices.refresh(index=index)
+    except Exception as e:
+        logger.error(f"Bulk indexing failed: {e}")
+        raise
 
 
 def add_object_to_index(
