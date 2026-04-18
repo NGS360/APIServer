@@ -49,13 +49,13 @@ class SequencingRun(SQLModel, table=True):
 
     model_config = ConfigDict(from_attributes=True)
 
-    @staticmethod
-    def is_data_valid(data):
-        ''' A Run must have an experiment_name and a run_folder_uri to be valid '''
-        for field in ["experiment_name", "run_folder_uri"]:
-            if field not in data:
-                return False
-        return True
+    # @staticmethod
+    # def is_data_valid(data):
+    #     ''' A Run must have an experiment_name and a run_folder_uri to be valid '''
+    #     for field in ["experiment_name", "run_folder_uri"]:
+    #         if field not in data:
+    #             return False
+    #     return True
 
     @staticmethod
     def parse_barcode(barcode: str):
