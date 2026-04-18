@@ -18,6 +18,7 @@ from core.utils import interpolate
 from sample_sheet import SampleSheet as IlluminaSampleSheet
 
 from core.utils import define_search_body
+from core.logger import logger
 
 from api.runs.models import (
     DemuxWorkflowConfig,
