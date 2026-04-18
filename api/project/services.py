@@ -29,7 +29,9 @@ from api.project.models import (
     ProjectsPublic,
 )
 from api.search.models import SearchDocument
-from api.search.services import add_object_to_index, delete_index, add_objects_to_index, reset_index
+from api.search.services import (
+    add_object_to_index, add_objects_to_index, reset_index
+)
 from api.samples.models import (
     Sample,
     SampleAttribute,

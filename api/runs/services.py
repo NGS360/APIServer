@@ -39,7 +39,6 @@ from api.qcmetrics.models import QCMetricSample
 from api.search.services import (
     add_object_to_index,
     add_objects_to_index,
-    delete_index,
     delete_document_from_index,
     reset_index
 )
