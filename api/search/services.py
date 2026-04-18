@@ -117,6 +117,15 @@ def delete_document_from_index(
         logger.warning("Failed to delete document %s from index %s: %s", document_id, index, e)
 
 
+def reset_index(client: OpenSearch, index: str) -> None:
+    # Clear the existing index
+    if client.indices.exists(index=index):
+        client.indices.delete(index=index)
+
+    # Create a new index
+    client.indices.create(index=index, ignore=400)
+
+
 def search(
     client: OpenSearch, session: Session, query: str, n_results: int = 5
 ) -> SearchResponse:
