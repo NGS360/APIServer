@@ -59,6 +59,19 @@ def add_run(
     """Add a new sequencing run to the database and index it in OpenSearch."""
     # Create the SequencingRun instance
     run = SequencingRun(**sequencingrun_in.model_dump())
+    # Remove leading zeros for consistent formatting
+    # or leave as is if it cannot be converted (e.g. ONT runs)
+    try:
+        run.run_number = str(int(run.run_number))
+    except ValueError:
+        pass
+
+    existing_run = get_run(session=session, run_barcode=run.barcode)
+    if existing_run:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Run with barcode '{run.barcode}' already exists.",
+        )
 
     # Add to the database
     session.add(run)
@@ -119,8 +132,8 @@ def get_runs(
     # Determine sort field and direction
     # Handle computed fields that can't be sorted directly
     if sort_by == "barcode":
-        # For barcode sorting, use run_date as primary sort field since barcode starts with date
-        sort_field = SequencingRun.run_date
+        runs = session.exec(select(SequencingRun)).all()
+        runs.sort(key=lambda r: r.barcode, reverse=(sort_order == "desc"))
     else:
         # Get the actual database column, fallback to id if field doesn't exist
         sort_field = getattr(SequencingRun, sort_by, SequencingRun.id)
@@ -128,15 +141,15 @@ def get_runs(
         if not hasattr(sort_field, 'asc'):
             sort_field = SequencingRun.id
 
-    sort_direction = sort_field.asc() if sort_order == "asc" else sort_field.desc()
+        sort_direction = sort_field.asc() if sort_order == "asc" else sort_field.desc()
 
-    # Get run selection
-    runs = session.exec(
-        select(SequencingRun)
-        .order_by(sort_direction)
-        .limit(per_page)
-        .offset((page - 1) * per_page)
-    ).all()
+        # Get run selection
+        runs = session.exec(
+            select(SequencingRun)
+            .order_by(sort_direction)
+            .limit(per_page)
+            .offset((page - 1) * per_page)
+        ).all()
 
     # Map to public run
     public_runs = [
