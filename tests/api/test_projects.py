@@ -171,7 +171,10 @@ def test_get_project_with_sequencing_runs(client: TestClient, session: Session):
 
 
 def test_get_project_without_sequencing_runs(client: TestClient, session: Session):
-    """Test that GET /api/projects/<project_id> returns empty list when no sequencing runs associated with project"""
+    """
+    Test that GET /api/projects/<project_id> returns empty list
+    when no sequencing runs associated with project
+    """
     from api.project.models import Project
     from api.project.services import generate_project_id
 
