@@ -78,7 +78,7 @@ class SequencingRun(SQLModel, table=True):
                 return (None, None, None, None, None)
 
             machine_id = parts[1]
-            run_number = int(parts[2])
+            run_number = str(int(parts[2]))
             flowcell_id = parts[3]
             run_time = None
 

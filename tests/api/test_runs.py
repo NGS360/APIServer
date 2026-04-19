@@ -54,7 +54,7 @@ class TestSequencingRunModel:
         assert run_date == datetime.date(2019, 1, 10)
         assert run_time is None
         assert machine_id == "MACHINE123"
-        assert run_number == "0001"
+        assert run_number == "1"
         assert flowcell_id == "FLOWCELL123"
 
 
@@ -97,12 +97,12 @@ def test_add_run(client: TestClient):
     data = response.json()
     assert data["run_date"] == "2019-01-10"
     assert data["machine_id"] == "MACHINE123"
-    assert data["run_number"] == "0001"
+    assert data["run_number"] == "1"
     assert data["flowcell_id"] == "FLOWCELL123"
     assert data["experiment_name"] == "Test Experiment"
     assert data["run_folder_uri"] == "s3://bucket/path/to/run"
     assert data["status"] == RunStatus.READY.value
-    assert data["barcode"] == "190110_MACHINE123_0001_FLOWCELL123"
+    assert data["barcode"] == "190110_MACHINE123_1_FLOWCELL123"
 
     # Add a run with empty run_time string
     new_run = {
@@ -335,7 +335,7 @@ def test_get_run_samplesheet(client: TestClient, session: Session):
         id=uuid4(),
         run_date=datetime.date(2019, 1, 10),
         machine_id="MACHINE123",
-        run_number="0001",
+        run_number="1",
         flowcell_id="FLOWCELL123",
         experiment_name="Test Experiment",
         run_folder_uri=run_folder.as_posix(),
@@ -351,13 +351,13 @@ def test_get_run_samplesheet(client: TestClient, session: Session):
     data = response.json()
     assert data["Summary"]["run_date"] == "2019-01-10"
     assert data["Summary"]["machine_id"] == "MACHINE123"
-    assert data["Summary"]["run_number"] == "0001"
+    assert data["Summary"]["run_number"] == "1"
     assert data["Summary"]["run_time"] == ""
     assert data["Summary"]["flowcell_id"] == "FLOWCELL123"
     assert data["Summary"]["experiment_name"] == "Test Experiment"
     assert data["Summary"]["run_folder_uri"] == run_folder.as_posix()
     assert data["Summary"]["status"] == RunStatus.READY.value
-    assert data["Summary"]["barcode"] == run_barcode
+    assert data["Summary"]["barcode"] == "190110_MACHINE123_1_FLOWCELL123"
     assert "id" not in data["Summary"]  # Database ID should not be exposed
 
 
@@ -374,7 +374,7 @@ def test_get_run_samplesheet_no_result(client: TestClient, session: Session):
         id=uuid4(),
         run_date=datetime.date(2019, 1, 10),
         machine_id="MACHINE123",
-        run_number="0002",
+        run_number="2",
         flowcell_id="FLOWCELL123",
         experiment_name="Test Experiment",
         run_folder_uri=run_folder.as_posix(),
@@ -406,7 +406,7 @@ def test_get_run_samplesheet_no_s3_credentials(
         id=uuid4(),
         run_date=datetime.date(2019, 1, 10),
         machine_id="MACHINE123",
-        run_number="0001",
+        run_number="1",
         flowcell_id="FLOWCELL123",
         experiment_name="Test Experiment",
         run_folder_uri=run_folder,
@@ -449,7 +449,7 @@ def test_get_run_metrics(client: TestClient, session: Session):
         id=uuid4(),
         run_date=datetime.date(2019, 1, 10),
         machine_id="MACHINE123",
-        run_number="0001",
+        run_number="1",
         flowcell_id="FLOWCELL123",
         experiment_name="Test Experiment",
         run_folder_uri=run_folder.as_posix(),
@@ -480,7 +480,7 @@ def test_get_run_metrics_no_result(client: TestClient, session: Session):
         id=uuid4(),
         run_date=datetime.date(2019, 1, 10),
         machine_id="MACHINE123",
-        run_number="0002",
+        run_number="2",
         flowcell_id="FLOWCELL123",
         experiment_name="Test Experiment",
         run_folder_uri=run_folder.as_posix(),
@@ -503,7 +503,7 @@ def test_update_run_status(client: TestClient, session: Session):
         id=uuid4(),
         run_date=datetime.date(2019, 1, 10),
         machine_id="MACHINE123",
-        run_number="0001",
+        run_number="1",
         flowcell_id="FLOWCELL123",
         experiment_name="Test Experiment",
         run_folder_uri="/dir/path/to/run",
@@ -519,7 +519,7 @@ def test_update_run_status(client: TestClient, session: Session):
     assert response.status_code == 200
     data = response.json()
     assert data["status"] == RunStatus.READY.value
-    assert data["barcode"] == "190110_MACHINE123_0001_FLOWCELL123"
+    assert data["barcode"] == "190110_MACHINE123_1_FLOWCELL123"
 
     # Test that we can't specifiy an invalid status
     update_data = {"run_status": "INVALID_STATUS"}
@@ -571,7 +571,7 @@ def test_upload_run_samplesheet(client: TestClient, session: Session, tmp_path: 
         id=uuid4(),
         run_date=datetime.date(2019, 1, 10),
         machine_id="MACHINE123",
-        run_number="0001",
+        run_number="1",
         flowcell_id="FLOWCELL123",
         experiment_name="Test Experiment",
         run_folder_uri=run_folder.as_posix(),
@@ -621,10 +621,10 @@ def test_search_runs(client: TestClient):
     assert response.json() == {
         "data": [
             {
-                "barcode": "190110_MACHINE123_0001_FLOWCELL123",
+                "barcode": "190110_MACHINE123_1_FLOWCELL123",
                 "run_date": "2019-01-10",
                 "machine_id": "MACHINE123",
-                "run_number": "0001",
+                "run_number": "1",
                 "flowcell_id": "FLOWCELL123",
                 "experiment_name": "Test Experiment AI",
                 "run_folder_uri": "s3://bucket/path/to/run",

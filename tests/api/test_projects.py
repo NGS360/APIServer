@@ -101,7 +101,7 @@ def test_get_project_with_sequencing_runs(client: TestClient, session: Session):
     run2 = SequencingRun(
         run_date=date(2024, 2, 20),
         machine_id="M67890",
-        run_number="0200",
+        run_number="200",
         flowcell_id="FC002",
         experiment_name="Experiment-002",
         run_folder_uri="s3://runs/run2/",
@@ -163,15 +163,15 @@ def test_get_project_with_sequencing_runs(client: TestClient, session: Session):
 
     # Verify second run details
     assert sequencing_runs[1]["machine_id"] == "M67890"
-    assert sequencing_runs[1]["run_number"] == "0200"
+    assert sequencing_runs[1]["run_number"] == "200"
     assert sequencing_runs[1]["flowcell_id"] == "FC002"
     assert sequencing_runs[1]["experiment_name"] == "Experiment-002"
     assert sequencing_runs[1]["status"] == "Uploading"
-    assert sequencing_runs[1]["barcode"] == "240220_M67890_0200_FC002"
+    assert sequencing_runs[1]["barcode"] == "240220_M67890_200_FC002"
 
 
 def test_get_project_without_sequencing_runs(client: TestClient, session: Session):
-    """Test that GET /api/projects/<project_id> returns empty list when no sequencing runs"""
+    """Test that GET /api/projects/<project_id> returns empty list when no sequencing runs associated with project"""
     from api.project.models import Project
     from api.project.services import generate_project_id
 
