@@ -18,6 +18,7 @@ from core.utils import interpolate
 from sample_sheet import SampleSheet as IlluminaSampleSheet
 
 from core.utils import define_search_body
+from core.logger import logger
 
 from api.runs.models import (
     DemuxWorkflowConfig,
@@ -36,7 +37,12 @@ from api.runs.models import (
 from api.samples.models import Sample, SampleAttribute
 from api.files.models import File, FileSequencingRun, FileSample
 from api.qcmetrics.models import QCMetricSample
-from api.search.services import add_object_to_index, delete_index, delete_document_from_index
+from api.search.services import (
+    add_object_to_index,
+    add_objects_to_index,
+    delete_document_from_index,
+    reset_index
+)
 from api.search.models import (
     SearchDocument,
 )
@@ -90,14 +96,18 @@ def get_run(
     (run_date, run_time, machine_id, run_number, flowcell_id) = (
         SequencingRun.parse_barcode(run_barcode)
     )
-    run = session.exec(
-        select(SequencingRun).where(
-            SequencingRun.run_date == run_date,
-            SequencingRun.machine_id == machine_id,
-            SequencingRun.run_number == run_number,
-            SequencingRun.flowcell_id == flowcell_id,
-        )
-    ).one_or_none()
+    try:
+        run = session.exec(
+            select(SequencingRun).where(
+                SequencingRun.run_date == run_date,
+                SequencingRun.machine_id == machine_id,
+                SequencingRun.run_number == run_number,
+                SequencingRun.flowcell_id == flowcell_id,
+            )
+        ).one_or_none()
+    except Exception as e:
+        logger.error(f"Error retrieving run {run_barcode}: {e}")
+        return None
     return run
 
 
@@ -182,7 +192,9 @@ def search_runs(
     Search for runs
     """
     # Construct the search query
-    search_body = define_search_body(query, page, per_page, sort_by, sort_order)
+    search_body = define_search_body(
+        query, page, per_page, sort_by, sort_order
+    )
 
     try:
 
@@ -212,7 +224,10 @@ def search_runs(
         )
 
     except Exception as e:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e)) from e
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(e)
+        ) from e
 
 
 def reindex_runs(
@@ -222,13 +237,22 @@ def reindex_runs(
     """
     Index all runs in database with OpenSearch
     """
-    delete_index(client, "illumina_runs")
     runs = session.exec(
         select(SequencingRun)
     ).all()
+
+    # Sort the runs by barcode to ensure consistent indexing order
+    runs.sort(key=lambda r: r.barcode)
+
+    # Prepare all documents
+    search_docs = []
     for run in runs:
         search_doc = SearchDocument(id=run.barcode, body=run)
-        add_object_to_index(client, search_doc, "illumina_runs")
+        search_docs.append(search_doc)
+
+    reset_index(client, "illumina_runs")
+    # Bulk index all documents in one call
+    add_objects_to_index(client, search_docs, "illumina_runs")
 
 
 def get_run_samplesheet(session: Session, run_barcode: str):
@@ -353,7 +377,9 @@ def get_run_metrics(session: Session, run_barcode: str) -> dict:
     return IlluminaMetricsResponseModel(**metrics)
 
 
-def update_run(session: Session, run_barcode: str, run_status: RunStatus) -> SequencingRunPublic:
+def update_run(
+    session: Session, run_barcode: str, run_status: RunStatus
+) -> SequencingRunPublic:
     """
     Update the status of a specific run.
     """
@@ -365,7 +391,6 @@ def update_run(session: Session, run_barcode: str, run_status: RunStatus) -> Seq
         )
 
     run.status = run_status
-    session.add(run)
     session.commit()
     session.refresh(run)
 
