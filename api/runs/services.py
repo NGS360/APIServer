@@ -122,8 +122,8 @@ def get_runs(
     # Determine sort field and direction
     # Handle computed fields that can't be sorted directly
     if sort_by == "barcode":
-        # For barcode sorting, use run_date as primary sort field since barcode starts with date
-        sort_field = SequencingRun.run_date
+        runs = session.exec(select(SequencingRun)).all()
+        runs.sort(key=lambda r: r.barcode, reverse=(sort_order == "desc"))
     else:
         # Get the actual database column, fallback to id if field doesn't exist
         sort_field = getattr(SequencingRun, sort_by, SequencingRun.id)
@@ -131,15 +131,15 @@ def get_runs(
         if not hasattr(sort_field, 'asc'):
             sort_field = SequencingRun.id
 
-    sort_direction = sort_field.asc() if sort_order == "asc" else sort_field.desc()
+        sort_direction = sort_field.asc() if sort_order == "asc" else sort_field.desc()
 
-    # Get run selection
-    runs = session.exec(
-        select(SequencingRun)
-        .order_by(sort_direction)
-        .limit(per_page)
-        .offset((page - 1) * per_page)
-    ).all()
+        # Get run selection
+        runs = session.exec(
+            select(SequencingRun)
+            .order_by(sort_direction)
+            .limit(per_page)
+            .offset((page - 1) * per_page)
+        ).all()
 
     # Map to public run
     public_runs = [
