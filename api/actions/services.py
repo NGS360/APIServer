@@ -349,7 +349,7 @@ def validate_action_config(
 
     except ValidationError as exc:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=exc.errors()
         ) from exc
     except ClientError as e:

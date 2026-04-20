@@ -17,6 +17,47 @@ from api.runs.models import SequencingRun, RunStatus
 from api.auth.models import User
 
 
+class TestSequencingRunModel:
+    """Test the SequencingRun model"""
+
+    def test_barcode_generation(self):
+        """Test that the barcode is generated correctly"""
+        run = SequencingRun(
+            run_date=datetime.date(2019, 1, 10),
+            machine_id="MACHINE123",
+            run_number="1",
+            flowcell_id="FLOWCELL123",
+            experiment_name="Test Experiment",
+            run_folder_uri="/dir/path/to/run",
+            status=RunStatus.READY,
+        )
+        assert run.barcode == "190110_MACHINE123_1_FLOWCELL123"
+
+    def test_parse_barcode_2digityear(self):
+        """Test that we can parse a barcode correctly"""
+        barcode = "190110_MACHINE123_1_FLOWCELL123"
+        run_date, run_time, machine_id, run_number, flowcell_id = SequencingRun.parse_barcode(
+            barcode
+        )
+        assert run_date == datetime.date(2019, 1, 10)
+        assert run_time is None
+        assert machine_id == "MACHINE123"
+        assert run_number == "1"
+        assert flowcell_id == "FLOWCELL123"
+
+    def test_parse_barcode_4digityear(self):
+        """Test that we can parse a barcode with a 4 digit year AND zero-padding correctly"""
+        barcode = "20190110_MACHINE123_0001_FLOWCELL123"
+        run_date, run_time, machine_id, run_number, flowcell_id = SequencingRun.parse_barcode(
+            barcode
+        )
+        assert run_date == datetime.date(2019, 1, 10)
+        assert run_time is None
+        assert machine_id == "MACHINE123"
+        assert run_number == "1"
+        assert flowcell_id == "FLOWCELL123"
+
+
 @pytest.fixture(name="test_user")
 def test_user_fixture(session: Session):
     """Create a test user"""
@@ -56,12 +97,12 @@ def test_add_run(client: TestClient):
     data = response.json()
     assert data["run_date"] == "2019-01-10"
     assert data["machine_id"] == "MACHINE123"
-    assert data["run_number"] == "0001"
+    assert data["run_number"] == "1"
     assert data["flowcell_id"] == "FLOWCELL123"
     assert data["experiment_name"] == "Test Experiment"
     assert data["run_folder_uri"] == "s3://bucket/path/to/run"
     assert data["status"] == RunStatus.READY.value
-    assert data["barcode"] == "190110_MACHINE123_0001_FLOWCELL123"
+    assert data["barcode"] == "190110_MACHINE123_1_FLOWCELL123"
 
     # Add a run with empty run_time string
     new_run = {
@@ -294,7 +335,7 @@ def test_get_run_samplesheet(client: TestClient, session: Session):
         id=uuid4(),
         run_date=datetime.date(2019, 1, 10),
         machine_id="MACHINE123",
-        run_number="0001",
+        run_number="1",
         flowcell_id="FLOWCELL123",
         experiment_name="Test Experiment",
         run_folder_uri=run_folder.as_posix(),
@@ -310,13 +351,13 @@ def test_get_run_samplesheet(client: TestClient, session: Session):
     data = response.json()
     assert data["Summary"]["run_date"] == "2019-01-10"
     assert data["Summary"]["machine_id"] == "MACHINE123"
-    assert data["Summary"]["run_number"] == "0001"
+    assert data["Summary"]["run_number"] == "1"
     assert data["Summary"]["run_time"] == ""
     assert data["Summary"]["flowcell_id"] == "FLOWCELL123"
     assert data["Summary"]["experiment_name"] == "Test Experiment"
     assert data["Summary"]["run_folder_uri"] == run_folder.as_posix()
     assert data["Summary"]["status"] == RunStatus.READY.value
-    assert data["Summary"]["barcode"] == run_barcode
+    assert data["Summary"]["barcode"] == "190110_MACHINE123_1_FLOWCELL123"
     assert "id" not in data["Summary"]  # Database ID should not be exposed
 
 
@@ -333,7 +374,7 @@ def test_get_run_samplesheet_no_result(client: TestClient, session: Session):
         id=uuid4(),
         run_date=datetime.date(2019, 1, 10),
         machine_id="MACHINE123",
-        run_number="0002",
+        run_number="2",
         flowcell_id="FLOWCELL123",
         experiment_name="Test Experiment",
         run_folder_uri=run_folder.as_posix(),
@@ -365,7 +406,7 @@ def test_get_run_samplesheet_no_s3_credentials(
         id=uuid4(),
         run_date=datetime.date(2019, 1, 10),
         machine_id="MACHINE123",
-        run_number="0001",
+        run_number="1",
         flowcell_id="FLOWCELL123",
         experiment_name="Test Experiment",
         run_folder_uri=run_folder,
@@ -408,7 +449,7 @@ def test_get_run_metrics(client: TestClient, session: Session):
         id=uuid4(),
         run_date=datetime.date(2019, 1, 10),
         machine_id="MACHINE123",
-        run_number="0001",
+        run_number="1",
         flowcell_id="FLOWCELL123",
         experiment_name="Test Experiment",
         run_folder_uri=run_folder.as_posix(),
@@ -439,7 +480,7 @@ def test_get_run_metrics_no_result(client: TestClient, session: Session):
         id=uuid4(),
         run_date=datetime.date(2019, 1, 10),
         machine_id="MACHINE123",
-        run_number="0002",
+        run_number="2",
         flowcell_id="FLOWCELL123",
         experiment_name="Test Experiment",
         run_folder_uri=run_folder.as_posix(),
@@ -462,7 +503,7 @@ def test_update_run_status(client: TestClient, session: Session):
         id=uuid4(),
         run_date=datetime.date(2019, 1, 10),
         machine_id="MACHINE123",
-        run_number="0001",
+        run_number="1",
         flowcell_id="FLOWCELL123",
         experiment_name="Test Experiment",
         run_folder_uri="/dir/path/to/run",
@@ -478,7 +519,7 @@ def test_update_run_status(client: TestClient, session: Session):
     assert response.status_code == 200
     data = response.json()
     assert data["status"] == RunStatus.READY.value
-    assert data["barcode"] == "190110_MACHINE123_0001_FLOWCELL123"
+    assert data["barcode"] == "190110_MACHINE123_1_FLOWCELL123"
 
     # Test that we can't specifiy an invalid status
     update_data = {"run_status": "INVALID_STATUS"}
@@ -530,7 +571,7 @@ def test_upload_run_samplesheet(client: TestClient, session: Session, tmp_path: 
         id=uuid4(),
         run_date=datetime.date(2019, 1, 10),
         machine_id="MACHINE123",
-        run_number="0001",
+        run_number="1",
         flowcell_id="FLOWCELL123",
         experiment_name="Test Experiment",
         run_folder_uri=run_folder.as_posix(),
@@ -580,10 +621,10 @@ def test_search_runs(client: TestClient):
     assert response.json() == {
         "data": [
             {
-                "barcode": "190110_MACHINE123_0001_FLOWCELL123",
+                "barcode": "190110_MACHINE123_1_FLOWCELL123",
                 "run_date": "2019-01-10",
                 "machine_id": "MACHINE123",
-                "run_number": "0001",
+                "run_number": "1",
                 "flowcell_id": "FLOWCELL123",
                 "experiment_name": "Test Experiment AI",
                 "run_folder_uri": "s3://bucket/path/to/run",
@@ -1737,7 +1778,7 @@ class TestParseBarcodeFormats:
         assert run_date == datetime.date(2019, 1, 10)
         assert run_time is None
         assert machine_id == "SH00862"
-        assert run_number == "0012"
+        assert run_number == "12"  # Zero-padding stripped by parse_barcode
         assert flowcell_id == "BFLOWCELL"
 
     def test_parse_barcode_8digit_illumina(self):
@@ -1747,7 +1788,7 @@ class TestParseBarcodeFormats:
         assert run_date == datetime.date(2026, 2, 2)
         assert run_time is None
         assert machine_id == "SH00862"
-        assert run_number == "0012"
+        assert run_number == "12"  # Zero-padding stripped by parse_barcode
         assert flowcell_id == "ASC2144730-SC3"
 
     def test_parse_barcode_ont(self):
@@ -1794,7 +1835,8 @@ class TestOriginalBarcodeProperty:
             flowcell_id="FLOWCELL123",
         )
         assert run.original_barcode is None
-        assert run.barcode == "190110_MACHINE123_0001_FLOWCELL123"
+        # _reconstruct_barcode uses int(run_number) to strip padding (aligns with main)
+        assert run.barcode == "190110_MACHINE123_1_FLOWCELL123"
 
     def test_barcode_reconstructs_ont_when_original_is_none(self):
         """ONT reconstruction uses YYYYMMDD format."""
@@ -1846,7 +1888,8 @@ class TestOriginalBarcodeEndToEnd:
         assert response.status_code == 201
         data = response.json()
         assert data["original_barcode"] is None
-        assert data["barcode"] == "190110_MACHINEABC_0099_FLOWCELLXYZ"
+        # _reconstruct_barcode uses int(run_number) to strip padding (aligns with main)
+        assert data["barcode"] == "190110_MACHINEABC_99_FLOWCELLXYZ"
 
     def test_get_run_by_8digit_barcode(self, client: TestClient, session: Session):
         """Retrieve a run using an 8-digit date barcode in the URL path."""
@@ -1854,7 +1897,7 @@ class TestOriginalBarcodeEndToEnd:
             id=uuid4(),
             run_date=datetime.date(2026, 2, 2),
             machine_id="SH00862",
-            run_number="0099",
+            run_number="99",  # Store unpadded to match parse_barcode behavior from main
             flowcell_id="BFLOWCELL99",
             experiment_name="8-digit lookup test",
             run_folder_uri="s3://bucket/test",
@@ -1864,10 +1907,11 @@ class TestOriginalBarcodeEndToEnd:
         session.add(run)
         session.commit()
 
-        # Retrieve by the 8-digit barcode
+        # Retrieve by the 8-digit barcode (parse_barcode strips padding to "99" for query)
         response = client.get("/api/v1/runs/20260202_SH00862_0099_BFLOWCELL99")
         assert response.status_code == 200
         data = response.json()
+        # barcode property returns original_barcode when set (preserves padding)
         assert data["barcode"] == "20260202_SH00862_0099_BFLOWCELL99"
         assert data["run_date"] == "2026-02-02"
         assert data["machine_id"] == "SH00862"

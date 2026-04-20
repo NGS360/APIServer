@@ -51,57 +51,46 @@ class SequencingRun(SQLModel, table=True):
     model_config = ConfigDict(from_attributes=True)
 
     @staticmethod
-    def is_data_valid(data):
-        ''' A Run must have an experiment_name and a run_folder_uri to be valid '''
-        for field in ["experiment_name", "run_folder_uri"]:
-            if field not in data:
-                return False
-        return True
-
-    @staticmethod
     def parse_barcode(barcode: str):
         """
         Converts a barcode to its parts
 
         :param barcode: Barcode in the form of
-                     <YYMMDD>_<machineid>_<zero padded run number>_<flowcell>
-                  or newer Illumina format with 4-digit year:
-                     <YYYYMMDD>_<machineid>_<zero padded run number>_<flowcell>
-                  or ONT run id in the form of
-                     <YYYYMMDD>_<HHMM>_<machineid>_<flowcell>_<run string>
+                        Illumina: <YYMMDD>|<YYYYMMDD>_<machineid>_<zero padded run number>_<flowcell>
+                        ONT:      <YYYYMMDD>_<HHMM>_<machineid>_<flowcell>_<run hash>
         :return: 5 parts (run_date, run_time, machine_id, run_number, flowcell_id) or None
         """
         # Define (default) return values
         run_date, run_time, machine_id, run_number, flowcell_id = (None, None, None, None, None)
 
         # Split the barcode into its parts
-        run_id_fields = barcode.split("_")
-        if len(run_id_fields) not in [4, 5]:
-            return (None, None, None, None, None)
+        parts = barcode.split("_")
 
-        try:
-            # illumina run id has 4 fields
-            if len(run_id_fields) == 4:
-                # Support both 6-char (YYMMDD) and 8-char (YYYYMMDD) date formats
-                date_str = run_id_fields[0]
-                date_fmt = "%Y%m%d" if len(date_str) == 8 else "%y%m%d"
-                run_date = datetime.strptime(date_str, date_fmt).date()
-                machine_id = run_id_fields[1]
+        # illumina run id has 4 fields
+        # Illumina format is <YYMMDD>_<machineid>_<zero padded run number>_<flowcell>
+        if len(parts) == 4:
+            # Check if date is YYMMDD (6 chars) or YYYYMMDD (8 chars)
+            date_field = parts[0]
+            if len(date_field) == 6:
+                run_date = datetime.strptime(date_field, "%y%m%d").date()
+            elif len(date_field) == 8:
+                run_date = datetime.strptime(date_field, "%Y%m%d").date()
+            else:
+                return (None, None, None, None, None)
 
-                run_number = run_id_fields[2]
+            machine_id = parts[1]
+            run_number = str(int(parts[2]))
+            flowcell_id = parts[3]
+            run_time = None
 
-                flowcell_id = run_id_fields[3]
-                run_time = None
-
-            # ONT will have 5 fields
-            if len(run_id_fields) == 5:
-                run_date = datetime.strptime(run_id_fields[0], "%Y%m%d").date()
-                run_time = run_id_fields[1]
-                machine_id = run_id_fields[2]
-                run_number = run_id_fields[4]
-                flowcell_id = run_id_fields[3]
-        except ValueError:
-            return (None, None, None, None, None)
+        # ONT will have 5 fields
+        # ONT format is <YYYYMMDD>_<HHMM>_<machineid>_<flowcell>_<run hash>
+        elif len(parts) == 5:
+            run_date = datetime.strptime(parts[0], "%Y%m%d").date()
+            run_time = parts[1]
+            machine_id = parts[2]
+            run_number = parts[4]
+            flowcell_id = parts[3]
 
         return (run_date, run_time, machine_id, run_number, flowcell_id)
 
@@ -112,7 +101,8 @@ class SequencingRun(SQLModel, table=True):
         """
         if self.run_time is None:
             run_date = self.run_date.strftime("%y%m%d")
-            return f"{run_date}_{self.machine_id}_{self.run_number}_{self.flowcell_id}"
+            run_number = int(self.run_number)
+            return f"{run_date}_{self.machine_id}_{run_number}_{self.flowcell_id}"
         # ONT: run_number may be an arbitrary string
         run_date = self.run_date.strftime("%Y%m%d")
         return f"{run_date}_{self.run_time}_{self.machine_id}_{self.flowcell_id}_{self.run_number}"
@@ -140,11 +130,6 @@ class SequencingRun(SQLModel, table=True):
             "barcode": self.barcode,
         }
         return data
-
-    def from_dict(self, data):
-        ''' Updates the object from a dictionary '''
-        for field in data:
-            setattr(self, field, data[field])
 
     def __repr__(self):
         return f"<SequencingRun {self.id}>"

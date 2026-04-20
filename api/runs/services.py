@@ -18,6 +18,7 @@ from core.utils import interpolate
 from sample_sheet import SampleSheet as IlluminaSampleSheet
 
 from core.utils import define_search_body
+from core.logger import logger
 
 from api.runs.models import (
     DemuxWorkflowConfig,
@@ -36,7 +37,12 @@ from api.runs.models import (
 from api.samples.models import Sample, SampleAttribute
 from api.files.models import File, FileSequencingRun, FileSample
 from api.qcmetrics.models import QCMetricSample
-from api.search.services import add_object_to_index, delete_index, delete_document_from_index
+from api.search.services import (
+    add_object_to_index,
+    add_objects_to_index,
+    delete_document_from_index,
+    reset_index
+)
 from api.search.models import (
     SearchDocument,
 )
@@ -53,6 +59,19 @@ def add_run(
     """Add a new sequencing run to the database and index it in OpenSearch."""
     # Create the SequencingRun instance
     run = SequencingRun(**sequencingrun_in.model_dump())
+    # Remove leading zeros for consistent formatting
+    # or leave as is if it cannot be converted (e.g. ONT runs)
+    try:
+        run.run_number = str(int(run.run_number))
+    except ValueError:
+        pass
+
+    existing_run = get_run(session=session, run_barcode=run.barcode)
+    if existing_run:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Run with barcode '{run.barcode}' already exists.",
+        )
 
     # Add to the database
     session.add(run)
@@ -77,14 +96,18 @@ def get_run(
     (run_date, run_time, machine_id, run_number, flowcell_id) = (
         SequencingRun.parse_barcode(run_barcode)
     )
-    run = session.exec(
-        select(SequencingRun).where(
-            SequencingRun.run_date == run_date,
-            SequencingRun.machine_id == machine_id,
-            SequencingRun.run_number == run_number,
-            SequencingRun.flowcell_id == flowcell_id,
-        )
-    ).one_or_none()
+    try:
+        run = session.exec(
+            select(SequencingRun).where(
+                SequencingRun.run_date == run_date,
+                SequencingRun.machine_id == machine_id,
+                SequencingRun.run_number == run_number,
+                SequencingRun.flowcell_id == flowcell_id,
+            )
+        ).one_or_none()
+    except Exception as e:
+        logger.error(f"Error retrieving run {run_barcode}: {e}")
+        return None
     return run
 
 
@@ -109,8 +132,8 @@ def get_runs(
     # Determine sort field and direction
     # Handle computed fields that can't be sorted directly
     if sort_by == "barcode":
-        # For barcode sorting, use run_date as primary sort field since barcode starts with date
-        sort_field = SequencingRun.run_date
+        runs = session.exec(select(SequencingRun)).all()
+        runs.sort(key=lambda r: r.barcode, reverse=(sort_order == "desc"))
     else:
         # Get the actual database column, fallback to id if field doesn't exist
         sort_field = getattr(SequencingRun, sort_by, SequencingRun.id)
@@ -118,15 +141,15 @@ def get_runs(
         if not hasattr(sort_field, 'asc'):
             sort_field = SequencingRun.id
 
-    sort_direction = sort_field.asc() if sort_order == "asc" else sort_field.desc()
+        sort_direction = sort_field.asc() if sort_order == "asc" else sort_field.desc()
 
-    # Get run selection
-    runs = session.exec(
-        select(SequencingRun)
-        .order_by(sort_direction)
-        .limit(per_page)
-        .offset((page - 1) * per_page)
-    ).all()
+        # Get run selection
+        runs = session.exec(
+            select(SequencingRun)
+            .order_by(sort_direction)
+            .limit(per_page)
+            .offset((page - 1) * per_page)
+        ).all()
 
     # Map to public run
     public_runs = [
@@ -170,7 +193,9 @@ def search_runs(
     Search for runs
     """
     # Construct the search query
-    search_body = define_search_body(query, page, per_page, sort_by, sort_order)
+    search_body = define_search_body(
+        query, page, per_page, sort_by, sort_order
+    )
 
     try:
 
@@ -200,7 +225,10 @@ def search_runs(
         )
 
     except Exception as e:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e)) from e
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(e)
+        ) from e
 
 
 def reindex_runs(
@@ -210,13 +238,22 @@ def reindex_runs(
     """
     Index all runs in database with OpenSearch
     """
-    delete_index(client, "illumina_runs")
     runs = session.exec(
         select(SequencingRun)
     ).all()
+
+    # Sort the runs by barcode to ensure consistent indexing order
+    runs.sort(key=lambda r: r.barcode)
+
+    # Prepare all documents
+    search_docs = []
     for run in runs:
         search_doc = SearchDocument(id=run.barcode, body=run)
-        add_object_to_index(client, search_doc, "illumina_runs")
+        search_docs.append(search_doc)
+
+    reset_index(client, "illumina_runs")
+    # Bulk index all documents in one call
+    add_objects_to_index(client, search_docs, "illumina_runs")
 
 
 def get_run_samplesheet(session: Session, run_barcode: str):
@@ -341,7 +378,9 @@ def get_run_metrics(session: Session, run_barcode: str) -> dict:
     return IlluminaMetricsResponseModel(**metrics)
 
 
-def update_run(session: Session, run_barcode: str, run_status: RunStatus) -> SequencingRunPublic:
+def update_run(
+    session: Session, run_barcode: str, run_status: RunStatus
+) -> SequencingRunPublic:
     """
     Update the status of a specific run.
     """
@@ -353,7 +392,6 @@ def update_run(session: Session, run_barcode: str, run_status: RunStatus) -> Seq
         )
 
     run.status = run_status
-    session.add(run)
     session.commit()
     session.refresh(run)
 

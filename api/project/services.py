@@ -29,7 +29,9 @@ from api.project.models import (
     ProjectsPublic,
 )
 from api.search.models import SearchDocument
-from api.search.services import add_object_to_index, delete_index
+from api.search.services import (
+    add_object_to_index, add_objects_to_index, reset_index
+)
 from api.samples.models import (
     Sample,
     SampleAttribute,
@@ -467,13 +469,19 @@ def reindex_projects(
     """
     Index all projects in database with OpenSearch
     """
-    delete_index(client, "projects")
     projects = session.exec(
         select(Project).order_by(Project.project_id)
     ).all()
+
+    # Prepare all documents
+    search_docs = []
     for project in projects:
         search_doc = SearchDocument(id=project.project_id, body=project)
-        add_object_to_index(client, search_doc, index="projects")
+        search_docs.append(search_doc)
+
+    reset_index(client, "projects")
+    # Bulk index all documents in one call
+    add_objects_to_index(client, search_docs, "projects")
 
 
 def submit_pipeline_job(
