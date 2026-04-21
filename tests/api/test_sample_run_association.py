@@ -19,12 +19,14 @@ from api.qcmetrics.models import QCMetric, QCMetricSample, QCRecord
 
 def _create_run(session: Session) -> str:
     """Insert a sequencing run and return its barcode."""
+    barcode = "240315_M00001_42_HXXXXXXXXX"
     run = SequencingRun(
         run_date=date(2024, 3, 15),
         machine_id="M00001",
         run_number="42",
         flowcell_id="HXXXXXXXXX",
         experiment_name="TestExp",
+        original_barcode=barcode,
     )
     session.add(run)
     session.commit()
@@ -34,15 +36,9 @@ def _create_run(session: Session) -> str:
 
 def _get_run_id(session: Session, barcode: str):
     """Get the UUID of a sequencing run from its barcode."""
-    (run_date, run_time, machine_id, run_number, flowcell_id) = (
-        SequencingRun.parse_barcode(barcode)
-    )
     run = session.exec(
         select(SequencingRun).where(
-            SequencingRun.run_date == run_date,
-            SequencingRun.machine_id == machine_id,
-            SequencingRun.run_number == run_number,
-            SequencingRun.flowcell_id == flowcell_id,
+            SequencingRun.original_barcode == barcode
         )
     ).one()
     return run.id
@@ -198,12 +194,14 @@ def test_remove_sample_from_run_not_found(client: TestClient, session: Session):
 
 def _create_second_run(session: Session) -> str:
     """Insert a second sequencing run and return its barcode."""
+    barcode = "240420_M00002_99_HYYYYYYYYY"
     run = SequencingRun(
         run_date=date(2024, 4, 20),
         machine_id="M00002",
         run_number="99",
         flowcell_id="HYYYYYYYYY",
         experiment_name="SecondExp",
+        original_barcode=barcode,
     )
     session.add(run)
     session.commit()
@@ -217,10 +215,7 @@ def _associate(session: Session, sample_id: str, run_barcode: str) -> None:
 
     run = session.exec(
         select(SequencingRun).where(
-            SequencingRun.run_date == SequencingRun.parse_barcode(run_barcode)[0],
-            SequencingRun.machine_id == SequencingRun.parse_barcode(run_barcode)[2],
-            SequencingRun.run_number == SequencingRun.parse_barcode(run_barcode)[3],
-            SequencingRun.flowcell_id == SequencingRun.parse_barcode(run_barcode)[4],
+            SequencingRun.original_barcode == run_barcode
         )
     ).one()
     assoc = SampleSequencingRun(

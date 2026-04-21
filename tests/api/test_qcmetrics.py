@@ -80,12 +80,15 @@ def _create_workflow_run(session: Session) -> str:
 
 def _create_sequencing_run(session: Session) -> tuple[str, str]:
     """Create a SequencingRun; return (id_str, barcode)."""
+    flowcell_id = f"H{uuid4().hex[:8].upper()}"
+    original_barcode = f"240615_M00001_42_{flowcell_id}"
     sr = SequencingRun(
         id=uuid4(),
         run_date=date(2024, 6, 15),
         machine_id="M00001",
         run_number="42",
-        flowcell_id=f"H{uuid4().hex[:8].upper()}",
+        flowcell_id=flowcell_id,
+        original_barcode=original_barcode,
     )
     session.add(sr)
     session.flush()

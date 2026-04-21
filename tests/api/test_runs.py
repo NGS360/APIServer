@@ -236,6 +236,7 @@ def test_get_run_by_barcode(client: TestClient, session: Session):
         experiment_name="Test Experiment",
         run_folder_uri="/dir/path/to/run",
         status=RunStatus.READY,
+        original_barcode="190110_MACHINE123_1_FLOWCELL123",
     )
     session.add(new_run)
     session.commit()
@@ -280,6 +281,7 @@ def test_get_runs_ont(client: TestClient, session: Session):
         run_folder_uri="/dir/path/to/run",
         status=RunStatus.READY,
         run_time="1230",
+        original_barcode="20190110_1230_MACHINE123_FLOWCELL123_0012efg",
     )
     session.add(new_run)
     session.commit()
@@ -340,6 +342,7 @@ def test_get_run_samplesheet(client: TestClient, session: Session):
         experiment_name="Test Experiment",
         run_folder_uri=run_folder.as_posix(),
         status=RunStatus.READY,
+        original_barcode="190110_MACHINE123_0001_FLOWCELL123",
     )
     session.add(new_run)
     session.commit()
@@ -357,7 +360,7 @@ def test_get_run_samplesheet(client: TestClient, session: Session):
     assert data["Summary"]["experiment_name"] == "Test Experiment"
     assert data["Summary"]["run_folder_uri"] == run_folder.as_posix()
     assert data["Summary"]["status"] == RunStatus.READY.value
-    assert data["Summary"]["barcode"] == "190110_MACHINE123_1_FLOWCELL123"
+    assert data["Summary"]["barcode"] == "190110_MACHINE123_0001_FLOWCELL123"
     assert "id" not in data["Summary"]  # Database ID should not be exposed
 
 
@@ -379,6 +382,7 @@ def test_get_run_samplesheet_no_result(client: TestClient, session: Session):
         experiment_name="Test Experiment",
         run_folder_uri=run_folder.as_posix(),
         status=RunStatus.READY,
+        original_barcode="190110_MACHINE123_0002_FLOWCELL123",
     )
     session.add(new_run)
     session.commit()
@@ -411,6 +415,7 @@ def test_get_run_samplesheet_no_s3_credentials(
         experiment_name="Test Experiment",
         run_folder_uri=run_folder,
         status=RunStatus.READY,
+        original_barcode="190110_MACHINE123_0001_FLOWCELL123",
     )
     session.add(new_run)
     session.commit()
@@ -454,6 +459,7 @@ def test_get_run_metrics(client: TestClient, session: Session):
         experiment_name="Test Experiment",
         run_folder_uri=run_folder.as_posix(),
         status=RunStatus.READY,
+        original_barcode="190110_MACHINE123_0001_FLOWCELL123",
     )
     session.add(new_run)
     session.commit()
@@ -485,6 +491,7 @@ def test_get_run_metrics_no_result(client: TestClient, session: Session):
         experiment_name="Test Experiment",
         run_folder_uri=run_folder.as_posix(),
         status=RunStatus.READY,
+        original_barcode="190110_MACHINE123_0002_FLOWCELL123",
     )
     session.add(new_run)
     session.commit()
@@ -508,6 +515,7 @@ def test_update_run_status(client: TestClient, session: Session):
         experiment_name="Test Experiment",
         run_folder_uri="/dir/path/to/run",
         status=RunStatus.IN_PROGRESS,
+        original_barcode="190110_MACHINE123_0001_FLOWCELL123",
     )
     session.add(new_run)
     session.commit()
@@ -519,7 +527,7 @@ def test_update_run_status(client: TestClient, session: Session):
     assert response.status_code == 200
     data = response.json()
     assert data["status"] == RunStatus.READY.value
-    assert data["barcode"] == "190110_MACHINE123_1_FLOWCELL123"
+    assert data["barcode"] == "190110_MACHINE123_0001_FLOWCELL123"
 
     # Test that we can't specifiy an invalid status
     update_data = {"run_status": "INVALID_STATUS"}
@@ -541,6 +549,7 @@ def test_update_run_status_ont(client: TestClient, session: Session):
         run_folder_uri="/dir/path/to/run",
         status=RunStatus.IN_PROGRESS,
         run_time="1230",
+        original_barcode="20190110_1230_MACHINE123_FLOWCELL123_0001",
     )
     session.add(new_run)
     session.commit()
@@ -576,6 +585,7 @@ def test_upload_run_samplesheet(client: TestClient, session: Session, tmp_path: 
         experiment_name="Test Experiment",
         run_folder_uri=run_folder.as_posix(),
         status=RunStatus.READY,
+        original_barcode="190110_MACHINE123_0001_FLOWCELL123",
     )
     session.add(new_run)
     session.commit()
@@ -608,6 +618,7 @@ def test_search_runs(client: TestClient):
         "experiment_name": "Test Experiment AI",
         "run_folder_uri": "s3://bucket/path/to/run",
         "status": RunStatus.READY,
+        "original_barcode": "190110_MACHINE123_1_FLOWCELL123",
     }
     response = client.post("/api/v1/runs", json=new_run)
     assert response.status_code == 201
@@ -630,7 +641,7 @@ def test_search_runs(client: TestClient):
                 "run_folder_uri": "s3://bucket/path/to/run",
                 "status": "Ready",
                 "run_time": None,
-                "original_barcode": None,
+                "original_barcode": "190110_MACHINE123_1_FLOWCELL123",
             }
         ],
         "total_items": 1,
@@ -656,6 +667,7 @@ def test_search_runs_db_opensearch_out_of_sync(client: TestClient, session: Sess
         "experiment_name": "Test Experiment AI",
         "run_folder_uri": "s3://bucket/path/to/run",
         "status": RunStatus.READY,
+        "original_barcode": "190110_MACHINE123_1_FLOWCELL123",
     }
     response = client.post("/api/v1/runs", json=new_run)
     assert response.status_code == 201

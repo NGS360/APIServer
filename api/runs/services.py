@@ -90,19 +90,16 @@ def get_run(
     session: Session,
     run_barcode: str,
 ) -> SequencingRun | None:
+    """Retrieve a sequencing run by its original barcode.
+
+    Uses an indexed exact-match lookup on original_barcode.
+    Legacy rows without original_barcode will not be found until
+    the ETL backfill populates that column.
     """
-    Retrieve a sequencing run from the database.
-    """
-    (run_date, run_time, machine_id, run_number, flowcell_id) = (
-        SequencingRun.parse_barcode(run_barcode)
-    )
     try:
         run = session.exec(
             select(SequencingRun).where(
-                SequencingRun.run_date == run_date,
-                SequencingRun.machine_id == machine_id,
-                SequencingRun.run_number == run_number,
-                SequencingRun.flowcell_id == flowcell_id,
+                SequencingRun.original_barcode == run_barcode
             )
         ).one_or_none()
     except Exception as e:
