@@ -37,16 +37,16 @@ def _create_run(
     experiment_name: str = "TestExp",
 ) -> str:
     """Insert a sequencing run and return its barcode."""
-    # Construct original_barcode from fields (Illumina YYMMDD format)
+    # Construct run_id from fields (Illumina YYMMDD format)
     date_str = run_date.strftime("%y%m%d")
-    original_barcode = f"{date_str}_{machine_id}_{run_number}_{flowcell_id}"
+    run_id = f"{date_str}_{machine_id}_{run_number}_{flowcell_id}"
     run = SequencingRun(
         run_date=run_date,
         machine_id=machine_id,
         run_number=run_number,
         flowcell_id=flowcell_id,
         experiment_name=experiment_name,
-        original_barcode=original_barcode,
+        run_id=run_id,
     )
     session.add(run)
     session.commit()

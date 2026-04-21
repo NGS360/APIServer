@@ -223,7 +223,7 @@ def get_project_by_project_id(session: Session, project_id: str) -> ProjectPubli
             run_folder_uri=run.run_folder_uri,
             status=run.status,
             run_time=run.run_time,
-            original_barcode=run.original_barcode,
+            run_id=run.run_id,
             barcode=run.barcode,
         )
         for run in sequencing_runs

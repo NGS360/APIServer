@@ -90,16 +90,16 @@ def get_run(
     session: Session,
     run_barcode: str,
 ) -> SequencingRun | None:
-    """Retrieve a sequencing run by its original barcode.
+    """Retrieve a sequencing run by its run_id.
 
-    Uses an indexed exact-match lookup on original_barcode.
-    Legacy rows without original_barcode will not be found until
+    Uses an indexed exact-match lookup on run_id.
+    Legacy rows without run_id will not be found until
     the ETL backfill populates that column.
     """
     try:
         run = session.exec(
             select(SequencingRun).where(
-                SequencingRun.original_barcode == run_barcode
+                SequencingRun.run_id == run_barcode
             )
         ).one_or_none()
     except Exception as e:
@@ -160,7 +160,7 @@ def get_runs(
             run_folder_uri=run.run_folder_uri,
             status=run.status,
             run_time=run.run_time,
-            original_barcode=run.original_barcode,
+            run_id=run.run_id,
             barcode=run.barcode,
         )
         for run in runs
@@ -402,7 +402,7 @@ def update_run(
         run_folder_uri=run.run_folder_uri,
         status=run.status,
         run_time=run.run_time,
-        original_barcode=run.original_barcode,
+        run_id=run.run_id,
         barcode=run.barcode,
     )
 

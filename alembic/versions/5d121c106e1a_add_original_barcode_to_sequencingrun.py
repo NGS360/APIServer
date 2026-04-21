@@ -1,4 +1,4 @@
-"""add original_barcode to sequencingrun
+"""add run_id to sequencingrun
 
 Revision ID: 5d121c106e1a
 Revises: 21274c7c470d
@@ -21,27 +21,27 @@ depends_on: Union[str, Sequence[str], None] = None
 
 def upgrade() -> None:
     """Upgrade schema."""
-    # Add nullable original_barcode column
+    # Add nullable run_id column
     op.add_column(
         'sequencingrun',
         sa.Column(
-            'original_barcode',
+            'run_id',
             sqlmodel.sql.sqltypes.AutoString(length=100),
             nullable=True,
         ),
     )
     # Add partial unique index: uniqueness enforced for non-NULL values,
-    # multiple NULLs allowed (legacy rows without original_barcode).
+    # multiple NULLs allowed (legacy rows without run_id).
     op.create_index(
-        'ix_sequencingrun_original_barcode',
+        'ix_sequencingrun_run_id',
         'sequencingrun',
-        ['original_barcode'],
+        ['run_id'],
         unique=True,
-        postgresql_where=sa.text('original_barcode IS NOT NULL'),
+        postgresql_where=sa.text('run_id IS NOT NULL'),
     )
 
 
 def downgrade() -> None:
     """Downgrade schema."""
-    op.drop_index('ix_sequencingrun_original_barcode', 'sequencingrun')
-    op.drop_column('sequencingrun', 'original_barcode')
+    op.drop_index('ix_sequencingrun_run_id', 'sequencingrun')
+    op.drop_column('sequencingrun', 'run_id')

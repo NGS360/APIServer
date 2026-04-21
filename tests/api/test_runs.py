@@ -236,7 +236,7 @@ def test_get_run_by_barcode(client: TestClient, session: Session):
         experiment_name="Test Experiment",
         run_folder_uri="/dir/path/to/run",
         status=RunStatus.READY,
-        original_barcode="190110_MACHINE123_1_FLOWCELL123",
+        run_id="190110_MACHINE123_1_FLOWCELL123",
     )
     session.add(new_run)
     session.commit()
@@ -281,7 +281,7 @@ def test_get_runs_ont(client: TestClient, session: Session):
         run_folder_uri="/dir/path/to/run",
         status=RunStatus.READY,
         run_time="1230",
-        original_barcode="20190110_1230_MACHINE123_FLOWCELL123_0012efg",
+        run_id="20190110_1230_MACHINE123_FLOWCELL123_0012efg",
     )
     session.add(new_run)
     session.commit()
@@ -342,7 +342,7 @@ def test_get_run_samplesheet(client: TestClient, session: Session):
         experiment_name="Test Experiment",
         run_folder_uri=run_folder.as_posix(),
         status=RunStatus.READY,
-        original_barcode="190110_MACHINE123_0001_FLOWCELL123",
+        run_id="190110_MACHINE123_0001_FLOWCELL123",
     )
     session.add(new_run)
     session.commit()
@@ -382,7 +382,7 @@ def test_get_run_samplesheet_no_result(client: TestClient, session: Session):
         experiment_name="Test Experiment",
         run_folder_uri=run_folder.as_posix(),
         status=RunStatus.READY,
-        original_barcode="190110_MACHINE123_0002_FLOWCELL123",
+        run_id="190110_MACHINE123_0002_FLOWCELL123",
     )
     session.add(new_run)
     session.commit()
@@ -415,7 +415,7 @@ def test_get_run_samplesheet_no_s3_credentials(
         experiment_name="Test Experiment",
         run_folder_uri=run_folder,
         status=RunStatus.READY,
-        original_barcode="190110_MACHINE123_0001_FLOWCELL123",
+        run_id="190110_MACHINE123_0001_FLOWCELL123",
     )
     session.add(new_run)
     session.commit()
@@ -459,7 +459,7 @@ def test_get_run_metrics(client: TestClient, session: Session):
         experiment_name="Test Experiment",
         run_folder_uri=run_folder.as_posix(),
         status=RunStatus.READY,
-        original_barcode="190110_MACHINE123_0001_FLOWCELL123",
+        run_id="190110_MACHINE123_0001_FLOWCELL123",
     )
     session.add(new_run)
     session.commit()
@@ -491,7 +491,7 @@ def test_get_run_metrics_no_result(client: TestClient, session: Session):
         experiment_name="Test Experiment",
         run_folder_uri=run_folder.as_posix(),
         status=RunStatus.READY,
-        original_barcode="190110_MACHINE123_0002_FLOWCELL123",
+        run_id="190110_MACHINE123_0002_FLOWCELL123",
     )
     session.add(new_run)
     session.commit()
@@ -515,7 +515,7 @@ def test_update_run_status(client: TestClient, session: Session):
         experiment_name="Test Experiment",
         run_folder_uri="/dir/path/to/run",
         status=RunStatus.IN_PROGRESS,
-        original_barcode="190110_MACHINE123_0001_FLOWCELL123",
+        run_id="190110_MACHINE123_0001_FLOWCELL123",
     )
     session.add(new_run)
     session.commit()
@@ -549,7 +549,7 @@ def test_update_run_status_ont(client: TestClient, session: Session):
         run_folder_uri="/dir/path/to/run",
         status=RunStatus.IN_PROGRESS,
         run_time="1230",
-        original_barcode="20190110_1230_MACHINE123_FLOWCELL123_0001",
+        run_id="20190110_1230_MACHINE123_FLOWCELL123_0001",
     )
     session.add(new_run)
     session.commit()
@@ -585,7 +585,7 @@ def test_upload_run_samplesheet(client: TestClient, session: Session, tmp_path: 
         experiment_name="Test Experiment",
         run_folder_uri=run_folder.as_posix(),
         status=RunStatus.READY,
-        original_barcode="190110_MACHINE123_0001_FLOWCELL123",
+        run_id="190110_MACHINE123_0001_FLOWCELL123",
     )
     session.add(new_run)
     session.commit()
@@ -618,7 +618,7 @@ def test_search_runs(client: TestClient):
         "experiment_name": "Test Experiment AI",
         "run_folder_uri": "s3://bucket/path/to/run",
         "status": RunStatus.READY,
-        "original_barcode": "190110_MACHINE123_1_FLOWCELL123",
+        "run_id": "190110_MACHINE123_1_FLOWCELL123",
     }
     response = client.post("/api/v1/runs", json=new_run)
     assert response.status_code == 201
@@ -641,7 +641,7 @@ def test_search_runs(client: TestClient):
                 "run_folder_uri": "s3://bucket/path/to/run",
                 "status": "Ready",
                 "run_time": None,
-                "original_barcode": "190110_MACHINE123_1_FLOWCELL123",
+                "run_id": "190110_MACHINE123_1_FLOWCELL123",
             }
         ],
         "total_items": 1,
@@ -667,7 +667,7 @@ def test_search_runs_db_opensearch_out_of_sync(client: TestClient, session: Sess
         "experiment_name": "Test Experiment AI",
         "run_folder_uri": "s3://bucket/path/to/run",
         "status": RunStatus.READY,
-        "original_barcode": "190110_MACHINE123_1_FLOWCELL123",
+        "run_id": "190110_MACHINE123_1_FLOWCELL123",
     }
     response = client.post("/api/v1/runs", json=new_run)
     assert response.status_code == 201
@@ -1776,7 +1776,7 @@ class TestInterpolateFunction:
 
 
 # ---------------------------------------------------------------------------
-# Tests for 8-digit (YYYYMMDD) Illumina barcode support & original_barcode
+# Tests for 8-digit (YYYYMMDD) Illumina barcode support & run_id
 # ---------------------------------------------------------------------------
 
 
@@ -1828,25 +1828,25 @@ class TestOriginalBarcodeProperty:
     """Unit tests for the barcode computed property and _reconstruct_barcode."""
 
     def test_barcode_returns_original_when_set(self):
-        """When original_barcode is populated, barcode property returns it."""
+        """When run_id is populated, barcode property returns it."""
         run = SequencingRun(
             run_date=datetime.date(2026, 2, 2),
             machine_id="SH00862",
             run_number="0012",
             flowcell_id="ASC2144730-SC3",
-            original_barcode="20260202_SH00862_0012_ASC2144730-SC3",
+            run_id="20260202_SH00862_0012_ASC2144730-SC3",
         )
         assert run.barcode == "20260202_SH00862_0012_ASC2144730-SC3"
 
     def test_barcode_reconstructs_when_original_is_none(self):
-        """When original_barcode is None, barcode is reconstructed (YYMMDD for Illumina)."""
+        """When run_id is None, barcode is reconstructed (YYMMDD for Illumina)."""
         run = SequencingRun(
             run_date=datetime.date(2019, 1, 10),
             machine_id="MACHINE123",
             run_number="0001",
             flowcell_id="FLOWCELL123",
         )
-        assert run.original_barcode is None
+        assert run.run_id is None
         # _reconstruct_barcode uses int(run_number) to strip padding (aligns with main)
         assert run.barcode == "190110_MACHINE123_1_FLOWCELL123"
 
@@ -1859,15 +1859,15 @@ class TestOriginalBarcodeProperty:
             flowcell_id="FLOWCELL123",
             run_time="1230",
         )
-        assert run.original_barcode is None
+        assert run.run_id is None
         assert run.barcode == "20190110_1230_MACHINE123_FLOWCELL123_0012efg"
 
 
 class TestOriginalBarcodeEndToEnd:
-    """End-to-end tests for creating/retrieving runs with original_barcode."""
+    """End-to-end tests for creating/retrieving runs with run_id."""
 
-    def test_add_run_with_original_barcode(self, client: TestClient):
-        """Creating a run with original_barcode preserves it in the response."""
+    def test_add_run_with_run_id(self, client: TestClient):
+        """Creating a run with run_id preserves it in the response."""
         new_run = {
             "run_date": "2026-02-02",
             "machine_id": "SH00862",
@@ -1876,17 +1876,17 @@ class TestOriginalBarcodeEndToEnd:
             "experiment_name": "Test 8-digit",
             "run_folder_uri": "s3://bucket/20260202_SH00862_0012_ASC2144730-SC3",
             "status": RunStatus.READY,
-            "original_barcode": "20260202_SH00862_0012_ASC2144730-SC3",
+            "run_id": "20260202_SH00862_0012_ASC2144730-SC3",
         }
         response = client.post("/api/v1/runs", json=new_run)
         assert response.status_code == 201
         data = response.json()
-        assert data["original_barcode"] == "20260202_SH00862_0012_ASC2144730-SC3"
+        assert data["run_id"] == "20260202_SH00862_0012_ASC2144730-SC3"
         assert data["barcode"] == "20260202_SH00862_0012_ASC2144730-SC3"
         assert data["run_date"] == "2026-02-02"
 
-    def test_add_run_without_original_barcode_reconstructs(self, client: TestClient):
-        """A run without original_barcode still reconstructs barcode from fields."""
+    def test_add_run_without_run_id_reconstructs(self, client: TestClient):
+        """A run without run_id still reconstructs barcode from fields."""
         new_run = {
             "run_date": "2019-01-10",
             "machine_id": "MACHINEABC",
@@ -1899,7 +1899,7 @@ class TestOriginalBarcodeEndToEnd:
         response = client.post("/api/v1/runs", json=new_run)
         assert response.status_code == 201
         data = response.json()
-        assert data["original_barcode"] is None
+        assert data["run_id"] is None
         # _reconstruct_barcode uses int(run_number) to strip padding (aligns with main)
         assert data["barcode"] == "190110_MACHINEABC_99_FLOWCELLXYZ"
 
@@ -1914,7 +1914,7 @@ class TestOriginalBarcodeEndToEnd:
             experiment_name="8-digit lookup test",
             run_folder_uri="s3://bucket/test",
             status=RunStatus.READY,
-            original_barcode="20260202_SH00862_0099_BFLOWCELL99",
+            run_id="20260202_SH00862_0099_BFLOWCELL99",
         )
         session.add(run)
         session.commit()
@@ -1923,7 +1923,7 @@ class TestOriginalBarcodeEndToEnd:
         response = client.get("/api/v1/runs/20260202_SH00862_0099_BFLOWCELL99")
         assert response.status_code == 200
         data = response.json()
-        # barcode property returns original_barcode when set (preserves padding)
+        # barcode property returns run_id when set (preserves padding)
         assert data["barcode"] == "20260202_SH00862_0099_BFLOWCELL99"
         assert data["run_date"] == "2026-02-02"
         assert data["machine_id"] == "SH00862"

@@ -26,7 +26,7 @@ def _create_run(session: Session) -> str:
         run_number="42",
         flowcell_id="HXXXXXXXXX",
         experiment_name="TestExp",
-        original_barcode=barcode,
+        run_id=barcode,
     )
     session.add(run)
     session.commit()
@@ -38,7 +38,7 @@ def _get_run_id(session: Session, barcode: str):
     """Get the UUID of a sequencing run from its barcode."""
     run = session.exec(
         select(SequencingRun).where(
-            SequencingRun.original_barcode == barcode
+            SequencingRun.run_id == barcode
         )
     ).one()
     return run.id
@@ -201,7 +201,7 @@ def _create_second_run(session: Session) -> str:
         run_number="99",
         flowcell_id="HYYYYYYYYY",
         experiment_name="SecondExp",
-        original_barcode=barcode,
+        run_id=barcode,
     )
     session.add(run)
     session.commit()
@@ -215,7 +215,7 @@ def _associate(session: Session, sample_id: str, run_barcode: str) -> None:
 
     run = session.exec(
         select(SequencingRun).where(
-            SequencingRun.original_barcode == run_barcode
+            SequencingRun.run_id == run_barcode
         )
     ).one()
     assoc = SampleSequencingRun(

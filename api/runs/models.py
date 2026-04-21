@@ -41,7 +41,7 @@ class SequencingRun(SQLModel, table=True):
     run_folder_uri: str | None = Field(default=None, max_length=255)
     status: RunStatus | None = Field(default=None)
     run_time: str | None = Field(default=None, max_length=4)
-    original_barcode: str | None = Field(default=None, max_length=100)
+    run_id: str | None = Field(default=None, max_length=100)
     # TBD: Convert this to an enum or separate table if we want to enforce a set of allowed platforms
     sequencing_platform: str | None = Field(default=None, max_length=50)  # e.g., "Illumina", "ONT"
 
@@ -97,7 +97,7 @@ class SequencingRun(SQLModel, table=True):
     def _reconstruct_barcode(self) -> str:
         """
         Reconstruct barcode from component fields (for backward compatibility).
-        This method is called when original_barcode is NULL in the database.
+        This method is called when run_id is NULL in the database.
         """
         if self.run_time is None:
             run_date = self.run_date.strftime("%y%m%d")
@@ -110,9 +110,9 @@ class SequencingRun(SQLModel, table=True):
     @computed_field
     @property
     def barcode(self) -> str:
-        """Return original_barcode if stored, otherwise reconstruct from fields."""
-        if self.original_barcode:
-            return self.original_barcode
+        """Return run_id if stored, otherwise reconstruct from fields."""
+        if self.run_id:
+            return self.run_id
         return self._reconstruct_barcode()
 
     def to_dict(self):
@@ -144,7 +144,7 @@ class SequencingRunCreate(SQLModel):
     run_folder_uri: str | None = None
     status: RunStatus | None = None
     run_time: str | None = None
-    original_barcode: str | None = None
+    run_id: str | None = None
 
     model_config = ConfigDict(extra="forbid")
 
@@ -185,7 +185,7 @@ class SequencingRunPublic(SQLModel):
     run_folder_uri: str | None
     status: RunStatus | None
     run_time: str | None
-    original_barcode: str | None = None
+    run_id: str | None = None
     barcode: str | None
 
 
