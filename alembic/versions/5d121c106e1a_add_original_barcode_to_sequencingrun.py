@@ -30,14 +30,13 @@ def upgrade() -> None:
             nullable=True,
         ),
     )
-    # Add partial unique index: uniqueness enforced for non-NULL values,
-    # multiple NULLs allowed (legacy rows without run_id).
+    # Add unique index: MySQL allows multiple NULLs in a unique index,
+    # so legacy rows without run_id are fine.
     op.create_index(
         'ix_sequencingrun_run_id',
         'sequencingrun',
         ['run_id'],
         unique=True,
-        postgresql_where=sa.text('run_id IS NOT NULL'),
     )
 
 

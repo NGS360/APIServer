@@ -53,6 +53,12 @@ class SequencingRun(SQLModel, table=True):
     @staticmethod
     def parse_barcode(barcode: str):
         """
+        .. deprecated::
+            No longer used by APIServer production code (get_run now queries
+            by run_id directly).  Still called by NGS360-ETL scripts
+            (load_json_to_db.py, backfill_sample_associations.py).
+            Remove once those callers are migrated to run_id lookups.
+
         Converts a barcode to its parts
 
         :param barcode: Barcode in the form of
