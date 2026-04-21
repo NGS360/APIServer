@@ -1,4 +1,5 @@
 import uuid
+from datetime import datetime, timezone
 from typing import List, Literal
 
 from fastapi import HTTPException, status
@@ -57,7 +58,11 @@ def resolve_or_create_sample(
         return existing.id
 
     # Create stub sample
-    stub = Sample(sample_id=sample_name, project_id=project_id)
+    stub = Sample(
+        sample_id=sample_name,
+        project_id=project_id,
+        created_at=datetime.now(timezone.utc),
+    )
     session.add(stub)
     session.flush()  # Get the UUID
 
@@ -92,7 +97,11 @@ def add_sample_to_project(
         )
 
     # Create initial sample
-    sample = Sample(sample_id=sample_in.sample_id, project_id=project_id)
+    sample = Sample(
+        sample_id=sample_in.sample_id,
+        project_id=project_id,
+        created_at=datetime.now(timezone.utc),
+    )
     session.add(sample)
     session.flush()
 
@@ -478,6 +487,7 @@ def bulk_create_samples(
             sample = Sample(
                 sample_id=item.sample_id,
                 project_id=project.project_id,
+                created_at=datetime.now(timezone.utc),
             )
             session.add(sample)
             session.flush()  # get the UUID
