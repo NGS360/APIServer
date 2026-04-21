@@ -27,6 +27,7 @@ from api.workflow.routes import router as workflow_router
 from api.workflow.routes import run_router as workflow_run_router
 from api.pipeline.routes import router as pipeline_router
 from api.platforms.routes import router as platforms_router
+from api.legacy.routes import router as legacy_router
 
 
 # Customize route id's
@@ -139,6 +140,10 @@ app.include_router(workflow_router, prefix=API_PREFIX)
 app.include_router(workflow_run_router, prefix=API_PREFIX)
 app.include_router(pipeline_router, prefix=API_PREFIX)
 app.include_router(platforms_router, prefix=API_PREFIX)
+
+# Legacy compatibility routers
+LEGACY_PREFIX = "/api/v0"
+app.include_router(legacy_router, prefix=LEGACY_PREFIX)
 
 
 if __name__ == "__main__":
