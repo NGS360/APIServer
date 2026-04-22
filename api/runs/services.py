@@ -560,7 +560,7 @@ def list_demux_workflow_configs(session: Session, s3_client=None) -> list[str]:
 
 
 def get_demux_workflow_config(
-    session: Session, workflow_id: str, s3_client=None, run_barcode: str = None
+    session: Session, workflow_id: str, s3_client=None, run_id: str = None
 ) -> DemuxWorkflowConfig:
     """
     Retrieve a specific tool configuration from S3.
@@ -569,10 +569,10 @@ def get_demux_workflow_config(
         session: Database session
         workflow_id: The workflow identifier (filename without extension)
         s3_client: Optional boto3 S3 client
-        run_barcode: Optional run barcode to prepopulate s3_run_folder_path from run's run_folder_uri
+        run_id: Optional run ID to prepopulate s3_run_folder_path from run's run_folder_uri
 
     Returns:
-        DemuxWorkflowConfig object with prepopulated defaults if run_barcode is provided
+        DemuxWorkflowConfig object with prepopulated defaults if run_id is provided
     """
     bucket, prefix = _get_demux_workflow_configs_s3_location(session)
 
@@ -609,9 +609,9 @@ def get_demux_workflow_config(
         # Validate and return as DemuxWorkflowConfig model
         config = DemuxWorkflowConfig(**config_data)
 
-        # If run_barcode is provided, prepopulate s3_run_folder_path from the run's run_folder_uri
-        if run_barcode:
-            run = get_run(session=session, run_barcode=run_barcode)
+        # If run_id is provided, prepopulate s3_run_folder_path from the run's run_folder_uri
+        if run_id:
+            run = get_run(session=session, run_id=run_id)
             if run and run.run_folder_uri:
                 # Find inputs that contain 's3_run_folder_path' in their name and set the default
                 for input_item in config.inputs:
@@ -670,7 +670,7 @@ def submit_demux_job(
     Args:
         session: Database session
         workflow_body: The demultiplex workflow execution request containing workflow_id,
-                   run_barcode, and inputs
+                   run_id, and inputs
         s3_client: Optional boto3 S3 client
     Returns:
         BatchJobPublic: The created batch job with AWS job information.
