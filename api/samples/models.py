@@ -29,7 +29,7 @@ class SampleAttribute(SQLModel, table=True):
 
 
 class Sample(SQLModel, table=True):
-    __searchable__ = ["sample_id"]
+    __searchable__ = ["sample_id", "project_id"]
 
     id: uuid.UUID | None = Field(default_factory=uuid.uuid4, primary_key=True)
     sample_id: str
@@ -149,3 +149,15 @@ class BulkSampleCreateResponse(SQLModel):
     files_created: int = 0
     files_skipped: int = 0
     items: List[BulkSampleItemResponse]
+
+
+# ---------------------------------------------------------------------------
+# Sample search request model
+# ---------------------------------------------------------------------------
+
+
+class SampleSearchRequest(SQLModel):
+    """POST /api/v1/samples/search request body."""
+    filter_on: dict = {}
+    page: int = 1
+    per_page: int = 20
