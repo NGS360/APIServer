@@ -370,7 +370,7 @@ def bulk_create_samples(
     """
     Create multiple samples in a single atomic transaction.
 
-    Each item may optionally include a ``run_barcode`` to associate
+    Each item may optionally include a ``run_id`` to associate
     the sample with a sequencing run at creation time.
 
     All database writes happen in one transaction — if anything fails
@@ -406,28 +406,28 @@ def bulk_create_samples(
             ),
         )
 
-    # 2. Resolve all unique run barcodes up-front
-    unique_barcodes = {
-        item.run_barcode for item in samples_in if item.run_barcode
+    # 2. Resolve all unique run IDs up-front
+    unique_run_ids = {
+        item.run_id for item in samples_in if item.run_id
     }
-    barcode_to_run: dict[str, SequencingRun] = {}
-    invalid_barcodes: list[str] = []
-    for barcode in unique_barcodes:
+    run_id_to_run: dict[str, SequencingRun] = {}
+    invalid_run_ids: list[str] = []
+    for rid in unique_run_ids:
         try:
-            run = get_run(session=session, run_barcode=barcode)
+            run = get_run(session=session, run_id=rid)
         except (ValueError, Exception):
             run = None
         if run is None:
-            invalid_barcodes.append(barcode)
+            invalid_run_ids.append(rid)
         else:
-            barcode_to_run[barcode] = run
+            run_id_to_run[rid] = run
 
-    if invalid_barcodes:
+    if invalid_run_ids:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=(
-                f"Run barcode(s) not found: "
-                f"{', '.join(sorted(invalid_barcodes))}"
+                f"Run ID(s) not found: "
+                f"{', '.join(sorted(invalid_run_ids))}"
             ),
         )
 
@@ -497,9 +497,8 @@ def bulk_create_samples(
             newly_created_samples.append(sample)
 
         # Associate with sequencing run if requested
-        run_barcode_echo: str | None = None
-        if item.run_barcode:
-            run = barcode_to_run[item.run_barcode]
+        if item.run_id:
+            run = run_id_to_run[item.run_id]
             existing_assoc = session.exec(
                 select(SampleSequencingRun).where(
                     SampleSequencingRun.sample_id == sample.id,
@@ -518,8 +517,6 @@ def bulk_create_samples(
                 session.add(assoc)
                 associations_created += 1
 
-            run_barcode_echo = item.run_barcode
-
         # Create associated files if provided
         item_files_created = 0
         item_files_skipped = 0
@@ -537,7 +534,7 @@ def bulk_create_samples(
                 sample_uuid=sample.id,
                 project_id=project.project_id,
                 created=created,
-                run_barcode=run_barcode_echo,
+                run_id=item.run_id,
                 files_created=item_files_created,
                 files_skipped=item_files_skipped,
             )
