@@ -215,6 +215,7 @@ def get_project_by_project_id(session: Session, project_id: str) -> ProjectPubli
     # Convert to public model
     sequencing_runs_public = [
         SequencingRunPublic(
+            run_id=run.run_id,
             run_date=run.run_date,
             machine_id=run.machine_id,
             run_number=run.run_number,
@@ -222,8 +223,7 @@ def get_project_by_project_id(session: Session, project_id: str) -> ProjectPubli
             experiment_name=run.experiment_name,
             run_folder_uri=run.run_folder_uri,
             status=run.status,
-            run_time=run.run_time,
-            barcode=run.barcode,
+            run_time=run.run_time
         )
         for run in sequencing_runs
     ]
