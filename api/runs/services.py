@@ -727,18 +727,18 @@ def submit_demux_job(
 
 def associate_sample_with_run(
     session: Session,
-    run_barcode: str,
+    run_id: str,
     sample_id: str,
     created_by: str,
 ) -> SampleSequencingRun:
     """Create a Sample ↔ SequencingRun association."""
     from uuid import UUID
 
-    run = get_run(session=session, run_barcode=run_barcode)
+    run = get_run(session=session, run_id=run_id)
     if run is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Run with barcode '{run_barcode}' not found.",
+            detail=f"Run with ID '{run_id}' not found.",
         )
 
     sample = session.exec(
@@ -762,7 +762,7 @@ def associate_sample_with_run(
             status_code=status.HTTP_409_CONFLICT,
             detail=(
                 f"Sample '{sample_id}' is already associated "
-                f"with run '{run_barcode}'."
+                f"with run '{run_id}'."
             ),
         )
 
@@ -779,14 +779,14 @@ def associate_sample_with_run(
 
 def get_samples_for_run(
     session: Session,
-    run_barcode: str,
+    run_id: str,
 ) -> list[SampleSequencingRunPublic]:
     """List all sample associations for a run."""
-    run = get_run(session=session, run_barcode=run_barcode)
+    run = get_run(session=session, run_id=run_id)
     if run is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Run with barcode '{run_barcode}' not found.",
+            detail=f"Run with ID '{run_id}' not found.",
         )
 
     associations = session.exec(
@@ -809,17 +809,17 @@ def get_samples_for_run(
 
 def remove_sample_from_run(
     session: Session,
-    run_barcode: str,
+    run_id: str,
     sample_id: str,
 ) -> None:
     """Remove a Sample ↔ SequencingRun association."""
     from uuid import UUID
 
-    run = get_run(session=session, run_barcode=run_barcode)
+    run = get_run(session=session, run_id=run_id)
     if run is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Run with barcode '{run_barcode}' not found.",
+            detail=f"Run with ID '{run_id}' not found.",
         )
 
     assoc = session.exec(
@@ -833,7 +833,7 @@ def remove_sample_from_run(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=(
                 f"Association between sample '{sample_id}' and "
-                f"run '{run_barcode}' not found."
+                f"run '{run_id}' not found."
             ),
         )
     session.delete(assoc)
@@ -842,7 +842,7 @@ def remove_sample_from_run(
 
 def clear_samples_for_run(
     session: Session,
-    run_barcode: str,
+    run_id: str,
     opensearch_client: OpenSearch = None,
 ) -> RunSampleCleanupResponse:
     """
@@ -867,17 +867,17 @@ def clear_samples_for_run(
 
     Args:
         session: Database session
-        run_barcode: The run barcode identifying the sequencing run
+        run_id: The run ID identifying the sequencing run
         opensearch_client: Optional OpenSearch client for index cleanup
 
     Returns:
         RunSampleCleanupResponse with counts of what was removed/preserved
     """
-    run = get_run(session=session, run_barcode=run_barcode)
+    run = get_run(session=session, run_id=run_id)
     if run is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Run with barcode '{run_barcode}' not found.",
+            detail=f"Run with ID '{run_id}' not found.",
         )
 
     # ── Step 1: Delete File records associated with this run ──────────
@@ -1001,7 +1001,7 @@ def clear_samples_for_run(
     session.commit()
 
     return RunSampleCleanupResponse(
-        run_barcode=run_barcode,
+        run_id=run_id,
         associations_removed=associations_removed,
         files_deleted=files_deleted,
         samples_deleted=samples_deleted,
