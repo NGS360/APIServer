@@ -257,7 +257,7 @@ class DemuxWorkflowConfig(BaseModel):
 
 class DemuxWorkflowSubmitBody(BaseModel):
     workflow_id: str
-    run_barcode: str
+    run_id: str
     inputs: Dict[str, Any]
 
 
@@ -293,7 +293,7 @@ class SampleSequencingRunPublic(SQLModel):
 
 class RunSampleCleanupResponse(SQLModel):
     """Response model for bulk sample/file cleanup on a run (re-demux scenario)."""
-    run_barcode: str
+    run_id: str
     associations_removed: int
     files_deleted: int
     samples_deleted: int
