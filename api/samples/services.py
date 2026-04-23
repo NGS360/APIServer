@@ -1,3 +1,4 @@
+import logging
 import uuid
 from typing import List, Literal
 
@@ -21,6 +22,8 @@ from api.project.models import Project
 from api.runs.models import SequencingRun, SampleSequencingRun
 from api.search.models import SearchDocument
 from api.search.services import add_object_to_index, delete_index
+
+logger = logging.getLogger(__name__)
 
 
 def resolve_or_create_sample(
@@ -235,6 +238,81 @@ def reindex_samples(session: Session, client: OpenSearch):
     for sample in samples:
         search_doc = SearchDocument(id=str(sample.id), body=sample)
         add_object_to_index(client, search_doc, index="samples")
+
+
+# ---------------------------------------------------------------------------
+# Sample deletion
+# ---------------------------------------------------------------------------
+
+
+def delete_sample(
+    session: Session,
+    project_id: str,
+    sample_id: str,
+) -> None:
+    """
+    Hard-delete a sample and all its child rows.
+
+    Explicitly deletes:
+    - SampleAttribute rows (sample metadata)
+    - FileSample rows (file associations — the File records themselves are NOT deleted)
+    - SampleSequencingRun rows (run associations)
+
+    Then deletes the Sample record itself.
+
+    Args:
+        session: Database session
+        project_id: Project business key (string)
+        sample_id: Sample identifier (Sample.sample_id, not the UUID)
+
+    Raises:
+        HTTPException 404: If sample not found in the given project
+    """
+    sample = session.exec(
+        select(Sample).where(
+            Sample.sample_id == sample_id,
+            Sample.project_id == project_id,
+        )
+    ).first()
+
+    if not sample:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Sample '{sample_id}' not found in project '{project_id}'",
+        )
+
+    # Delete child rows explicitly (no cascade configured on Sample)
+    # 1. SampleAttribute
+    attrs = session.exec(
+        select(SampleAttribute).where(SampleAttribute.sample_id == sample.id)
+    ).all()
+    for attr in attrs:
+        session.delete(attr)
+
+    # 2. FileSample (junction to files — files themselves are preserved)
+    file_samples = session.exec(
+        select(FileSample).where(FileSample.sample_id == sample.id)
+    ).all()
+    for fs in file_samples:
+        session.delete(fs)
+
+    # 3. SampleSequencingRun (junction to runs)
+    run_assocs = session.exec(
+        select(SampleSequencingRun).where(
+            SampleSequencingRun.sample_id == sample.id
+        )
+    ).all()
+    for ra in run_assocs:
+        session.delete(ra)
+
+    # Delete the sample itself
+    session.delete(sample)
+    session.commit()
+
+    logger.info(
+        "Deleted sample '%s' (UUID %s) from project '%s'",
+        sample_id, sample.id, project_id,
+    )
 
 
 # ---------------------------------------------------------------------------
