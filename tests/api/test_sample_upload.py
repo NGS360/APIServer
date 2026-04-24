@@ -148,6 +148,69 @@ class TestSampleUploadHappyPath:
         assert response.status_code == 201
         assert response.json()["samples_created"] == 1
 
+    def test_upload_empty_cell_deletes_existing_attribute(
+        self, client: TestClient, session: Session
+    ):
+        """Test that uploading a CSV where a column is present but the
+        cell is empty deletes the previously-set attribute from the DB,
+        while attributes for columns absent from the file are preserved."""
+        pid = _create_project(session)
+
+        # First upload — set Tissue and Condition
+        csv1 = "SampleName,Tissue,Condition\nS001,Liver,Healthy\n"
+        r1 = _upload(client, pid, csv1)
+        assert r1.status_code == 201
+        assert r1.json()["samples_created"] == 1
+
+        # Second upload — Tissue column present but empty, Stage added,
+        # Condition column absent (should be preserved)
+        csv2 = "SampleName,Tissue,Stage\nS001,,III\n"
+        r2 = _upload(client, pid, csv2)
+        assert r2.status_code == 201
+        assert r2.json()["samples_updated"] == 1
+
+        # Verify DB: Tissue deleted, Condition preserved, Stage added
+        sample = session.exec(
+            select(Sample).where(
+                Sample.sample_id == "S001", Sample.project_id == pid
+            )
+        ).one()
+        attrs = session.exec(
+            select(SampleAttribute).where(
+                SampleAttribute.sample_id == sample.id
+            )
+        ).all()
+        attr_dict = {a.key: a.value for a in attrs}
+        assert "Tissue" not in attr_dict, "Empty cell should delete existing attribute"
+        assert attr_dict["Condition"] == "Healthy", "Absent column should preserve attribute"
+        assert attr_dict["Stage"] == "III"
+
+    def test_upload_empty_cell_on_new_sample_skips_attribute(
+        self, client: TestClient, session: Session
+    ):
+        """Test that uploading a CSV for a new sample where a column cell
+        is empty does not create an attribute row for that column."""
+        pid = _create_project(session)
+        csv = "SampleName,Tissue,Condition\nS001,Liver,\n"
+
+        response = _upload(client, pid, csv)
+        assert response.status_code == 201
+        assert response.json()["samples_created"] == 1
+
+        sample = session.exec(
+            select(Sample).where(
+                Sample.sample_id == "S001", Sample.project_id == pid
+            )
+        ).one()
+        attrs = session.exec(
+            select(SampleAttribute).where(
+                SampleAttribute.sample_id == sample.id
+            )
+        ).all()
+        attr_dict = {a.key: a.value for a in attrs}
+        assert attr_dict == {"Tissue": "Liver"}
+        assert "Condition" not in attr_dict
+
 
 # ===================================================================
 # Error cases

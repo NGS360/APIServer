@@ -145,11 +145,14 @@ class TestColumnNormalization:
 
 
 class TestEmptyCellHandling:
-    """Verify that empty/blank cells are skipped in attributes."""
+    """Verify that empty/blank cells produce Attribute(value='') so the
+    service layer can distinguish 'column present, value blank' from
+    'column absent'."""
 
-    def test_parse_skips_empty_cells(self):
-        """Test that empty cells in attribute columns are excluded from
-        the resulting attributes list for each sample."""
+    def test_parse_includes_empty_cells(self):
+        """Test that empty cells in attribute columns are included as
+        Attribute(key=col, value='') so downstream code can detect
+        that the column was present but the value was blank."""
         content = (
             "SampleName,Tissue,Condition\n"
             "S001,Liver,\n"
@@ -158,24 +161,25 @@ class TestEmptyCellHandling:
 
         result = parse_sample_file(content, "test.csv")
 
-        # S001: Tissue=Liver, no Condition
+        # S001: Tissue=Liver, Condition=""
         attrs_0 = {a.key: a.value for a in result[0].attributes}
-        assert attrs_0 == {"Tissue": "Liver"}
+        assert attrs_0 == {"Tissue": "Liver", "Condition": ""}
 
-        # S002: Condition=Diseased, no Tissue
+        # S002: Tissue="", Condition=Diseased
         attrs_1 = {a.key: a.value for a in result[1].attributes}
-        assert attrs_1 == {"Condition": "Diseased"}
+        assert attrs_1 == {"Tissue": "", "Condition": "Diseased"}
 
-    def test_all_cells_empty_yields_no_attributes(self):
+    def test_all_cells_empty_yields_empty_value_attributes(self):
         """Test that a row where all attribute cells are empty produces
-        a SampleCreate with attributes set to None."""
+        Attribute entries with value='' for each column."""
         content = (
             "SampleName,Tissue,Condition\n"
             "S001,,\n"
         ).encode()
 
         result = parse_sample_file(content, "test.csv")
-        assert result[0].attributes is None
+        attrs = {a.key: a.value for a in result[0].attributes}
+        assert attrs == {"Tissue": "", "Condition": ""}
 
 
 # ---------------------------------------------------------------------------

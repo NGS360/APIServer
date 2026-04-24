@@ -147,7 +147,10 @@ def parse_sample_file(
             )
         seen_names.add(sample_name)
 
-        # Build attributes from remaining columns
+        # Build attributes from remaining columns.
+        # Empty cells are included as value="" so the service layer
+        # can delete previously-set attributes when the column is
+        # present but the value is blank.
         attributes: List[Attribute] | None = None
         if attribute_columns:
             attr_list = []
@@ -156,8 +159,7 @@ def parse_sample_file(
                 if value is None:
                     value = ""
                 value = value.strip()
-                if value:  # skip empty cells
-                    attr_list.append(Attribute(key=col, value=value))
+                attr_list.append(Attribute(key=col, value=value))
             attributes = attr_list if attr_list else None
 
         samples.append(
