@@ -453,15 +453,18 @@ def bulk_create_samples(
 
     samples_created = 0
     samples_existing = 0
+    samples_updated = 0
     associations_created = 0
     associations_existing = 0
     total_files_created = 0
     total_files_skipped = 0
     items: list[BulkSampleItemResponse] = []
     newly_created_samples: list[Sample] = []
+    updated_samples: list[Sample] = []
 
     for item in samples_in:
         created = False
+        updated = False
 
         # Resolve or create the sample
         existing = session.exec(
@@ -473,7 +476,44 @@ def bulk_create_samples(
 
         if existing:
             sample = existing
-            samples_existing += 1
+
+            # ── Merge/upsert attributes on existing sample ────────
+            if item.attributes:
+                # Build a map of existing attributes for this sample
+                existing_attrs = session.exec(
+                    select(SampleAttribute).where(
+                        SampleAttribute.sample_id == sample.id
+                    )
+                ).all()
+                existing_attr_map = {a.key: a for a in existing_attrs}
+
+                for attr in item.attributes:
+                    ea = existing_attr_map.get(attr.key)
+                    if ea:
+                        if ea.value != attr.value:
+                            ea.value = attr.value
+                            updated = True
+                    else:
+                        session.add(
+                            SampleAttribute(
+                                sample_id=sample.id,
+                                key=attr.key,
+                                value=attr.value,
+                            )
+                        )
+                        updated = True
+
+                # Remove auto_created_stub tag if real attributes arrive
+                stub_attr = existing_attr_map.get("auto_created_stub")
+                if stub_attr is not None:
+                    session.delete(stub_attr)
+                    updated = True
+
+            if updated:
+                samples_updated += 1
+                updated_samples.append(sample)
+            else:
+                samples_existing += 1
         else:
             sample = Sample(
                 sample_id=item.sample_id,
@@ -534,6 +574,7 @@ def bulk_create_samples(
                 sample_uuid=sample.id,
                 project_id=project.project_id,
                 created=created,
+                updated=updated,
                 run_id=item.run_id,
                 files_created=item_files_created,
                 files_skipped=item_files_skipped,
@@ -545,9 +586,9 @@ def bulk_create_samples(
     # Single commit — all or nothing
     session.commit()
 
-    # ── Post-commit: index newly created samples in OpenSearch ────────
+    # ── Post-commit: index new and updated samples in OpenSearch ──────
     if opensearch_client:
-        for sample in newly_created_samples:
+        for sample in newly_created_samples + updated_samples:
             session.refresh(sample)
             search_doc = SearchDocument(id=str(sample.id), body=sample)
             try:
@@ -559,6 +600,7 @@ def bulk_create_samples(
         project_id=project.project_id,
         samples_created=samples_created,
         samples_existing=samples_existing,
+        samples_updated=samples_updated,
         associations_created=associations_created,
         associations_existing=associations_existing,
         files_created=total_files_created,
