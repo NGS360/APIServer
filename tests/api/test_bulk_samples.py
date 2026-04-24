@@ -1078,3 +1078,370 @@ class TestSingleSampleWithFiles:
         )
         assert response.status_code == 201
         assert response.json()["sample_id"] == "NOFILE001"
+
+
+# ===================================================================
+# Bulk sample attribute upsert (merge semantics)
+# ===================================================================
+
+
+class TestBulkSampleAttributeUpsert:
+    """POST /projects/{project_id}/samples/bulk – attribute merge/upsert on existing samples."""
+
+    def test_bulk_upsert_attributes_on_existing_sample(
+        self, client: TestClient, session: Session
+    ):
+        """Test that bulk endpoint upserts changed and new attributes on
+        an existing sample while preserving unmentioned attributes."""
+        pid = _create_project(session)
+
+        # First submission: create sample with Tissue and Condition
+        r1 = client.post(
+            f"/api/v1/projects/{pid}/samples/bulk",
+            json={
+                "samples": [
+                    {
+                        "sample_id": "U001",
+                        "attributes": [
+                            {"key": "Tissue", "value": "Liver"},
+                            {"key": "Condition", "value": "Healthy"},
+                        ],
+                    },
+                ]
+            },
+        )
+        assert r1.status_code == 201
+        assert r1.json()["samples_created"] == 1
+
+        # Second submission: change Tissue, add Stage (omit Condition)
+        r2 = client.post(
+            f"/api/v1/projects/{pid}/samples/bulk",
+            json={
+                "samples": [
+                    {
+                        "sample_id": "U001",
+                        "attributes": [
+                            {"key": "Tissue", "value": "Heart"},
+                            {"key": "Stage", "value": "III"},
+                        ],
+                    },
+                ]
+            },
+        )
+        assert r2.status_code == 201
+        b2 = r2.json()
+        assert b2["samples_created"] == 0
+        assert b2["samples_updated"] == 1
+        assert b2["samples_existing"] == 0
+        assert b2["items"][0]["updated"] is True
+
+        # Verify DB: Tissue updated, Condition preserved, Stage added
+        sample = session.exec(
+            select(Sample).where(
+                Sample.sample_id == "U001", Sample.project_id == pid
+            )
+        ).one()
+        attrs = session.exec(
+            select(SampleAttribute).where(
+                SampleAttribute.sample_id == sample.id
+            )
+        ).all()
+        attr_dict = {a.key: a.value for a in attrs}
+        assert attr_dict == {
+            "Tissue": "Heart",
+            "Condition": "Healthy",
+            "Stage": "III",
+        }
+
+    def test_bulk_no_attributes_field_preserves_existing(
+        self, client: TestClient, session: Session
+    ):
+        """Test that existing attributes are preserved when the attributes
+        field is omitted from the resubmission payload."""
+        pid = _create_project(session)
+
+        # Create with attributes
+        client.post(
+            f"/api/v1/projects/{pid}/samples/bulk",
+            json={
+                "samples": [
+                    {
+                        "sample_id": "U002",
+                        "attributes": [{"key": "Tissue", "value": "Liver"}],
+                    },
+                ]
+            },
+        )
+
+        # Resubmit without attributes field
+        r2 = client.post(
+            f"/api/v1/projects/{pid}/samples/bulk",
+            json={"samples": [{"sample_id": "U002"}]},
+        )
+        assert r2.status_code == 201
+        b2 = r2.json()
+        assert b2["samples_updated"] == 0
+        assert b2["samples_existing"] == 1
+        assert b2["items"][0]["updated"] is False
+
+        # Verify existing attribute still present
+        sample = session.exec(
+            select(Sample).where(
+                Sample.sample_id == "U002", Sample.project_id == pid
+            )
+        ).one()
+        attrs = session.exec(
+            select(SampleAttribute).where(
+                SampleAttribute.sample_id == sample.id
+            )
+        ).all()
+        assert len(attrs) == 1
+        assert attrs[0].key == "Tissue"
+        assert attrs[0].value == "Liver"
+
+    def test_bulk_empty_attributes_list_preserves_existing(
+        self, client: TestClient, session: Session
+    ):
+        """Test that existing attributes are preserved when the attributes
+        field is an empty list in the resubmission payload."""
+        pid = _create_project(session)
+
+        # Create with attributes
+        client.post(
+            f"/api/v1/projects/{pid}/samples/bulk",
+            json={
+                "samples": [
+                    {
+                        "sample_id": "U003",
+                        "attributes": [{"key": "Tissue", "value": "Liver"}],
+                    },
+                ]
+            },
+        )
+
+        # Resubmit with empty attributes list
+        r2 = client.post(
+            f"/api/v1/projects/{pid}/samples/bulk",
+            json={
+                "samples": [{"sample_id": "U003", "attributes": []}]
+            },
+        )
+        assert r2.status_code == 201
+        b2 = r2.json()
+        assert b2["samples_updated"] == 0
+        assert b2["samples_existing"] == 1
+
+        # Verify existing attribute still present
+        sample = session.exec(
+            select(Sample).where(
+                Sample.sample_id == "U003", Sample.project_id == pid
+            )
+        ).one()
+        attrs = session.exec(
+            select(SampleAttribute).where(
+                SampleAttribute.sample_id == sample.id
+            )
+        ).all()
+        assert len(attrs) == 1
+        assert attrs[0].key == "Tissue"
+
+    def test_bulk_mixed_new_and_existing_with_attributes(
+        self, client: TestClient, session: Session
+    ):
+        """Test that a batch containing both new samples and existing
+        samples with changed attributes reports correct counters."""
+        pid = _create_project(session)
+
+        # Pre-create one sample with attributes
+        client.post(
+            f"/api/v1/projects/{pid}/samples/bulk",
+            json={
+                "samples": [
+                    {
+                        "sample_id": "M001",
+                        "attributes": [{"key": "Tissue", "value": "Liver"}],
+                    },
+                ]
+            },
+        )
+
+        # Submit batch with existing (changed attrs) + new sample
+        r2 = client.post(
+            f"/api/v1/projects/{pid}/samples/bulk",
+            json={
+                "samples": [
+                    {
+                        "sample_id": "M001",
+                        "attributes": [{"key": "Tissue", "value": "Heart"}],
+                    },
+                    {
+                        "sample_id": "M002",
+                        "attributes": [{"key": "Tissue", "value": "Lung"}],
+                    },
+                ]
+            },
+        )
+        assert r2.status_code == 201
+        b2 = r2.json()
+        assert b2["samples_created"] == 1
+        assert b2["samples_updated"] == 1
+        assert b2["samples_existing"] == 0
+
+        items = {i["sample_id"]: i for i in b2["items"]}
+        assert items["M001"]["created"] is False
+        assert items["M001"]["updated"] is True
+        assert items["M002"]["created"] is True
+        assert items["M002"]["updated"] is False
+
+    def test_bulk_removes_auto_created_stub_tag(
+        self, client: TestClient, session: Session
+    ):
+        """Test that the auto_created_stub attribute is removed when
+        real attributes are submitted for a stub sample."""
+        pid = _create_project(session)
+        from api.samples.services import resolve_or_create_sample
+
+        # Create a stub sample
+        stub_uuid = resolve_or_create_sample(
+            session=session,
+            sample_name="STUB001",
+            project_id=pid,
+        )
+        session.commit()
+
+        # Verify stub tag exists
+        stub_attrs = session.exec(
+            select(SampleAttribute).where(
+                SampleAttribute.sample_id == stub_uuid
+            )
+        ).all()
+        stub_keys = {a.key for a in stub_attrs}
+        assert "auto_created_stub" in stub_keys
+
+        # Submit real attributes via bulk endpoint
+        r = client.post(
+            f"/api/v1/projects/{pid}/samples/bulk",
+            json={
+                "samples": [
+                    {
+                        "sample_id": "STUB001",
+                        "attributes": [
+                            {"key": "Tissue", "value": "Brain"},
+                            {"key": "STUDYID", "value": "S-123"},
+                        ],
+                    },
+                ]
+            },
+        )
+        assert r.status_code == 201
+        body = r.json()
+        assert body["samples_updated"] == 1
+
+        # Verify auto_created_stub is gone and real attrs present
+        attrs = session.exec(
+            select(SampleAttribute).where(
+                SampleAttribute.sample_id == stub_uuid
+            )
+        ).all()
+        attr_dict = {a.key: a.value for a in attrs}
+        assert "auto_created_stub" not in attr_dict
+        assert attr_dict["Tissue"] == "Brain"
+        assert attr_dict["STUDYID"] == "S-123"
+
+    def test_bulk_idempotent_resubmission_same_attributes(
+        self, client: TestClient, session: Session
+    ):
+        """Test that resubmitting identical attributes results in zero
+        samples_updated because no values actually changed."""
+        pid = _create_project(session)
+
+        payload = {
+            "samples": [
+                {
+                    "sample_id": "IDEM001",
+                    "attributes": [
+                        {"key": "Tissue", "value": "Liver"},
+                        {"key": "Condition", "value": "Healthy"},
+                    ],
+                },
+            ]
+        }
+
+        # First submission
+        r1 = client.post(
+            f"/api/v1/projects/{pid}/samples/bulk", json=payload
+        )
+        assert r1.status_code == 201
+        assert r1.json()["samples_created"] == 1
+
+        # Identical resubmission
+        r2 = client.post(
+            f"/api/v1/projects/{pid}/samples/bulk", json=payload
+        )
+        assert r2.status_code == 201
+        b2 = r2.json()
+        assert b2["samples_created"] == 0
+        assert b2["samples_updated"] == 0
+        assert b2["samples_existing"] == 1
+        assert b2["items"][0]["updated"] is False
+
+    def test_bulk_demux_adds_source_uri_preserves_manifest_attrs(
+        self, client: TestClient, session: Session
+    ):
+        """Test that a demux-like submission adding source_uri preserves
+        all manifest attributes on the existing sample."""
+        pid = _create_project(session)
+
+        # Manifest-like submission with full attribute set
+        client.post(
+            f"/api/v1/projects/{pid}/samples/bulk",
+            json={
+                "samples": [
+                    {
+                        "sample_id": "DX001",
+                        "attributes": [
+                            {"key": "BMSPROJECTID", "value": pid},
+                            {"key": "STUDYID", "value": "CA209-901"},
+                            {"key": "ASSAYMETHOD", "value": "WES"},
+                        ],
+                    },
+                ]
+            },
+        )
+
+        # Demux-like submission: just source_uri
+        r2 = client.post(
+            f"/api/v1/projects/{pid}/samples/bulk",
+            json={
+                "samples": [
+                    {
+                        "sample_id": "DX001",
+                        "attributes": [
+                            {"key": "source_uri", "value": "240315_M00001_0042_H"},
+                        ],
+                    },
+                ]
+            },
+        )
+        assert r2.status_code == 201
+        b2 = r2.json()
+        assert b2["samples_updated"] == 1
+
+        # Verify all manifest attrs preserved + source_uri added
+        sample = session.exec(
+            select(Sample).where(
+                Sample.sample_id == "DX001", Sample.project_id == pid
+            )
+        ).one()
+        attrs = session.exec(
+            select(SampleAttribute).where(
+                SampleAttribute.sample_id == sample.id
+            )
+        ).all()
+        attr_dict = {a.key: a.value for a in attrs}
+        assert attr_dict == {
+            "BMSPROJECTID": pid,
+            "STUDYID": "CA209-901",
+            "ASSAYMETHOD": "WES",
+            "source_uri": "240315_M00001_0042_H",
+        }
