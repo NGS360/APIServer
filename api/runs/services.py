@@ -560,7 +560,7 @@ def list_demux_workflow_configs(session: Session, s3_client=None) -> list[str]:
 
 
 def get_demux_workflow_config(
-    session: Session, workflow_id: str, s3_client=None, run_barcode: str = None
+    session: Session, workflow_id: str, s3_client=None, run_id: str = None
 ) -> DemuxWorkflowConfig:
     """
     Retrieve a specific tool configuration from S3.
@@ -569,10 +569,10 @@ def get_demux_workflow_config(
         session: Database session
         workflow_id: The workflow identifier (filename without extension)
         s3_client: Optional boto3 S3 client
-        run_barcode: Optional run barcode to prepopulate s3_run_folder_path from run's run_folder_uri
+        run_id: Optional run ID to prepopulate s3_run_folder_path from run's run_folder_uri
 
     Returns:
-        DemuxWorkflowConfig object with prepopulated defaults if run_barcode is provided
+        DemuxWorkflowConfig object with prepopulated defaults if run_id is provided
     """
     bucket, prefix = _get_demux_workflow_configs_s3_location(session)
 
@@ -609,9 +609,9 @@ def get_demux_workflow_config(
         # Validate and return as DemuxWorkflowConfig model
         config = DemuxWorkflowConfig(**config_data)
 
-        # If run_barcode is provided, prepopulate s3_run_folder_path from the run's run_folder_uri
-        if run_barcode:
-            run = get_run(session=session, run_barcode=run_barcode)
+        # If run_id is provided, prepopulate s3_run_folder_path from the run's run_folder_uri
+        if run_id:
+            run = get_run(session=session, run_id=run_id)
             if run and run.run_folder_uri:
                 # Find inputs that contain 's3_run_folder_path' in their name and set the default
                 for input_item in config.inputs:
@@ -670,7 +670,7 @@ def submit_demux_job(
     Args:
         session: Database session
         workflow_body: The demultiplex workflow execution request containing workflow_id,
-                   run_barcode, and inputs
+                   run_id, and inputs
         s3_client: Optional boto3 S3 client
     Returns:
         BatchJobPublic: The created batch job with AWS job information.
@@ -727,18 +727,18 @@ def submit_demux_job(
 
 def associate_sample_with_run(
     session: Session,
-    run_barcode: str,
+    run_id: str,
     sample_id: str,
     created_by: str,
 ) -> SampleSequencingRun:
     """Create a Sample ↔ SequencingRun association."""
     from uuid import UUID
 
-    run = get_run(session=session, run_barcode=run_barcode)
+    run = get_run(session=session, run_id=run_id)
     if run is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Run with barcode '{run_barcode}' not found.",
+            detail=f"Run with ID '{run_id}' not found.",
         )
 
     sample = session.exec(
@@ -762,7 +762,7 @@ def associate_sample_with_run(
             status_code=status.HTTP_409_CONFLICT,
             detail=(
                 f"Sample '{sample_id}' is already associated "
-                f"with run '{run_barcode}'."
+                f"with run '{run_id}'."
             ),
         )
 
@@ -779,14 +779,14 @@ def associate_sample_with_run(
 
 def get_samples_for_run(
     session: Session,
-    run_barcode: str,
+    run_id: str,
 ) -> list[SampleSequencingRunPublic]:
     """List all sample associations for a run."""
-    run = get_run(session=session, run_barcode=run_barcode)
+    run = get_run(session=session, run_id=run_id)
     if run is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Run with barcode '{run_barcode}' not found.",
+            detail=f"Run with ID '{run_id}' not found.",
         )
 
     associations = session.exec(
@@ -809,17 +809,17 @@ def get_samples_for_run(
 
 def remove_sample_from_run(
     session: Session,
-    run_barcode: str,
+    run_id: str,
     sample_id: str,
 ) -> None:
     """Remove a Sample ↔ SequencingRun association."""
     from uuid import UUID
 
-    run = get_run(session=session, run_barcode=run_barcode)
+    run = get_run(session=session, run_id=run_id)
     if run is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Run with barcode '{run_barcode}' not found.",
+            detail=f"Run with ID '{run_id}' not found.",
         )
 
     assoc = session.exec(
@@ -833,7 +833,7 @@ def remove_sample_from_run(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=(
                 f"Association between sample '{sample_id}' and "
-                f"run '{run_barcode}' not found."
+                f"run '{run_id}' not found."
             ),
         )
     session.delete(assoc)
@@ -842,7 +842,7 @@ def remove_sample_from_run(
 
 def clear_samples_for_run(
     session: Session,
-    run_barcode: str,
+    run_id: str,
     opensearch_client: OpenSearch = None,
 ) -> RunSampleCleanupResponse:
     """
@@ -867,17 +867,17 @@ def clear_samples_for_run(
 
     Args:
         session: Database session
-        run_barcode: The run barcode identifying the sequencing run
+        run_id: The run ID identifying the sequencing run
         opensearch_client: Optional OpenSearch client for index cleanup
 
     Returns:
         RunSampleCleanupResponse with counts of what was removed/preserved
     """
-    run = get_run(session=session, run_barcode=run_barcode)
+    run = get_run(session=session, run_id=run_id)
     if run is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Run with barcode '{run_barcode}' not found.",
+            detail=f"Run with ID '{run_id}' not found.",
         )
 
     # ── Step 1: Delete File records associated with this run ──────────
@@ -1001,7 +1001,7 @@ def clear_samples_for_run(
     session.commit()
 
     return RunSampleCleanupResponse(
-        run_barcode=run_barcode,
+        run_id=run_id,
         associations_removed=associations_removed,
         files_deleted=files_deleted,
         samples_deleted=samples_deleted,

@@ -187,7 +187,7 @@ def submit_demultiplex_workflow_job(
     Args:
         session: Database session
         workflow_body: The demultiplex workflow execution request containing
-            workflow_id, run_barcode, and inputs
+            workflow_id, run_id, and inputs
         s3_client: S3 client for accessing workflow configs
     Returns:
         BatchJobPublic: The created batch job with AWS job information.
@@ -202,20 +202,20 @@ def get_demultiplex_workflow_config(
     workflow_id: str,
     session: SessionDep,
     s3_client=Depends(get_s3_client),
-    run_barcode: str = Query(None, description="Run barcode to prepopulate s3_run_folder_path"),
+    run_id: str = Query(None, description="Run ID to prepopulate s3_run_folder_path"),
 ) -> DemuxWorkflowConfig:
     """
     Retrieve a specific demultiplex workflow configuration.
 
     Args:
         workflow_id: The workflow identifier (filename without extension)
-        run_barcode: Optional run barcode to prepopulate s3_run_folder_path from run's run_folder_uri
+        run_id: Optional run ID to prepopulate s3_run_folder_path from run's run_folder_uri
 
     Returns:
-        Complete workflow configuration with prepopulated defaults if run_barcode is provided
+        Complete workflow configuration with prepopulated defaults if run_id is provided
     """
     return services.get_demux_workflow_config(
-        session=session, workflow_id=workflow_id, s3_client=s3_client, run_barcode=run_barcode
+        session=session, workflow_id=workflow_id, s3_client=s3_client, run_id=run_id
     )
 
 

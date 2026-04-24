@@ -70,7 +70,7 @@ def test_add_run(client: TestClient):
 
 
 def test_add_run_with_empty_run_time(client: TestClient):
-    """ Test that we can add a run with an empty run_time field, and that it is set to None in the database """
+    """Test that adding a run with an empty run_time stores None."""
     # Add a run with empty run_time string
     new_run = {
         "run_id": "TEST_RUN_WITH_EMPTY_RUN_TIME",
@@ -93,6 +93,7 @@ def test_add_run_with_empty_run_time(client: TestClient):
     assert data["run_time"] is None
     assert data["run_id"] == "TEST_RUN_WITH_EMPTY_RUN_TIME"
 
+
 def test_add_run_with_invalid_run_time(client: TestClient):
     """Test that we cannot add a run with an invalid run_time field"""
     # Try to add a run with an invalid run_time field
@@ -112,7 +113,7 @@ def test_add_run_with_invalid_run_time(client: TestClient):
 
 
 def test_add_run_with_ont_style_barcode(client: TestClient):
-    """Test that we can add a run with an ONT style barcode, which includes the run_time field in the run_id"""
+    """Test that a run with an ONT-style run_id (including run_time) is stored correctly."""
     # Add a run with valid run_time field - ONT style barcode
     new_run = {
         "run_id": "20190110_1230_MACHINE-123_FLOWCELL123_04abcd",
@@ -578,7 +579,7 @@ def test_search_runs(client: TestClient):
     than handling pagination from the database.
     """
     # Add a run to the database
-    # This is not how to add a run for testing. This should be added to db directly as its not under test.
+    # NOTE: should be added to db directly; this is not the code under test.
     new_run = {
         "run_id": "190110_MACHINE123_0001_FLOWCELL123",
         "run_date": "2019-01-10",
@@ -1213,7 +1214,7 @@ aws_batch:
         # Submit job
         request_body = {
             "workflow_id": "cellranger-mkfastq",
-            "run_barcode": "190110_MACHINE123_0001_FLOWCELL123",
+            "run_id": "190110_MACHINE123_0001_FLOWCELL123",
             "inputs": {
                 "s3_run_folder_path": "s3://bucket/test-run",
                 "barcode_mismatches": 1,
@@ -1301,7 +1302,7 @@ aws_batch:
 
         request_body = {
             "workflow_id": "test-tool",
-            "run_barcode": "test-run-123",
+            "run_id": "test-run-123",
             "inputs": {
                 "s3_path": "s3://bucket/folder/subfolder/file.txt",
                 "max_reads": 5000,
@@ -1346,7 +1347,7 @@ aws_batch:
 
         request_body = {
             "workflow_id": "non-existent-tool",
-            "run_barcode": "test-run",
+            "run_id": "test-run",
             "inputs": {"param": "value"},
         }
 
@@ -1396,7 +1397,7 @@ tags:
 
         request_body = {
             "workflow_id": "no-batch-tool",
-            "run_barcode": "test-run",
+            "run_id": "test-run",
             "inputs": {"input1": "value1"},
         }
 
@@ -1471,7 +1472,7 @@ aws_batch:
 
         request_body = {
             "workflow_id": "batch-error-tool",
-            "run_barcode": "test-run",
+            "run_id": "test-run",
             "inputs": {"input1": "value1"},
         }
 
@@ -1540,7 +1541,7 @@ aws_batch:
 
         request_body = {
             "workflow_id": "no-env-tool",
-            "run_barcode": "test-run",
+            "run_id": "test-run",
             "inputs": {"input1": "value1"},
         }
 
@@ -1575,7 +1576,7 @@ aws_batch:
         # Missing required field 'inputs'
         invalid_body = {
             "workflow_id": "test-tool",
-            "run_barcode": "test-run",
+            "run_id": "test-run",
         }
 
         response = client.post("/api/v1/runs/demultiplex", json=invalid_body)
@@ -1663,7 +1664,7 @@ aws_batch:
 
         request_body = {
             "workflow_id": "complex-tool",
-            "run_barcode": "test-run",
+            "run_id": "test-run",
             "inputs": {
                 "string_input": "test_string",
                 "int_input": 42,

@@ -57,7 +57,7 @@ class SampleFileInput(SQLModel):
 class SampleCreate(SQLModel):
     sample_id: str
     attributes: List[Attribute] | None = None
-    run_barcode: str | None = None
+    run_id: str | None = None
     files: List[SampleFileInput] | None = None
     model_config = ConfigDict(extra="forbid")
 
@@ -66,7 +66,7 @@ class SamplePublic(SQLModel):
     sample_id: str
     project_id: str
     attributes: List[Attribute] | None
-    run_barcode: str | None = None
+    run_id: str | None = None
 
 
 class SamplesPublic(SQLModel):
@@ -131,7 +131,7 @@ class BulkSampleItemResponse(SQLModel):
     sample_uuid: uuid.UUID
     project_id: str
     created: bool
-    run_barcode: str | None = None
+    run_id: str | None = None
     files_created: int = 0
     files_skipped: int = 0
 
