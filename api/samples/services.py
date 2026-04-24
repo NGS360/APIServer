@@ -108,15 +108,16 @@ def add_sample_to_project(
                 detail=f"Duplicate keys ({', '.join(dups)}) are not allowed in project attributes.",
             )
 
-        # Parse and create project attributes
-        # linking to new project
+        # Parse and create project attributes (skip empty/whitespace-only values)
         sample_attributes = [
             SampleAttribute(sample_id=sample.id, key=attr.key, value=attr.value)
             for attr in sample_in.attributes
+            if attr.value is not None and attr.value.strip() != ""
         ]
 
         # Update database with attribute links
-        session.add_all(sample_attributes)
+        if sample_attributes:
+            session.add_all(sample_attributes)
 
     # With orm_mode=True, attributes will be eagerly loaded
     # and mapped to SamplePublic via response model
@@ -488,8 +489,15 @@ def bulk_create_samples(
                 existing_attr_map = {a.key: a for a in existing_attrs}
 
                 for attr in item.attributes:
+                    is_empty = attr.value is None or attr.value.strip() == ""
                     ea = existing_attr_map.get(attr.key)
-                    if ea:
+
+                    if is_empty:
+                        # Column present but value blank → delete
+                        if ea:
+                            session.delete(ea)
+                            updated = True
+                    elif ea:
                         if ea.value != attr.value:
                             ea.value = attr.value
                             updated = True
@@ -522,15 +530,17 @@ def bulk_create_samples(
             session.add(sample)
             session.flush()  # get the UUID
 
-            # Create attributes
+            # Create attributes (skip empty/whitespace-only values)
             if item.attributes:
                 attrs = [
                     SampleAttribute(
                         sample_id=sample.id, key=a.key, value=a.value
                     )
                     for a in item.attributes
+                    if a.value is not None and a.value.strip() != ""
                 ]
-                session.add_all(attrs)
+                if attrs:
+                    session.add_all(attrs)
 
             samples_created += 1
             created = True

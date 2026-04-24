@@ -1384,3 +1384,155 @@ class TestBulkSampleAttributeUpsert:
         assert b2["samples_updated"] == 0
         assert b2["samples_existing"] == 1
         assert b2["items"][0]["updated"] is False
+
+    def test_bulk_empty_value_deletes_existing_attribute(
+        self, client: TestClient, session: Session
+    ):
+        """Test that submitting an attribute with value='' deletes the
+        previously-set attribute from the database while attributes not
+        mentioned in the request are preserved."""
+        pid = _create_project(session)
+
+        # First: create sample with Tissue and Condition
+        payload1 = {
+            "samples": [
+                {
+                    "sample_id": "DEL001",
+                    "attributes": [
+                        {"key": "Tissue", "value": "Liver"},
+                        {"key": "Condition", "value": "Healthy"},
+                    ],
+                },
+            ]
+        }
+        r1 = client.post(
+            f"/api/v1/projects/{pid}/samples/bulk", json=payload1
+        )
+        assert r1.status_code == 201
+        assert r1.json()["samples_created"] == 1
+
+        # Second: send Tissue="" to delete it, add Stage
+        payload2 = {
+            "samples": [
+                {
+                    "sample_id": "DEL001",
+                    "attributes": [
+                        {"key": "Tissue", "value": ""},
+                        {"key": "Stage", "value": "III"},
+                    ],
+                },
+            ]
+        }
+        r2 = client.post(
+            f"/api/v1/projects/{pid}/samples/bulk", json=payload2
+        )
+        assert r2.status_code == 201
+        assert r2.json()["samples_updated"] == 1
+
+        # Verify DB
+        sample = session.exec(
+            select(Sample).where(
+                Sample.sample_id == "DEL001", Sample.project_id == pid
+            )
+        ).one()
+        attrs = session.exec(
+            select(SampleAttribute).where(
+                SampleAttribute.sample_id == sample.id
+            )
+        ).all()
+        attr_dict = {a.key: a.value for a in attrs}
+        assert "Tissue" not in attr_dict, "Empty value should delete existing attribute"
+        assert attr_dict["Condition"] == "Healthy", "Unmentioned attribute should be preserved"
+        assert attr_dict["Stage"] == "III"
+
+    def test_bulk_whitespace_only_value_deletes_existing_attribute(
+        self, client: TestClient, session: Session
+    ):
+        """Test that submitting an attribute with a whitespace-only value
+        deletes the previously-set attribute from the database."""
+        pid = _create_project(session)
+
+        # Create sample with Tissue
+        payload1 = {
+            "samples": [
+                {
+                    "sample_id": "WS001",
+                    "attributes": [
+                        {"key": "Tissue", "value": "Liver"},
+                    ],
+                },
+            ]
+        }
+        r1 = client.post(
+            f"/api/v1/projects/{pid}/samples/bulk", json=payload1
+        )
+        assert r1.status_code == 201
+
+        # Send Tissue="  " (whitespace only) to delete it
+        payload2 = {
+            "samples": [
+                {
+                    "sample_id": "WS001",
+                    "attributes": [
+                        {"key": "Tissue", "value": "   "},
+                    ],
+                },
+            ]
+        }
+        r2 = client.post(
+            f"/api/v1/projects/{pid}/samples/bulk", json=payload2
+        )
+        assert r2.status_code == 201
+        assert r2.json()["samples_updated"] == 1
+
+        # Verify Tissue is gone
+        sample = session.exec(
+            select(Sample).where(
+                Sample.sample_id == "WS001", Sample.project_id == pid
+            )
+        ).one()
+        attrs = session.exec(
+            select(SampleAttribute).where(
+                SampleAttribute.sample_id == sample.id
+            )
+        ).all()
+        attr_keys = [a.key for a in attrs]
+        assert "Tissue" not in attr_keys
+
+    def test_bulk_empty_value_on_new_sample_skips_attribute(
+        self, client: TestClient, session: Session
+    ):
+        """Test that creating a new sample with value='' does not persist
+        an attribute row for that key."""
+        pid = _create_project(session)
+
+        payload = {
+            "samples": [
+                {
+                    "sample_id": "SKIP001",
+                    "attributes": [
+                        {"key": "Tissue", "value": "Liver"},
+                        {"key": "Condition", "value": ""},
+                    ],
+                },
+            ]
+        }
+        r = client.post(
+            f"/api/v1/projects/{pid}/samples/bulk", json=payload
+        )
+        assert r.status_code == 201
+        assert r.json()["samples_created"] == 1
+
+        sample = session.exec(
+            select(Sample).where(
+                Sample.sample_id == "SKIP001", Sample.project_id == pid
+            )
+        ).one()
+        attrs = session.exec(
+            select(SampleAttribute).where(
+                SampleAttribute.sample_id == sample.id
+            )
+        ).all()
+        attr_dict = {a.key: a.value for a in attrs}
+        assert attr_dict == {"Tissue": "Liver"}
+        assert "Condition" not in attr_dict
