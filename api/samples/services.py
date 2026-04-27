@@ -553,14 +553,15 @@ def bulk_create_samples(
     session.commit()
 
     # ── Post-commit: index newly created samples in OpenSearch ────────
-    if opensearch_client:
+    if opensearch_client and newly_created_samples:
+        search_docs = []
         for sample in newly_created_samples:
             session.refresh(sample)
-            search_doc = SearchDocument(id=str(sample.id), body=sample)
-            try:
-                add_object_to_index(opensearch_client, search_doc, index="samples")
-            except Exception:
-                pass  # best-effort indexing
+            search_docs.append(SearchDocument(id=str(sample.id), body=sample))
+        try:
+            add_objects_to_index(opensearch_client, search_docs, index="samples")
+        except Exception:
+            pass  # best-effort indexing
 
     return BulkSampleCreateResponse(
         project_id=project.project_id,
