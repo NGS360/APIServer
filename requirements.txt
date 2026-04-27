@@ -62,7 +62,7 @@ fastapi-cli==0.0.24
     # via fastapi
 fastapi-cloud-cli==0.6.0
     # via fastapi-cli
-fastar==0.9.0
+fastar==0.11.0
     # via fastapi-cloud-cli
 grpcio==1.78.0
     # via opensearch-protobufs
@@ -109,7 +109,7 @@ opensearch-protobufs==0.19.0
     # via opensearch-py
 opensearch-py==3.1.0
     # via ngs360-server (pyproject.toml)
-packaging==26.0
+packaging==26.2
     # via gunicorn
 protobuf==7.34.1
     # via opensearch-protobufs
