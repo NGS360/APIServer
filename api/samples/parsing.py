@@ -18,7 +18,7 @@ from api.samples.models import SampleCreate, Attribute
 # Column normalization
 # ---------------------------------------------------------------------------
 
-_SAMPLE_ID_CANONICALS = {"samplename", "sampleid"}
+_SAMPLE_ID_CANONICAL = "sampleid"
 
 ALLOWED_EXTENSIONS = {"csv", "tsv", "txt"}
 
@@ -29,11 +29,9 @@ def _normalize_header(header: str) -> str:
     lowercase, strip underscores and spaces.
 
     Examples:
-        "Sample_Name"  → "samplename"
-        "SampleName"   → "samplename"
-        "SAMPLE NAME"  → "samplename"
         "Sample_ID"    → "sampleid"
-        "Sample ID"    → "sampleid"
+        "SampleID"     → "sampleid"
+        "SAMPLE ID"    → "sampleid"
         "Tissue Type"  → "tissuetype"
     """
     return re.sub(r"[_\s]", "", header.strip().lower())
@@ -55,9 +53,10 @@ def parse_sample_file(
     - Detects delimiter via csv.Sniffer
     - Normalizes column headers for matching (case-insensitive,
       underscore/space-insensitive)
-    - Validates required 'samplename' column exists
-    - Validates no duplicate sample names
-    - Skips empty cell values in attributes
+    - Validates required 'SampleID' column exists (accepts variants
+      like Sample_ID, Sample ID, sampleid, SAMPLEID)
+    - Validates no duplicate sample IDs
+    - Includes empty cell values as value="" for downstream deletion
     - Preserves original column header as attribute key
 
     Args:
@@ -69,7 +68,7 @@ def parse_sample_file(
 
     Raises:
         ValueError: On validation failures (bad extension, missing
-                    samplename column, duplicate sample names, empty file)
+                    SampleID column, duplicate sample IDs, empty file)
     """
     # ── Validate extension ────────────────────────────────────────────
     ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
@@ -112,26 +111,20 @@ def parse_sample_file(
         _normalize_header(h): h for h in original_headers
     }
 
-    # ── Validate sample identifier column exists ─────────────────────
-    matched_canonical = None
-    for canonical in _SAMPLE_ID_CANONICALS:
-        if canonical in normalized_map:
-            matched_canonical = canonical
-            break
-
-    if matched_canonical is None:
+    # ── Validate SampleID column exists ──────────────────────────────
+    if _SAMPLE_ID_CANONICAL not in normalized_map:
         raise ValueError(
-            "File must have a column named 'SampleName', 'Sample_Name', "
-            "'SampleID', or 'Sample_ID' (case-insensitive). "
+            "File must have a column named 'SampleID' or 'Sample_ID' "
+            "(case-insensitive). "
             f"Found columns: {', '.join(original_headers)}"
         )
 
-    samplename_original = normalized_map[matched_canonical]
+    sampleid_original = normalized_map[_SAMPLE_ID_CANONICAL]
 
     # Attribute columns = everything except the sample identifier
     attribute_columns = [
         h for h in original_headers
-        if _normalize_header(h) not in _SAMPLE_ID_CANONICALS
+        if _normalize_header(h) != _SAMPLE_ID_CANONICAL
     ]
 
     # ── Iterate rows ──────────────────────────────────────────────────
@@ -139,7 +132,7 @@ def parse_sample_file(
     seen_names: set[str] = set()
 
     for row_idx, row in enumerate(reader, start=2):  # row 1 is header
-        raw_name = row.get(samplename_original, "")
+        raw_name = row.get(sampleid_original, "")
         if raw_name is None:
             raw_name = ""
         sample_name = raw_name.strip()

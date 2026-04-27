@@ -14,11 +14,11 @@ class TestParseSampleFileHappyPath:
     """Basic parsing of well-formed files."""
 
     def test_parse_csv_basic(self):
-        """Test that a standard CSV with SampleName and attribute columns
+        """Test that a standard CSV with SampleID and attribute columns
         produces SampleCreate objects with correct sample_id and attributes
         using the original column headers as keys."""
         content = (
-            "SampleName,Tissue,Condition\n"
+            "SampleID,Tissue,Condition\n"
             "S001,Liver,Healthy\n"
             "S002,Heart,Diseased\n"
         ).encode()
@@ -57,7 +57,7 @@ class TestParseSampleFileHappyPath:
         """Test that a file with .txt extension is accepted and parsed
         into a SampleCreate object."""
         content = (
-            "SampleName,Tissue\n"
+            "SampleID,Tissue\n"
             "S001,Liver\n"
         ).encode()
 
@@ -65,11 +65,11 @@ class TestParseSampleFileHappyPath:
         assert len(result) == 1
         assert result[0].sample_id == "S001"
 
-    def test_parse_samplename_only_file(self):
-        """Test that a file with only a SampleName column produces
+    def test_parse_sampleid_only_file(self):
+        """Test that a file with only a SampleID column produces
         SampleCreate objects with attributes set to None."""
         content = (
-            "SampleName\n"
+            "SampleID\n"
             "S001\n"
             "S002\n"
             "S003\n"
@@ -92,39 +92,39 @@ class TestParseSampleFileHappyPath:
 class TestColumnNormalization:
     """Verify case-insensitive, underscore/space-insensitive column matching."""
 
-    def test_parse_lowercase_samplename(self):
-        """Test that the all-lowercase column header 'samplename' is
+    def test_parse_lowercase_sampleid(self):
+        """Test that the all-lowercase column header 'sampleid' is
         recognized as the sample identifier column."""
-        content = b"samplename,Tissue\nS001,Liver\n"
+        content = b"sampleid,Tissue\nS001,Liver\n"
         result = parse_sample_file(content, "test.csv")
         assert result[0].sample_id == "S001"
 
     def test_parse_underscore_variant(self):
-        """Test that the underscore variant 'Sample_Name' is recognized
+        """Test that the underscore variant 'Sample_ID' is recognized
         as the sample identifier column."""
-        content = b"Sample_Name,Tissue\nS001,Liver\n"
+        content = b"Sample_ID,Tissue\nS001,Liver\n"
         result = parse_sample_file(content, "test.csv")
         assert result[0].sample_id == "S001"
 
     def test_parse_mixed_case(self):
-        """Test that the all-uppercase variant 'SAMPLENAME' is recognized
+        """Test that the all-uppercase variant 'SAMPLEID' is recognized
         as the sample identifier column."""
-        content = b"SAMPLENAME,Tissue\nS001,Liver\n"
+        content = b"SAMPLEID,Tissue\nS001,Liver\n"
         result = parse_sample_file(content, "test.csv")
         assert result[0].sample_id == "S001"
 
     def test_parse_space_variant(self):
-        """Test that the space-separated variant 'Sample Name' is recognized
+        """Test that the space-separated variant 'Sample ID' is recognized
         as the sample identifier column."""
-        content = b"Sample Name,Tissue\nS001,Liver\n"
+        content = b"Sample ID,Tissue\nS001,Liver\n"
         result = parse_sample_file(content, "test.csv")
         assert result[0].sample_id == "S001"
 
     def test_parse_preserves_original_attribute_keys(self):
-        """Test that non-samplename columns retain their original casing
+        """Test that non-SampleID columns retain their original casing
         and formatting as attribute keys in the parsed output."""
         content = (
-            "SampleName,Tissue_Type,assay_method,READ COUNT\n"
+            "SampleID,Tissue_Type,assay_method,READ COUNT\n"
             "S001,FFPE,WES,12345\n"
         ).encode()
 
@@ -155,7 +155,7 @@ class TestEmptyCellHandling:
         Attribute(key=col, value='') so downstream code can detect
         that the column was present but the value was blank."""
         content = (
-            "SampleName,Tissue,Condition\n"
+            "SampleID,Tissue,Condition\n"
             "S001,Liver,\n"
             "S002,,Diseased\n"
         ).encode()
@@ -174,7 +174,7 @@ class TestEmptyCellHandling:
         """Test that a row where all attribute cells are empty produces
         Attribute entries with value='' for each column."""
         content = (
-            "SampleName,Tissue,Condition\n"
+            "SampleID,Tissue,Condition\n"
             "S001,,\n"
         ).encode()
 
@@ -194,29 +194,29 @@ class TestParsingErrors:
     def test_parse_unsupported_extension(self):
         """Test that a file with an unsupported extension (.xlsx) raises
         ValueError with a message listing the allowed extensions."""
-        content = b"SampleName\nS001\n"
+        content = b"SampleID\nS001\n"
         with pytest.raises(ValueError, match="Unsupported file type"):
             parse_sample_file(content, "samples.xlsx")
 
     def test_parse_no_extension(self):
         """Test that a filename with no extension raises ValueError
         indicating an unsupported file type."""
-        content = b"SampleName\nS001\n"
+        content = b"SampleID\nS001\n"
         with pytest.raises(ValueError, match="Unsupported file type"):
             parse_sample_file(content, "samples")
 
-    def test_parse_missing_samplename_column(self):
-        """Test that a file without any recognized samplename column
+    def test_parse_missing_sampleid_column(self):
+        """Test that a file without any recognized SampleID column
         raises ValueError mentioning the expected column name."""
         content = b"Name,Tissue\nS001,Liver\n"
-        with pytest.raises(ValueError, match="SampleName"):
+        with pytest.raises(ValueError, match="SampleID"):
             parse_sample_file(content, "test.csv")
 
     def test_parse_duplicate_sample_names(self):
         """Test that a file containing duplicate sample names raises
         ValueError identifying the duplicate name and row number."""
         content = (
-            "SampleName,Tissue\n"
+            "SampleID,Tissue\n"
             "S001,Liver\n"
             "S001,Heart\n"
         ).encode()
@@ -232,7 +232,7 @@ class TestParsingErrors:
     def test_parse_headers_only_no_data(self):
         """Test that a file containing only a header row and no data
         rows raises ValueError indicating no data rows were found."""
-        content = b"SampleName,Tissue\n"
+        content = b"SampleID,Tissue\n"
         with pytest.raises(ValueError, match="no data rows"):
             parse_sample_file(content, "test.csv")
 
@@ -240,7 +240,7 @@ class TestParsingErrors:
         """Test that a row with an empty sample name cell raises
         ValueError identifying the row with the empty name."""
         content = (
-            "SampleName,Tissue\n"
+            "SampleID,Tissue\n"
             ",Liver\n"
         ).encode()
         with pytest.raises(ValueError, match="empty sample name"):
@@ -259,7 +259,7 @@ class TestEncodingHandling:
         """Test that a UTF-8 file with a byte-order mark (BOM) is parsed
         correctly with the BOM stripped from column headers."""
         bom = b"\xef\xbb\xbf"
-        content = bom + b"SampleName,Tissue\nS001,Liver\n"
+        content = bom + b"SampleID,Tissue\nS001,Liver\n"
         result = parse_sample_file(content, "test.csv")
         assert result[0].sample_id == "S001"
         attrs = {a.key: a.value for a in result[0].attributes}
@@ -268,7 +268,7 @@ class TestEncodingHandling:
     def test_parse_latin1_encoding(self):
         """Test that a Latin-1 encoded file with non-ASCII characters
         is decoded and parsed correctly."""
-        content = "SampleName,Tissue\nS001,Lébér\n".encode("latin-1")
+        content = "SampleID,Tissue\nS001,Lébér\n".encode("latin-1")
         result = parse_sample_file(content, "test.csv")
         assert result[0].sample_id == "S001"
         attrs = {a.key: a.value for a in result[0].attributes}

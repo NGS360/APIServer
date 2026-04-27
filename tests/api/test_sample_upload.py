@@ -48,7 +48,7 @@ class TestSampleUploadHappyPath:
         """Test that uploading a CSV file creates samples with the correct
         attributes persisted in the database."""
         pid = _create_project(session)
-        csv = "SampleName,Tissue,Condition\nS001,Liver,Healthy\nS002,Heart,Diseased\n"
+        csv = "SampleID,Tissue,Condition\nS001,Liver,Healthy\nS002,Heart,Diseased\n"
 
         response = _upload(client, pid, csv)
 
@@ -78,7 +78,7 @@ class TestSampleUploadHappyPath:
         """Test that uploading a TSV file auto-detects the tab delimiter
         and creates the expected number of samples."""
         pid = _create_project(session)
-        tsv = "SampleName\tTissue\nS001\tLiver\nS002\tHeart\n"
+        tsv = "SampleID\tTissue\nS001\tLiver\nS002\tHeart\n"
 
         response = _upload(client, pid, tsv, filename="samples.tsv")
 
@@ -93,13 +93,13 @@ class TestSampleUploadHappyPath:
         pid = _create_project(session)
 
         # First upload
-        csv1 = "SampleName,Tissue,Condition\nS001,Liver,Healthy\n"
+        csv1 = "SampleID,Tissue,Condition\nS001,Liver,Healthy\n"
         r1 = _upload(client, pid, csv1)
         assert r1.status_code == 201
         assert r1.json()["samples_created"] == 1
 
         # Second upload — change Tissue, add Stage
-        csv2 = "SampleName,Tissue,Stage\nS001,Heart,III\n"
+        csv2 = "SampleID,Tissue,Stage\nS001,Heart,III\n"
         r2 = _upload(client, pid, csv2)
         assert r2.status_code == 201
         b2 = r2.json()
@@ -124,13 +124,13 @@ class TestSampleUploadHappyPath:
             "Stage": "III",
         }
 
-    def test_upload_samplename_only(
+    def test_upload_sampleid_only(
         self, client: TestClient, session: Session
     ):
-        """Test that uploading a file with only a SampleName column creates
+        """Test that uploading a file with only a SampleID column creates
         samples with no attributes."""
         pid = _create_project(session)
-        csv = "SampleName\nS001\nS002\n"
+        csv = "SampleID\nS001\nS002\n"
 
         response = _upload(client, pid, csv)
         assert response.status_code == 201
@@ -139,10 +139,10 @@ class TestSampleUploadHappyPath:
     def test_upload_case_insensitive_header(
         self, client: TestClient, session: Session
     ):
-        """Test that the 'sample_name' column header variant (lowercase
+        """Test that the 'sample_id' column header variant (lowercase
         with underscore) is recognized and samples are created."""
         pid = _create_project(session)
-        csv = "sample_name,Tissue\nS001,Liver\n"
+        csv = "sample_id,Tissue\nS001,Liver\n"
 
         response = _upload(client, pid, csv)
         assert response.status_code == 201
@@ -157,14 +157,14 @@ class TestSampleUploadHappyPath:
         pid = _create_project(session)
 
         # First upload — set Tissue and Condition
-        csv1 = "SampleName,Tissue,Condition\nS001,Liver,Healthy\n"
+        csv1 = "SampleID,Tissue,Condition\nS001,Liver,Healthy\n"
         r1 = _upload(client, pid, csv1)
         assert r1.status_code == 201
         assert r1.json()["samples_created"] == 1
 
         # Second upload — Tissue column present but empty, Stage added,
         # Condition column absent (should be preserved)
-        csv2 = "SampleName,Tissue,Stage\nS001,,III\n"
+        csv2 = "SampleID,Tissue,Stage\nS001,,III\n"
         r2 = _upload(client, pid, csv2)
         assert r2.status_code == 201
         assert r2.json()["samples_updated"] == 1
@@ -191,7 +191,7 @@ class TestSampleUploadHappyPath:
         """Test that uploading a CSV for a new sample where a column cell
         is empty does not create an attribute row for that column."""
         pid = _create_project(session)
-        csv = "SampleName,Tissue,Condition\nS001,Liver,\n"
+        csv = "SampleID,Tissue,Condition\nS001,Liver,\n"
 
         response = _upload(client, pid, csv)
         assert response.status_code == 201
@@ -226,19 +226,19 @@ class TestSampleUploadErrors:
         """Test that uploading a file with an unsupported extension (.xlsx)
         returns HTTP 400 with an 'Unsupported file type' error message."""
         pid = _create_project(session)
-        response = _upload(client, pid, "SampleName\nS001\n", filename="samples.xlsx")
+        response = _upload(client, pid, "SampleID\nS001\n", filename="samples.xlsx")
         assert response.status_code == 400
         assert "Unsupported file type" in response.json()["detail"]
 
-    def test_upload_missing_samplename_column(
+    def test_upload_missing_sampleid_column(
         self, client: TestClient, session: Session
     ):
-        """Test that uploading a file without a recognized SampleName column
+        """Test that uploading a file without a recognized SampleID column
         returns HTTP 400 with an error mentioning the expected column name."""
         pid = _create_project(session)
         response = _upload(client, pid, "Name,Tissue\nS001,Liver\n")
         assert response.status_code == 400
-        assert "SampleName" in response.json()["detail"]
+        assert "SampleID" in response.json()["detail"]
 
     def test_upload_duplicate_sample_names(
         self, client: TestClient, session: Session
@@ -246,7 +246,7 @@ class TestSampleUploadErrors:
         """Test that uploading a file containing duplicate sample names
         returns HTTP 400 with an error identifying the duplicate."""
         pid = _create_project(session)
-        csv = "SampleName,Tissue\nS001,Liver\nS001,Heart\n"
+        csv = "SampleID,Tissue\nS001,Liver\nS001,Heart\n"
         response = _upload(client, pid, csv)
         assert response.status_code == 400
         assert "duplicate" in response.json()["detail"].lower()
@@ -256,7 +256,7 @@ class TestSampleUploadErrors:
     ):
         """Test that uploading a file to a non-existent project returns
         HTTP 404."""
-        csv = "SampleName\nS001\n"
+        csv = "SampleID\nS001\n"
         response = _upload(client, "P-NONEXISTENT-9999", csv)
         assert response.status_code == 404
 
