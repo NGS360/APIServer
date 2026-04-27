@@ -66,7 +66,7 @@ fastar==0.11.0
     # via fastapi-cloud-cli
 grpcio==1.78.0
     # via opensearch-protobufs
-gunicorn==23.0.0
+gunicorn==25.3.0
     # via ngs360-server (pyproject.toml)
 h11==0.16.0
     # via
