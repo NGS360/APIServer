@@ -2,7 +2,6 @@ import uuid
 from typing import List, Literal
 
 from fastapi import HTTPException, status
-from pydantic import PositiveInt
 from sqlmodel import Session, select, func
 from opensearchpy import OpenSearch
 
