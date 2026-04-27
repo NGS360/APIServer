@@ -232,20 +232,48 @@ def get_sample_by_sample_id(session: Session, sample_id: str) -> Sample:
     return None
 
 
-def reindex_samples(session: Session, client: OpenSearch):
+def reindex_samples(
+    session: Session, client: OpenSearch, batch_size: int = 5000
+):
     """
-    Index all samples in database with OpenSearch
+    Index all samples in database with OpenSearch.
+
+    Processes samples in batches to bound memory usage for large datasets.
     """
-    samples = session.exec(select(Sample)).all()
+    total = session.exec(
+        select(func.count()).select_from(Sample)
+    ).one()
+    total_batches = (total + batch_size - 1) // batch_size if total else 0
 
-    # Prepare all documents
-    search_docs = []
-    for sample in samples:
-        search_docs.append(SearchDocument(id=str(sample.id), body=sample))
-
+    logger.info("Reindexing %d samples in %d batch(es) of %d", total, total_batches, batch_size)
     reset_index(client, "samples")
-    # Bulk index all documents in one call
-    add_objects_to_index(client, search_docs, "samples")
+
+    indexed = 0
+    batch_num = 0
+    while True:
+        samples = session.exec(
+            select(Sample).offset(indexed).limit(batch_size)
+        ).all()
+
+        if not samples:
+            break
+
+        batch_num += 1
+        search_docs = [
+            SearchDocument(id=str(s.id), body=s) for s in samples
+        ]
+        add_objects_to_index(client, search_docs, "samples")
+
+        indexed += len(samples)
+        logger.info(
+            "Indexing batch %d/%d — %d samples indexed out of %d total",
+            batch_num, total_batches, indexed, total,
+        )
+
+        if len(samples) < batch_size:
+            break
+
+    logger.info("Reindex complete: %d samples indexed", indexed)
 
 
 # ---------------------------------------------------------------------------
