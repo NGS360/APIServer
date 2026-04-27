@@ -21,7 +21,11 @@ from api.files.models import File, FileHash, FileTag, FileSample, FileProject
 from api.project.models import Project
 from api.runs.models import SequencingRun, SampleSequencingRun
 from api.search.models import SearchDocument
-from api.search.services import add_object_to_index, delete_index
+from api.search.services import (
+    add_object_to_index,
+    add_objects_to_index,
+    reset_index,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -228,17 +232,48 @@ def get_sample_by_sample_id(session: Session, sample_id: str) -> Sample:
     return None
 
 
-def reindex_samples(session: Session, client: OpenSearch):
+def reindex_samples(
+    session: Session, client: OpenSearch, batch_size: int = 5000
+):
     """
-    Index all samples in database with OpenSearch
+    Index all samples in database with OpenSearch.
+
+    Processes samples in batches to bound memory usage for large datasets.
     """
-    delete_index(client, "samples")
-    samples = session.exec(
-        select(Sample)
-    ).all()
-    for sample in samples:
-        search_doc = SearchDocument(id=str(sample.id), body=sample)
-        add_object_to_index(client, search_doc, index="samples")
+    total = session.exec(
+        select(func.count()).select_from(Sample)
+    ).one()
+    total_batches = (total + batch_size - 1) // batch_size if total else 0
+
+    logger.info("Reindexing %d samples in %d batch(es) of %d", total, total_batches, batch_size)
+    reset_index(client, "samples")
+
+    indexed = 0
+    batch_num = 0
+    while True:
+        samples = session.exec(
+            select(Sample).offset(indexed).limit(batch_size)
+        ).all()
+
+        if not samples:
+            break
+
+        batch_num += 1
+        search_docs = [
+            SearchDocument(id=str(s.id), body=s) for s in samples
+        ]
+        add_objects_to_index(client, search_docs, "samples")
+
+        indexed += len(samples)
+        logger.info(
+            "Indexing batch %d/%d — %d samples indexed out of %d total",
+            batch_num, total_batches, indexed, total,
+        )
+
+        if len(samples) < batch_size:
+            break
+
+    logger.info("Reindex complete: %d samples indexed", indexed)
 
 
 # ---------------------------------------------------------------------------
@@ -674,15 +709,16 @@ def bulk_create_samples(
     # Single commit — all or nothing
     session.commit()
 
-    # ── Post-commit: index new and updated samples in OpenSearch ──────
-    if opensearch_client:
+    # ── Post-commit: index newly created and updated samples in OpenSearch ────────
+    if opensearch_client and (newly_created_samples or updated_samples):
+        search_docs = []
         for sample in newly_created_samples + updated_samples:
             session.refresh(sample)
-            search_doc = SearchDocument(id=str(sample.id), body=sample)
-            try:
-                add_object_to_index(opensearch_client, search_doc, index="samples")
-            except Exception:
-                pass  # best-effort indexing
+            search_docs.append(SearchDocument(id=str(sample.id), body=sample))
+        try:
+            add_objects_to_index(opensearch_client, search_docs, index="samples")
+        except Exception:
+            pass  # best-effort indexing
 
     return BulkSampleCreateResponse(
         project_id=project.project_id,
