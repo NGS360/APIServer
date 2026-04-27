@@ -55,8 +55,7 @@ class VendorsPublic(SQLModel):
     """
     data: list[VendorPublic]
     total_items: int
-    total_pages: int
-    current_page: int
-    per_page: int
+    skip: int
+    limit: int
     has_next: bool
     has_prev: bool
