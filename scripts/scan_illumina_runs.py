@@ -2,7 +2,9 @@
 """Scan S3 bucket for Illumina run folders.
 
 Usage:
-    PYTHONPATH=. python3 scripts/scan_illumina_runs.py --bucket <illumina run bucket> --prefix <runs folder/>
+    PYTHONPATH=. python3 scripts/scan_illumina_runs.py
+        --bucket <illumina run bucket>
+        --prefix <runs folder/>
 
 Output:
     List of run folders (directories) found in the bucket/prefix
@@ -170,9 +172,9 @@ def update_database():
     import datetime
     from sqlmodel import delete
     from api.runs.models import SequencingRun, SampleSequencingRun
-    from api.samples.models import Sample
-    from api.qcmetrics.models import QCRecord
-    from api.project.models import Project
+    from api.samples.models import Sample  # pylint: disable=unused-import
+    from api.qcmetrics.models import QCRecord  # pylint: disable=unused-import
+    from api.project.models import Project  # pylint: disable=unused-import
     from core.db import get_session
 
     session = next(get_session())
@@ -314,7 +316,7 @@ def scan():
 
 
 def main():
-    #scan()
+    # scan()
     update_database()
 
 
