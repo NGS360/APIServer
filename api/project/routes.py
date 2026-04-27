@@ -224,7 +224,7 @@ def add_sample_to_project(
     """
     Create a new sample with optional attributes.
 
-    If ``run_barcode`` is provided in the request body, the sample is also
+    If ``run_id`` is provided in the request body, the sample is also
     associated with the specified sequencing run in the same transaction.
     """
     sample = services.add_sample_to_project(
@@ -241,7 +241,7 @@ def add_sample_to_project(
             Attribute(key=a.key, value=a.value)
             for a in (sample.attributes or [])
         ],
-        run_barcode=sample_in.run_barcode,
+        run_id=sample_in.run_id,
     )
 
 

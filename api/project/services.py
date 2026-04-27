@@ -215,6 +215,7 @@ def get_project_by_project_id(session: Session, project_id: str) -> ProjectPubli
     # Convert to public model
     sequencing_runs_public = [
         SequencingRunPublic(
+            run_id=run.run_id,
             run_date=run.run_date,
             machine_id=run.machine_id,
             run_number=run.run_number,
@@ -222,8 +223,7 @@ def get_project_by_project_id(session: Session, project_id: str) -> ProjectPubli
             experiment_name=run.experiment_name,
             run_folder_uri=run.run_folder_uri,
             status=run.status,
-            run_time=run.run_time,
-            barcode=run.barcode,
+            run_time=run.run_time
         )
         for run in sequencing_runs
     ]
@@ -678,14 +678,14 @@ def add_sample_to_project(
     """
     Create a new sample with optional attributes in a project.
 
-    If ``sample_in.run_barcode`` is provided the sample is also associated
+    If ``sample_in.run_id`` is provided the sample is also associated
     with the corresponding sequencing run in the **same** transaction.
 
     Args:
         session: Database session
         opensearch_client: OpenSearch client for indexing
         project: The project object (already validated)
-        sample_in: Sample creation data (may include run_barcode)
+        sample_in: Sample creation data (may include run_id)
         created_by: Username recorded on any SampleSequencingRun row
 
     Returns:
@@ -695,15 +695,15 @@ def add_sample_to_project(
 
     # Resolve run up-front so we can fail fast before creating the sample
     run = None
-    if sample_in.run_barcode:
+    if sample_in.run_id:
         try:
-            run = get_run(session=session, run_barcode=sample_in.run_barcode)
+            run = get_run(session=session, run_id=sample_in.run_id)
         except (ValueError, Exception):
             run = None
         if run is None:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Run with barcode '{sample_in.run_barcode}' not found.",
+                detail=f"Run with run_id '{sample_in.run_id}' not found.",
             )
 
     # Create initial sample

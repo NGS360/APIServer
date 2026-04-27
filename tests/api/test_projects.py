@@ -90,6 +90,7 @@ def test_get_project_with_sequencing_runs(client: TestClient, session: Session):
 
     # Create sequencing runs
     run1 = SequencingRun(
+        run_id="240115_M12345_100_FC001",
         run_date=date(2024, 1, 15),
         machine_id="M12345",
         run_number="100",
@@ -99,6 +100,7 @@ def test_get_project_with_sequencing_runs(client: TestClient, session: Session):
         status=RunStatus.READY
     )
     run2 = SequencingRun(
+        run_id="240220_M67890_200_FC002",
         run_date=date(2024, 2, 20),
         machine_id="M67890",
         run_number="200",
@@ -159,7 +161,7 @@ def test_get_project_with_sequencing_runs(client: TestClient, session: Session):
     assert sequencing_runs[0]["flowcell_id"] == "FC001"
     assert sequencing_runs[0]["experiment_name"] == "Experiment-001"
     assert sequencing_runs[0]["status"] == "Ready"
-    assert sequencing_runs[0]["barcode"] == "240115_M12345_100_FC001"
+    assert sequencing_runs[0]["run_id"] == "240115_M12345_100_FC001"
 
     # Verify second run details
     assert sequencing_runs[1]["machine_id"] == "M67890"
@@ -167,7 +169,7 @@ def test_get_project_with_sequencing_runs(client: TestClient, session: Session):
     assert sequencing_runs[1]["flowcell_id"] == "FC002"
     assert sequencing_runs[1]["experiment_name"] == "Experiment-002"
     assert sequencing_runs[1]["status"] == "Uploading"
-    assert sequencing_runs[1]["barcode"] == "240220_M67890_200_FC002"
+    assert sequencing_runs[1]["run_id"] == "240220_M67890_200_FC002"
 
 
 def test_get_project_without_sequencing_runs(client: TestClient, session: Session):
