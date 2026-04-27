@@ -3,9 +3,9 @@ Routes/endpoints for the Project API
 """
 
 from typing import Literal, List as TypingList
-from fastapi import APIRouter, Query, status
+from fastapi import APIRouter, HTTPException, Query, UploadFile, status
 from core.deps import SessionDep, OpenSearchDep, S3ClientDep
-from api.auth.deps import CurrentUser
+from api.auth.deps import CurrentUser, CurrentSuperuser
 from api.jobs.models import BatchJobPublic
 from api.project.deps import ProjectDep
 from api.project.models import (
@@ -246,6 +246,53 @@ def add_sample_to_project(
 
 
 @router.post(
+    "/{project_id}/samples/upload",
+    tags=["Project Endpoints"],
+    status_code=status.HTTP_201_CREATED,
+    response_model=BulkSampleCreateResponse,
+)
+async def upload_samples_file(
+    session: SessionDep,
+    opensearch_client: OpenSearchDep,
+    project: ProjectDep,
+    current_user: CurrentUser,
+    file: UploadFile,
+) -> BulkSampleCreateResponse:
+    """
+    Upload a CSV/TSV file to create or update samples in bulk.
+
+    The file must contain a column named ``SampleName`` (or ``Sample_Name``,
+    case-insensitive).  All other columns become sample attributes, preserving
+    the original column header as the attribute key.
+
+    Parsing and column normalisation are handled by the
+    ``api.samples.parsing`` module; the resulting ``SampleCreate`` list is
+    fed directly into the existing ``bulk_create_samples()`` service.
+    """
+    from api.samples.parsing import parse_sample_file
+
+    # Validate content type / extension
+    filename = file.filename or ""
+    content = await file.read()
+
+    try:
+        samples_in = parse_sample_file(file_content=content, filename=filename)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        )
+
+    return sample_services.bulk_create_samples(
+        session=session,
+        opensearch_client=opensearch_client,
+        project=project,
+        samples_in=samples_in,
+        created_by=current_user.username,
+    )
+
+
+@router.post(
     "/{project_id}/samples/bulk",
     tags=["Project Endpoints"],
     status_code=status.HTTP_201_CREATED,
@@ -305,6 +352,32 @@ def get_project_samples(
         sort_by=sort_by,
         sort_order=sort_order,
         include=include,
+    )
+
+
+@router.delete(
+    "/{project_id}/samples/{sample_id}",
+    tags=["Project Endpoints"],
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def delete_sample_from_project(
+    session: SessionDep,
+    project: ProjectDep,
+    sample_id: str,
+    current_user: CurrentSuperuser,
+) -> None:
+    """
+    Hard-delete a sample and all its child rows (superuser only).
+
+    Deletes: SampleAttribute, FileSample, SampleSequencingRun rows.
+    Associated File records are NOT deleted (they may belong to other entities).
+
+    **This action is irreversible.**
+    """
+    sample_services.delete_sample(
+        session=session,
+        project_id=project.project_id,
+        sample_id=sample_id,
     )
 
 
