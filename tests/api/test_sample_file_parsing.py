@@ -37,10 +37,11 @@ class TestParseSampleFileHappyPath:
         assert attrs_1 == {"Tissue": "Heart", "Condition": "Diseased"}
 
     def test_parse_tsv_basic(self):
-        """Test that a tab-delimited file is auto-detected and parsed
-        into SampleCreate objects with correct sample_id and attributes."""
+        """Test that a tab-delimited file with 'Sample ID' header is
+        auto-detected and parsed into SampleCreate objects with correct
+        sample_id and attributes."""
         content = (
-            "SampleName\tTissue\tCondition\n"
+            "Sample ID\tTissue\tCondition\n"
             "S001\tLiver\tHealthy\n"
             "S002\tHeart\tDiseased\n"
         ).encode()

@@ -18,7 +18,7 @@ from api.samples.models import SampleCreate, Attribute
 # Column normalization
 # ---------------------------------------------------------------------------
 
-_SAMPLENAME_CANONICAL = "samplename"
+_SAMPLE_ID_CANONICALS = {"samplename", "sampleid"}
 
 ALLOWED_EXTENSIONS = {"csv", "tsv", "txt"}
 
@@ -32,6 +32,8 @@ def _normalize_header(header: str) -> str:
         "Sample_Name"  → "samplename"
         "SampleName"   → "samplename"
         "SAMPLE NAME"  → "samplename"
+        "Sample_ID"    → "sampleid"
+        "Sample ID"    → "sampleid"
         "Tissue Type"  → "tissuetype"
     """
     return re.sub(r"[_\s]", "", header.strip().lower())
@@ -110,20 +112,26 @@ def parse_sample_file(
         _normalize_header(h): h for h in original_headers
     }
 
-    # ── Validate samplename column exists ─────────────────────────────
-    if _SAMPLENAME_CANONICAL not in normalized_map:
+    # ── Validate sample identifier column exists ─────────────────────
+    matched_canonical = None
+    for canonical in _SAMPLE_ID_CANONICALS:
+        if canonical in normalized_map:
+            matched_canonical = canonical
+            break
+
+    if matched_canonical is None:
         raise ValueError(
-            "File must have a column named 'SampleName' or 'Sample_Name' "
-            "(case-insensitive). "
+            "File must have a column named 'SampleName', 'Sample_Name', "
+            "'SampleID', or 'Sample_ID' (case-insensitive). "
             f"Found columns: {', '.join(original_headers)}"
         )
 
-    samplename_original = normalized_map[_SAMPLENAME_CANONICAL]
+    samplename_original = normalized_map[matched_canonical]
 
-    # Attribute columns = everything except samplename
+    # Attribute columns = everything except the sample identifier
     attribute_columns = [
         h for h in original_headers
-        if _normalize_header(h) != _SAMPLENAME_CANONICAL
+        if _normalize_header(h) not in _SAMPLE_ID_CANONICALS
     ]
 
     # ── Iterate rows ──────────────────────────────────────────────────
