@@ -84,9 +84,9 @@ def get_runs(
     session: SessionDep,
     page: int = Query(1, description="Page number (1-indexed)"),
     per_page: int = Query(20, description="Number of items per page"),
-    sort_by: str = Query("run_id", description="Field to sort by"),
+    sort_by: str = Query("run_date", description="Field to sort by"),
     sort_order: Literal["asc", "desc"] = Query(
-        "asc", description="Sort order (asc or desc)"
+        "desc", description="Sort order (asc or desc)"
     ),
 ) -> SequencingRunsPublic:
     """
@@ -117,11 +117,11 @@ def search_runs(
     query: str = Query(description="Search query string"),
     page: int = Query(1, description="Page number (1-indexed)"),
     per_page: int = Query(20, description="Number of items per page"),
-    sort_by: Literal["run_id", "experiment_name"] | None = Query(
-        "run_id", description="Field to sort by"
+    sort_by: str | None = Query(
+        "run_date", description="Field to sort by"
     ),
     sort_order: Literal["asc", "desc"] | None = Query(
-        "asc", description="Sort order (asc or desc)"
+        "desc", description="Sort order (asc or desc)"
     ),
 ) -> SequencingRunsPublic:
     '''
