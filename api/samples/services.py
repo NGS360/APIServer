@@ -3,7 +3,6 @@ import uuid
 from typing import List, Literal
 
 from fastapi import HTTPException, status
-from pydantic import PositiveInt
 from sqlmodel import Session, select, func
 from opensearchpy import OpenSearch
 
@@ -143,8 +142,8 @@ def get_samples(
     *,
     session: Session,
     project_id: str,
-    page: PositiveInt,
-    per_page: PositiveInt,
+    skip: int = 0,
+    limit: int = 100,
     sort_by: str,
     sort_order: Literal["asc", "desc"],
 ) -> SamplesPublic:
@@ -154,8 +153,8 @@ def get_samples(
     Args:
         session: Database session
         project_id: Project ID to filter samples by
-        page: Page number (1-based)
-        per_page: Number of items per page
+        skip: Number of records to skip (offset)
+        limit: Maximum number of records to return
         sort_by: Column name to sort by
         sort_order: Sort direction ('asc' or 'desc')
 
@@ -166,12 +165,6 @@ def get_samples(
     total_count = session.exec(
         select(func.count()).select_from(Sample).where(Sample.project_id == project_id)
     ).one()
-
-    # Compute total pages
-    total_pages = (total_count + per_page - 1) // per_page  # Ceiling division
-
-    # Calculate offset for pagination
-    offset = (page - 1) * per_page
 
     # Build the select statement
     statement = select(Sample).where(Sample.project_id == project_id)
@@ -184,7 +177,7 @@ def get_samples(
         statement = statement.order_by(sort_column)
 
     # Add pagination
-    statement = statement.offset(offset).limit(per_page)
+    statement = statement.offset(skip).limit(limit)
 
     # Execute the query
     samples = session.exec(statement).all()
@@ -195,9 +188,6 @@ def get_samples(
             sample_id=sample.sample_id,
             project_id=sample.project_id,
             attributes=sample.attributes,
-            # [
-            #    {"key": attr.key, "value": attr.value} for attr in (sample.attributes or [])
-            # ] if sample.attributes else []
         )
         for sample in samples
     ]
@@ -216,11 +206,10 @@ def get_samples(
         data=public_samples,
         data_cols=data_cols,
         total_items=total_count,
-        total_pages=total_pages,
-        current_page=page,
-        per_page=per_page,
-        has_next=page < total_pages,
-        has_prev=page > 1,
+        skip=skip,
+        limit=limit,
+        has_next=(skip + limit) < total_count,
+        has_prev=skip > 0,
     )
 
 
