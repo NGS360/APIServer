@@ -123,27 +123,27 @@ def get_runs(
     # Compute total pages
     total_pages = (total_count + per_page - 1) // per_page  # Ceiling division
 
-    # Determine sort field and direction
-    # Handle computed fields that can't be sorted directly
-    if sort_by == "run_id":
-        runs = session.exec(select(SequencingRun)).all()
-        runs.sort(key=lambda r: r.run_id, reverse=(sort_order == "desc"))
-    else:
-        # Get the actual database column, fallback to run_id if field doesn't exist
-        sort_field = getattr(SequencingRun, sort_by, SequencingRun.run_id)
-        # Ensure we got a column, not a property
-        if not hasattr(sort_field, 'asc'):
-            sort_field = SequencingRun.run_id
+    # Resolve sort column, falling back to run_date if the requested field
+    # is unknown or not a sortable column.
+    sort_field = getattr(SequencingRun, sort_by, None)
+    if sort_field is None or not hasattr(sort_field, "asc"):
+        sort_by = "run_date"
+        sort_field = getattr(SequencingRun, sort_by)
 
-        sort_direction = sort_field.asc() if sort_order == "asc" else sort_field.desc()
+    descending = sort_order == "desc"
+    order_sort_clauses = [sort_field.desc() if descending else sort_field.asc()]
 
-        # Get run selection
-        runs = session.exec(
-            select(SequencingRun)
-            .order_by(sort_direction)
-            .limit(per_page)
-            .offset((page - 1) * per_page)
-        ).all()
+    # When sorting by run_date, break ties with run_time in the same direction.
+    if sort_by == "run_date":
+        run_time_col = getattr(SequencingRun, "run_time")
+        order_sort_clauses.append(run_time_col.desc() if descending else run_time_col.asc())
+
+    runs = session.exec(
+        select(SequencingRun)
+        .order_by(*order_sort_clauses)
+        .limit(per_page)
+        .offset((page - 1) * per_page)
+    ).all()
 
     # Map to public run
     public_runs = [
@@ -178,8 +178,8 @@ def search_runs(
     query: str,
     page: int,
     per_page: int,
-    sort_by: str | None = "run_id",
-    sort_order: Literal["asc", "desc"] | None = "asc",
+    sort_by: str | None = "run_date",
+    sort_order: Literal["asc", "desc"] | None = "desc",
 ) -> SequencingRunsPublic:
     """
     Search for runs
@@ -188,6 +188,19 @@ def search_runs(
     search_body = define_search_body(
         query, page, per_page, sort_by, sort_order
     )
+
+    # run_date is a `date` mapping; everything else sorts on its `.keyword`
+    sort_by = sort_by or "run_date"
+    sort_order = sort_order or "desc"
+    if sort_by == "run_date":
+        search_body["sort"] = [
+            {"run_date": {"order": sort_order}},
+            {"run_time.keyword": {"order": sort_order}},
+        ]
+    else:
+        search_body["sort"] = [
+            {f"{sort_by}.keyword": {"order": sort_order}},
+        ]
 
     try:
 
