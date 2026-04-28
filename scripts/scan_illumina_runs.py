@@ -48,6 +48,11 @@ def parse_args() -> argparse.Namespace:
         required=True,
         help="S3 prefix to scan (default: illumina/)",
     )
+    parser.add_argument(
+        "--exclude-ont-suffix",
+        default=None,
+        help="Exclude ONT runs whose run_id ends with this suffix",
+    )
     return parser.parse_args()
 
 
@@ -292,6 +297,14 @@ def scan():
                 # Is this an ONT folder?
                 # YYYYMMDD_HHMM_device_flowcell_hash
                 run_id = folder.rstrip("/")
+
+                # Skip ONT runs whose run_id ends with the excluded suffix
+                if args.exclude_ont_suffix and run_id.endswith(args.exclude_ont_suffix):
+                    print(f"  Skipping ONT run (excluded suffix '{args.exclude_ont_suffix}'): {run_id}")
+                    bad_run += 1
+                    continue
+
+                run_folder = f"s3://{args.bucket}/{args.prefix}{folder.rstrip('/')}"
                 run_date, run_time, machine_id, flowcell_id, run_number = run_id.split("_")
                 exp_name = ""
                 status = "READY"
