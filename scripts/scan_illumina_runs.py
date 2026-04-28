@@ -327,8 +327,8 @@ def scan():
 
 
 def main():
-    #scan()
-    update_database()
+    scan()
+    #update_database()
 
 
 if __name__ == "__main__":
