@@ -124,9 +124,9 @@ A workflow definition evolves over time. The `Workflow` table captures the logic
 
 Aliases like `production` and `development` let teams mark which version should be used without hardcoding version strings. The `WorkflowAlias` table stores a free-text alias name with a `UNIQUE(workflow_id, alias)` constraint — each workflow can have at most one pointer per alias name. Moving an alias is an upsert, providing an audit trail of who changed it and when.
 
-**Why do WorkflowDeployment and WorkflowRun point to WorkflowVersion?**
+**Why does WorkflowDeployment point to WorkflowVersion?**
 
-You register and execute a *specific version* of a workflow. Different versions may have different external IDs on the same platform. The FK to `workflowversion.id` captures this precisely. You can still navigate to the parent workflow via `WorkflowVersion.workflow_id`.
+You register and execute a *specific version* of a workflow on a platform. Different versions may have different external IDs on the same platform. The FK to `workflow_version.id` captures this precisely. You can still navigate to the parent workflow via `WorkflowVersion.workflow_id`.
 
 **Why separate WorkflowRun from BatchJob?**
 
