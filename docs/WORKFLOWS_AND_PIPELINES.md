@@ -26,7 +26,6 @@ erDiagram
     Workflow ||--o{ WorkflowAlias : has_aliases
     WorkflowAlias }o--|| WorkflowVersion : points_to
     WorkflowVersion ||--o{ WorkflowDeployment : deployed_on
-    WorkflowVersion ||--o{ WorkflowRun : executed_as
     WorkflowVersion ||--o{ WorkflowVersionAttribute : has_attributes
     Platform ||--o{ WorkflowDeployment : engine_FK
 
