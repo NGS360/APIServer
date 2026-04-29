@@ -7,7 +7,7 @@ This document describes the Workflow and Pipeline systems — how workflows are 
 The system provides:
 
 - **Platform-agnostic workflow identity**: Define a workflow once by name
-- **Versioning**: Each version carries its own `definition_uri` (WDL/CWL/Nextflow file) and semantic version string
+- **Versioning**: Each version carries its own `definition_uri` (WDL/CWL/Nextflow file) and auto-increment version number.  semantic version string can be associated using an attribute on the workflow version.
 - **Aliases**: Assign an alias to a specific version, e.g. `production` or `development` — like AWS Lambda aliases
 - **Cross-platform deployment**: Register a specific workflow version on multiple execution engines (Arvados, SevenBridges, AWS HealthOmics, etc.)
 - **Pipeline grouping**: Organise related workflows into named groups called pipelines
@@ -72,6 +72,7 @@ erDiagram
 
     WorkflowVersionAlias {
         uuid id PK
+        workflow_id FK
         string alias
         uuid workflow_version_id FK
         datetime created_at
@@ -206,12 +207,12 @@ Named pointer to a specific workflow version.
 
 ### Platform
 
-A registered workflow execution engine. Single-column reference table — the `name` is the PK. Must be created before workflows can be deployed or run on a given engine.
+A registered workflow execution engine. A reference table — where `name` is the unique. Must be created before workflows can be deployed or run on a given engine.
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `id` | UUID | auto | Primary key |
-| `name` | string | yes | Unique — e.g., `"Arvados"`, `"SevenBridges"` |
+| `name` | string | yes | Unique — e.g., `"Arvados"`, `"SevenBridges"`, `"AWS HealthOmics (us-east-1)"`, `"AWS HealthOmics (eu-central-1)"` |
 
 ### WorkflowDeployment
 
@@ -336,7 +337,6 @@ POST /workflows/{workflow_id}/versions
 
 ```json
 {
-  "version": "2.1.0",
   "definition_uri": "s3://workflows/variant-calling-v2.1.cwl"
 }
 ```
@@ -347,7 +347,7 @@ POST /workflows/{workflow_id}/versions
 {
   "id": "v1v2v3v4-...",
   "workflow_id": "a1b2c3d4-...",
-  "version": "2.1.0",
+  "version": "1",
   "definition_uri": "s3://workflows/variant-calling-v2.1.cwl",
   "created_at": "2026-03-01T12:05:00Z",
   "created_by": "jdoe",
@@ -357,7 +357,6 @@ POST /workflows/{workflow_id}/versions
 
 **Errors:**
 - `404 Not Found` — Workflow does not exist.
-- `409 Conflict` — Version string already exists for this workflow.
 
 #### List Versions
 
@@ -538,77 +537,6 @@ DELETE /workflows/{workflow_id}/versions/{version_id}/deployments/{deployment_id
 
 **Response:** `204 No Content`
 
-### WorkflowRun Endpoints
-
-#### Create a Run
-
-```
-POST /workflows/{workflow_id}/runs
-```
-
-**Request Body:**
-
-```json
-{
-  "workflow_version_id": "v1v2v3v4-...",
-  "engine": "Arvados",
-  "external_run_id": "zzzzz-xvhdp-run123",
-  "attributes": [
-    {"key": "sample_id", "value": "sample-001"},
-    {"key": "input_bam", "value": "s3://data/sample-001.bam"}
-  ]
-}
-```
-
-**Response** (`201 Created`):
-
-```json
-{
-  "id": "...",
-  "workflow_version_id": "v1v2v3v4-...",
-  "workflow_name": "variant-calling-wf",
-  "workflow_version": "2.1.0",
-  "engine": "Arvados",
-  "external_run_id": "zzzzz-xvhdp-run123",
-  "created_at": "2026-03-01T14:00:00Z",
-  "created_by": "jdoe",
-  "attributes": [
-    {"key": "sample_id", "value": "sample-001"},
-    {"key": "input_bam", "value": "s3://data/sample-001.bam"}
-  ]
-}
-```
-
-#### List Runs (Paginated)
-
-```
-GET /workflows/{workflow_id}/runs?page=1&per_page=20&sort_by=created_at&sort_order=desc
-```
-
-Lists runs across all versions of the workflow.
-
-**Response:**
-
-```json
-{
-  "data": [ ... ],
-  "total_items": 42,
-  "total_pages": 3,
-  "current_page": 1,
-  "per_page": 20,
-  "has_next": true,
-  "has_prev": false
-}
-```
-
-#### Get Run by ID
-
-```
-GET /workflow-runs/{run_id}
-```
-
-Note: This uses a top-level `/workflow-runs` path (not nested under a workflow) for convenience.
-
 ### Pipeline CRUD
 
 #### Create a Pipeline
@@ -744,5 +672,4 @@ DELETE /pipelines/{pipeline_id}/workflows/{workflow_id}
 | `tests/api/test_workflow_versions.py` | Version CRUD tests |
 | `tests/api/test_workflow_aliases.py` | Alias CRUD tests |
 | `tests/api/test_workflow_deployments.py` | Deployment endpoint tests (incl. engine validation) |
-| `tests/api/test_workflow_runs.py` | Workflow run endpoint tests (incl. engine validation) |
 | `tests/api/test_pipeline_entity.py` | Pipeline CRUD and workflow association tests (13 tests) |
