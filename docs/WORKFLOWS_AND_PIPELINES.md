@@ -28,6 +28,7 @@ erDiagram
     WorkflowAlias }o--|| WorkflowVersion : points_to
     WorkflowVersion ||--o{ WorkflowDeployment : deployed_on
     WorkflowVersion ||--o{ WorkflowRun : executed_as
+    WorkflowVersion ||--o{ WorkflowVersionAttribute : has_attributes
     Platform ||--o{ WorkflowDeployment : engine_FK
     Platform ||--o{ WorkflowRun : engine_FK
     WorkflowRun ||--o{ WorkflowRunAttribute : has_attributes
@@ -72,7 +73,6 @@ erDiagram
 
     WorkflowAlias {
         uuid id PK
-        uuid workflow_id FK
         string alias
         uuid workflow_version_id FK
         datetime created_at
