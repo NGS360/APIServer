@@ -57,10 +57,17 @@ erDiagram
     WorkflowVersion {
         uuid id PK
         uuid workflow_id FK
-        string version
+        int version
         string definition_uri
         datetime created_at
         string created_by
+    }
+
+    WorkflowVersionAttribute {
+        uuid id PK
+        uuid workflow_version_id FK
+        string key
+        string value
     }
 
     WorkflowAlias {
