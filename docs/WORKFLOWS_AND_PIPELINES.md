@@ -9,7 +9,7 @@ The system provides:
 - **Platform-agnostic workflow identity**: Define a workflow once by name
 - **Versioning**: Each version carries its own `definition_uri` (WDL/CWL/Nextflow file) and semantic version string
 - **Aliases**: Assign an alias to a specific version, e.g. `production` or `development` — like AWS Lambda aliases
-- **Cross-platform deployment**: Register a specific workflow version on multiple execution engines (Arvados, SevenBridges, AWS Batch, etc.)
+- **Cross-platform deployment**: Register a specific workflow version on multiple execution engines (Arvados, SevenBridges, AWS HealthOmics, etc.)
 - **Pipeline grouping**: Organise related workflows into named groups called pipelines
 - **Flexible metadata**: Key-value attributes on workflows and pipelines
 - **Provenance**: All entities track `created_at` and `created_by` for audit trails
