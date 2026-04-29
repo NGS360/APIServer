@@ -23,10 +23,12 @@ The system provides:
 erDiagram
     Workflow ||--o{ WorkflowAttribute : has_attributes
     Workflow ||--o{ WorkflowVersion : has_versions
-    Workflow ||--o{ WorkflowAlias : has_aliases
-    WorkflowAlias }o--|| WorkflowVersion : points_to
+
     WorkflowVersion ||--o{ WorkflowDeployment : deployed_on
     WorkflowVersion ||--o{ WorkflowVersionAttribute : has_attributes
+
+    WorkflowAlias }o--|| WorkflowVersion : points_to
+
     Platform ||--o{ WorkflowDeployment : engine_FK
 
     Pipeline ||--o{ PipelineWorkflow : contains
