@@ -36,7 +36,8 @@ erDiagram
     Pipeline ||--o{ PipelineAttribute : has_attributes
 
     Platform {
-        string name PK
+        uuid id PK 
+        string name UQ
     }
 
     Workflow {
