@@ -27,7 +27,7 @@ erDiagram
     WorkflowVersion ||--o{ WorkflowDeployment : deployed_on
     WorkflowVersion ||--o{ WorkflowVersionAttribute : has_attributes
 
-    WorkflowAlias }o--|| WorkflowVersion : points_to
+    WorkflowVersionAlias }o--|| WorkflowVersion : points_to
 
     Platform ||--o{ WorkflowDeployment : engine_FK
 
@@ -69,7 +69,7 @@ erDiagram
         string value
     }
 
-    WorkflowAlias {
+    WorkflowVersionAlias {
         uuid id PK
         string alias
         uuid workflow_version_id FK
@@ -122,7 +122,7 @@ A workflow definition evolves over time. The `Workflow` table captures the logic
 
 **Why a separate alias table?**
 
-Aliases like `production` and `development` let teams mark which version should be used without hardcoding version strings. The `WorkflowAlias` table stores a free-text alias name with a `UNIQUE(workflow_id, alias)` constraint — each workflow can have at most one pointer per alias name. Moving an alias is an upsert, providing an audit trail of who changed it and when.
+Aliases like `production` and `development` let teams mark which version should be used without hardcoding version strings. The `WorkflowVersionAlias` table stores a free-text alias name with a `UNIQUE(workflow_id, alias)` constraint — each workflow can have at most one pointer per alias name. Moving an alias is an upsert, providing an audit trail of who changed it and when.
 
 **Why does WorkflowDeployment point to WorkflowVersion?**
 
@@ -188,7 +188,7 @@ Key-value metadata for workflow versions. Extensible without schema changes.
 | `key` | string | yes | Attribute name |
 | `value` | string | yes | Attribute value |
 
-### WorkflowAlias
+### WorkflowVersionAlias
 
 Named pointer to a specific workflow version.
 
@@ -374,7 +374,7 @@ GET /workflows/{workflow_id}/versions/{version_id}
 
 Returns a single version with its deployments.
 
-### WorkflowAlias Endpoints
+### WorkflowVersionAlias Endpoints
 
 #### Set/Update an Alias
 
