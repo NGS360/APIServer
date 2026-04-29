@@ -195,7 +195,6 @@ Named pointer to a specific workflow version.
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `id` | UUID | auto | Primary key |
-| `workflow_id` | UUID | yes | FK → `workflow.id` — scopes the alias |
 | `alias` | string | yes | Free-text alias name (e.g. `production`, `staging`) |
 | `workflow_version_id` | UUID | yes | FK → `workflowversion.id` |
 | `created_at` | datetime | auto | UTC timestamp |
