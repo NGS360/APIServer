@@ -20,8 +20,6 @@ from sqlmodel import Session, select
 
 from api.project.models import Project
 from api.runs.models import SequencingRun
-from api.workflow.models import Workflow, WorkflowVersion, WorkflowRun
-from api.platforms.models import Platform
 
 
 # ---------------------------------------------------------------------------
@@ -37,51 +35,6 @@ def _ensure_project(session: Session, project_id: str) -> None:
     if not existing:
         session.add(Project(project_id=project_id, name=f"Test {project_id}"))
         session.commit()
-
-
-def _ensure_platform(session: Session, name: str = "Arvados") -> str:
-    """Ensure a Platform record exists; return its name."""
-    existing = session.get(Platform, name)
-    if not existing:
-        session.add(Platform(name=name))
-        session.flush()
-    return name
-
-
-def _create_workflow(session: Session) -> Workflow:
-    """Create a minimal Workflow and return it."""
-    wf = Workflow(
-        name="RNA-Seq Pipeline",
-        created_by="testuser",
-    )
-    session.add(wf)
-    session.flush()
-    return wf
-
-
-def _create_workflow_run(session: Session) -> str:
-    """Create Platform → Workflow → Version → WorkflowRun; return run ID."""
-    engine = _ensure_platform(session)
-    wf = _create_workflow(session)
-    ver = WorkflowVersion(
-        workflow_id=wf.id,
-        version="1.0",
-        definition_uri="https://github.com/test/rna-seq.wdl",
-        created_by="testuser",
-    )
-    session.add(ver)
-    session.flush()
-    wr = WorkflowRun(
-        workflow_version_id=ver.id,
-        engine=engine,
-        external_run_id=f"ext-run-{uuid4().hex[:8]}",
-        created_by="testuser",
-    )
-    session.add(wr)
-    session.flush()
-    wr_id = str(wr.id)
-    session.commit()
-    return wr_id
 
 
 def _create_sequencing_run(session: Session) -> tuple[str, str]:
@@ -530,7 +483,7 @@ def test_search_by_workflow_run_id(
     GET /search?workflow_run_id=<uuid> should return only records
     with that provenance link on QCRecord.workflow_run_id.
     """
-    wr_id = _create_workflow_run(session)
+    wr_id = str(uuid4())
     _ensure_project(session, "P-SEARCH-WR-1")
     _ensure_project(session, "P-SEARCH-WR-2")
 
@@ -844,7 +797,7 @@ def test_create_qcrecord_with_workflow_run_provenance(
     Create a QCRecord with workflow_run_id (provenance link).
     Verify it appears in both the create response and GET.
     """
-    wr_id = _create_workflow_run(session)
+    wr_id = str(uuid4())
     _ensure_project(session, "P-PROV-001")
 
     payload = {
@@ -885,23 +838,24 @@ def test_create_qcrecord_without_workflow_run_id(
     assert get_resp.json()["workflow_run_id"] is None
 
 
-def test_create_qcrecord_invalid_workflow_run_id(
+def test_create_qcrecord_with_any_workflow_run_uuid(
     client: TestClient, session: Session, auth_headers: dict,
 ):
     """
-    Providing a workflow_run_id that doesn't exist should return 422.
+    Any valid UUID is accepted for workflow_run_id (external DB reference).
+    No FK validation — the UUID is a soft reference to an external system.
     """
-    fake_uuid = str(uuid4())
-    _ensure_project(session, "P-PROV-BAD")
+    any_uuid = str(uuid4())
+    _ensure_project(session, "P-PROV-ANY")
 
     payload = {
-        "project_id": "P-PROV-BAD",
-        "workflow_run_id": fake_uuid,
+        "project_id": "P-PROV-ANY",
+        "workflow_run_id": any_uuid,
         "metadata": {"pipeline": "WES"},
     }
     resp = client.post("/api/v1/qcmetrics", json=payload, headers=auth_headers)
-    assert resp.status_code == 422
-    assert "WorkflowRun not found" in resp.json()["detail"]
+    assert resp.status_code == 201
+    assert resp.json()["workflow_run_id"] == any_uuid
 
 
 # ============================================================================
@@ -952,10 +906,10 @@ def test_create_metric_with_workflow_run(
     client: TestClient, session: Session, auth_headers: dict,
 ):
     """
-    Create a QCRecord with a metric scoped to a WorkflowRun via direct FK.
+    Create a QCRecord with a metric scoped to an external workflow run via UUID.
     Verify the workflow_run_id appears in the GET response.
     """
-    wr_id = _create_workflow_run(session)
+    wr_id = str(uuid4())
     _ensure_project(session, "P-WR-001")
 
     payload = {
@@ -989,10 +943,10 @@ def test_create_metric_with_both_entities(
 ):
     """
     Mixed scoping: a single metric scoped to both a SequencingRun
-    and a WorkflowRun simultaneously via barcode + UUID.
+    and a workflow run simultaneously via barcode + UUID.
     """
     sr_id, sr_barcode = _create_sequencing_run(session)
-    wr_id = _create_workflow_run(session)
+    wr_id = str(uuid4())
     _ensure_project(session, "P-BOTH-001")
 
     payload = {
@@ -1086,27 +1040,28 @@ def test_create_metric_invalid_sequencing_run_barcode(
     assert "SequencingRun not found" in resp.json()["detail"]
 
 
-def test_create_metric_invalid_workflow_run_id(
+def test_create_metric_with_any_workflow_run_uuid(
     client: TestClient, session: Session, auth_headers: dict,
 ):
-    """Invalid workflow_run_id in a metric should return 422."""
-    fake_uuid = str(uuid4())
-    _ensure_project(session, "P-WR-BAD")
+    """Any valid UUID is accepted for metric-level workflow_run_id (external DB reference)."""
+    any_uuid = str(uuid4())
+    _ensure_project(session, "P-WR-ANY")
 
     payload = {
-        "project_id": "P-WR-BAD",
+        "project_id": "P-WR-ANY",
         "metadata": {"pipeline": "RNA-Seq"},
         "metrics": [
             {
                 "name": "execution_metrics",
-                "workflow_run_id": fake_uuid,
+                "workflow_run_id": any_uuid,
                 "values": {"runtime_hours": 1.0},
             }
         ],
     }
     resp = client.post("/api/v1/qcmetrics", json=payload, headers=auth_headers)
-    assert resp.status_code == 422
-    assert "WorkflowRun not found" in resp.json()["detail"]
+    assert resp.status_code == 201
+    get_resp = client.get(f"/api/v1/qcmetrics/{resp.json()['id']}")
+    assert get_resp.json()["metrics"][0]["workflow_run_id"] == any_uuid
 
 
 # ============================================================================
@@ -1163,7 +1118,7 @@ def test_delete_qcrecord_cascades_entity_fks(
     (including their entity FK references).
     """
     sr_id, sr_barcode = _create_sequencing_run(session)
-    wr_id = _create_workflow_run(session)
+    wr_id = str(uuid4())
     _ensure_project(session, "P-CASCADE-001")
 
     create_resp = client.post("/api/v1/qcmetrics", json={

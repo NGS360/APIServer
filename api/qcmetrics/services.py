@@ -42,7 +42,6 @@ from api.samples.services import resolve_or_create_sample
 from api.samples.models import Sample
 from api.runs.models import SequencingRun
 from api.runs.services import get_run as get_sequencing_run
-from api.workflow.models import WorkflowRun
 
 
 logger = logging.getLogger(__name__)
@@ -130,20 +129,6 @@ def create_qcrecord(
                 )
             )
 
-    # ── Validate workflow_run_id FK if provided ───────────────────
-    if qcrecord_create.workflow_run_id:
-        wf_run = session.get(
-            WorkflowRun, qcrecord_create.workflow_run_id
-        )
-        if not wf_run:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail=(
-                    "WorkflowRun not found: "
-                    f"{qcrecord_create.workflow_run_id}"
-                )
-            )
-
     # ── Create main QC record ─────────────────────────────────────
     qcrecord = QCRecord(
         created_on=datetime.now(timezone.utc),
@@ -225,15 +210,7 @@ def _create_metric(
         )
         sr_id = run.id
 
-    # Validate workflow_run_id FK if provided
     wr_id = metric_input.workflow_run_id
-    if wr_id:
-        wr = session.get(WorkflowRun, wr_id)
-        if not wr:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail=f"WorkflowRun not found: {wr_id}"
-            )
 
     metric = QCMetric(
         qcrecord_id=qcrecord_id,

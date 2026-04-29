@@ -5,8 +5,7 @@ Workflow — Platform-agnostic workflow identity
 WorkflowVersion — Versioned definition of a workflow (holds version + definition_uri)
 WorkflowVersionAlias — Named pointer (e.g. production, development) to a specific version
 WorkflowDeployment — Platform-specific deployment of a workflow version
-WorkflowRun — Execution record of a workflow version on a specific platform
-WorkflowAttribute / WorkflowRunAttribute — Key-value metadata
+WorkflowAttribute — Key-value metadata
 """
 import uuid
 from datetime import datetime, timezone
@@ -71,7 +70,6 @@ class WorkflowVersion(SQLModel, table=True):
     deployments: List["WorkflowDeployment"] | None = Relationship(
         back_populates="workflow_version",
     )
-    runs: List["WorkflowRun"] | None = Relationship(back_populates="workflow_version")
 
 
 class WorkflowVersionAlias(SQLModel, table=True):
@@ -109,35 +107,6 @@ class WorkflowDeployment(SQLModel, table=True):
 
     # Relationships
     workflow_version: WorkflowVersion = Relationship(back_populates="deployments")
-
-
-class WorkflowRunAttribute(SQLModel, table=True):
-    """Key-value metadata for a workflow run."""
-    __tablename__ = "workflowrunattribute"
-
-    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
-    workflow_run_id: uuid.UUID = Field(foreign_key="workflowrun.id")
-    key: str
-    value: str
-
-    # Relationships
-    workflow_run: "WorkflowRun" = Relationship(back_populates="attributes")
-
-
-class WorkflowRun(SQLModel, table=True):
-    """Provenance record — links a workflow version to an external execution."""
-    __tablename__ = "workflowrun"
-
-    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
-    workflow_version_id: uuid.UUID = Field(foreign_key="workflowversion.id")
-    engine: str = Field(foreign_key="platform.name")
-    external_run_id: str  # External run/job ID on the platform (required)
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    created_by: str
-
-    # Relationships
-    workflow_version: WorkflowVersion = Relationship(back_populates="runs")
-    attributes: List[WorkflowRunAttribute] | None = Relationship(back_populates="workflow_run")
 
 
 # ---------------------------------------------------------------------------
@@ -230,35 +199,3 @@ class WorkflowDeploymentPublic(SQLModel):
     created_by: str
 
 
-# ---------------------------------------------------------------------------
-# Request / Response models — WorkflowRun
-# ---------------------------------------------------------------------------
-
-class WorkflowRunCreate(SQLModel):
-    workflow_version_id: uuid.UUID
-    engine: str
-    external_run_id: str
-    attributes: List[Attribute] | None = None
-
-
-class WorkflowRunPublic(SQLModel):
-    id: uuid.UUID
-    workflow_version_id: uuid.UUID
-    workflow_name: str | None = None
-    workflow_version: str | None = None
-    engine: str
-    external_run_id: str
-    created_at: datetime
-    created_by: str
-    attributes: List[Attribute] | None = None
-
-
-class WorkflowRunsPublic(SQLModel):
-    """Paginated list of workflow runs."""
-    data: List[WorkflowRunPublic]
-    total_items: int
-    total_pages: int
-    current_page: int
-    per_page: int
-    has_next: bool
-    has_prev: bool

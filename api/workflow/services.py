@@ -2,12 +2,12 @@
 Workflow Service
 
 CRUD operations for Workflow, WorkflowVersion, WorkflowVersionAlias,
-WorkflowDeployment, and WorkflowRun entities.
+and WorkflowDeployment entities.
 """
 from uuid import UUID
 
 from fastapi import HTTPException, status
-from sqlmodel import Session, select, func
+from sqlmodel import Session, select
 
 from api.platforms.models import Platform
 from api.workflow.models import (
@@ -20,11 +20,6 @@ from api.workflow.models import (
     WorkflowDeployment,
     WorkflowDeploymentCreate,
     WorkflowDeploymentPublic,
-    WorkflowRun,
-    WorkflowRunAttribute,
-    WorkflowRunCreate,
-    WorkflowRunPublic,
-    WorkflowRunsPublic,
     WorkflowVersion,
     WorkflowVersionAlias,
     WorkflowVersionCreate,
@@ -614,193 +609,3 @@ def delete_workflow_deployment(
     session.commit()
 
 
-# ---------------------------------------------------------------------------
-# WorkflowRun CRUD
-# ---------------------------------------------------------------------------
-
-def create_workflow_run(
-    session: Session,
-    workflow_id: str,
-    run_in: WorkflowRunCreate,
-    created_by: str,
-) -> WorkflowRun:
-    """Create a workflow provenance record."""
-    workflow = get_workflow_by_id(session, workflow_id)
-
-    # Verify version exists and belongs to this workflow
-    version = session.exec(
-        select(WorkflowVersion).where(
-            WorkflowVersion.id == run_in.workflow_version_id,
-            WorkflowVersion.workflow_id == workflow.id,
-        )
-    ).first()
-    if not version:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=(
-                f"Workflow version "
-                f"'{run_in.workflow_version_id}' not found "
-                f"for workflow '{workflow_id}'."
-            ),
-        )
-
-    # Verify engine is a registered platform
-    _validate_engine(session, run_in.engine)
-
-    workflow_run = WorkflowRun(
-        workflow_version_id=version.id,
-        engine=run_in.engine,
-        external_run_id=run_in.external_run_id,
-        created_by=created_by,
-    )
-
-    session.add(workflow_run)
-    session.flush()
-
-    # Handle run attributes
-    if run_in.attributes:
-        run_attributes = [
-            WorkflowRunAttribute(
-                workflow_run_id=workflow_run.id,
-                key=attr.key,
-                value=attr.value,
-            )
-            for attr in run_in.attributes
-        ]
-        session.add_all(run_attributes)
-
-    session.commit()
-    session.refresh(workflow_run)
-    return workflow_run
-
-
-def get_workflow_runs(
-    session: Session,
-    workflow_id: str,
-    page: int = 1,
-    per_page: int = 20,
-    sort_by: str = "created_at",
-    sort_order: str = "desc",
-) -> WorkflowRunsPublic:
-    """Paginated list of runs for a workflow (across all versions)."""
-    workflow = get_workflow_by_id(session, workflow_id)
-
-    valid_sort_fields = {
-        "created_at": WorkflowRun.created_at,
-    }
-    if sort_by not in valid_sort_fields:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=(
-                f"Invalid sort_by field '{sort_by}'. "
-                f"Valid fields are: "
-                f"{', '.join(valid_sort_fields.keys())}."
-            ),
-        )
-
-    sort_column = valid_sort_fields[sort_by]
-    if sort_order == "desc":
-        sort_column = sort_column.desc()
-
-    # Get all version IDs for this workflow
-    version_ids = session.exec(
-        select(WorkflowVersion.id).where(
-            WorkflowVersion.workflow_id == workflow.id,
-        )
-    ).all()
-
-    if not version_ids:
-        return WorkflowRunsPublic(
-            data=[],
-            total_items=0,
-            total_pages=0,
-            current_page=page,
-            per_page=per_page,
-            has_next=False,
-            has_prev=False,
-        )
-
-    total_count = session.exec(
-        select(func.count())
-        .select_from(WorkflowRun)
-        .where(
-            WorkflowRun.workflow_version_id.in_(version_ids),
-        )
-    ).one()
-    total_pages = (
-        (total_count + per_page - 1) // per_page
-        if total_count > 0
-        else 0
-    )
-
-    runs = session.exec(
-        select(WorkflowRun)
-        .where(
-            WorkflowRun.workflow_version_id.in_(version_ids),
-        )
-        .order_by(sort_column)
-        .offset((page - 1) * per_page)
-        .limit(per_page)
-    ).all()
-
-    public_runs = [workflow_run_to_public(r) for r in runs]
-
-    return WorkflowRunsPublic(
-        data=public_runs,
-        total_items=total_count,
-        total_pages=total_pages,
-        current_page=page,
-        per_page=per_page,
-        has_next=page < total_pages,
-        has_prev=page > 1,
-    )
-
-
-def get_workflow_run_by_id(
-    session: Session, run_id: str,
-) -> WorkflowRun:
-    """Get a single workflow run by its UUID."""
-    run_uuid = _parse_uuid(run_id, "run_id")
-    workflow_run = session.exec(
-        select(WorkflowRun).where(
-            WorkflowRun.id == run_uuid,
-        )
-    ).first()
-    if not workflow_run:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=(
-                f"Workflow run with id '{run_id}' not found."
-            ),
-        )
-    return workflow_run
-
-
-def workflow_run_to_public(run: WorkflowRun) -> WorkflowRunPublic:
-    """Convert a WorkflowRun ORM object to public."""
-    attributes = None
-    if run.attributes:
-        attributes = [
-            Attribute(key=a.key, value=a.value)
-            for a in run.attributes
-        ]
-
-    wf_version = run.workflow_version
-    workflow_name = (
-        wf_version.workflow.name if wf_version else None
-    )
-    workflow_version = (
-        wf_version.version if wf_version else None
-    )
-
-    return WorkflowRunPublic(
-        id=run.id,
-        workflow_version_id=run.workflow_version_id,
-        workflow_name=workflow_name,
-        workflow_version=workflow_version,
-        engine=run.engine,
-        external_run_id=run.external_run_id,
-        created_at=run.created_at,
-        created_by=run.created_by,
-        attributes=attributes,
-    )

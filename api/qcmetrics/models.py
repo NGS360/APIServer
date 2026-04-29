@@ -124,7 +124,6 @@ class QCMetric(SQLModel, table=True):
     )
     workflow_run_id: uuid.UUID | None = Field(
         default=None,
-        foreign_key="workflowrun.id",
         nullable=True,
         index=True,
     )
@@ -179,10 +178,9 @@ class QCRecord(SQLModel, table=True):
         index=True,
     )
 
-    # Optional provenance link to the execution that produced this data
+    # Optional provenance link to external workflow execution (no FK — external DB)
     workflow_run_id: uuid.UUID | None = Field(
         default=None,
-        foreign_key="workflowrun.id",
         nullable=True,
         index=True,
     )
