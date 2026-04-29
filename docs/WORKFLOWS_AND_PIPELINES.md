@@ -172,12 +172,21 @@ A versioned definition of a workflow.
 |-------|------|----------|-------------|
 | `id` | UUID | auto | Primary key |
 | `workflow_id` | UUID | yes | FK → `workflow.id` |
-| `version` | string | yes | Semantic version string (e.g., `"2.1.0"`) |
+| `version` | int | yes | auto-incremented numerical value for a workflow |
 | `definition_uri` | string | yes | URI to the workflow definition file (WDL, CWL, Nextflow, etc.) |
 | `created_at` | datetime | auto | UTC timestamp |
 | `created_by` | string | yes | Username of the creator |
 
-**Constraints:** `UNIQUE(workflow_id, version)` — no duplicate version strings per workflow.
+### WorkflowVersionAttribute
+
+Key-value metadata for workflow versions. Extensible without schema changes.
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `id` | UUID | auto | Primary key |
+| `workflow_version_id` | UUID | yes | FK → `workflow_version.id` |
+| `key` | string | yes | Attribute name |
+| `value` | string | yes | Attribute value |
 
 ### WorkflowAlias
 
@@ -200,7 +209,8 @@ A registered workflow execution engine. Single-column reference table — the `n
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `name` | string | yes | Primary key — e.g., `"Arvados"`, `"SevenBridges"` |
+| `id` | UUID | auto | Primary key |
+| `name` | string | yes | Unique — e.g., `"Arvados"`, `"SevenBridges"` |
 
 ### WorkflowDeployment
 
@@ -216,30 +226,6 @@ Platform-specific deployment of a workflow version. The `engine` column is a FK 
 | `created_by` | string | yes | Username of the creator |
 
 **Constraints:** `UNIQUE(workflow_version_id, engine)` — one deployment per engine per version.
-
-### WorkflowRun
-
-Provenance record linking a workflow version to an external execution. The `engine` column is a FK to `platform.name`.
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `id` | UUID | auto | Primary key |
-| `workflow_version_id` | UUID | yes | FK → `workflowversion.id` |
-| `engine` | string | yes | FK → `platform.name` |
-| `external_run_id` | string | yes | External run/job ID on the platform |
-| `created_at` | datetime | auto | UTC timestamp of creation |
-| `created_by` | string | yes | Username of the creator |
-
-### WorkflowRunAttribute
-
-Key-value metadata for workflow runs (e.g., input parameters, output paths).
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `id` | UUID | auto | Primary key |
-| `workflow_run_id` | UUID | yes | FK → `workflowrun.id` |
-| `key` | string | yes | Attribute name |
-| `value` | string | yes | Attribute value |
 
 ### Pipeline
 
