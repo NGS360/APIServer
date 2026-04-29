@@ -177,9 +177,6 @@ def update_database():
     import datetime
     from sqlmodel import delete
     from api.runs.models import SequencingRun, SampleSequencingRun
-    from api.samples.models import Sample
-    from api.qcmetrics.models import QCRecord
-    from api.project.models import Project
     from core.db import get_session
 
     session = next(get_session())
