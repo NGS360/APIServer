@@ -10,9 +10,8 @@ The system provides:
 - **Versioning**: Each version carries its own `definition_uri` (WDL/CWL/Nextflow file) and semantic version string
 - **Aliases**: Assign an alias to a specific version, e.g. `production` or `development` — like AWS Lambda aliases
 - **Cross-platform deployment**: Register a specific workflow version on multiple execution engines (Arvados, SevenBridges, AWS Batch, etc.)
-- ~~**Execution provenance**: Record workflow runs with engine-specific run IDs and key-value attributes for file/QC provenance tracking~~ (This is handled by GA4GH WES API)
 - **Pipeline grouping**: Organise related workflows into named groups called pipelines
-- **Flexible metadata**: Key-value attributes on workflows, ~~workflow runs~~, and pipelines
+- **Flexible metadata**: Key-value attributes on workflows and pipelines
 - **Provenance**: All entities track `created_at` and `created_by` for audit trails
 - **Pagination**: List endpoints support pagination with configurable sorting
 
@@ -30,8 +29,6 @@ erDiagram
     WorkflowVersion ||--o{ WorkflowRun : executed_as
     WorkflowVersion ||--o{ WorkflowVersionAttribute : has_attributes
     Platform ||--o{ WorkflowDeployment : engine_FK
-    Platform ||--o{ WorkflowRun : engine_FK
-    WorkflowRun ||--o{ WorkflowRunAttribute : has_attributes
 
     Pipeline ||--o{ PipelineWorkflow : contains
     Workflow ||--o{ PipelineWorkflow : belongs_to
@@ -86,22 +83,6 @@ erDiagram
         string external_id
         datetime created_at
         string created_by
-    }
-
-    WorkflowRun {
-        uuid id PK
-        uuid workflow_version_id FK
-        string engine FK
-        string external_run_id
-        datetime created_at
-        string created_by
-    }
-
-    WorkflowRunAttribute {
-        uuid id PK
-        uuid workflow_run_id FK
-        string key
-        string value
     }
 
     Pipeline {
