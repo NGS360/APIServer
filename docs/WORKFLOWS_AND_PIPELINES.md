@@ -24,8 +24,8 @@ The system provides:
 erDiagram
     Workflow ||--o{ WorkflowAttribute : has_attributes
     Workflow ||--o{ WorkflowVersion : has_versions
-    Workflow ||--o{ WorkflowVersionAlias : has_aliases
-    WorkflowVersionAlias }o--|| WorkflowVersion : points_to
+    Workflow ||--o{ WorkflowAlias : has_aliases
+    WorkflowAlias }o--|| WorkflowVersion : points_to
     WorkflowVersion ||--o{ WorkflowDeployment : deployed_on
     WorkflowVersion ||--o{ WorkflowRun : executed_as
     Platform ||--o{ WorkflowDeployment : engine_FK
@@ -63,7 +63,7 @@ erDiagram
         string created_by
     }
 
-    WorkflowVersionAlias {
+    WorkflowAlias {
         uuid id PK
         uuid workflow_id FK
         string alias
@@ -133,7 +133,7 @@ A workflow definition evolves over time. The `Workflow` table captures the logic
 
 **Why a separate alias table?**
 
-Aliases like `production` and `development` let teams mark which version should be used without hardcoding version strings. The `WorkflowVersionAlias` table stores a free-text alias name with a `UNIQUE(workflow_id, alias)` constraint — each workflow can have at most one pointer per alias name. Moving an alias is an upsert, providing an audit trail of who changed it and when.
+Aliases like `production` and `development` let teams mark which version should be used without hardcoding version strings. The `WorkflowAlias` table stores a free-text alias name with a `UNIQUE(workflow_id, alias)` constraint — each workflow can have at most one pointer per alias name. Moving an alias is an upsert, providing an audit trail of who changed it and when.
 
 **Why do WorkflowDeployment and WorkflowRun point to WorkflowVersion?**
 
@@ -194,7 +194,7 @@ A versioned definition of a workflow.
 
 **Constraints:** `UNIQUE(workflow_id, version)` — no duplicate version strings per workflow.
 
-### WorkflowVersionAlias
+### WorkflowAlias
 
 Named pointer to a specific workflow version.
 
@@ -403,7 +403,7 @@ GET /workflows/{workflow_id}/versions/{version_id}
 
 Returns a single version with its deployments.
 
-### WorkflowVersionAlias Endpoints
+### WorkflowAlias Endpoints
 
 #### Set/Update an Alias
 
