@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
-"""Scan S3 bucket for Illumina run folders.
+"""Scan S3 bucket for Illumina/ONT run folders.
 
 Usage:
-    PYTHONPATH=. python3 scripts/scan_illumina_runs.py --bucket <illumina run bucket> --prefix <runs folder/>
+    PYTHONPATH=. python3 scripts/scan_sequencing_runs.py
+        --bucket <sequencing runs bucket>
+        --illumina <Illumina runs folder>
+        --ont <ONT runs folder>
 
 Output:
     List of run folders (directories) found in the bucket/prefix
