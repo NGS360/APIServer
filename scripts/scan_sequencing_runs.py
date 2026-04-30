@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Scan S3 bucket for Illumina run folders.
+"""Scan S3 bucket for Illumina/ONT run folders.
 
 Usage:
-    PYTHONPATH=. python3 scripts/scan_illumina_runs.py \
-        --bucket <illumina run bucket> \
-        --prefix <runs folder/>
+    PYTHONPATH=. python3 scripts/scan_sequencing_runs.py
+        --bucket <sequencing runs bucket>
+        --illumina <Illumina runs folder>
+        --ont <ONT runs folder>
 
 Output:
     List of run folders (directories) found in the bucket/prefix
@@ -34,28 +35,6 @@ def parse_s3_path(s3_path: str) -> tuple[str, str]:
     bucket = path_parts[0]
     prefix = path_parts[1] if len(path_parts) > 1 else ""
     return bucket, prefix
-
-
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Scan S3 bucket for Illumina run folders"
-    )
-    parser.add_argument(
-        "--bucket",
-        required=True,
-        help="S3 bucket name (default: bmsrd-data-raw)",
-    )
-    parser.add_argument(
-        "--prefix",
-        required=True,
-        help="S3 prefix to scan (default: illumina/)",
-    )
-    parser.add_argument(
-        "--exclude-ont-suffix",
-        default=None,
-        help="Exclude ONT runs whose run_id ends with this suffix",
-    )
-    return parser.parse_args()
 
 
 def get_run_folders(bucket: str, prefix: str) -> list[str]:
@@ -175,16 +154,10 @@ def read_samplesheet(run_folder):
 
 def update_database():
     import datetime
-    from sqlmodel import delete
-    from api.runs.models import SequencingRun, SampleSequencingRun
+    from api.runs.models import SequencingRun
     from core.db import get_session
 
     session = next(get_session())
-
-    # Delete child records first (junction table)
-    session.exec(delete(SampleSequencingRun))
-    session.exec(delete(SequencingRun))  # Clear existing runs
-    session.commit()
 
     with open("run_info.txt", "r") as f:
         lines = f.readlines()
@@ -193,14 +166,14 @@ def update_database():
             if len(parts) == 8:
                 run_time = None
                 (
-                    run_id, run_date, machine_id,
+                    run_id, _, machine_id,
                     run_number, flowcell_id,
                     experiment_name, run_folder_uri,
                     status,
                 ) = parts
             else:
                 (
-                    run_id, run_date, machine_id,
+                    run_id, _, machine_id,
                     run_number, flowcell_id,
                     experiment_name, run_folder_uri,
                     status, run_time,
@@ -240,14 +213,13 @@ def update_database():
     session.commit()
 
 
-def scan():
-    args = parse_args()
+def scan(bucket: str, runs_folder_prefix: str, exclude_suffix: str | None = None):
     s3 = boto3.client("s3")
 
-    print(f"Scanning s3://{args.bucket}/{args.prefix}")
+    print(f"Scanning s3://{bucket}/{runs_folder_prefix}")
     print("-" * 60)
 
-    run_folders = get_run_folders(args.bucket, args.prefix)
+    run_folders = get_run_folders(bucket, runs_folder_prefix)
 
     if not run_folders:
         print("No run folders found.")
@@ -272,19 +244,19 @@ def scan():
 
         for idx, folder in enumerate(sorted(run_folders)):
             print(f"\n[{idx + 1}/{len(run_folders)}] {folder}")
-            folder_path = f"{args.prefix}{folder}"
-            runinfo_path = find_run_info_xml(s3, args.bucket, folder_path)
+            folder_path = f"{runs_folder_prefix}{folder}"
+            runinfo_path = find_run_info_xml(s3, bucket, folder_path)
 
             if runinfo_path:
-                print(f"  RunInfo.xml: s3://{args.bucket}/{runinfo_path}")
-                content = read_run_info_xml(s3, args.bucket, runinfo_path)
+                print(f"  RunInfo.xml: s3://{bucket}/{runinfo_path}")
+                content = read_run_info_xml(s3, bucket, runinfo_path)
                 run_info = extract_run_info_fields(content)
                 run_id = run_info.get("run_id", "")
                 run_date = run_id.split("_")[0]
                 machine_id = run_info.get("machine_id", "")
                 run_number = run_info.get("run_number", "")
                 flowcell_id = run_info.get("flowcell_id", "")
-                run_folder = f"s3://{args.bucket}/{runinfo_path.rsplit('/', 1)[0]}"
+                run_folder = f"s3://{bucket}/{runinfo_path.rsplit('/', 1)[0]}"
 
                 samplesheet_info = read_samplesheet(run_folder)
                 exp_name = samplesheet_info.get("experiment_name", "")
@@ -310,30 +282,16 @@ def scan():
                                     run_time]),
                           file=run_info_file)
                     run_ids[run_id] = run_folder
-            elif (
-                folder.count("_") == 4
-                and folder.split("_")[0].isdigit()
-                and folder.split("_")[1].isdigit()
-            ):
-                # Is this an ONT folder?
-                # YYYYMMDD_HHMM_device_flowcell_hash
+            elif folder.count("_") == 4:
+                # ONT runs: YYYYMMDD_HHMM_device_flowcell_hash
                 run_id = folder.rstrip("/")
-
-                # Skip ONT runs whose run_id ends with the excluded suffix
-                if args.exclude_ont_suffix and run_id.endswith(args.exclude_ont_suffix):
-                    print(
-                        f"  Skipping ONT run"
-                        f" (excluded suffix"
-                        f" '{args.exclude_ont_suffix}'):"
-                        f" {run_id}"
-                    )
-                    bad_run += 1
+                if exclude_suffix and run_id.endswith(exclude_suffix):
+                    print(f"  Skipping ONT run {run_id} due to exclude suffix {exclude_suffix}")
                     continue
-
-                run_folder = f"s3://{args.bucket}/{args.prefix}{folder.rstrip('/')}"
                 run_date, run_time, machine_id, flowcell_id, run_number = run_id.split("_")
                 exp_name = ""
                 status = "READY"
+                run_folder = f"s3://{bucket}/{runs_folder_prefix}{folder.strip('/')}"
                 print("\t".join([run_id,
                                  run_date,
                                  machine_id,
@@ -352,9 +310,52 @@ def scan():
     print(f"  Bad runs: {bad_run}")
 
 
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Scan S3 bucket for Illumina run folders"
+    )
+    parser.add_argument(
+        "--bucket",
+        required=True,
+        help="S3 bucket name",
+    )
+
+    parser.add_argument(
+        "--illumina",
+        required=False,
+        default="illumina/",
+        help="S3 prefix to scan for Illumina runs",
+    )
+
+    parser.add_argument(
+        "--ont",
+        required=False,
+        default="ONT/",
+        help="S3 prefix to scan for ONT runs",
+    )
+    parser.add_argument(
+        "--exclude-ont-suffix",
+        default=None,
+        help="Exclude ONT runs whose run_id ends with this suffix"
+    )
+
+    parser.add_argument(
+        "--update-db",
+        action="store_true",
+        help="Update the database with the scanned runs (after scanning)"
+    )
+    return parser.parse_args()
+
+
 def main():
-    scan()
-    # update_database()
+    args = parse_args()
+
+    if args.illumina:
+        scan(args.bucket, args.illumina)
+    if args.ont:
+        scan(args.bucket, args.ont, args.exclude_ont_suffix)
+    if args.update_db:
+        update_database()
 
 
 if __name__ == "__main__":
