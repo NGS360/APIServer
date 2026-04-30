@@ -2,7 +2,9 @@
 """Scan S3 bucket for Illumina run folders.
 
 Usage:
-    PYTHONPATH=. python3 scripts/scan_illumina_runs.py --bucket <illumina run bucket> --prefix <runs folder/>
+    PYTHONPATH=. python3 scripts/scan_illumina_runs.py \
+        --bucket <illumina run bucket> \
+        --prefix <runs folder/>
 
 Output:
     List of run folders (directories) found in the bucket/prefix
@@ -47,6 +49,11 @@ def parse_args() -> argparse.Namespace:
         "--prefix",
         required=True,
         help="S3 prefix to scan (default: illumina/)",
+    )
+    parser.add_argument(
+        "--exclude-ont-suffix",
+        default=None,
+        help="Exclude ONT runs whose run_id ends with this suffix",
     )
     return parser.parse_args()
 
@@ -170,9 +177,6 @@ def update_database():
     import datetime
     from sqlmodel import delete
     from api.runs.models import SequencingRun, SampleSequencingRun
-    from api.samples.models import Sample
-    from api.qcmetrics.models import QCRecord
-    from api.project.models import Project
     from core.db import get_session
 
     session = next(get_session())
@@ -188,9 +192,19 @@ def update_database():
             parts = line.strip().split("\t")
             if len(parts) == 8:
                 run_time = None
-                run_id, run_date, machine_id, run_number, flowcell_id, experiment_name, run_folder_uri, status = parts
+                (
+                    run_id, run_date, machine_id,
+                    run_number, flowcell_id,
+                    experiment_name, run_folder_uri,
+                    status,
+                ) = parts
             else:
-                run_id, run_date, machine_id, run_number, flowcell_id, experiment_name, run_folder_uri, status, run_time = parts
+                (
+                    run_id, run_date, machine_id,
+                    run_number, flowcell_id,
+                    experiment_name, run_folder_uri,
+                    status, run_time,
+                ) = parts
 
             print(f"Adding run {run_id}")
 
@@ -205,7 +219,11 @@ def update_database():
             elif len(run_date) == 8:  # YYYYMMDD
                 run_date = datetime.datetime.strptime(run_date, "%Y%m%d").date()
             else:
-                print(f"  WARNING: Unrecognized run_date format '{run_date}' for run_id {run_id}. Setting to None.")
+                print(
+                    f"  WARNING: Unrecognized run_date format"
+                    f" '{run_date}' for run_id {run_id}."
+                    f" Setting to None."
+                )
                 run_date = None
             run = SequencingRun(
                 run_id=run_id,
@@ -274,7 +292,11 @@ def scan():
                 run_time = ""
 
                 if run_id in run_ids:
-                    print(f"  WARNING: Duplicate run_id {run_id} found in {run_ids[run_id]} and {run_folder}")
+                    print(
+                        f"  WARNING: Duplicate run_id {run_id}"
+                        f" found in {run_ids[run_id]}"
+                        f" and {run_folder}"
+                    )
                     run_ids[run_id] = f"{run_ids[run_id]} | {run_folder}"
                 else:
                     print("\t".join([run_id,
@@ -288,10 +310,27 @@ def scan():
                                     run_time]),
                           file=run_info_file)
                     run_ids[run_id] = run_folder
-            elif folder.count("_") == 4 and folder.split("_")[0].isdigit() and folder.split("_")[1].isdigit():
+            elif (
+                folder.count("_") == 4
+                and folder.split("_")[0].isdigit()
+                and folder.split("_")[1].isdigit()
+            ):
                 # Is this an ONT folder?
                 # YYYYMMDD_HHMM_device_flowcell_hash
                 run_id = folder.rstrip("/")
+
+                # Skip ONT runs whose run_id ends with the excluded suffix
+                if args.exclude_ont_suffix and run_id.endswith(args.exclude_ont_suffix):
+                    print(
+                        f"  Skipping ONT run"
+                        f" (excluded suffix"
+                        f" '{args.exclude_ont_suffix}'):"
+                        f" {run_id}"
+                    )
+                    bad_run += 1
+                    continue
+
+                run_folder = f"s3://{args.bucket}/{args.prefix}{folder.rstrip('/')}"
                 run_date, run_time, machine_id, flowcell_id, run_number = run_id.split("_")
                 exp_name = ""
                 status = "READY"
@@ -314,8 +353,8 @@ def scan():
 
 
 def main():
-    #scan()
-    update_database()
+    scan()
+    # update_database()
 
 
 if __name__ == "__main__":
