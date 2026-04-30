@@ -37,23 +37,6 @@ def parse_s3_path(s3_path: str) -> tuple[str, str]:
     return bucket, prefix
 
 
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Scan S3 bucket for Illumina run folders"
-    )
-    parser.add_argument(
-        "--bucket",
-        required=True,
-        help="S3 bucket name (default: bmsrd-data-raw)",
-    )
-    parser.add_argument(
-        "--prefix",
-        required=True,
-        help="S3 prefix to scan (default: illumina/)",
-    )
-    return parser.parse_args()
-
-
 def get_run_folders(bucket: str, prefix: str) -> list[str]:
     """Scan the bucket/prefix for run folders and return them.
 
@@ -316,7 +299,31 @@ def scan():
     print(f"  Bad runs: {bad_run}")
 
 
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Scan S3 bucket for Illumina run folders"
+    )
+    parser.add_argument(
+        "--bucket",
+        required=True,
+        help="S3 bucket name",
+    )
+    parser.add_argument(
+        "--illumina",
+        required=True,
+        help="S3 prefix to scan for Illumina runs",
+    )
+    parser.add_argument(
+        "--ont",
+        required=True,
+        help="S3 prefix to scan for ONT runs",
+    )
+    return parser.parse_args()
+
+
 def main():
+    args = parse_args()
+
     #scan()
     update_database()
 
