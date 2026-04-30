@@ -154,8 +154,7 @@ def read_samplesheet(run_folder):
 
 def update_database():
     import datetime
-    from sqlmodel import delete
-    from api.runs.models import SequencingRun, SampleSequencingRun
+    from api.runs.models import SequencingRun
     from core.db import get_session
 
     session = next(get_session())
@@ -167,14 +166,14 @@ def update_database():
             if len(parts) == 8:
                 run_time = None
                 (
-                    run_id, run_date, machine_id,
+                    run_id, _, machine_id,
                     run_number, flowcell_id,
                     experiment_name, run_folder_uri,
                     status,
                 ) = parts
             else:
                 (
-                    run_id, run_date, machine_id,
+                    run_id, _, machine_id,
                     run_number, flowcell_id,
                     experiment_name, run_folder_uri,
                     status, run_time,
