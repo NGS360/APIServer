@@ -208,14 +208,13 @@ def update_database():
     session.commit()
 
 
-def scan():
-    args = parse_args()
+def scan(bucket: str, illumina_runs_folder_prefix: str):
     s3 = boto3.client("s3")
 
-    print(f"Scanning s3://{args.bucket}/{args.prefix}")
+    print(f"Scanning s3://{bucket}/{illumina_runs_folder_prefix}")
     print("-" * 60)
 
-    run_folders = get_run_folders(args.bucket, args.prefix)
+    run_folders = get_run_folders(bucket, illumina_runs_folder_prefix)
 
     if not run_folders:
         print("No run folders found.")
@@ -240,19 +239,19 @@ def scan():
 
         for idx, folder in enumerate(sorted(run_folders)):
             print(f"\n[{idx + 1}/{len(run_folders)}] {folder}")
-            folder_path = f"{args.prefix}{folder}"
-            runinfo_path = find_run_info_xml(s3, args.bucket, folder_path)
+            folder_path = f"{illumina_runs_folder_prefix}{folder}"
+            runinfo_path = find_run_info_xml(s3, bucket, folder_path)
 
             if runinfo_path:
-                print(f"  RunInfo.xml: s3://{args.bucket}/{runinfo_path}")
-                content = read_run_info_xml(s3, args.bucket, runinfo_path)
+                print(f"  RunInfo.xml: s3://{bucket}/{runinfo_path}")
+                content = read_run_info_xml(s3, bucket, runinfo_path)
                 run_info = extract_run_info_fields(content)
                 run_id = run_info.get("run_id", "")
                 run_date = run_id.split("_")[0]
                 machine_id = run_info.get("machine_id", "")
                 run_number = run_info.get("run_number", "")
                 flowcell_id = run_info.get("flowcell_id", "")
-                run_folder = f"s3://{args.bucket}/{runinfo_path.rsplit('/', 1)[0]}"
+                run_folder = f"s3://{bucket}/{runinfo_path.rsplit('/', 1)[0]}"
 
                 samplesheet_info = read_samplesheet(run_folder)
                 exp_name = samplesheet_info.get("experiment_name", "")
@@ -275,8 +274,6 @@ def scan():
                           file=run_info_file)
                     run_ids[run_id] = run_folder
             elif folder.count("_") == 4 and folder.split("_")[0].isdigit() and folder.split("_")[1].isdigit():
-                # Is this an ONT folder?
-                # YYYYMMDD_HHMM_device_flowcell_hash
                 run_id = folder.rstrip("/")
                 run_date, run_time, machine_id, flowcell_id, run_number = run_id.split("_")
                 exp_name = ""
@@ -324,7 +321,7 @@ def parse_args() -> argparse.Namespace:
 def main():
     args = parse_args()
 
-    #scan()
+    scan(args.bucket, args.illumina)
     update_database()
 
 
