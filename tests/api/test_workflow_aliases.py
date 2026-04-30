@@ -12,7 +12,7 @@ from api.workflow.models import Workflow, WorkflowVersion
 
 def _create_workflow_and_version(
     session: Session,
-    version: str = "1.0.0",
+    version: int = 1,
 ) -> tuple[str, str]:
     """Insert a workflow + version; return (wf_id, version_id)."""
     wf = Workflow(name="Alias Test WF", created_by="testuser")
@@ -21,7 +21,7 @@ def _create_workflow_and_version(
     ver = WorkflowVersion(
         workflow_id=wf.id,
         version=version,
-        definition_uri=f"s3://bucket/{version}.wdl",
+        definition_uri=f"s3://bucket/v{version}.wdl",
         created_by="testuser",
     )
     session.add(ver)
@@ -49,7 +49,7 @@ def test_set_alias(client: TestClient, session: Session):
 
     assert data["alias"] == "production"
     assert data["workflow_version_id"] == ver_id
-    assert data["version"] == "1.0.0"
+    assert data["version"] == 1
     assert data["workflow_id"] == wf_id
     assert data["created_by"] == "testuser"
 
@@ -90,11 +90,11 @@ def test_move_alias_to_different_version(
     session.add(wf)
     session.flush()
     v1 = WorkflowVersion(
-        workflow_id=wf.id, version="1.0.0",
+        workflow_id=wf.id, version=1,
         definition_uri="s3://b/v1.wdl", created_by="testuser",
     )
     v2 = WorkflowVersion(
-        workflow_id=wf.id, version="2.0.0",
+        workflow_id=wf.id, version=2,
         definition_uri="s3://b/v2.wdl", created_by="testuser",
     )
     session.add_all([v1, v2])
@@ -113,7 +113,7 @@ def test_move_alias_to_different_version(
         json={"workflow_version_id": v1_id},
     )
     assert resp1.status_code == 200
-    assert resp1.json()["version"] == "1.0.0"
+    assert resp1.json()["version"] == 1
 
     # Move to v2
     resp2 = client.put(
@@ -121,7 +121,7 @@ def test_move_alias_to_different_version(
         json={"workflow_version_id": v2_id},
     )
     assert resp2.status_code == 200
-    assert resp2.json()["version"] == "2.0.0"
+    assert resp2.json()["version"] == 2
 
 
 def test_set_alias_version_not_found(
@@ -294,4 +294,4 @@ def test_workflow_public_includes_aliases(
     data = resp.json()
     assert len(data["aliases"]) == 1
     assert data["aliases"][0]["alias"] == "production"
-    assert data["aliases"][0]["version"] == "1.0.0"
+    assert data["aliases"][0]["version"] == 1

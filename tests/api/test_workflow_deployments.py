@@ -23,7 +23,7 @@ def _create_workflow_and_version(
     session.flush()
     ver = WorkflowVersion(
         workflow_id=wf.id,
-        version="1.0.0",
+        version=1,
         definition_uri="s3://bucket/align.wdl",
         created_by="testuser",
     )
@@ -346,11 +346,11 @@ def _create_two_versions_with_deps(
     session.add(wf)
     session.flush()
     v1 = WorkflowVersion(
-        workflow_id=wf.id, version="1.0.0",
+        workflow_id=wf.id, version=1,
         definition_uri="s3://b/v1.wdl", created_by="testuser",
     )
     v2 = WorkflowVersion(
-        workflow_id=wf.id, version="2.0.0",
+        workflow_id=wf.id, version=2,
         definition_uri="s3://b/v2.wdl", created_by="testuser",
     )
     session.add_all([v1, v2])
