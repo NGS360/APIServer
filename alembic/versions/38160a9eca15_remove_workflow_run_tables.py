@@ -1,4 +1,4 @@
-"""remove workflow run tables
+"""remove workflow run tables, add version attributes, auto-increment version
 
 Revision ID: 38160a9eca15
 Revises: 8a5d5a8bb9f6
@@ -22,21 +22,51 @@ depends_on: Union[str, Sequence[str], None] = None
 def upgrade() -> None:
     """Upgrade schema.
 
-    Drop WorkflowRun-related tables and convert FK references to plain UUIDs.
-    Workflow run tracking is now handled by an external database.
+    1. Drop WorkflowRun-related tables and convert FK references to plain UUIDs.
+       Workflow run tracking is now handled by an external database.
+    2. Create WorkflowVersionAttribute table for key-value metadata on versions.
+    3. Change WorkflowVersion.version from VARCHAR to INTEGER (auto-increment).
 
     Order: FK constraints first, then dependent tables, then parent table.
     """
-    # 1. Drop FK constraints that reference workflowrun
+    # --- Part 1: Remove WorkflowRun tables ---
+
+    # 1a. Drop FK constraints that reference workflowrun
     op.drop_constraint('qcmetric_ibfk_3', 'qcmetric', type_='foreignkey')
     op.drop_constraint('qcrecord_ibfk_3', 'qcrecord', type_='foreignkey')
 
-    # 2. Drop dependent tables (drop_table handles indexes implicitly)
+    # 1b. Drop dependent tables (drop_table handles indexes implicitly)
     op.drop_table('fileworkflowrun')
     op.drop_table('workflowrunattribute')
 
-    # 3. Drop the parent table last
+    # 1c. Drop the parent table last
     op.drop_table('workflowrun')
+
+    # --- Part 2: Create WorkflowVersionAttribute table ---
+
+    op.create_table(
+        'workflowversionattribute',
+        sa.Column('id', sa.CHAR(length=32), nullable=False),
+        sa.Column('workflow_version_id', sa.CHAR(length=32), nullable=False),
+        sa.Column('key', sa.VARCHAR(length=255), nullable=False),
+        sa.Column('value', sa.VARCHAR(length=255), nullable=False),
+        sa.ForeignKeyConstraint(
+            ['workflow_version_id'], ['workflowversion.id'],
+            name='fk_wfverattr_workflowversion',
+        ),
+        sa.PrimaryKeyConstraint('id'),
+    )
+
+    # --- Part 3: Change WorkflowVersion.version from VARCHAR to INTEGER ---
+
+    op.alter_column(
+        'workflowversion',
+        'version',
+        existing_type=mysql.VARCHAR(length=255),
+        type_=sa.Integer(),
+        existing_nullable=False,
+        postgresql_using='version::integer',
+    )
 
 
 def downgrade() -> None:

@@ -212,28 +212,25 @@ def create_workflow_version(
     version_in: WorkflowVersionCreate,
     created_by: str,
 ) -> WorkflowVersion:
-    """Create a new version for a workflow."""
+    """Create a new version for a workflow.
+
+    The version number is auto-incremented (max existing + 1).
+    """
+    from sqlalchemy import func
+
     workflow = get_workflow_by_id(session, workflow_id)
 
-    # Check for duplicate version string
-    existing = session.exec(
-        select(WorkflowVersion).where(
-            WorkflowVersion.workflow_id == workflow.id,
-            WorkflowVersion.version == version_in.version,
+    # Auto-increment: find max version for this workflow
+    max_version = session.exec(
+        select(func.max(WorkflowVersion.version)).where(
+            WorkflowVersion.workflow_id == workflow.id
         )
-    ).first()
-    if existing:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=(
-                f"Version '{version_in.version}' already exists "
-                f"for workflow '{workflow_id}'."
-            ),
-        )
+    ).one()
+    next_version = (max_version or 0) + 1
 
     version = WorkflowVersion(
         workflow_id=workflow.id,
-        version=version_in.version,
+        version=next_version,
         definition_uri=version_in.definition_uri,
         created_by=created_by,
     )
