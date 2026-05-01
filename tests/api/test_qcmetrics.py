@@ -10,7 +10,8 @@ Covers:
 - Project FK validation
 - Multi-entity extension: QCRecord.workflow_run_id provenance,
   QCMetric.sequencing_run_id / workflow_run_id scoping,
-  search filtering, backward compatibility, cascade deletes
+  search filtering, null FK defaults, cascade deletes
+- Run-scoped QCRecords (no project_id, scoped to sequencing run)
 """
 from datetime import date
 from uuid import uuid4
@@ -37,21 +38,22 @@ def _ensure_project(session: Session, project_id: str) -> None:
         session.commit()
 
 
-def _create_sequencing_run(session: Session) -> tuple[str, str]:
-    """Create a SequencingRun; return (id_str, barcode)."""
+def _create_sequencing_run(session: Session) -> str:
+    """Create a SequencingRun; return its run_id string."""
+    flowcell_id = f"H{uuid4().hex[:8].upper()}"
     sr = SequencingRun(
         id=uuid4(),
+        run_id=f"240615_M00001_0042_{flowcell_id}",
         run_date=date(2024, 6, 15),
         machine_id="M00001",
-        run_number=42,
-        flowcell_id=f"H{uuid4().hex[:8].upper()}",
+        run_number="42",
+        flowcell_id=flowcell_id,
     )
     session.add(sr)
     session.flush()
-    sr_id = str(sr.id)
-    sr_barcode = sr.barcode
+    sr_run_id = sr.run_id
     session.commit()
-    return sr_id, sr_barcode
+    return sr_run_id
 
 
 # ============================================================================
@@ -60,11 +62,7 @@ def _create_sequencing_run(session: Session) -> tuple[str, str]:
 
 
 def test_create_qcrecord_basic(client: TestClient, session: Session, auth_headers: dict):
-    """
-    Test creating a basic QC record with metadata only.
-
-    Create returns minimal response; use GET to verify full data.
-    """
+    """Test that a basic QC record with metadata only is created correctly."""
     _ensure_project(session, "P-TEST-001")
 
     qcrecord_data = {
@@ -104,9 +102,7 @@ def test_create_qcrecord_basic(client: TestClient, session: Session, auth_header
 def test_create_qcrecord_with_single_sample_metrics(
     client: TestClient, session: Session, auth_headers: dict
 ):
-    """
-    Test creating a QC record with single-sample metrics.
-    """
+    """Test that a QC record with single-sample metrics stores values and sample correctly."""
     _ensure_project(session, "P-TEST-002")
 
     qcrecord_data = {
@@ -155,9 +151,7 @@ def test_create_qcrecord_with_single_sample_metrics(
 def test_create_qcrecord_with_paired_sample_metrics(
     client: TestClient, session: Session, auth_headers: dict
 ):
-    """
-    Test creating a QC record with tumor/normal paired metrics.
-    """
+    """Test that a QC record with tumor/normal paired metrics preserves sample roles."""
     _ensure_project(session, "P-TEST-003")
 
     qcrecord_data = {
@@ -205,9 +199,7 @@ def test_create_qcrecord_with_paired_sample_metrics(
 def test_create_qcrecord_with_workflow_level_metrics(
     client: TestClient, session: Session, auth_headers: dict
 ):
-    """
-    Test creating a QC record with workflow-level metrics (no samples).
-    """
+    """Test that a QC record with workflow-level metrics (no samples) stores values correctly."""
     _ensure_project(session, "P-TEST-004")
 
     qcrecord_data = {
@@ -248,10 +240,10 @@ def test_create_qcrecord_with_workflow_level_metrics(
     assert values_dict["total_samples_processed"] == "48"
 
 
-def test_create_qcrecord_with_output_files(client: TestClient, session: Session, auth_headers: dict):
-    """
-    Test creating a QC record with output files.
-    """
+def test_create_qcrecord_with_output_files(
+    client: TestClient, session: Session, auth_headers: dict
+):
+    """Test that a QC record with output files stores file metadata, samples, hashes, and tags."""
     _ensure_project(session, "P-TEST-005")
 
     qcrecord_data = {
@@ -305,14 +297,16 @@ def test_create_qcrecord_with_output_files(client: TestClient, session: Session,
     assert tags_dict["type"] == "alignment"
 
     # Check second file (workflow-level, no samples)
-    matrix_file = next(f for f in full_data["output_files"] if "matrix" in f["uri"])
+    matrix_file = next(
+        f for f in full_data["output_files"] if "matrix" in f["uri"]
+    )
     assert len(matrix_file["samples"]) == 0
 
 
-def test_create_qcrecord_unauthorized(unauthenticated_client: TestClient, session: Session):
-    """
-    Test that creating a QC record without authentication fails.
-    """
+def test_create_qcrecord_unauthorized(
+    unauthenticated_client: TestClient, session: Session
+):
+    """Test that creating a QC record without authentication returns 401."""
     qcrecord_data = {
         "project_id": "P-TEST-UNAUTH",
         "metadata": {"pipeline": "RNA-Seq"}
@@ -328,10 +322,7 @@ def test_create_qcrecord_unauthorized(unauthenticated_client: TestClient, sessio
 def test_create_qcrecord_nonexistent_project(
     client: TestClient, session: Session, auth_headers: dict
 ):
-    """
-    Test that creating a QC record with a non-existent project_id returns 422.
-    The FK constraint enforces referential integrity.
-    """
+    """Test that creating a QC record with a non-existent project_id returns 422."""
     qcrecord_data = {
         "project_id": "P-DOES-NOT-EXIST",
         "metadata": {"pipeline": "RNA-Seq"}
@@ -352,9 +343,7 @@ def test_create_qcrecord_nonexistent_project(
 
 
 def test_search_qcrecords_empty(client: TestClient, session: Session):
-    """
-    Test searching QC records when none exist.
-    """
+    """Test that searching QC records when none exist returns an empty list."""
     response = client.get("/api/v1/qcmetrics/search")
     assert response.status_code == 200
 
@@ -363,10 +352,10 @@ def test_search_qcrecords_empty(client: TestClient, session: Session):
     assert data["data"] == []
 
 
-def test_search_qcrecords_by_project_id(client: TestClient, session: Session, auth_headers: dict):
-    """
-    Test searching QC records by project ID.
-    """
+def test_search_qcrecords_by_project_id(
+    client: TestClient, session: Session, auth_headers: dict
+):
+    """Test that searching QC records by project_id returns matching records."""
     _ensure_project(session, "P-SEARCH-001")
 
     # Create a QC record
@@ -385,10 +374,10 @@ def test_search_qcrecords_by_project_id(client: TestClient, session: Session, au
     assert data["data"][0]["project_id"] == "P-SEARCH-001"
 
 
-def test_search_qcrecords_latest_only(client: TestClient, session: Session, auth_headers: dict):
-    """
-    Test that latest=true returns only the newest record per project.
-    """
+def test_search_qcrecords_latest_only(
+    client: TestClient, session: Session, auth_headers: dict
+):
+    """Test that latest=true returns only the newest record per project."""
     _ensure_project(session, "P-LATEST-001")
 
     # Create two QC records for the same project
@@ -396,30 +385,38 @@ def test_search_qcrecords_latest_only(client: TestClient, session: Session, auth
         "project_id": "P-LATEST-001",
         "metadata": {"version": "1.0"}
     }
-    client.post("/api/v1/qcmetrics", json=qcrecord_data_1, headers=auth_headers)
+    client.post(
+        "/api/v1/qcmetrics", json=qcrecord_data_1, headers=auth_headers
+    )
 
     qcrecord_data_2 = {
         "project_id": "P-LATEST-001",
         "metadata": {"version": "2.0"}  # Different metadata, so not a duplicate
     }
-    client.post("/api/v1/qcmetrics", json=qcrecord_data_2, headers=auth_headers)
+    client.post(
+        "/api/v1/qcmetrics", json=qcrecord_data_2, headers=auth_headers
+    )
 
     # Search with latest=true (default)
-    response = client.get("/api/v1/qcmetrics/search?project_id=P-LATEST-001&latest=true")
+    response = client.get(
+        "/api/v1/qcmetrics/search?project_id=P-LATEST-001&latest=true"
+    )
     assert response.status_code == 200
 
     data = response.json()
     assert data["total"] == 1
 
     # Should be version 2.0 (the latest)
-    metadata_dict = {m["key"]: m["value"] for m in data["data"][0]["metadata"]}
+    metadata_dict = {
+        m["key"]: m["value"] for m in data["data"][0]["metadata"]
+    }
     assert metadata_dict["version"] == "2.0"
 
 
-def test_search_qcrecords_all_versions(client: TestClient, session: Session, auth_headers: dict):
-    """
-    Test that latest=false returns all versions.
-    """
+def test_search_qcrecords_all_versions(
+    client: TestClient, session: Session, auth_headers: dict
+):
+    """Test that latest=false returns all record versions for a project."""
     _ensure_project(session, "P-ALLVER-001")
 
     # Create two QC records for the same project
@@ -427,16 +424,22 @@ def test_search_qcrecords_all_versions(client: TestClient, session: Session, aut
         "project_id": "P-ALLVER-001",
         "metadata": {"version": "1.0"}
     }
-    client.post("/api/v1/qcmetrics", json=qcrecord_data_1, headers=auth_headers)
+    client.post(
+        "/api/v1/qcmetrics", json=qcrecord_data_1, headers=auth_headers
+    )
 
     qcrecord_data_2 = {
         "project_id": "P-ALLVER-001",
         "metadata": {"version": "2.0"}
     }
-    client.post("/api/v1/qcmetrics", json=qcrecord_data_2, headers=auth_headers)
+    client.post(
+        "/api/v1/qcmetrics", json=qcrecord_data_2, headers=auth_headers
+    )
 
     # Search with latest=false
-    response = client.get("/api/v1/qcmetrics/search?project_id=P-ALLVER-001&latest=false")
+    response = client.get(
+        "/api/v1/qcmetrics/search?project_id=P-ALLVER-001&latest=false"
+    )
     assert response.status_code == 200
 
     data = response.json()
@@ -446,9 +449,7 @@ def test_search_qcrecords_all_versions(client: TestClient, session: Session, aut
 def test_search_qcrecords_post_with_metadata_filter(
     client: TestClient, session: Session, auth_headers: dict
 ):
-    """
-    Test POST search with metadata filtering.
-    """
+    """Test that POST search with metadata filter returns only matching records."""
     _ensure_project(session, "P-META-001")
     _ensure_project(session, "P-META-002")
 
@@ -514,21 +515,18 @@ def test_search_by_workflow_run_id(
 def test_search_by_sequencing_run_id(
     client: TestClient, session: Session, auth_headers: dict,
 ):
-    """
-    GET /search?sequencing_run_id=<uuid> should return records
-    that have a metric scoped to that SequencingRun via direct FK.
-    """
-    sr_id, sr_barcode = _create_sequencing_run(session)
+    """Test that GET /search?sequencing_run_id filters records whose metrics reference that run."""
+    sr_run_id = _create_sequencing_run(session)
     _ensure_project(session, "P-SEARCH-SR-1")
     _ensure_project(session, "P-SEARCH-SR-2")
 
-    # Record with metric scoped to the sequencing run (barcode API)
+    # Record with metric scoped to the sequencing run
     client.post("/api/v1/qcmetrics", json={
         "project_id": "P-SEARCH-SR-1",
         "metadata": {"pipeline": "Demux"},
         "metrics": [{
             "name": "demux_stats",
-            "sequencing_run_barcode": sr_barcode,
+            "sequencing_run_id": sr_run_id,
             "values": {"clusters": 500000000},
         }],
     }, headers=auth_headers)
@@ -540,7 +538,7 @@ def test_search_by_sequencing_run_id(
     }, headers=auth_headers)
 
     resp = client.get(
-        f"/api/v1/qcmetrics/search?sequencing_run_id={sr_id}&latest=false"
+        f"/api/v1/qcmetrics/search?sequencing_run_id={sr_run_id}&latest=false"
     )
     assert resp.status_code == 200
 
@@ -554,10 +552,10 @@ def test_search_by_sequencing_run_id(
 # ============================================================================
 
 
-def test_get_qcrecord_by_id(client: TestClient, session: Session, auth_headers: dict):
-    """
-    Test getting a QC record by its ID.
-    """
+def test_get_qcrecord_by_id(
+    client: TestClient, session: Session, auth_headers: dict
+):
+    """Test that a QC record can be retrieved by its ID with full metadata."""
     _ensure_project(session, "P-GET-001")
 
     # Create a QC record
@@ -581,26 +579,22 @@ def test_get_qcrecord_by_id(client: TestClient, session: Session, auth_headers: 
 
 
 def test_get_qcrecord_not_found(client: TestClient, session: Session):
-    """
-    Test getting a non-existent QC record returns 404.
-    """
+    """Test that getting a non-existent QC record returns 404."""
     fake_uuid = "00000000-0000-0000-0000-000000000000"
     response = client.get(f"/api/v1/qcmetrics/{fake_uuid}")
     assert response.status_code == 404
 
 
 def test_get_qcrecord_invalid_uuid(client: TestClient, session: Session):
-    """
-    Test getting with an invalid UUID format returns 400.
-    """
+    """Test that getting a QC record with an invalid UUID format returns 400."""
     response = client.get("/api/v1/qcmetrics/not-a-uuid")
     assert response.status_code == 400
 
 
-def test_delete_qcrecord(client: TestClient, session: Session, auth_headers: dict):
-    """
-    Test deleting a QC record.
-    """
+def test_delete_qcrecord(
+    client: TestClient, session: Session, auth_headers: dict
+):
+    """Test that deleting a QC record removes it and subsequent GET returns 404."""
     _ensure_project(session, "P-DELETE-001")
 
     # Create a QC record
@@ -621,9 +615,7 @@ def test_delete_qcrecord(client: TestClient, session: Session, auth_headers: dic
 
 
 def test_delete_qcrecord_not_found(client: TestClient, session: Session):
-    """
-    Test deleting a non-existent QC record returns 404.
-    """
+    """Test that deleting a non-existent QC record returns 404."""
     fake_uuid = "00000000-0000-0000-0000-000000000000"
     response = client.delete(f"/api/v1/qcmetrics/{fake_uuid}")
     assert response.status_code == 404
@@ -634,10 +626,10 @@ def test_delete_qcrecord_not_found(client: TestClient, session: Session):
 # ============================================================================
 
 
-def test_duplicate_detection(client: TestClient, session: Session, auth_headers: dict):
-    """
-    Test that equivalent records are detected as duplicates.
-    """
+def test_duplicate_detection(
+    client: TestClient, session: Session, auth_headers: dict
+):
+    """Test that submitting an identical QC record returns is_duplicate=True and the same ID."""
     _ensure_project(session, "P-DUP-001")
 
     qcrecord_data = {
@@ -646,13 +638,17 @@ def test_duplicate_detection(client: TestClient, session: Session, auth_headers:
     }
 
     # Create first record
-    response1 = client.post("/api/v1/qcmetrics", json=qcrecord_data, headers=auth_headers)
+    response1 = client.post(
+        "/api/v1/qcmetrics", json=qcrecord_data, headers=auth_headers
+    )
     assert response1.status_code == 201
     data1 = response1.json()
     assert data1["is_duplicate"] is False
 
     # Try to create identical record
-    response2 = client.post("/api/v1/qcmetrics", json=qcrecord_data, headers=auth_headers)
+    response2 = client.post(
+        "/api/v1/qcmetrics", json=qcrecord_data, headers=auth_headers
+    )
     assert response2.status_code == 201
     data2 = response2.json()
     assert data2["is_duplicate"] is True
@@ -666,14 +662,10 @@ def test_duplicate_detection(client: TestClient, session: Session, auth_headers:
 # ============================================================================
 
 
-def test_numeric_metric_values(client: TestClient, session: Session, auth_headers: dict):
-    """
-    Test that numeric metric values (int, float) are accepted and returned
-    with their original types preserved.
-
-    This matches the legacy ES format where values like QC_ForwardReadCount=122483575
-    were numeric rather than string.
-    """
+def test_numeric_metric_values(
+    client: TestClient, session: Session, auth_headers: dict
+):
+    """Test that numeric metric values (int, float) are accepted and returned with original types."""
     _ensure_project(session, "P-NUMERIC-001")
 
     qcrecord_data = {
@@ -684,14 +676,14 @@ def test_numeric_metric_values(client: TestClient, session: Session, auth_header
                 "name": "sample_qc_metrics",
                 "samples": [{"sample_name": "SampleA"}],
                 "values": {
-                    "QC_ForwardReadCount": 122483575,  # int
-                    "QC_ReverseReadCount": 122483575,  # int
-                    "QC_FractionContaminatedReads": 0,  # int (zero)
-                    "QC_MeanReadLength": 150,  # int
-                    "QC_FractionReadsAligned": 0.587,  # float
-                    "QC_StrandBalance": 0.5,  # float
-                    "QC_Median5Bias": 0.395753,  # float
-                    "QC_DynamicRange": 2452.4661796537  # float with high precision
+                    "QC_ForwardReadCount": 122483575,
+                    "QC_ReverseReadCount": 122483575,
+                    "QC_FractionContaminatedReads": 0,
+                    "QC_MeanReadLength": 150,
+                    "QC_FractionReadsAligned": 0.587,
+                    "QC_StrandBalance": 0.5,
+                    "QC_Median5Bias": 0.395753,
+                    "QC_DynamicRange": 2452.4661796537,
                 }
             }
         ]
@@ -734,11 +726,10 @@ def test_numeric_metric_values(client: TestClient, session: Session, auth_header
     assert isinstance(values_dict["QC_DynamicRange"], float)
 
 
-def test_mixed_string_and_numeric_values(client: TestClient, session: Session, auth_headers: dict):
-    """
-    Test that both string and numeric values can be provided in the same metric,
-    and each is returned with its original type.
-    """
+def test_mixed_string_and_numeric_values(
+    client: TestClient, session: Session, auth_headers: dict
+):
+    """Test that string and numeric values coexist in the same metric with types preserved."""
     _ensure_project(session, "P-MIXED-001")
 
     qcrecord_data = {
@@ -749,10 +740,10 @@ def test_mixed_string_and_numeric_values(client: TestClient, session: Session, a
                 "name": "alignment_stats",
                 "samples": [{"sample_name": "Sample1"}],
                 "values": {
-                    "total_reads": 50000000,  # numeric int
-                    "alignment_rate": 97.5,  # numeric float
-                    "reference_genome": "GRCh38",  # string
-                    "status": "passed"  # string
+                    "total_reads": 50000000,
+                    "alignment_rate": 97.5,
+                    "reference_genome": "GRCh38",
+                    "status": "passed",
                 }
             }
         ]
@@ -770,7 +761,9 @@ def test_mixed_string_and_numeric_values(client: TestClient, session: Session, a
     get_response = client.get(f"/api/v1/qcmetrics/{data['id']}")
     full_data = get_response.json()
 
-    values_dict = {v["key"]: v["value"] for v in full_data["metrics"][0]["values"]}
+    values_dict = {
+        v["key"]: v["value"] for v in full_data["metrics"][0]["values"]
+    }
 
     # Numeric values returned with original types
     assert values_dict["total_reads"] == 50000000
@@ -805,7 +798,9 @@ def test_create_qcrecord_with_workflow_run_provenance(
         "workflow_run_id": wr_id,
         "metadata": {"pipeline": "RNA-Seq"},
     }
-    resp = client.post("/api/v1/qcmetrics", json=payload, headers=auth_headers)
+    resp = client.post(
+        "/api/v1/qcmetrics", json=payload, headers=auth_headers
+    )
     assert resp.status_code == 201
 
     data = resp.json()
@@ -820,17 +815,16 @@ def test_create_qcrecord_with_workflow_run_provenance(
 def test_create_qcrecord_without_workflow_run_id(
     client: TestClient, session: Session, auth_headers: dict,
 ):
-    """
-    Create a QCRecord without workflow_run_id — field should be null.
-    Backward-compatible with existing callers.
-    """
+    """Test that a QCRecord created without workflow_run_id has null for that field."""
     _ensure_project(session, "P-PROV-002")
 
     payload = {
         "project_id": "P-PROV-002",
         "metadata": {"pipeline": "WGS"},
     }
-    resp = client.post("/api/v1/qcmetrics", json=payload, headers=auth_headers)
+    resp = client.post(
+        "/api/v1/qcmetrics", json=payload, headers=auth_headers
+    )
     assert resp.status_code == 201
     assert resp.json()["workflow_run_id"] is None
 
@@ -866,11 +860,8 @@ def test_create_qcrecord_with_any_workflow_run_uuid(
 def test_create_metric_with_sequencing_run(
     client: TestClient, session: Session, auth_headers: dict,
 ):
-    """
-    Create a QCRecord with a metric scoped to a SequencingRun via barcode.
-    Verify both sequencing_run_id and sequencing_run_barcode in GET response.
-    """
-    sr_id, sr_barcode = _create_sequencing_run(session)
+    """Test that a metric scoped to a SequencingRun returns the run_id in GET."""
+    sr_run_id = _create_sequencing_run(session)
     _ensure_project(session, "P-SR-001")
 
     payload = {
@@ -879,7 +870,7 @@ def test_create_metric_with_sequencing_run(
         "metrics": [
             {
                 "name": "demux_stats",
-                "sequencing_run_barcode": sr_barcode,
+                "sequencing_run_id": sr_run_id,
                 "values": {
                     "total_clusters": 500000000,
                     "pct_q30": 92.5,
@@ -887,7 +878,9 @@ def test_create_metric_with_sequencing_run(
             }
         ],
     }
-    resp = client.post("/api/v1/qcmetrics", json=payload, headers=auth_headers)
+    resp = client.post(
+        "/api/v1/qcmetrics", json=payload, headers=auth_headers
+    )
     assert resp.status_code == 201
 
     get_resp = client.get(f"/api/v1/qcmetrics/{resp.json()['id']}")
@@ -895,8 +888,7 @@ def test_create_metric_with_sequencing_run(
 
     metric = full["metrics"][0]
     assert metric["name"] == "demux_stats"
-    assert metric["sequencing_run_id"] == sr_id
-    assert metric["sequencing_run_barcode"] == sr_barcode
+    assert metric["sequencing_run_id"] == sr_run_id
 
     # workflow_run_id should be null
     assert metric["workflow_run_id"] is None
@@ -926,7 +918,9 @@ def test_create_metric_with_workflow_run(
             }
         ],
     }
-    resp = client.post("/api/v1/qcmetrics", json=payload, headers=auth_headers)
+    resp = client.post(
+        "/api/v1/qcmetrics", json=payload, headers=auth_headers
+    )
     assert resp.status_code == 201
 
     get_resp = client.get(f"/api/v1/qcmetrics/{resp.json()['id']}")
@@ -943,9 +937,9 @@ def test_create_metric_with_both_entities(
 ):
     """
     Mixed scoping: a single metric scoped to both a SequencingRun
-    and a workflow run simultaneously via barcode + UUID.
+    and a workflow run simultaneously via run_id string + UUID.
     """
-    sr_id, sr_barcode = _create_sequencing_run(session)
+    sr_run_id = _create_sequencing_run(session)
     wr_id = str(uuid4())
     _ensure_project(session, "P-BOTH-001")
 
@@ -956,7 +950,7 @@ def test_create_metric_with_both_entities(
         "metrics": [
             {
                 "name": "demux_qc",
-                "sequencing_run_barcode": sr_barcode,
+                "sequencing_run_id": sr_run_id,
                 "workflow_run_id": wr_id,
                 "values": {
                     "lane_count": 8,
@@ -964,7 +958,9 @@ def test_create_metric_with_both_entities(
             }
         ],
     }
-    resp = client.post("/api/v1/qcmetrics", json=payload, headers=auth_headers)
+    resp = client.post(
+        "/api/v1/qcmetrics", json=payload, headers=auth_headers
+    )
     assert resp.status_code == 201
 
     get_resp = client.get(f"/api/v1/qcmetrics/{resp.json()['id']}")
@@ -973,18 +969,15 @@ def test_create_metric_with_both_entities(
     assert full["workflow_run_id"] == wr_id
 
     metric = full["metrics"][0]
-    assert metric["sequencing_run_id"] == sr_id
-    assert metric["sequencing_run_barcode"] == sr_barcode
+    assert metric["sequencing_run_id"] == sr_run_id
     assert metric["workflow_run_id"] == wr_id
 
 
 def test_create_metric_with_samples_and_sequencing_run(
     client: TestClient, session: Session, auth_headers: dict,
 ):
-    """
-    Per-sample metrics scoped to a SequencingRun — e.g., per-sample demux yield.
-    """
-    sr_id, sr_barcode = _create_sequencing_run(session)
+    """Test that per-sample metrics scoped to a SequencingRun return both samples and run_id."""
+    sr_run_id = _create_sequencing_run(session)
     _ensure_project(session, "P-SR-SAMPLE-001")
 
     payload = {
@@ -994,7 +987,7 @@ def test_create_metric_with_samples_and_sequencing_run(
             {
                 "name": "sample_demux_yield",
                 "samples": [{"sample_name": "SampleA"}],
-                "sequencing_run_barcode": sr_barcode,
+                "sequencing_run_id": sr_run_id,
                 "values": {
                     "reads": 25000000,
                     "pct_q30": 95.3,
@@ -1002,15 +995,16 @@ def test_create_metric_with_samples_and_sequencing_run(
             }
         ],
     }
-    resp = client.post("/api/v1/qcmetrics", json=payload, headers=auth_headers)
+    resp = client.post(
+        "/api/v1/qcmetrics", json=payload, headers=auth_headers
+    )
     assert resp.status_code == 201
 
     get_resp = client.get(f"/api/v1/qcmetrics/{resp.json()['id']}")
     metric = get_resp.json()["metrics"][0]
     assert len(metric["samples"]) == 1
     assert metric["samples"][0]["sample_name"] == "SampleA"
-    assert metric["sequencing_run_id"] == sr_id
-    assert metric["sequencing_run_barcode"] == sr_barcode
+    assert metric["sequencing_run_id"] == sr_run_id
 
 
 # ============================================================================
@@ -1018,10 +1012,10 @@ def test_create_metric_with_samples_and_sequencing_run(
 # ============================================================================
 
 
-def test_create_metric_invalid_sequencing_run_barcode(
+def test_create_metric_invalid_sequencing_run_id(
     client: TestClient, session: Session, auth_headers: dict,
 ):
-    """Invalid sequencing_run_barcode in a metric should return 422."""
+    """Test that a non-existent sequencing_run_id in a metric returns 422."""
     _ensure_project(session, "P-SR-BAD")
 
     payload = {
@@ -1030,12 +1024,14 @@ def test_create_metric_invalid_sequencing_run_barcode(
         "metrics": [
             {
                 "name": "demux_stats",
-                "sequencing_run_barcode": "990101_FAKE_0001_NOFLOW",
+                "sequencing_run_id": "990101_FAKE_0001_NOFLOW",
                 "values": {"clusters": 100},
             }
         ],
     }
-    resp = client.post("/api/v1/qcmetrics", json=payload, headers=auth_headers)
+    resp = client.post(
+        "/api/v1/qcmetrics", json=payload, headers=auth_headers
+    )
     assert resp.status_code == 422
     assert "SequencingRun not found" in resp.json()["detail"]
 
@@ -1065,17 +1061,14 @@ def test_create_metric_with_any_workflow_run_uuid(
 
 
 # ============================================================================
-# Multi-entity: backward compatibility
+# Multi-entity: null FK defaults
 # ============================================================================
 
 
 def test_existing_patterns_return_null_entity_fields(
     client: TestClient, session: Session, auth_headers: dict,
 ):
-    """
-    Records created without any entity scoping should return
-    null/None for the new FK fields.
-    """
+    """Test that records created without entity scoping return null for FK fields."""
     _ensure_project(session, "P-COMPAT-001")
 
     payload = {
@@ -1089,7 +1082,9 @@ def test_existing_patterns_return_null_entity_fields(
             }
         ],
     }
-    resp = client.post("/api/v1/qcmetrics", json=payload, headers=auth_headers)
+    resp = client.post(
+        "/api/v1/qcmetrics", json=payload, headers=auth_headers
+    )
     assert resp.status_code == 201
     assert resp.json()["workflow_run_id"] is None
 
@@ -1100,7 +1095,6 @@ def test_existing_patterns_return_null_entity_fields(
     metric = full["metrics"][0]
     assert metric["sequencing_run_id"] is None
     assert metric["workflow_run_id"] is None
-    # Existing fields still work
     assert len(metric["samples"]) == 1
     assert metric["samples"][0]["sample_name"] == "Sample1"
 
@@ -1117,7 +1111,7 @@ def test_delete_qcrecord_cascades_entity_fks(
     Deleting a QCRecord should cascade-delete the QCMetric rows
     (including their entity FK references).
     """
-    sr_id, sr_barcode = _create_sequencing_run(session)
+    sr_run_id = _create_sequencing_run(session)
     wr_id = str(uuid4())
     _ensure_project(session, "P-CASCADE-001")
 
@@ -1127,7 +1121,7 @@ def test_delete_qcrecord_cascades_entity_fks(
         "metadata": {"pipeline": "Demux"},
         "metrics": [{
             "name": "demux_stats",
-            "sequencing_run_barcode": sr_barcode,
+            "sequencing_run_id": sr_run_id,
             "workflow_run_id": wr_id,
             "values": {"clusters": 100},
         }],
@@ -1146,21 +1140,18 @@ def test_delete_qcrecord_cascades_entity_fks(
 
 
 # ============================================================================
-# Phase 3b: Run-Scoped QCRecords
+# Run-Scoped QCRecords
 # ============================================================================
 
 
 def test_create_run_scoped_qcrecord(
     client: TestClient, session: Session, auth_headers: dict,
 ):
-    """
-    Create a QCRecord scoped to a sequencing run (no project_id).
-    Verify the response includes sequencing_run_id and sequencing_run_barcode.
-    """
-    sr_id, sr_barcode = _create_sequencing_run(session)
+    """Test that a QCRecord scoped to a sequencing run (no project_id) returns the run_id."""
+    sr_run_id = _create_sequencing_run(session)
 
     payload = {
-        "sequencing_run_barcode": sr_barcode,
+        "sequencing_run_id": sr_run_id,
         "metadata": {"pipeline": "bcl-convert", "version": "4.3"},
         "metrics": [{
             "name": "demux_summary",
@@ -1174,8 +1165,7 @@ def test_create_run_scoped_qcrecord(
 
     data = resp.json()
     assert data["project_id"] is None
-    assert data["sequencing_run_id"] == sr_id
-    assert data["sequencing_run_barcode"] == sr_barcode
+    assert data["sequencing_run_id"] == sr_run_id
     assert data["is_duplicate"] is False
 
     # Verify full GET response
@@ -1183,16 +1173,15 @@ def test_create_run_scoped_qcrecord(
     assert get_resp.status_code == 200
     full = get_resp.json()
     assert full["project_id"] is None
-    assert full["sequencing_run_id"] == sr_id
-    assert full["sequencing_run_barcode"] == sr_barcode
+    assert full["sequencing_run_id"] == sr_run_id
 
 
-def test_create_run_scoped_qcrecord_invalid_barcode(
+def test_create_run_scoped_qcrecord_invalid_run_id(
     client: TestClient, session: Session, auth_headers: dict,
 ):
-    """Invalid sequencing_run_barcode at record level should return 422."""
+    """Test that a non-existent sequencing_run_id at record level returns 422."""
     payload = {
-        "sequencing_run_barcode": "990101_FAKE_0001_NOFLOW",
+        "sequencing_run_id": "990101_FAKE_0001_NOFLOW",
         "metadata": {"pipeline": "bcl-convert"},
         "metrics": [{
             "name": "demux_summary",
@@ -1209,7 +1198,7 @@ def test_create_run_scoped_qcrecord_invalid_barcode(
 def test_create_qcrecord_no_scope(
     client: TestClient, session: Session, auth_headers: dict,
 ):
-    """Omitting both project_id and sequencing_run_barcode → validation error."""
+    """Test that omitting both project_id and sequencing_run_id returns a validation error."""
     payload = {
         "metadata": {"pipeline": "RNA-Seq"},
         "metrics": [{
@@ -1226,13 +1215,13 @@ def test_create_qcrecord_no_scope(
 def test_create_qcrecord_both_scopes(
     client: TestClient, session: Session, auth_headers: dict,
 ):
-    """Providing both project_id and sequencing_run_barcode → validation error."""
-    sr_id, sr_barcode = _create_sequencing_run(session)
+    """Test that providing both project_id and sequencing_run_id returns a validation error."""
+    sr_run_id = _create_sequencing_run(session)
     _ensure_project(session, "P-DUAL-001")
 
     payload = {
         "project_id": "P-DUAL-001",
-        "sequencing_run_barcode": sr_barcode,
+        "sequencing_run_id": sr_run_id,
         "metadata": {"pipeline": "Demux"},
     }
     resp = client.post(
@@ -1244,26 +1233,23 @@ def test_create_qcrecord_both_scopes(
 def test_run_scoped_auto_propagation(
     client: TestClient, session: Session, auth_headers: dict,
 ):
-    """
-    Record-level sequencing_run_barcode should auto-propagate to metrics
-    that omit it.
-    """
-    sr_id, sr_barcode = _create_sequencing_run(session)
+    """Test that record-level sequencing_run_id auto-propagates to metrics that omit it."""
+    sr_run_id = _create_sequencing_run(session)
 
     payload = {
-        "sequencing_run_barcode": sr_barcode,
+        "sequencing_run_id": sr_run_id,
         "metadata": {"pipeline": "bcl-convert"},
         "metrics": [
             {
                 "name": "lane1_stats",
                 "values": {"reads": 200000000},
-                # no sequencing_run_barcode → inherited from record
+                # no sequencing_run_id -> inherited from record
             },
             {
                 "name": "lane2_stats",
-                "sequencing_run_barcode": sr_barcode,
+                "sequencing_run_id": sr_run_id,
                 "values": {"reads": 300000000},
-                # explicitly set → should work the same
+                # explicitly set -> should resolve the same
             },
         ],
     }
@@ -1277,21 +1263,18 @@ def test_run_scoped_auto_propagation(
 
     # Both metrics should have the sequencing_run resolved
     for metric in full["metrics"]:
-        assert metric["sequencing_run_id"] == sr_id
-        assert metric["sequencing_run_barcode"] == sr_barcode
+        assert metric["sequencing_run_id"] == sr_run_id
 
 
-def test_search_by_sequencing_run_barcode(
+def test_search_by_sequencing_run_id_run_scoped(
     client: TestClient, session: Session, auth_headers: dict,
 ):
-    """
-    GET /search?sequencing_run_barcode=<barcode> returns run-scoped records.
-    """
-    sr_id, sr_barcode = _create_sequencing_run(session)
+    """Test that GET /search?sequencing_run_id returns run-scoped records."""
+    sr_run_id = _create_sequencing_run(session)
 
     # Create a run-scoped record
     client.post("/api/v1/qcmetrics", json={
-        "sequencing_run_barcode": sr_barcode,
+        "sequencing_run_id": sr_run_id,
         "metadata": {"pipeline": "bcl-convert"},
         "metrics": [{
             "name": "demux",
@@ -1307,29 +1290,25 @@ def test_search_by_sequencing_run_barcode(
     }, headers=auth_headers)
 
     resp = client.get(
-        f"/api/v1/qcmetrics/search?sequencing_run_barcode={sr_barcode}"
+        f"/api/v1/qcmetrics/search?sequencing_run_id={sr_run_id}"
         "&latest=false"
     )
     assert resp.status_code == 200
 
     data = resp.json()
     assert data["total"] == 1
-    assert data["data"][0]["sequencing_run_id"] == sr_id
-    assert data["data"][0]["sequencing_run_barcode"] == sr_barcode
+    assert data["data"][0]["sequencing_run_id"] == sr_run_id
     assert data["data"][0]["project_id"] is None
 
 
 def test_run_scoped_duplicate_detection(
     client: TestClient, session: Session, auth_headers: dict,
 ):
-    """
-    Submitting the same run-scoped record twice (same barcode + metadata)
-    should return is_duplicate=True.
-    """
-    sr_id, sr_barcode = _create_sequencing_run(session)
+    """Test that submitting the same run-scoped record twice returns is_duplicate=True."""
+    sr_run_id = _create_sequencing_run(session)
 
     payload = {
-        "sequencing_run_barcode": sr_barcode,
+        "sequencing_run_id": sr_run_id,
         "metadata": {"pipeline": "bcl-convert", "version": "4.3"},
         "metrics": [{
             "name": "demux",
@@ -1354,24 +1333,21 @@ def test_run_scoped_duplicate_detection(
 def test_run_scoped_latest_filter(
     client: TestClient, session: Session, auth_headers: dict,
 ):
-    """
-    latest=true should return only the newest record per run
-    (analogous to per-project for project-scoped records).
-    """
-    sr_id, sr_barcode = _create_sequencing_run(session)
+    """Test that latest=true returns only the newest record per sequencing run."""
+    sr_run_id = _create_sequencing_run(session)
 
     # Create first version
     client.post("/api/v1/qcmetrics", json={
-        "sequencing_run_barcode": sr_barcode,
+        "sequencing_run_id": sr_run_id,
         "metadata": {"pipeline": "bcl-convert", "version": "4.2"},
         "metrics": [{
             "name": "demux", "values": {"reads": 100},
         }],
     }, headers=auth_headers)
 
-    # Create second version (different metadata → not a duplicate)
+    # Create second version (different metadata -> not a duplicate)
     client.post("/api/v1/qcmetrics", json={
-        "sequencing_run_barcode": sr_barcode,
+        "sequencing_run_id": sr_run_id,
         "metadata": {"pipeline": "bcl-convert", "version": "4.3"},
         "metrics": [{
             "name": "demux", "values": {"reads": 200},
@@ -1380,7 +1356,7 @@ def test_run_scoped_latest_filter(
 
     # latest=true should return only 1
     resp = client.get(
-        f"/api/v1/qcmetrics/search?sequencing_run_barcode={sr_barcode}"
+        f"/api/v1/qcmetrics/search?sequencing_run_id={sr_run_id}"
         "&latest=true"
     )
     assert resp.status_code == 200
@@ -1388,7 +1364,7 @@ def test_run_scoped_latest_filter(
 
     # latest=false should return both
     resp_all = client.get(
-        f"/api/v1/qcmetrics/search?sequencing_run_barcode={sr_barcode}"
+        f"/api/v1/qcmetrics/search?sequencing_run_id={sr_run_id}"
         "&latest=false"
     )
     assert resp_all.status_code == 200
@@ -1398,15 +1374,12 @@ def test_run_scoped_latest_filter(
 def test_redemux_cleanup_deletes_run_scoped_qcrecords(
     client: TestClient, session: Session, auth_headers: dict,
 ):
-    """
-    DELETE /runs/{barcode}/samples (clear_samples_for_run) should also
-    delete run-scoped QCRecords for that sequencing run.
-    """
-    sr_id, sr_barcode = _create_sequencing_run(session)
+    """Test that DELETE /runs/{run_id}/samples also deletes run-scoped QCRecords."""
+    sr_run_id = _create_sequencing_run(session)
 
     # Create a run-scoped QCRecord
     create_resp = client.post("/api/v1/qcmetrics", json={
-        "sequencing_run_barcode": sr_barcode,
+        "sequencing_run_id": sr_run_id,
         "metadata": {"pipeline": "bcl-convert"},
         "metrics": [{
             "name": "demux",
@@ -1421,7 +1394,7 @@ def test_redemux_cleanup_deletes_run_scoped_qcrecords(
     assert get_resp.status_code == 200
 
     # Clear samples (re-demux cleanup)
-    clear_resp = client.delete(f"/api/v1/runs/{sr_barcode}/samples")
+    clear_resp = client.delete(f"/api/v1/runs/{sr_run_id}/samples")
     assert clear_resp.status_code == 200
     assert clear_resp.json()["qcrecords_deleted"] == 1
 

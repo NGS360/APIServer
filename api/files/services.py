@@ -910,6 +910,83 @@ def download_file(s3_path: str, s3_client=None) -> tuple[bytes, str, str]:
         ) from exc
 
 
+def generate_presigned_url(
+    s3_path: str,
+    s3_client=None,
+    expiration: int = 3600,
+) -> str:
+    """
+    Generate a presigned URL for downloading a file from S3.
+
+    Args:
+        s3_path: The S3 URI of the file (e.g., s3://bucket/path/file.txt)
+        s3_client: Optional boto3 S3 client
+        expiration: URL expiration time in seconds (default: 1 hour)
+
+    Returns:
+        Presigned URL string
+
+    Raises:
+        HTTPException: If S3 path is invalid or credentials unavailable
+    """
+    if not BOTO3_AVAILABLE:
+        raise HTTPException(
+            status_code=status.HTTP_501_NOT_IMPLEMENTED,
+            detail="S3 support not available. Install boto3.",
+        )
+
+    try:
+        bucket, key = _parse_s3_path(s3_path)
+
+        if not key:
+            raise ValueError(
+                "S3 path must include a file key, not just a bucket"
+            )
+
+        if s3_client is None:
+            s3_client = boto3.client("s3")
+
+        presigned_url = s3_client.generate_presigned_url(
+            "get_object",
+            Params={"Bucket": bucket, "Key": key},
+            ExpiresIn=expiration,
+        )
+        return presigned_url
+
+    except NoCredentialsError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="AWS credentials not found.",
+        ) from exc
+    except ClientError as exc:
+        error_code = exc.response["Error"]["Code"]
+        if error_code == "NoSuchKey":
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"File not found: {s3_path}",
+            ) from exc
+        elif error_code == "NoSuchBucket":
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="S3 bucket not found",
+            ) from exc
+        elif error_code == "AccessDenied":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Access denied: {s3_path}",
+            ) from exc
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"S3 error: {exc.response['Error']['Message']}",
+            ) from exc
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        ) from e
+
+
 def list_s3_files(uri: str, s3_client=None) -> FileBrowserData:
     """
     List files and folders at the specified S3 URI.

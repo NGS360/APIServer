@@ -47,20 +47,20 @@ from api.runs.services import get_run as get_sequencing_run
 logger = logging.getLogger(__name__)
 
 
-def _resolve_barcode_to_run(
+def _resolve_run_id_to_run(
     session: Session,
-    barcode: str,
+    run_id_str: str,
 ) -> SequencingRun:
     """
-    Resolve a human-readable run barcode to a SequencingRun object.
+    Resolve a human-readable run_id string to a SequencingRun object.
 
-    Raises HTTPException(422) if barcode doesn't match any run.
+    Raises HTTPException(422) if run_id doesn't match any run.
     """
-    run = get_sequencing_run(session=session, run_barcode=barcode)
+    run = get_sequencing_run(session=session, run_id=run_id_str)
     if run is None:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"SequencingRun not found for barcode: {barcode}"
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=f"SequencingRun not found for run_id: {run_id_str}"
         )
     return run
 
@@ -75,29 +75,29 @@ def create_qcrecord(
 
     Supports two scoping modes:
     - project_id: project-scoped (e.g., alignment QC, variant QC)
-    - sequencing_run_barcode: run-scoped (e.g., demux stats)
+    - sequencing_run_id: run-scoped (e.g., demux stats)
 
-    Barcode strings are resolved to UUIDs at this layer.
+    Run ID strings are resolved to UUIDs at this layer.
     """
-    # ── Resolve sequencing_run_barcode → UUID ─────────────────────
-    resolved_run_id: uuid_module.UUID | None = None
-    resolved_run_barcode: str | None = None
-    if qcrecord_create.sequencing_run_barcode:
-        run = _resolve_barcode_to_run(
-            session, qcrecord_create.sequencing_run_barcode
+    # ── Resolve sequencing_run_id string → UUID ───────────────────
+    resolved_run_uuid: uuid_module.UUID | None = None
+    resolved_run_id_str: str | None = None
+    if qcrecord_create.sequencing_run_id:
+        run = _resolve_run_id_to_run(
+            session, qcrecord_create.sequencing_run_id
         )
-        resolved_run_id = run.id
-        resolved_run_barcode = run.barcode
+        resolved_run_uuid = run.id
+        resolved_run_id_str = run.run_id
 
     # ── Check for duplicate record ────────────────────────────────
     existing = _check_duplicate_record(
-        session, qcrecord_create, resolved_run_id
+        session, qcrecord_create, resolved_run_uuid
     )
     if existing:
         scope_label = (
             f"project {qcrecord_create.project_id}"
             if qcrecord_create.project_id
-            else f"run {resolved_run_barcode}"
+            else f"run {resolved_run_id_str}"
         )
         logger.info(
             "Equivalent QC record already exists for %s: %s",
@@ -108,8 +108,7 @@ def create_qcrecord(
             created_on=existing.created_on,
             created_by=existing.created_by,
             project_id=existing.project_id,
-            sequencing_run_id=existing.sequencing_run_id,
-            sequencing_run_barcode=resolved_run_barcode,
+            sequencing_run_id=resolved_run_id_str,
             is_duplicate=True,
         )
 
@@ -123,7 +122,7 @@ def create_qcrecord(
         ).first()
         if not project:
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail=(
                     f"Project not found: {qcrecord_create.project_id}"
                 )
@@ -134,7 +133,7 @@ def create_qcrecord(
         created_on=datetime.now(timezone.utc),
         created_by=created_by,
         project_id=qcrecord_create.project_id,
-        sequencing_run_id=resolved_run_id,
+        sequencing_run_id=resolved_run_uuid,
         workflow_run_id=qcrecord_create.workflow_run_id,
     )
     session.add(qcrecord)
@@ -176,7 +175,7 @@ def create_qcrecord(
     scope_label = (
         f"project {qcrecord.project_id}"
         if qcrecord.project_id
-        else f"run {resolved_run_barcode}"
+        else f"run {resolved_run_id_str}"
     )
     logger.info(
         "Created QC record %s for %s by %s",
@@ -188,8 +187,7 @@ def create_qcrecord(
         created_on=qcrecord.created_on,
         created_by=qcrecord.created_by,
         project_id=qcrecord.project_id,
-        sequencing_run_id=qcrecord.sequencing_run_id,
-        sequencing_run_barcode=resolved_run_barcode,
+        sequencing_run_id=resolved_run_id_str,
         workflow_run_id=qcrecord.workflow_run_id,
         is_duplicate=False,
     )
@@ -202,11 +200,11 @@ def _create_metric(
     project_id: str | None,
 ) -> QCMetric:
     """Create a metric group with its samples and values."""
-    # Resolve sequencing_run_barcode → UUID if provided
+    # Resolve sequencing_run_id string → UUID if provided
     sr_id = None
-    if metric_input.sequencing_run_barcode:
-        run = _resolve_barcode_to_run(
-            session, metric_input.sequencing_run_barcode
+    if metric_input.sequencing_run_id:
+        run = _resolve_run_id_to_run(
+            session, metric_input.sequencing_run_id
         )
         sr_id = run.id
 
@@ -418,15 +416,21 @@ def search_qcrecords(
         else:
             stmt = stmt.where(QCRecord.project_id == project_ids)
 
-    # Filter by sequencing_run_barcode (resolve to UUID)
-    if "sequencing_run_barcode" in filter_on:
-        barcode = filter_on["sequencing_run_barcode"]
+    # Filter by sequencing_run_id string (resolve to UUID)
+    if "sequencing_run_id" in filter_on:
+        run_id_str = filter_on["sequencing_run_id"]
         run = get_sequencing_run(
-            session=session, run_barcode=barcode
+            session=session, run_id=run_id_str
         )
         if run:
+            # Check both record-level and metric-level
+            sr_subq = (
+                select(QCMetric.qcrecord_id)
+                .where(QCMetric.sequencing_run_id == run.id)
+            )
             stmt = stmt.where(
-                QCRecord.sequencing_run_id == run.id
+                (QCRecord.sequencing_run_id == run.id)
+                | col(QCRecord.id).in_(sr_subq)
             )
         else:
             # No matching run → return empty results
@@ -438,21 +442,6 @@ def search_qcrecords(
         if isinstance(wf_run_id, str):
             wf_run_id = uuid_module.UUID(wf_run_id)
         stmt = stmt.where(QCRecord.workflow_run_id == wf_run_id)
-
-    # Filter by sequencing_run_id (via QCMetric direct FK — legacy)
-    if "sequencing_run_id" in filter_on:
-        sr_id_val = filter_on["sequencing_run_id"]
-        if isinstance(sr_id_val, str):
-            sr_id_val = uuid_module.UUID(sr_id_val)
-        # Check both record-level and metric-level
-        sr_subq = (
-            select(QCMetric.qcrecord_id)
-            .where(QCMetric.sequencing_run_id == sr_id_val)
-        )
-        stmt = stmt.where(
-            (QCRecord.sequencing_run_id == sr_id_val)
-            | col(QCRecord.id).in_(sr_subq)
-        )
 
     # Handle metadata filtering
     if "metadata" in filter_on and isinstance(
@@ -582,23 +571,23 @@ def _convert_value_to_type(
     return value_string
 
 
-def _resolve_run_barcode(
+def _resolve_run_id_string(
     session: Session,
-    sequencing_run_id: uuid_module.UUID | None,
+    sequencing_run_uuid: uuid_module.UUID | None,
 ) -> str | None:
-    """Resolve a sequencing_run_id UUID to its barcode string."""
-    if not sequencing_run_id:
+    """Resolve a sequencing_run_id UUID to its run_id string."""
+    if not sequencing_run_uuid:
         return None
-    run = session.get(SequencingRun, sequencing_run_id)
-    return run.barcode if run else None
+    run = session.get(SequencingRun, sequencing_run_uuid)
+    return run.run_id if run else None
 
 
 def _qcrecord_to_public(
     session: Session, record: QCRecord
 ) -> QCRecordPublic:
     """Convert a QCRecord database object to public format."""
-    # Resolve run barcode for record-level and metric-level
-    record_run_barcode = _resolve_run_barcode(
+    # Resolve run_id string for record-level and metric-level
+    record_run_id_str = _resolve_run_id_string(
         session, record.sequencing_run_id
     )
 
@@ -647,16 +636,15 @@ def _qcrecord_to_public(
                 )
             )
 
-        # Resolve metric-level barcode (may differ from record)
-        metric_run_barcode = _resolve_run_barcode(
+        # Resolve metric-level run_id string (may differ from record)
+        metric_run_id_str = _resolve_run_id_string(
             session, metric.sequencing_run_id
         )
 
         metrics.append(MetricPublic(
             name=metric.name,
             samples=metric_sample_publics,
-            sequencing_run_id=metric.sequencing_run_id,
-            sequencing_run_barcode=metric_run_barcode,
+            sequencing_run_id=metric_run_id_str,
             workflow_run_id=metric.workflow_run_id,
             values=[
                 MetricValuePublic(
@@ -741,8 +729,7 @@ def _qcrecord_to_public(
         created_on=record.created_on,
         created_by=record.created_by,
         project_id=record.project_id,
-        sequencing_run_id=record.sequencing_run_id,
-        sequencing_run_barcode=record_run_barcode,
+        sequencing_run_id=record_run_id_str,
         workflow_run_id=record.workflow_run_id,
         metadata=metadata,
         metrics=metrics,

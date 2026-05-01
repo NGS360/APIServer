@@ -29,13 +29,18 @@ from api.project.models import (
     ProjectsPublic,
 )
 from api.search.models import SearchDocument
-from api.search.services import add_object_to_index, delete_index
+from api.search.services import (
+    add_object_to_index, add_objects_to_index, reset_index
+)
 from api.samples.models import (
     Sample,
     SampleAttribute,
     SampleCreate,
     SamplePublic,
     SamplesPublic,
+    SamplesWithFilesPublic,
+    SampleWithFilesPublic,
+    SampleFilePublic,
     Attribute,
 )
 from api.runs.models import SequencingRun, SequencingRunPublic, SampleSequencingRun
@@ -210,6 +215,7 @@ def get_project_by_project_id(session: Session, project_id: str) -> ProjectPubli
     # Convert to public model
     sequencing_runs_public = [
         SequencingRunPublic(
+            run_id=run.run_id,
             run_date=run.run_date,
             machine_id=run.machine_id,
             run_number=run.run_number,
@@ -217,8 +223,7 @@ def get_project_by_project_id(session: Session, project_id: str) -> ProjectPubli
             experiment_name=run.experiment_name,
             run_folder_uri=run.run_folder_uri,
             status=run.status,
-            run_time=run.run_time,
-            barcode=run.barcode,
+            run_time=run.run_time
         )
         for run in sequencing_runs
     ]
@@ -315,6 +320,101 @@ def update_project(
     )
 
 
+def patch_project(
+    *,
+    session: Session,
+    opensearch_client: OpenSearch,
+    project_id: str,
+    update_request: ProjectUpdate,
+) -> ProjectPublic:
+    """
+    Partially update a project using merge/upsert semantics.
+
+    Unlike ``update_project`` (PUT), this does **not** remove attributes
+    that are absent from the request.  Each supplied attribute is upserted:
+    existing keys have their value updated, new keys are inserted, and
+    unmentioned keys are left untouched.  An empty attributes list is a
+    no-op.
+    """
+    # Fetch the project
+    project = session.exec(
+        select(Project).where(Project.project_id == project_id)
+    ).first()
+
+    if not project:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Project {project_id} not found.",
+        )
+
+    # Update name if provided
+    if update_request.name is not None:
+        project.name = update_request.name
+
+    # Merge/upsert attributes (does NOT remove unmentioned attributes)
+    if (
+        update_request.attributes is not None
+        and len(update_request.attributes) > 0
+    ):
+        # Prevent duplicate keys in the request
+        seen = set()
+        keys = [attr.key for attr in update_request.attributes]
+        dups = [k for k in keys if k in seen or seen.add(k)]
+        if dups:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    f"Duplicate keys ({', '.join(dups)}) are not "
+                    f"allowed in project attributes."
+                ),
+            )
+
+        for attr in update_request.attributes:
+            existing_attr = session.exec(
+                select(ProjectAttribute).where(
+                    ProjectAttribute.project_id == project.id,
+                    ProjectAttribute.key == attr.key,
+                )
+            ).first()
+
+            if existing_attr:
+                existing_attr.value = attr.value
+            else:
+                session.add(
+                    ProjectAttribute(
+                        project_id=project.id,
+                        key=attr.key,
+                        value=attr.value,
+                    )
+                )
+
+    session.commit()
+    session.refresh(project)
+
+    # Update project in opensearch
+    if opensearch_client:
+        search_doc = SearchDocument(
+            id=project.project_id, body=project
+        )
+        add_object_to_index(
+            opensearch_client, search_doc, index="projects"
+        )
+
+    data_bucket = get_setting_value(session, "DATA_BUCKET_URI")
+    results_bucket = get_setting_value(session, "RESULTS_BUCKET_URI")
+
+    return ProjectPublic(
+        project_id=project.project_id,
+        name=project.name,
+        data_folder_uri=f"{data_bucket}/{project.project_id}/",
+        results_folder_uri=(
+            f"{results_bucket}/{project.project_id}/"
+        ),
+        attributes=project.attributes,
+        sequencing_runs=None,
+    )
+
+
 def search_projects(
     session: Session,
     client: OpenSearch,
@@ -368,13 +468,19 @@ def reindex_projects(
     """
     Index all projects in database with OpenSearch
     """
-    delete_index(client, "projects")
     projects = session.exec(
         select(Project).order_by(Project.project_id)
     ).all()
+
+    # Prepare all documents
+    search_docs = []
     for project in projects:
         search_doc = SearchDocument(id=project.project_id, body=project)
-        add_object_to_index(client, search_doc, index="projects")
+        search_docs.append(search_doc)
+
+    reset_index(client, "projects")
+    # Bulk index all documents in one call
+    add_objects_to_index(client, search_docs, "projects")
 
 
 def submit_pipeline_job(
@@ -567,19 +673,39 @@ def add_sample_to_project(
     opensearch_client: OpenSearch,
     project: Project,
     sample_in: SampleCreate,
+    created_by: str | None = None,
 ) -> Sample:
     """
     Create a new sample with optional attributes in a project.
+
+    If ``sample_in.run_id`` is provided the sample is also associated
+    with the corresponding sequencing run in the **same** transaction.
 
     Args:
         session: Database session
         opensearch_client: OpenSearch client for indexing
         project: The project object (already validated)
-        sample_in: Sample creation data
+        sample_in: Sample creation data (may include run_id)
+        created_by: Username recorded on any SampleSequencingRun row
 
     Returns:
         Sample instance
     """
+    from api.runs.services import get_run
+
+    # Resolve run up-front so we can fail fast before creating the sample
+    run = None
+    if sample_in.run_id:
+        try:
+            run = get_run(session=session, run_id=sample_in.run_id)
+        except (ValueError, Exception):
+            run = None
+        if run is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Run with run_id '{sample_in.run_id}' not found.",
+            )
+
     # Create initial sample
     sample = Sample(sample_id=sample_in.sample_id, project_id=project.project_id)
     session.add(sample)
@@ -606,13 +732,35 @@ def add_sample_to_project(
         # Update database with attribute links
         session.add_all(sample_attributes)
 
+    # Associate with sequencing run if requested
+    if run is not None:
+        assoc = SampleSequencingRun(
+            sample_id=sample.id,
+            sequencing_run_id=run.id,
+            created_by=created_by or "api",
+        )
+        session.add(assoc)
+
+    # Create associated files if provided
+    if sample_in.files:
+        from api.samples.services import _create_sample_files
+        _create_sample_files(
+            session=session,
+            sample=sample,
+            project_uuid=project.id,
+            file_inputs=sample_in.files,
+        )
+
     session.commit()
     session.refresh(sample)
 
-    # Add sample to opensearch
+    # Add sample to opensearch (best-effort; DB is source of truth)
     if opensearch_client:
         search_doc = SearchDocument(id=str(sample.id), body=sample)
-        add_object_to_index(opensearch_client, search_doc, index="samples")
+        try:
+            add_object_to_index(opensearch_client, search_doc, index="samples")
+        except Exception:
+            pass  # best-effort indexing; can be resynced via /reindex
 
     return sample
 
@@ -625,7 +773,8 @@ def get_project_samples(
     per_page: PositiveInt,
     sort_by: str,
     sort_order: Literal["asc", "desc"],
-) -> SamplesPublic:
+    include: list[str] | None = None,
+) -> SamplesPublic | SamplesWithFilesPublic:
     """
     Get a paginated list of samples for a specific project.
 
@@ -636,10 +785,17 @@ def get_project_samples(
         per_page: Number of items per page
         sort_by: Column name to sort by
         sort_order: Sort direction ('asc' or 'desc')
+        include: Optional list of related data to include (e.g. ``["files"]``)
 
     Returns:
-        SamplesPublic: Paginated list of samples for the project
+        SamplesPublic or SamplesWithFilesPublic depending on *include*
     """
+    from sqlalchemy.orm import selectinload
+
+    from api.files.models import FileSample, File
+
+    include_files = include is not None and "files" in include
+
     # Get the total count of samples for the project
     total_count = session.exec(
         select(func.count()).select_from(Sample).where(Sample.project_id == project.project_id)
@@ -654,6 +810,14 @@ def get_project_samples(
     # Build the select statement
     statement = select(Sample).where(Sample.project_id == project.project_id)
 
+    # Eagerly load file associations when requested
+    if include_files:
+        statement = statement.options(
+            selectinload(Sample.file_samples)  # type: ignore[attr-defined]
+            .selectinload(FileSample.file)  # type: ignore[attr-defined]
+            .selectinload(File.tags)  # type: ignore[attr-defined]
+        )
+
     # Add sorting
     if hasattr(Sample, sort_by):
         sort_column = getattr(Sample, sort_by)
@@ -667,16 +831,6 @@ def get_project_samples(
     # Execute the query
     samples = session.exec(statement).all()
 
-    # Map to public samples
-    public_samples = [
-        SamplePublic(
-            sample_id=sample.sample_id,
-            project_id=sample.project_id,
-            attributes=sample.attributes,
-        )
-        for sample in samples
-    ]
-
     # Collect all unique attribute keys across all samples for data_cols
     data_cols = None
     if samples:
@@ -687,8 +841,46 @@ def get_project_samples(
                     all_keys.add(attr.key)
         data_cols = sorted(list(all_keys)) if all_keys else None
 
+    # Build response with or without files
+    if include_files:
+        public_samples = []
+        for sample in samples:
+            files = []
+            for fs in sample.file_samples or []:
+                file = fs.file
+                tags_dict = {t.key: t.value for t in (file.tags or [])}
+                files.append(SampleFilePublic(uri=file.uri, tags=tags_dict or None))
+            public_samples.append(
+                SampleWithFilesPublic(
+                    sample_id=sample.sample_id,
+                    project_id=sample.project_id,
+                    attributes=sample.attributes,
+                    files=files if files else None,
+                )
+            )
+        return SamplesWithFilesPublic(
+            data=public_samples,
+            data_cols=data_cols,
+            total_items=total_count,
+            total_pages=total_pages,
+            current_page=page,
+            per_page=per_page,
+            has_next=page < total_pages,
+            has_prev=page > 1,
+        )
+
+    # Default: no files
+    public_samples_plain = [
+        SamplePublic(
+            sample_id=sample.sample_id,
+            project_id=sample.project_id,
+            attributes=sample.attributes,
+        )
+        for sample in samples
+    ]
+
     return SamplesPublic(
-        data=public_samples,
+        data=public_samples_plain,
         data_cols=data_cols,
         total_items=total_count,
         total_pages=total_pages,

@@ -12,15 +12,16 @@ PUT    /api/v1/jobs/[id]    Update a batch job
 from typing import Optional, Literal
 from fastapi import APIRouter, HTTPException, Query, status
 from core.deps import SessionDep
+from core.models import HTTPErrorResponse
 from api.jobs.models import (
     BatchJobSubmit,
     BatchJobUpdate,
     BatchJobPublic,
     BatchJobsPublic,
-    JobStatus
+    JobStatus,
+    LogResponse
 )
 from api.jobs import services
-import uuid
 
 router = APIRouter(prefix="/jobs", tags=["Job Endpoints"])
 
@@ -71,41 +72,6 @@ def submit_job(
         user=job_in.user,
     )
     return BatchJobPublic.model_validate(job)
-
-
-@router.put(
-    "",
-    response_model=BatchJobPublic,
-    tags=["Job Endpoints"],
-)
-def find_and_update_job(
-    session: SessionDep,
-    job_update: BatchJobUpdate,
-) -> BatchJobPublic:
-    """
-    Find and Update a batch job.
-
-    Args:
-        session: Database session
-        job_update: Job update data
-
-    Returns:
-        Updated job information
-    """
-    # Make sure there is an aws_job_id to find the job
-    if not job_update.aws_job_id:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="aws_job_id is required"
-        )
-    job = services.get_batch_job_by_aws_id(session, job_update.aws_job_id)
-    if not job:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"No job found with aws_job_id {job_update.aws_job_id}"
-        )
-    updated_job = services.update_batch_job(session, job.id, job_update)
-    return BatchJobPublic.model_validate(updated_job)
 
 
 @router.get(
@@ -160,22 +126,30 @@ def get_jobs(
     "/{job_id}",
     response_model=BatchJobPublic,
     tags=["Job Endpoints"],
+    responses={
+        404: {"model": HTTPErrorResponse, "description": "Job not found"}
+    }
 )
 def get_job(
     session: SessionDep,
-    job_id: uuid.UUID,
+    job_id: str,
 ) -> BatchJobPublic:
     """
     Retrieve information about a specific batch job.
 
     Args:
         session: Database session
-        job_id: Job UUID
+        job_id: string representation of the job UUID
 
     Returns:
         Job information
     """
     job = services.get_batch_job(session, job_id)
+    if not job:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"No job found with id {job_id}"
+        )
     return BatchJobPublic.model_validate(job)
 
 
@@ -183,14 +157,17 @@ def get_job(
     "/{job_id}",
     response_model=BatchJobPublic,
     tags=["Job Endpoints"],
+    responses={
+        404: {"model": HTTPErrorResponse, "description": "Job not found"}
+    }
 )
 def update_job(
     session: SessionDep,
-    job_id: uuid.UUID,
+    job_id: str,
     job_update: BatchJobUpdate,
 ) -> BatchJobPublic:
     """
-    Update a batch job.
+    Find and Update a batch job.
 
     Args:
         session: Database session
@@ -200,18 +177,32 @@ def update_job(
     Returns:
         Updated job information
     """
-    job = services.update_batch_job(session, job_id, job_update)
-    return BatchJobPublic.model_validate(job)
+    # Make sure there is an id to find the job
+    job = services.get_batch_job(session, job_id)
+    if not job:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"No job found with id {job_id}"
+        )
+    updated_job = services.update_batch_job(session, job, job_update)
+    return BatchJobPublic.model_validate(updated_job)
 
+
+###############################################################################
+# Job Endpoints /api/v1/jobs/{job_id}/log
+###############################################################################
 
 @router.get(
     "/{job_id}/log",
     response_model=list[str],
     tags=["Job Endpoints"],
+    responses={
+        404: {"model": HTTPErrorResponse, "description": "Job not found"}
+    }
 )
 def get_job_log(
     session: SessionDep,
-    job_id: uuid.UUID,
+    job_id: str,
 ) -> list[str]:
     """
     Retrieve log for a specific batch job.
@@ -221,7 +212,57 @@ def get_job_log(
         job_id: Job UUID
 
     Returns:
-        List of log lines
+        Log output as a list of strings
     """
     logs = services.get_batch_job_log(session, job_id)
     return logs
+
+
+@router.get(
+    "/{job_id}/log/paginated",
+    response_model=LogResponse,
+    tags=["Job Endpoints"],
+    responses={
+        404: {"model": HTTPErrorResponse, "description": "Job not found"}
+    }
+)
+def get_job_log_paginated(
+    session: SessionDep,
+    job_id: str,
+    limit: int = Query(1000, ge=1, le=10000, description="Number of log lines to return"),
+    next_token: Optional[str] = Query(None, description="Token for next page of results"),
+    start_from_head: bool = Query(True, description="Start from beginning (true) or end (false)"),
+) -> LogResponse:
+    """
+    Get paginated logs for a specific batch job.
+
+    This endpoint returns logs in pages, allowing clients to fetch large log files
+    incrementally without timeouts.
+
+    Args:
+        session: Database session
+        job_id: Job UUID
+        limit: Maximum number of log lines to return (1-10000)
+        next_token: Pagination token from previous response
+        start_from_head: If true, start from oldest logs; if false, start from newest
+
+    Returns:
+        Paginated log response with events and next_token for subsequent requests
+
+    Example usage:
+        1. First request: GET /jobs/{id}/log/paginated?limit=1000
+        2. Next page: GET /jobs/{id}/log/paginated?limit=1000&next_token={token}
+    """
+    job = services.get_batch_job(session, job_id)
+    if not job or not job.log_stream_name:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Job or log not found"
+        )
+
+    return services.get_batch_job_log_paginated(
+        log_stream_name=job.log_stream_name,
+        limit=limit,
+        next_token=next_token,
+        start_from_head=start_from_head
+    )

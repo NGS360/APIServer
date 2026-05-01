@@ -2,9 +2,9 @@
 Routes/endpoints for the Project API
 """
 
-from typing import Literal
-from fastapi import APIRouter, Query, status, Depends
-from core.deps import SessionDep, OpenSearchDep, get_s3_client
+from typing import Literal, List as TypingList
+from fastapi import APIRouter, Query, status
+from core.deps import SessionDep, OpenSearchDep, S3ClientDep
 from api.auth.deps import CurrentUser
 from api.jobs.models import BatchJobPublic
 from api.project.deps import ProjectDep
@@ -14,8 +14,17 @@ from api.project.models import (
     ProjectPublic,
     ProjectsPublic,
 )
-from api.samples.models import SampleCreate, SamplePublic, SamplesPublic, Attribute
+from api.samples.models import (
+    SampleCreate,
+    SamplePublic,
+    SamplesPublic,
+    SamplesWithFilesPublic,
+    Attribute,
+    BulkSampleCreateRequest,
+    BulkSampleCreateResponse,
+)
 from api.project import services
+from api.samples import services as sample_services
 from api.actions.models import ActionSubmitRequest
 
 router = APIRouter(prefix="/projects")
@@ -153,9 +162,41 @@ def update_project(
     update_request: ProjectUpdate
 ) -> ProjectPublic:
     """
-    Update information about a specific project.
+    Full replacement update of a project.
+
+    Attributes provided here **replace** all existing attributes.
+    To merge/upsert attributes without removing unmentioned ones,
+    use ``PATCH /{project_id}`` instead.
     """
     return services.update_project(
+        session=session,
+        opensearch_client=opensearch_client,
+        project_id=project.project_id,
+        update_request=update_request,
+    )
+
+
+@router.patch(
+    "/{project_id}",
+    status_code=status.HTTP_200_OK,
+    tags=["Project Endpoints"],
+    response_model=ProjectPublic,
+)
+def patch_project(
+    session: SessionDep,
+    opensearch_client: OpenSearchDep,
+    project: ProjectDep,
+    update_request: ProjectUpdate,
+) -> ProjectPublic:
+    """
+    Partially update a project using merge/upsert semantics.
+
+    Unlike PUT, this does **not** remove attributes that are absent
+    from the request.  Each supplied attribute is upserted: existing
+    keys are updated, new keys are inserted, and unmentioned keys
+    are left untouched.  An empty attributes list is a no-op.
+    """
+    return services.patch_project(
         session=session,
         opensearch_client=opensearch_client,
         project_id=project.project_id,
@@ -178,20 +219,65 @@ def add_sample_to_project(
     opensearch_client: OpenSearchDep,
     project: ProjectDep,
     sample_in: SampleCreate,
+    current_user: CurrentUser,
 ) -> SamplePublic:
     """
     Create a new sample with optional attributes.
+
+    If ``run_id`` is provided in the request body, the sample is also
+    associated with the specified sequencing run in the same transaction.
     """
-    return services.add_sample_to_project(
+    sample = services.add_sample_to_project(
         session=session,
         opensearch_client=opensearch_client,
         project=project,
         sample_in=sample_in,
+        created_by=current_user.username,
+    )
+    return SamplePublic(
+        sample_id=sample.sample_id,
+        project_id=sample.project_id,
+        attributes=[
+            Attribute(key=a.key, value=a.value)
+            for a in (sample.attributes or [])
+        ],
+        run_id=sample_in.run_id,
+    )
+
+
+@router.post(
+    "/{project_id}/samples/bulk",
+    tags=["Project Endpoints"],
+    status_code=status.HTTP_201_CREATED,
+    response_model=BulkSampleCreateResponse,
+)
+def bulk_create_samples(
+    session: SessionDep,
+    opensearch_client: OpenSearchDep,
+    project: ProjectDep,
+    current_user: CurrentUser,
+    body: BulkSampleCreateRequest,
+) -> BulkSampleCreateResponse:
+    """
+    Create multiple samples in a single atomic transaction.
+
+    Each sample in the list may optionally include a ``run_barcode``
+    to associate the sample with a sequencing run at creation time.
+    All samples succeed or fail together.
+    """
+    return sample_services.bulk_create_samples(
+        session=session,
+        opensearch_client=opensearch_client,
+        project=project,
+        samples_in=body.samples,
+        created_by=current_user.username,
     )
 
 
 @router.get(
-    "/{project_id}/samples", tags=["Project Endpoints"], response_model=SamplesPublic
+    "/{project_id}/samples",
+    tags=["Project Endpoints"],
+    response_model=SamplesWithFilesPublic | SamplesPublic,
 )
 def get_project_samples(
     session: SessionDep,
@@ -202,9 +288,14 @@ def get_project_samples(
     sort_order: Literal["asc", "desc"] = Query(
         "asc", description="Sort order (asc or desc)"
     ),
-) -> SamplesPublic:
+    include: TypingList[str] | None = Query(
+        None, description="Include related data: files"
+    ),
+) -> SamplesWithFilesPublic | SamplesPublic:
     """
     Returns a paginated list of samples.
+
+    Pass ``?include=files`` to eagerly load file metadata for each sample.
     """
     return services.get_project_samples(
         session=session,
@@ -213,6 +304,7 @@ def get_project_samples(
         per_page=per_page,
         sort_by=sort_by,
         sort_order=sort_order,
+        include=include,
     )
 
 
@@ -254,7 +346,7 @@ def submit_pipeline_job(
     request: ActionSubmitRequest,
     current_user: CurrentUser,
     session: SessionDep,
-    s3_client=Depends(get_s3_client),
+    s3_client: S3ClientDep,
 ) -> BatchJobPublic:
     """
     Submit a pipeline job to AWS Batch for a project.
@@ -308,7 +400,7 @@ def ingest_vendor_data(
     session: SessionDep,
     project: ProjectDep,
     user: CurrentUser,
-    s3_client=Depends(get_s3_client),
+    s3_client: S3ClientDep,
     files_uri: str = Query(
         ..., description="Source Bucket/Prefix of the data to be ingested"
     ),

@@ -13,13 +13,13 @@ anyio==4.12.1
     #   httpx
     #   starlette
     #   watchfiles
-authlib==1.6.9
+authlib==1.6.11
     # via ngs360-server (pyproject.toml)
 bcrypt==4.3.0
     # via ngs360-server (pyproject.toml)
-boto3==1.42.6
+boto3==1.42.78
     # via ngs360-server (pyproject.toml)
-botocore==1.42.68
+botocore==1.42.85
     # via
     #   boto3
     #   s3transfer
@@ -40,14 +40,14 @@ click==8.3.1
     #   sample-sheet
     #   typer
     #   uvicorn
-cryptography==46.0.5
+cryptography==46.0.7
     # via
     #   ngs360-server (pyproject.toml)
     #   authlib
     #   python-jose
 dnspython==2.8.0
     # via email-validator
-ecdsa==0.19.1
+ecdsa==0.19.2
     # via python-jose
 email-validator==2.3.0
     # via
@@ -58,11 +58,11 @@ events==0.5
     # via opensearch-py
 fastapi==0.135.1
     # via ngs360-server (pyproject.toml)
-fastapi-cli==0.0.23
+fastapi-cli==0.0.24
     # via fastapi
 fastapi-cloud-cli==0.6.0
     # via fastapi-cli
-fastar==0.9.0
+fastar==0.11.0
     # via fastapi-cloud-cli
 grpcio==1.78.0
     # via opensearch-protobufs
@@ -109,7 +109,7 @@ opensearch-protobufs==0.19.0
     # via opensearch-py
 opensearch-py==3.1.0
     # via ngs360-server (pyproject.toml)
-packaging==26.0
+packaging==26.2
     # via gunicorn
 protobuf==7.34.1
     # via opensearch-protobufs
@@ -135,7 +135,7 @@ pydantic-settings==2.12.0
     # via
     #   ngs360-server (pyproject.toml)
     #   fastapi
-pygments==2.19.2
+pygments==2.20.0
     # via rich
 pymysql==1.1.2
     # via ngs360-server (pyproject.toml)
@@ -143,14 +143,14 @@ python-dateutil==2.9.0.post0
     # via
     #   botocore
     #   opensearch-py
-python-dotenv==1.2.1
+python-dotenv==1.2.2
     # via
     #   ngs360-server (pyproject.toml)
     #   pydantic-settings
     #   uvicorn
 python-jose==3.5.0
     # via ngs360-server (pyproject.toml)
-python-multipart==0.0.22
+python-multipart==0.0.26
     # via
     #   ngs360-server (pyproject.toml)
     #   fastapi
@@ -158,7 +158,7 @@ pytz==2026.1.post1
     # via ngs360-server (pyproject.toml)
 pyyaml==6.0.3
     # via uvicorn
-requests==2.32.5
+requests==2.33.1
     # via
     #   opensearch-py
     #   sample-sheet
@@ -188,13 +188,13 @@ six==1.17.0
     #   python-dateutil
 smart-open==7.5.0
     # via ngs360-server (pyproject.toml)
-sqlalchemy==2.0.45
+sqlalchemy==2.0.49
     # via
     #   alembic
     #   sqlmodel
 sqlmodel==0.0.37
     # via ngs360-server (pyproject.toml)
-starlette==0.52.1
+starlette==1.0.0
     # via fastapi
 tabulate==0.9.0
     # via sample-sheet
@@ -238,5 +238,5 @@ watchfiles==1.1.1
     # via uvicorn
 websockets==16.0
     # via uvicorn
-wrapt==2.1.1
+wrapt==2.1.2
     # via smart-open

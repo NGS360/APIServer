@@ -368,6 +368,37 @@ class MockS3Client:
 
         return {"ETag": '"mock-etag"', "VersionId": "mock-version-id"}
 
+    def generate_presigned_url(
+        self, ClientMethod: str, Params: dict = None, ExpiresIn: int = 3600
+    ):
+        """Mock S3 generate_presigned_url operation"""
+        from botocore.exceptions import NoCredentialsError, ClientError
+
+        # Check for simulated errors
+        if self.error_mode == "NoCredentialsError":
+            raise NoCredentialsError()
+        elif self.error_mode == "NoSuchBucket":
+            error_response = {
+                "Error": {
+                    "Code": "NoSuchBucket",
+                    "Message": "The specified bucket does not exist",
+                }
+            }
+            raise ClientError(error_response, "GeneratePresignedUrl")
+        elif self.error_mode == "AccessDenied":
+            error_response = {
+                "Error": {"Code": "AccessDenied", "Message": "Access Denied"}
+            }
+            raise ClientError(error_response, "GeneratePresignedUrl")
+
+        Params = Params or {}
+        bucket = Params.get("Bucket", "mock-bucket")
+        key = Params.get("Key", "mock-key")
+        return (
+            f"https://{bucket}.s3.amazonaws.com/{key}"
+            f"?X-Amz-Expires={ExpiresIn}&X-Amz-Signature=mock-signature"
+        )
+
     def head_object(self, Bucket: str, Key: str, **kwargs):
         """Mock S3 head_object operation - check if object exists"""
         from botocore.exceptions import NoCredentialsError, ClientError

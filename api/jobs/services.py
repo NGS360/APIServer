@@ -1,7 +1,7 @@
 """
 Services for managing batch jobs.
 """
-from typing import Any, List, Dict, Literal
+from typing import Any, List, Dict, Literal, Optional
 from sqlmodel import select, Session, func
 from fastapi import HTTPException, status
 import uuid
@@ -12,47 +12,12 @@ from core.logger import logger
 
 from api.jobs.models import (
     BatchJob,
-    BatchJobCreate,
     BatchJobUpdate,
     JobStatus
 )
 
 
-def create_batch_job(session: Session, job_in: BatchJobCreate) -> BatchJob:
-    """
-    Create a new batch job.
-
-    Args:
-        session: Database session
-        job_in: Job creation data
-
-    Returns:
-        Created BatchJob instance
-    """
-    job = BatchJob.model_validate(job_in)
-    session.add(job)
-    session.commit()
-    session.refresh(job)
-    logger.info(f"Created batch job: {job.id}")
-    return job
-
-
-def get_batch_job_by_aws_id(session: Session, aws_job_id: str) -> BatchJob | None:
-    """
-    Find a batch job by its AWS job ID.
-
-    Args:
-        session: Database session
-        aws_job_id: AWS job ID to search for
-
-    Returns:
-        BatchJob instance if found, otherwise None
-    """
-    statement = select(BatchJob).where(BatchJob.aws_job_id == aws_job_id)
-    return session.exec(statement).first()
-
-
-def get_batch_job(session: Session, job_id: uuid.UUID) -> BatchJob:
+def get_batch_job(session: Session, job_id: str) -> BatchJob | None:
     """
     Retrieve a batch job by ID.
 
@@ -61,18 +26,9 @@ def get_batch_job(session: Session, job_id: uuid.UUID) -> BatchJob:
         job_id: Job UUID
 
     Returns:
-        BatchJob instance
-
-    Raises:
-        HTTPException: If job not found
+        BatchJob instance or None if not found
     """
-    job = session.get(BatchJob, job_id)
-    if not job:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Batch job {job_id} not found"
-        )
-    return job
+    return session.get(BatchJob, job_id)
 
 
 def get_batch_jobs(
@@ -123,7 +79,7 @@ def get_batch_jobs(
 
 def update_batch_job(
     session: Session,
-    job_id: uuid.UUID,
+    job: BatchJob,
     job_update: BatchJobUpdate
 ) -> BatchJob:
     """
@@ -131,7 +87,7 @@ def update_batch_job(
 
     Args:
         session: Database session
-        job_id: Job UUID
+        job: BatchJob instance to update
         job_update: Job update data
 
     Returns:
@@ -140,8 +96,6 @@ def update_batch_job(
     Raises:
         HTTPException: If job not found
     """
-    job = get_batch_job(session, job_id)
-
     update_data = job_update.model_dump(exclude_unset=True)
     for key, value in update_data.items():
         setattr(job, key, value)
@@ -149,7 +103,7 @@ def update_batch_job(
     session.add(job)
     session.commit()
     session.refresh(job)
-    logger.info(f"Updated batch job: {job_id}")
+    logger.info(f"Updated batch job: {job.id}")
     return job
 
 
@@ -179,7 +133,6 @@ def submit_batch_job(
         f"Submitting job '{job_name}' to AWS Batch queue '{job_queue}' "
         f"with definition '{job_def}'"
     )
-    logger.info(f"Container overrides: {container_overrides}")
 
     # Extract command from container overrides (expecting list)
     command = " ".join(container_overrides.get("command", []))
@@ -190,6 +143,7 @@ def submit_batch_job(
     container_overrides["environment"].append(
         {"name": "NGS360_API_ENDPOINT", "value": settings.client_origin}
     )
+    logger.info(f"Container overrides: {container_overrides}")
 
     try:
         batch_client = boto3.client("batch", region_name=settings.AWS_REGION)
@@ -206,20 +160,19 @@ def submit_batch_job(
             detail=f"Failed to submit job to AWS Batch: {err}",
         ) from err
 
-    # Create database record with AWS job information
-    job_create = BatchJobCreate(
+    job = BatchJob(
+        id=response.get("jobId"),
         name=job_name,
         command=command,
         user=user,
-        aws_job_id=response.get("jobId"),
         status=JobStatus.SUBMITTED
     )
+    session.add(job)
+    session.commit()
+    session.refresh(job)
+    logger.info(f"Created batch job: {job.id}")
 
-    batch_job = create_batch_job(session, job_create)
-    logger.info(f"Created database record for Job {response.get('jobId')} "
-                f"/ AWS Batch job {batch_job.aws_job_id}")
-
-    return batch_job
+    return job
 
 
 def get_batch_job_log(session: Session, job_id: uuid.UUID) -> list[str]:
@@ -232,10 +185,10 @@ def get_batch_job_log(session: Session, job_id: uuid.UUID) -> list[str]:
     Returns:
         Log output as a list of strings
     """
-    job = get_batch_job(session, job_id)
+    job = session.get(BatchJob, job_id)
 
-    if not job.aws_job_id or not job.log_stream_name:
-        logger.warning(f"Job {job_id} does not have AWS job ID or log stream name")
+    if not job or not job.log_stream_name:
+        logger.warning(f"Job {job_id} not available or does not have a log stream name")
         return []
 
     log_group = "/aws/batch/job"
@@ -262,13 +215,13 @@ def get_log_events(log_group, log_stream_name, start_time=None, end_time=None):
     if end_time:
         kwargs['endTime'] = end_time
 
+    settings = get_settings()
+    logs_client = boto3.client('logs', region_name=settings.AWS_REGION)
+
     events = []
     while True:
         try:
-            resp = boto3.client(
-                'logs',
-                region_name=get_settings().AWS_REGION
-            ).get_log_events(**kwargs)
+            resp = logs_client.get_log_events(**kwargs)
         except botocore.exceptions.ClientError:
             return ["No log (yet) available"]
         for event in resp['events']:
@@ -279,3 +232,90 @@ def get_log_events(log_group, log_stream_name, start_time=None, end_time=None):
             break
         kwargs['nextToken'] = next_forward_token
     return events
+
+
+def get_batch_job_log_paginated(
+    log_stream_name: str,
+    limit: int = 1000,
+    next_token: Optional[str] = None,
+    start_from_head: bool = True
+) -> dict:
+    """
+    Retrieve paginated log output for a batch job.
+
+    Args:
+        log_stream_name: CloudWatch log stream name
+        limit: Maximum number of log events to return
+        next_token: Token for retrieving next page
+        start_from_head: Start from oldest (true) or newest (false) logs
+
+    Returns:
+        Dictionary with events, next_token, has_more, and total_events
+    """
+    log_group = "/aws/batch/job"
+    settings = get_settings()
+
+    logger.info(
+        f"Fetching paginated logs: stream={log_stream_name}, "
+        f"limit={limit}, has_token={next_token is not None}, "
+        f"start_from_head={start_from_head}"
+    )
+
+    logs_client = boto3.client('logs', region_name=settings.AWS_REGION)
+
+    kwargs = {
+        'logGroupName': log_group,
+        'logStreamName': log_stream_name,
+        'limit': limit,
+        'startFromHead': start_from_head,
+    }
+
+    # Add pagination token if provided
+    if next_token:
+        kwargs['nextToken'] = next_token
+
+    try:
+        resp = logs_client.get_log_events(**kwargs)
+
+        events = [event['message'] for event in resp.get('events', [])]
+        returned_next_token = resp.get('nextForwardToken') \
+            if start_from_head else resp.get('nextBackwardToken')
+
+        # Determine if there are more pages
+        # If the token changed, there might be more data
+        has_more = (
+            returned_next_token is not None and
+            returned_next_token != next_token and
+            len(events) > 0
+        )
+
+        logger.info(
+            f"Retrieved {len(events)} events, "
+            f"has_more={has_more}, "
+            f"next_token={returned_next_token[:20] if returned_next_token else None}"
+        )
+
+        return {
+            "events": events,
+            "next_token": returned_next_token,
+            "has_more": has_more,
+            "total_events": len(events)
+        }
+
+    except botocore.exceptions.ClientError as e:
+        error_code = e.response.get('Error', {}).get('Code', 'Unknown')
+
+        if error_code == 'ResourceNotFoundException':
+            logger.warning(f"Log stream not found: {log_stream_name}")
+            return {
+                "events": ["No logs available yet"],
+                "next_token": None,
+                "has_more": False,
+                "total_events": 0
+            }
+
+        logger.error(f"Error fetching logs: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to retrieve logs: {str(e)}"
+        ) from e

@@ -36,64 +36,72 @@ def test_user_fixture(session: Session):
 
 
 def test_add_run(client: TestClient):
-    """Test that we can add a run"""
-    # Test No runs, this also ensure we are using the test db
-    response = client.get("/api/v1/runs")
-    assert response.status_code == 200
-    assert response.json() == {
-        "data": [],
-        "total_items": 0,
-        "total_pages": 0,
-        "current_page": 1,
-        "per_page": 20,
-        "has_next": False,
-        "has_prev": False,
-    }
+    """
+    Test that we can add a run to the database,
+    and that the run_id field is correctly stored and returned,
+    even if it contains the flowcell id as a substring.
+    """
 
-    # Add a run to the database
     new_run = {
+        "run_id": "THIS_IS_A_TEST_RUN_ID",
         "run_date": "2019-01-10",
         "machine_id": "MACHINE123",
-        "run_number": 1,
+        "run_number": "0001",
         "flowcell_id": "FLOWCELL123",
         "experiment_name": "Test Experiment",
         "run_folder_uri": "s3://bucket/path/to/run",
         "status": RunStatus.READY,
     }
+
+    # Test
     response = client.post("/api/v1/runs", json=new_run)
+
+    # Check that the run was added
     assert response.status_code == 201
     data = response.json()
+    assert data["run_id"] == "THIS_IS_A_TEST_RUN_ID"
     assert data["run_date"] == "2019-01-10"
     assert data["machine_id"] == "MACHINE123"
-    assert data["run_number"] == 1
+    assert data["run_number"] == "1"
     assert data["flowcell_id"] == "FLOWCELL123"
     assert data["experiment_name"] == "Test Experiment"
     assert data["run_folder_uri"] == "s3://bucket/path/to/run"
     assert data["status"] == RunStatus.READY.value
-    assert data["barcode"] == "190110_MACHINE123_0001_FLOWCELL123"
 
+
+def test_add_run_with_empty_run_time(client: TestClient):
+    """Test that adding a run with an empty run_time stores None."""
     # Add a run with empty run_time string
     new_run = {
+        "run_id": "TEST_RUN_WITH_EMPTY_RUN_TIME",
         "run_date": "2019-01-10",
         "machine_id": "MACHINE123",
-        "run_number": 2,
+        "run_number": "2",
         "flowcell_id": "FLOWCELL123",
         "experiment_name": "Test Experiment",
         "run_folder_uri": "s3://bucket/path/to/run",
         "status": RunStatus.READY,
         "run_time": "",
     }
+
+    # Test
     response = client.post("/api/v1/runs", json=new_run)
+
+    # Check that the run was added and run_time is set to None
     assert response.status_code == 201
     data = response.json()
     assert data["run_time"] is None
-    assert data["barcode"] == "190110_MACHINE123_0002_FLOWCELL123"
+    assert data["run_id"] == "TEST_RUN_WITH_EMPTY_RUN_TIME"
 
+
+def test_add_run_with_invalid_run_time(client: TestClient):
+    """Test that we cannot add a run with an invalid run_time field"""
     # Try to add a run with an invalid run_time field
     new_run = {
+        "run_id": "TEST_RUN_WITH_INVALID_RUN_TIME",
         "run_date": "2019-01-10",
         "machine_id": "MACHINE123",
-        "run_number": 3,
+        "run_number": "3",
         "flowcell_id": "FLOWCELL123",
         "experiment_name": "Test Experiment",
         "run_folder_uri": "s3://bucket/path/to/run",
@@ -103,11 +111,15 @@ def test_add_run(client: TestClient):
     response = client.post("/api/v1/runs", json=new_run)
     assert response.status_code == 422
 
-    # Add a run with valid run_time
+
+def test_add_run_with_ont_style_barcode(client: TestClient):
+    """Test that a run with an ONT-style run_id (including run_time) is stored correctly."""
+    # Add a run with valid run_time field - ONT style barcode
     new_run = {
+        "run_id": "20190110_1230_MACHINE-123_FLOWCELL123_04abcd",
         "run_date": "2019-01-10",
-        "machine_id": "MACHINE123",
-        "run_number": 4,
+        "machine_id": "MACHINE-123",
+        "run_number": "04abcd",
         "flowcell_id": "FLOWCELL123",
         "experiment_name": "Test Experiment",
         "run_folder_uri": "s3://bucket/path/to/run",
@@ -116,12 +128,18 @@ def test_add_run(client: TestClient):
     }
     response = client.post("/api/v1/runs", json=new_run)
     assert response.status_code == 201
+    data = response.json()
+    assert data["run_id"] == "20190110_1230_MACHINE-123_FLOWCELL123_04abcd"
 
+
+def test_add_run_with_invalid_ont_style_barcode(client: TestClient):
+    """Test that we cannot add a run with an ONT style barcode if the run_time field is invalid"""
     # Add a run with an invalid run_time
     new_run = {
+        "run_id": "TEST_RUN_WITH_INVALID_RUN_TIME_2",
         "run_date": "2019-01-10",
         "machine_id": "MACHINE123",
-        "run_number": 4,
+        "run_number": "4",
         "flowcell_id": "FLOWCELL123",
         "experiment_name": "Test Experiment",
         "run_folder_uri": "s3://bucket/path/to/run",
@@ -132,9 +150,9 @@ def test_add_run(client: TestClient):
     assert response.status_code == 422
 
 
-def test_get_runs(client: TestClient, session: Session):
+def test_get_runs_no_data(client: TestClient, session: Session):
     """Test that we can get all runs"""
-    # Test No projects, this also ensure we are using the test db
+    # Test GET /runs returns no runs, this also ensure we are using the test db
     response = client.get("/api/v1/runs")
     assert response.status_code == 200
     assert response.json() == {
@@ -147,12 +165,15 @@ def test_get_runs(client: TestClient, session: Session):
         "has_prev": False,
     }
 
+
+def test_get_runs_with_data(client: TestClient, session: Session):
     # Add a run to the database
     new_run = SequencingRun(
         id=uuid4(),
+        run_id="190110_MACHINE123_0001_FLOWCELL123",
         run_date=datetime.date(2019, 1, 10),
         machine_id="MACHINE123",
-        run_number=1,
+        run_number="1",
         flowcell_id="FLOWCELL123",
         experiment_name="Test Experiment",
         run_folder_uri="/dir/path/to/run",
@@ -161,41 +182,115 @@ def test_get_runs(client: TestClient, session: Session):
     session.add(new_run)
     session.commit()
 
-    # Test get runs again
+    # Test GET /runs returns the run.
+    response = client.get("/api/v1/runs")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["total_items"] == 1
+    assert data["data"][0]["machine_id"] == "MACHINE123"
+    assert data["data"][0]["run_number"] == "1"
+    assert data["data"][0]["flowcell_id"] == "FLOWCELL123"
+    assert data["data"][0]["experiment_name"] == "Test Experiment"
+    assert data["data"][0]["run_folder_uri"] == "/dir/path/to/run"
+    assert data["data"][0]["status"] == RunStatus.READY.value
+    assert data["data"][0]["run_id"] == "190110_MACHINE123_0001_FLOWCELL123"
+
+
+def test_get_non_existent_run(client: TestClient):
+    """Test that we get the correct response when the run does not exist"""
+    run_id = "190110_MACHINE123_1_FLOWCELL123"
+    response = client.get(f"/api/v1/runs/{run_id}")
+    assert response.status_code == 404
+    data = response.json()
+    assert data["detail"] == f"Run with ID {run_id} not found"
+
+
+def test_get_run_by_run_id(client: TestClient, session: Session):
+    # Add a run to the database
+    new_run = SequencingRun(
+        id=uuid4(),
+        run_id="190110_MACHINE123_0001_FLOWCELL123",
+        run_date=datetime.date(2019, 1, 10),
+        machine_id="MACHINE123",
+        run_number="1",
+        flowcell_id="FLOWCELL123",
+        experiment_name="Test Experiment",
+        run_folder_uri="/dir/path/to/run",
+        status=RunStatus.READY,
+    )
+    session.add(new_run)
+    session.commit()
+
+    # Test that we can get a specific run by ID
+    run_id = "190110_MACHINE123_0001_FLOWCELL123"
+    response = client.get(f"/api/v1/runs/{run_id}")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["run_date"] == "2019-01-10"
+    assert data["machine_id"] == "MACHINE123"
+    assert data["run_number"] == "1"
+    assert data["flowcell_id"] == "FLOWCELL123"
+    assert data["experiment_name"] == "Test Experiment"
+    assert data["run_folder_uri"] == "/dir/path/to/run"
+    assert data["status"] == RunStatus.READY.value
+    assert data["run_id"] == "190110_MACHINE123_0001_FLOWCELL123"
+
+
+def test_get_runs_ont(client: TestClient, session: Session):
+    """Test that we can get ONT runs"""
+    # Add a run to the database
+    new_run = SequencingRun(
+        id=uuid4(),
+        run_id="20190110_1230_MACHINE123_FLOWCELL123_0012efg",
+        run_date=datetime.date(2019, 1, 10),
+        machine_id="MACHINE123",
+        run_number="0012efg",
+        flowcell_id="FLOWCELL123",
+        experiment_name="Test Experiment",
+        run_folder_uri="/dir/path/to/run",
+        status=RunStatus.READY,
+        run_time="1230",
+    )
+    session.add(new_run)
+    session.commit()
+
+    # Test get runs
     response = client.get("/api/v1/runs")
     assert response.status_code == 200
     data = response.json()
     assert data["total_items"] == 1
     assert data["data"][0]["machine_id"] == "MACHINE123"
-    assert data["data"][0]["run_number"] == 1
+    assert data["data"][0]["run_number"] == "0012efg"
     assert data["data"][0]["flowcell_id"] == "FLOWCELL123"
     assert data["data"][0]["experiment_name"] == "Test Experiment"
     assert data["data"][0]["run_folder_uri"] == "/dir/path/to/run"
     assert data["data"][0]["status"] == RunStatus.READY.value
-    assert data["data"][0]["barcode"] == "190110_MACHINE123_0001_FLOWCELL123"
+    assert data["data"][0]["run_id"] == "20190110_1230_MACHINE123_FLOWCELL123_0012efg"
+    assert data["data"][0]["run_time"] == "1230"
 
     # Test that we can get a specific run by ID
-    run_barcode = "190110_MACHINE123_0001_FLOWCELL123"
-    response = client.get(f"/api/v1/runs/{run_barcode}")
+    run_id = "20190110_1230_MACHINE123_FLOWCELL123_0012efg"
+    response = client.get(f"/api/v1/runs/{run_id}")
     assert response.status_code == 200
     data = response.json()
     assert data["run_date"] == "2019-01-10"
     assert data["machine_id"] == "MACHINE123"
-    assert data["run_number"] == 1
+    assert data["run_number"] == "0012efg"
     assert data["flowcell_id"] == "FLOWCELL123"
     assert data["experiment_name"] == "Test Experiment"
     assert data["run_folder_uri"] == "/dir/path/to/run"
     assert data["status"] == RunStatus.READY.value
-    assert data["barcode"] == "190110_MACHINE123_0001_FLOWCELL123"
+    assert data["run_id"] == "20190110_1230_MACHINE123_FLOWCELL123_0012efg"
 
 
 def test_get_run_samplesheet_invalid_run(client: TestClient):
     """Test that we get the correct response when the run does not exist"""
-    run_barcode = "NONEXISTENT_RUN"
-    response = client.get(f"/api/v1/runs/{run_barcode}/samplesheet")
+    run_id = "NONEXISTENT_RUN"
+    response = client.get(f"/api/v1/runs/{run_id}/samplesheet")
     assert response.status_code == 404
     data = response.json()
-    assert data["detail"] == f"Run with barcode {run_barcode} not found"
+    assert data["detail"] == f"Run with ID {run_id} not found"
 
 
 def test_get_run_samplesheet(client: TestClient, session: Session):
@@ -209,9 +304,10 @@ def test_get_run_samplesheet(client: TestClient, session: Session):
     # Add a run to the database
     new_run = SequencingRun(
         id=uuid4(),
+        run_id="190110_MACHINE123_0001_FLOWCELL123",
         run_date=datetime.date(2019, 1, 10),
         machine_id="MACHINE123",
-        run_number=1,
+        run_number="1",
         flowcell_id="FLOWCELL123",
         experiment_name="Test Experiment",
         run_folder_uri=run_folder.as_posix(),
@@ -221,8 +317,8 @@ def test_get_run_samplesheet(client: TestClient, session: Session):
     session.commit()
 
     # Test get samplesheet for the run
-    run_barcode = "190110_MACHINE123_0001_FLOWCELL123"
-    response = client.get(f"/api/v1/runs/{run_barcode}/samplesheet")
+    run_id = "190110_MACHINE123_0001_FLOWCELL123"
+    response = client.get(f"/api/v1/runs/{run_id}/samplesheet")
     assert response.status_code == 200
     data = response.json()
     assert data["Summary"]["run_date"] == "2019-01-10"
@@ -233,7 +329,7 @@ def test_get_run_samplesheet(client: TestClient, session: Session):
     assert data["Summary"]["experiment_name"] == "Test Experiment"
     assert data["Summary"]["run_folder_uri"] == run_folder.as_posix()
     assert data["Summary"]["status"] == RunStatus.READY.value
-    assert data["Summary"]["barcode"] == run_barcode
+    assert data["Summary"]["run_id"] == "190110_MACHINE123_0001_FLOWCELL123"
     assert "id" not in data["Summary"]  # Database ID should not be exposed
 
 
@@ -248,9 +344,10 @@ def test_get_run_samplesheet_no_result(client: TestClient, session: Session):
     # Add a run to the database
     new_run = SequencingRun(
         id=uuid4(),
+        run_id="190110_MACHINE123_0002_FLOWCELL123",
         run_date=datetime.date(2019, 1, 10),
         machine_id="MACHINE123",
-        run_number=2,
+        run_number="2",
         flowcell_id="FLOWCELL123",
         experiment_name="Test Experiment",
         run_folder_uri=run_folder.as_posix(),
@@ -260,8 +357,8 @@ def test_get_run_samplesheet_no_result(client: TestClient, session: Session):
     session.commit()
 
     # Test get samplesheet for the run
-    run_barcode = "190110_MACHINE123_0002_FLOWCELL123"
-    response = client.get(f"/api/v1/runs/{run_barcode}/samplesheet")
+    run_id = "190110_MACHINE123_0002_FLOWCELL123"
+    response = client.get(f"/api/v1/runs/{run_id}/samplesheet")
     assert response.status_code == 204
 
 
@@ -280,9 +377,10 @@ def test_get_run_samplesheet_no_s3_credentials(
     # Add a run to the database
     new_run = SequencingRun(
         id=uuid4(),
+        run_id="190110_MACHINE123_0001_FLOWCELL123",
         run_date=datetime.date(2019, 1, 10),
         machine_id="MACHINE123",
-        run_number=1,
+        run_number="1",
         flowcell_id="FLOWCELL123",
         experiment_name="Test Experiment",
         run_folder_uri=run_folder,
@@ -292,8 +390,8 @@ def test_get_run_samplesheet_no_s3_credentials(
     session.commit()
 
     # Test get samplesheet for the run
-    run_barcode = "190110_MACHINE123_0001_FLOWCELL123"
-    response = client.get(f"/api/v1/runs/{run_barcode}/samplesheet")
+    run_id = "190110_MACHINE123_0001_FLOWCELL123"
+    response = client.get(f"/api/v1/runs/{run_id}/samplesheet")
     assert response.status_code == 500
     data = response.json()
     expected_detail = (
@@ -305,11 +403,11 @@ def test_get_run_samplesheet_no_s3_credentials(
 
 def test_get_run_metrics_invalid_run(client: TestClient):
     """Test that we get the correct response when the run does not exist"""
-    run_barcode = "NONEXISTENT_RUN"
-    response = client.get(f"/api/v1/runs/{run_barcode}/metrics")
+    run_id = "NONEXISTENT_RUN"
+    response = client.get(f"/api/v1/runs/{run_id}/metrics")
     assert response.status_code == 404
     data = response.json()
-    assert data["detail"] == f"Run with barcode {run_barcode} not found"
+    assert data["detail"] == f"Run with ID {run_id} not found"
 
 
 def test_get_run_metrics(client: TestClient, session: Session):
@@ -323,9 +421,10 @@ def test_get_run_metrics(client: TestClient, session: Session):
     # Add a run to the database
     new_run = SequencingRun(
         id=uuid4(),
+        run_id="190110_MACHINE123_0001_FLOWCELL123",
         run_date=datetime.date(2019, 1, 10),
         machine_id="MACHINE123",
-        run_number=1,
+        run_number="1",
         flowcell_id="FLOWCELL123",
         experiment_name="Test Experiment",
         run_folder_uri=run_folder.as_posix(),
@@ -335,8 +434,8 @@ def test_get_run_metrics(client: TestClient, session: Session):
     session.commit()
 
     # Test get metrics for the run
-    run_barcode = "190110_MACHINE123_0001_FLOWCELL123"
-    response = client.get(f"/api/v1/runs/{run_barcode}/metrics")
+    run_id = "190110_MACHINE123_0001_FLOWCELL123"
+    response = client.get(f"/api/v1/runs/{run_id}/metrics")
     assert response.status_code == 200
     data = response.json()
     assert data["RunNumber"] == 1
@@ -354,9 +453,10 @@ def test_get_run_metrics_no_result(client: TestClient, session: Session):
     # Add a run to the database
     new_run = SequencingRun(
         id=uuid4(),
+        run_id="190110_MACHINE123_0002_FLOWCELL123",
         run_date=datetime.date(2019, 1, 10),
         machine_id="MACHINE123",
-        run_number=2,
+        run_number="2",
         flowcell_id="FLOWCELL123",
         experiment_name="Test Experiment",
         run_folder_uri=run_folder.as_posix(),
@@ -366,8 +466,8 @@ def test_get_run_metrics_no_result(client: TestClient, session: Session):
     session.commit()
 
     # Test get metrics for the run
-    run_barcode = "190110_MACHINE123_0002_FLOWCELL123"
-    response = client.get(f"/api/v1/runs/{run_barcode}/metrics")
+    run_id = "190110_MACHINE123_0002_FLOWCELL123"
+    response = client.get(f"/api/v1/runs/{run_id}/metrics")
     assert response.status_code == 204
 
 
@@ -377,9 +477,10 @@ def test_update_run_status(client: TestClient, session: Session):
     # Add a run to the database
     new_run = SequencingRun(
         id=uuid4(),
+        run_id="190110_MACHINE123_0001_FLOWCELL123",
         run_date=datetime.date(2019, 1, 10),
         machine_id="MACHINE123",
-        run_number=1,
+        run_number="1",
         flowcell_id="FLOWCELL123",
         experiment_name="Test Experiment",
         run_folder_uri="/dir/path/to/run",
@@ -389,17 +490,51 @@ def test_update_run_status(client: TestClient, session: Session):
     session.commit()
 
     # Test update the run status
-    run_barcode = "190110_MACHINE123_0001_FLOWCELL123"
+    run_id = "190110_MACHINE123_0001_FLOWCELL123"
     update_data = {"run_status": RunStatus.READY}
-    response = client.put(f"/api/v1/runs/{run_barcode}", json=update_data)
+    response = client.put(f"/api/v1/runs/{run_id}", json=update_data)
     assert response.status_code == 200
     data = response.json()
     assert data["status"] == RunStatus.READY.value
-    assert data["barcode"] == "190110_MACHINE123_0001_FLOWCELL123"
+    assert data["run_id"] == "190110_MACHINE123_0001_FLOWCELL123"
 
     # Test that we can't specifiy an invalid status
     update_data = {"run_status": "INVALID_STATUS"}
-    response = client.put(f"/api/v1/runs/{run_barcode}", json=update_data)
+    response = client.put(f"/api/v1/runs/{run_id}", json=update_data)
+    assert response.status_code == 422
+
+
+def test_update_run_status_ont(client: TestClient, session: Session):
+    """Test that we can update an ont run status"""
+
+    # Add a run to the database
+    new_run = SequencingRun(
+        id=uuid4(),
+        run_id="20190110_1230_MACHINE123_FLOWCELL123_0012efg",
+        run_date=datetime.date(2019, 1, 10),
+        machine_id="MACHINE123",
+        run_number="0001",
+        flowcell_id="FLOWCELL123",
+        experiment_name="Test Experiment",
+        run_folder_uri="/dir/path/to/run",
+        status=RunStatus.IN_PROGRESS,
+        run_time="1230",
+    )
+    session.add(new_run)
+    session.commit()
+
+    # Test update the run status
+    run_id = "20190110_1230_MACHINE123_FLOWCELL123_0012efg"
+    update_data = {"run_status": RunStatus.READY}
+    response = client.put(f"/api/v1/runs/{run_id}", json=update_data)
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == RunStatus.READY.value
+    assert data["run_id"] == "20190110_1230_MACHINE123_FLOWCELL123_0012efg"
+
+    # Test that we can't specifiy an invalid status
+    update_data = {"run_status": "INVALID_STATUS"}
+    response = client.put(f"/api/v1/runs/{run_id}", json=update_data)
     assert response.status_code == 422
 
 
@@ -412,9 +547,10 @@ def test_upload_run_samplesheet(client: TestClient, session: Session, tmp_path: 
     # Add a run to the database
     new_run = SequencingRun(
         id=uuid4(),
+        run_id="190110_MACHINE123_0001_FLOWCELL123",
         run_date=datetime.date(2019, 1, 10),
         machine_id="MACHINE123",
-        run_number=1,
+        run_number="1",
         flowcell_id="FLOWCELL123",
         experiment_name="Test Experiment",
         run_folder_uri=run_folder.as_posix(),
@@ -424,11 +560,11 @@ def test_upload_run_samplesheet(client: TestClient, session: Session, tmp_path: 
     session.commit()
 
     # Upload the samplesheet via the API
-    run_barcode = "190110_MACHINE123_0001_FLOWCELL123"
+    run_id = "190110_MACHINE123_0001_FLOWCELL123"
 
     with open("tests/fixtures/190110_MACHINE123_0001_FLOWCELL123/SampleSheet.csv", "rb") as f:
         files = {"file": ("SampleSheet.csv", f, "text/csv")}
-        response = client.post(f"/api/v1/runs/{run_barcode}/samplesheet", files=files)
+        response = client.post(f"/api/v1/runs/{run_id}/samplesheet", files=files)
     assert response.status_code == 201
 
 
@@ -443,10 +579,12 @@ def test_search_runs(client: TestClient):
     than handling pagination from the database.
     """
     # Add a run to the database
+    # NOTE: should be added to db directly; this is not the code under test.
     new_run = {
+        "run_id": "190110_MACHINE123_0001_FLOWCELL123",
         "run_date": "2019-01-10",
         "machine_id": "MACHINE123",
-        "run_number": 1,
+        "run_number": "0001",
         "flowcell_id": "FLOWCELL123",
         "experiment_name": "Test Experiment AI",
         "run_folder_uri": "s3://bucket/path/to/run",
@@ -457,17 +595,17 @@ def test_search_runs(client: TestClient):
 
     # Test
     url = "/api/v1/runs/search"
-    query_string = "query=AI&page=1&per_page=20&sort_by=barcode&sort_order=desc"
+    query_string = "query=AI&page=1&per_page=20&sort_by=run_id&sort_order=desc"
     response = client.get(f"{url}?{query_string}")
 
     assert response.status_code == 200
     assert response.json() == {
         "data": [
             {
-                "barcode": "190110_MACHINE123_0001_FLOWCELL123",
+                "run_id": "190110_MACHINE123_0001_FLOWCELL123",
                 "run_date": "2019-01-10",
                 "machine_id": "MACHINE123",
-                "run_number": 1,
+                "run_number": "1",
                 "flowcell_id": "FLOWCELL123",
                 "experiment_name": "Test Experiment AI",
                 "run_folder_uri": "s3://bucket/path/to/run",
@@ -491,9 +629,10 @@ def test_search_runs_db_opensearch_out_of_sync(client: TestClient, session: Sess
     """
     # Add a run
     new_run = {
+        "run_id": "190110_MACHINE123_0001_FLOWCELL123",
         "run_date": "2019-01-10",
         "machine_id": "MACHINE123",
-        "run_number": 1,
+        "run_number": "0001",
         "flowcell_id": "FLOWCELL123",
         "experiment_name": "Test Experiment AI",
         "run_folder_uri": "s3://bucket/path/to/run",
@@ -517,7 +656,7 @@ def test_search_runs_db_opensearch_out_of_sync(client: TestClient, session: Sess
     # Test
     # OpenSearch will return the run, but the database will not have it
     url = "/api/v1/runs/search"
-    query_string = "query=AI&page=1&per_page=20&sort_by=barcode&sort_order=desc"
+    query_string = "query=AI&page=1&per_page=20&sort_by=run_id&sort_order=desc"
     response = client.get(f"{url}?{query_string}")
 
     assert response.status_code == 200
@@ -1075,7 +1214,7 @@ aws_batch:
         # Submit job
         request_body = {
             "workflow_id": "cellranger-mkfastq",
-            "run_barcode": "190110_MACHINE123_0001_FLOWCELL123",
+            "run_id": "190110_MACHINE123_0001_FLOWCELL123",
             "inputs": {
                 "s3_run_folder_path": "s3://bucket/test-run",
                 "barcode_mismatches": 1,
@@ -1088,12 +1227,12 @@ aws_batch:
 
         assert response.status_code == 200
         data = response.json()
-        assert data["aws_job_id"] == "test-job-123"
-        assert data["name"] == "cellranger-mkfastq-test-run"
-        assert "command" in data
-        assert data["command"] == "mkfastq.sh"
         assert "id" in data
         assert "status" in data
+        assert "command" in data
+        assert data["id"] == "test-job-123"
+        assert data["name"] == "cellranger-mkfastq-test-run"
+        assert data["command"] == "mkfastq.sh"
         assert data["user"] == test_user.username
 
     def test_submit_job_with_jinja_expressions(
@@ -1163,7 +1302,7 @@ aws_batch:
 
         request_body = {
             "workflow_id": "test-tool",
-            "run_barcode": "test-run-123",
+            "run_id": "test-run-123",
             "inputs": {
                 "s3_path": "s3://bucket/folder/subfolder/file.txt",
                 "max_reads": 5000,
@@ -1178,7 +1317,7 @@ aws_batch:
         # Verify Jinja2 expression was evaluated correctly
         assert data["name"] == "test-file.txt-5000"
         assert data["command"] == "run.sh 5000"
-        assert data["aws_job_id"] == "job-456"
+        assert data["id"] == "job-456"
         assert data["user"] == test_user.username
 
         # Verify container overrides
@@ -1208,7 +1347,7 @@ aws_batch:
 
         request_body = {
             "workflow_id": "non-existent-tool",
-            "run_barcode": "test-run",
+            "run_id": "test-run",
             "inputs": {"param": "value"},
         }
 
@@ -1258,7 +1397,7 @@ tags:
 
         request_body = {
             "workflow_id": "no-batch-tool",
-            "run_barcode": "test-run",
+            "run_id": "test-run",
             "inputs": {"input1": "value1"},
         }
 
@@ -1333,7 +1472,7 @@ aws_batch:
 
         request_body = {
             "workflow_id": "batch-error-tool",
-            "run_barcode": "test-run",
+            "run_id": "test-run",
             "inputs": {"input1": "value1"},
         }
 
@@ -1402,7 +1541,7 @@ aws_batch:
 
         request_body = {
             "workflow_id": "no-env-tool",
-            "run_barcode": "test-run",
+            "run_id": "test-run",
             "inputs": {"input1": "value1"},
         }
 
@@ -1410,7 +1549,7 @@ aws_batch:
 
         assert response.status_code == 200
         data = response.json()
-        assert data["aws_job_id"] == "job-789"
+        assert data["id"] == "job-789"
         assert data["name"] == "no-env-job"
         assert data["user"] == test_user.username
 
@@ -1437,7 +1576,7 @@ aws_batch:
         # Missing required field 'inputs'
         invalid_body = {
             "workflow_id": "test-tool",
-            "run_barcode": "test-run",
+            "run_id": "test-run",
         }
 
         response = client.post("/api/v1/runs/demultiplex", json=invalid_body)
@@ -1525,7 +1664,7 @@ aws_batch:
 
         request_body = {
             "workflow_id": "complex-tool",
-            "run_barcode": "test-run",
+            "run_id": "test-run",
             "inputs": {
                 "string_input": "test_string",
                 "int_input": 42,
@@ -1539,7 +1678,7 @@ aws_batch:
         assert response.status_code == 200
         data = response.json()
         assert data["name"] == "complex-test_string-42"
-        assert data["aws_job_id"] == "job-complex"
+        assert data["id"] == "job-complex"
         assert data["user"] == test_user.username
 
         # Verify environment variables have correct values
