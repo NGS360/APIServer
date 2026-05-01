@@ -30,12 +30,14 @@ def create_platform(session: Session, platform_in: PlatformCreate) -> Platform:
 def get_platforms(session: Session) -> list[PlatformPublic]:
     """Return all platforms."""
     platforms = session.exec(select(Platform).order_by(Platform.name)).all()
-    return [PlatformPublic(name=p.name) for p in platforms]
+    return [PlatformPublic(id=p.id, name=p.name) for p in platforms]
 
 
 def get_platform_by_name(session: Session, name: str) -> Platform:
     """Get a single platform by name."""
-    platform = session.get(Platform, name)
+    platform = session.exec(
+        select(Platform).where(Platform.name == name)
+    ).first()
     if not platform:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

@@ -47,7 +47,10 @@ def _parse_uuid(value: str, label: str = "id") -> UUID:
 
 def _validate_engine(session: Session, engine: str) -> None:
     """Verify that ``engine`` matches a registered Platform name."""
-    if not session.get(Platform, engine):
+    platform = session.exec(
+        select(Platform).where(Platform.name == engine)
+    ).first()
+    if not platform:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=(
