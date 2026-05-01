@@ -299,7 +299,8 @@ erDiagram
     Platform ||--o{ WorkflowDeployment : "hosts"
     
     Platform {
-        string name PK
+        uuid id PK
+        string name UK
     }
     
     Workflow ||--o{ WorkflowAttribute : "has"
