@@ -73,9 +73,8 @@ class SamplesPublic(SQLModel):
     data: List[SamplePublic]
     data_cols: list[str] | None = None
     total_items: int
-    total_pages: int
-    current_page: int
-    per_page: int
+    skip: int
+    limit: int
     has_next: bool
     has_prev: bool
 
@@ -101,9 +100,8 @@ class SamplesWithFilesPublic(SQLModel):
     data: List[SampleWithFilesPublic]
     data_cols: list[str] | None = None
     total_items: int
-    total_pages: int
-    current_page: int
-    per_page: int
+    skip: int
+    limit: int
     has_next: bool
     has_prev: bool
 
@@ -131,6 +129,7 @@ class BulkSampleItemResponse(SQLModel):
     sample_uuid: uuid.UUID
     project_id: str
     created: bool
+    updated: bool = False
     run_id: str | None = None
     files_created: int = 0
     files_skipped: int = 0
@@ -141,6 +140,7 @@ class BulkSampleCreateResponse(SQLModel):
     project_id: str
     samples_created: int
     samples_existing: int
+    samples_updated: int = 0
     associations_created: int
     associations_existing: int
     files_created: int = 0

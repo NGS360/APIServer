@@ -750,6 +750,58 @@ def auth_headers_fixture():
     }
 
 
+@pytest.fixture(name="superuser_client")
+def superuser_client_fixture(
+    session: Session,
+    mock_opensearch_client: MockOpenSearchClient,
+    mock_s3_client: MockS3Client,
+    mock_lambda_client: MockLambdaClient,
+    monkeypatch,
+):
+    """Provide a TestClient authenticated as a superuser"""
+    import boto3
+    from api.auth.models import User
+
+    def get_db_override():
+        return session
+
+    def get_opensearch_client_override():
+        return mock_opensearch_client
+
+    def get_s3_client_override():
+        return mock_s3_client
+
+    def get_current_user_override():
+        """Return a mock superuser for authentication"""
+        return User(
+            username="admin",
+            email="admin@example.com",
+            is_active=True,
+            is_verified=True,
+            is_superuser=True,
+        )
+
+    original_boto3_client = boto3.client
+
+    def mock_boto3_client(service_name, **kwargs):
+        if service_name == "lambda":
+            return mock_lambda_client
+        return original_boto3_client(service_name, **kwargs)
+
+    monkeypatch.setattr(boto3, "client", mock_boto3_client)
+
+    from api.auth.deps import get_current_user
+
+    app.dependency_overrides[get_db] = get_db_override
+    app.dependency_overrides[get_opensearch_client] = get_opensearch_client_override
+    app.dependency_overrides[get_s3_client] = get_s3_client_override
+    app.dependency_overrides[get_current_user] = get_current_user_override
+
+    client = TestClient(app)
+    yield client
+    app.dependency_overrides.clear()
+
+
 @pytest.fixture(name="opensearch_client")
 def opensearch_client_fixture(mock_opensearch_client: MockOpenSearchClient):
     """Provide the mock OpenSearch client directly for tests that need it"""
