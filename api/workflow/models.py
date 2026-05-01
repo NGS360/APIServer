@@ -1,10 +1,12 @@
 """
 Workflow Models
 
-Workflow — Platform-agnostic workflow definition
-WorkflowRegistration — Platform-specific registration of a workflow
-WorkflowRun — Execution record of a workflow on a specific platform
-WorkflowAttribute / WorkflowRunAttribute — Key-value metadata
+Workflow — Platform-agnostic workflow identity
+WorkflowVersion — Versioned definition of a workflow (holds auto-increment version + definition_uri)
+WorkflowVersionAlias — Named pointer (e.g. production, development) to a specific version
+WorkflowDeployment — Platform-specific deployment of a workflow version
+WorkflowAttribute — Key-value metadata
+WorkflowVersionAttribute — Key-value metadata for workflow versions
 """
 import uuid
 from datetime import datetime, timezone
@@ -37,66 +39,91 @@ class WorkflowAttribute(SQLModel, table=True):
     workflow: "Workflow" = Relationship(back_populates="attributes")
 
 
+class WorkflowVersionAttribute(SQLModel, table=True):
+    """Key-value metadata for workflow versions."""
+    __tablename__ = "workflowversionattribute"
+
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    workflow_version_id: uuid.UUID = Field(foreign_key="workflowversion.id")
+    key: str
+    value: str
+
+    # Relationships
+    workflow_version: "WorkflowVersion" = Relationship(back_populates="attributes")
+
+
 class Workflow(SQLModel, table=True):
-    """Platform-agnostic workflow definition."""
+    """Platform-agnostic workflow identity."""
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     name: str
-    version: str | None = Field(default=None)
-    definition_uri: str
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     created_by: str
 
     # Relationships
     attributes: List[WorkflowAttribute] | None = Relationship(back_populates="workflow")
-    registrations: List["WorkflowRegistration"] | None = Relationship(back_populates="workflow")
-    runs: List["WorkflowRun"] | None = Relationship(back_populates="workflow")
+    versions: List["WorkflowVersion"] | None = Relationship(back_populates="workflow")
+    aliases: List["WorkflowVersionAlias"] | None = Relationship(back_populates="workflow")
 
 
-class WorkflowRegistration(SQLModel, table=True):
-    """Platform-specific registration of a workflow (e.g., on Arvados or SevenBridges)."""
-    __tablename__ = "workflowregistration"
+class WorkflowVersion(SQLModel, table=True):
+    """Versioned definition of a workflow — holds auto-increment version and definition URI."""
+    __tablename__ = "workflowversion"
     __table_args__ = (
-        UniqueConstraint("workflow_id", "engine", name="uq_workflow_engine"),
+        UniqueConstraint("workflow_id", "version", name="uq_workflow_version"),
     )
 
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     workflow_id: uuid.UUID = Field(foreign_key="workflow.id")
+    version: int
+    definition_uri: str
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    created_by: str
+
+    # Relationships
+    workflow: Workflow = Relationship(back_populates="versions")
+    attributes: List[WorkflowVersionAttribute] | None = Relationship(
+        back_populates="workflow_version",
+    )
+    deployments: List["WorkflowDeployment"] | None = Relationship(
+        back_populates="workflow_version",
+    )
+
+
+class WorkflowVersionAlias(SQLModel, table=True):
+    """Named pointer to a specific workflow version (e.g. production, development)."""
+    __tablename__ = "workflowversionalias"
+    __table_args__ = (
+        UniqueConstraint("workflow_id", "alias", name="uq_workflow_alias"),
+    )
+
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    workflow_id: uuid.UUID = Field(foreign_key="workflow.id")
+    alias: str
+    workflow_version_id: uuid.UUID = Field(foreign_key="workflowversion.id")
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    created_by: str
+
+    # Relationships
+    workflow: Workflow = Relationship(back_populates="aliases")
+    workflow_version: WorkflowVersion = Relationship()
+
+
+class WorkflowDeployment(SQLModel, table=True):
+    """Platform-specific deployment of a workflow version (e.g., on Arvados or SevenBridges)."""
+    __tablename__ = "workflowdeployment"
+    __table_args__ = (
+        UniqueConstraint("workflow_version_id", "engine", name="uq_workflowversion_engine"),
+    )
+
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    workflow_version_id: uuid.UUID = Field(foreign_key="workflowversion.id")
     engine: str = Field(foreign_key="platform.name")
     external_id: str  # Workflow identifier on the external platform
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     created_by: str
 
     # Relationships
-    workflow: Workflow = Relationship(back_populates="registrations")
-
-
-class WorkflowRunAttribute(SQLModel, table=True):
-    """Key-value metadata for a workflow run."""
-    __tablename__ = "workflowrunattribute"
-
-    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
-    workflow_run_id: uuid.UUID = Field(foreign_key="workflowrun.id")
-    key: str
-    value: str
-
-    # Relationships
-    workflow_run: "WorkflowRun" = Relationship(back_populates="attributes")
-
-
-class WorkflowRun(SQLModel, table=True):
-    """Provenance record — links a workflow to an external execution."""
-    __tablename__ = "workflowrun"
-
-    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
-    workflow_id: uuid.UUID = Field(foreign_key="workflow.id")
-    engine: str = Field(foreign_key="platform.name")
-    external_run_id: str  # External run/job ID on the platform (required)
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    created_by: str
-
-    # Relationships
-    workflow: Workflow = Relationship(back_populates="runs")
-    attributes: List[WorkflowRunAttribute] | None = Relationship(back_populates="workflow_run")
+    workflow_version: WorkflowVersion = Relationship(back_populates="deployments")
 
 
 # ---------------------------------------------------------------------------
@@ -105,68 +132,84 @@ class WorkflowRun(SQLModel, table=True):
 
 class WorkflowCreate(SQLModel):
     name: str
-    version: str | None = None
-    definition_uri: str
     attributes: List[Attribute] | None = None
+
+
+class WorkflowVersionSummary(SQLModel):
+    """Lightweight version reference for inclusion in workflow responses."""
+    id: uuid.UUID
+    version: int
+    definition_uri: str
+    created_at: datetime
+
+
+class WorkflowAliasSummary(SQLModel):
+    """Alias info included in workflow responses."""
+    alias: str
+    workflow_version_id: uuid.UUID
+    version: int  # Resolved version number for convenience
 
 
 class WorkflowPublic(SQLModel):
     id: uuid.UUID
     name: str
-    version: str | None
+    created_at: datetime
+    created_by: str
+    attributes: List[Attribute] | None = None
+    versions: List[WorkflowVersionSummary] | None = None
+    aliases: List[WorkflowAliasSummary] | None = None
+
+
+# ---------------------------------------------------------------------------
+# Request / Response models — WorkflowVersion
+# ---------------------------------------------------------------------------
+
+class WorkflowVersionCreate(SQLModel):
+    definition_uri: str
+
+
+class WorkflowVersionPublic(SQLModel):
+    id: uuid.UUID
+    workflow_id: uuid.UUID
+    version: int
     definition_uri: str
     created_at: datetime
     created_by: str
-    attributes: List[Attribute] | None = None
-    registrations: List["WorkflowRegistrationPublic"] | None = None
+    deployments: List["WorkflowDeploymentPublic"] | None = None
 
 
 # ---------------------------------------------------------------------------
-# Request / Response models — WorkflowRegistration
+# Request / Response models — WorkflowVersionAlias
 # ---------------------------------------------------------------------------
 
-class WorkflowRegistrationCreate(SQLModel):
-    engine: str
-    external_id: str
+class WorkflowVersionAliasSet(SQLModel):
+    """Body for PUT /workflows/{id}/aliases/{alias}."""
+    workflow_version_id: uuid.UUID
 
 
-class WorkflowRegistrationPublic(SQLModel):
+class WorkflowVersionAliasPublic(SQLModel):
     id: uuid.UUID
     workflow_id: uuid.UUID
-    engine: str
-    external_id: str
+    alias: str
+    workflow_version_id: uuid.UUID
+    version: int  # Resolved version number
     created_at: datetime
     created_by: str
 
 
 # ---------------------------------------------------------------------------
-# Request / Response models — WorkflowRun
+# Request / Response models — WorkflowDeployment
 # ---------------------------------------------------------------------------
 
-class WorkflowRunCreate(SQLModel):
-    workflow_id: uuid.UUID
+class WorkflowDeploymentCreate(SQLModel):
     engine: str
-    external_run_id: str
-    attributes: List[Attribute] | None = None
+    external_id: str
 
 
-class WorkflowRunPublic(SQLModel):
+class WorkflowDeploymentPublic(SQLModel):
     id: uuid.UUID
-    workflow_id: uuid.UUID
-    workflow_name: str | None = None
+    workflow_version_id: uuid.UUID
     engine: str
-    external_run_id: str
+    external_id: str
     created_at: datetime
     created_by: str
-    attributes: List[Attribute] | None = None
-
-
-class WorkflowRunsPublic(SQLModel):
-    """Paginated list of workflow runs."""
-    data: List[WorkflowRunPublic]
-    total_items: int
-    total_pages: int
-    current_page: int
-    per_page: int
-    has_next: bool
-    has_prev: bool
