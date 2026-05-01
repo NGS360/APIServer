@@ -36,8 +36,8 @@ erDiagram
     Pipeline ||--o{ PipelineAttribute : has_attributes
 
     Platform {
-        uuid id PK 
-        string name UQ
+        uuid id PK
+        string name UK
     }
 
     Workflow {
@@ -72,7 +72,7 @@ erDiagram
 
     WorkflowVersionAlias {
         uuid id PK
-        workflow_id FK
+        uuid workflow_id FK
         string alias
         uuid workflow_version_id FK
         datetime created_at
