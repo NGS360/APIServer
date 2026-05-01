@@ -45,14 +45,9 @@ class SequencingRun(SQLModel, table=True):
     # or inserted into the ElasticSearch index.
     __searchable__ = [
         "run_id",
-        "machine_id",
-        "run_number",
-        "flowcell_id",
+        "flowcell_id", # We discovered flowcell may not be in the run id
         "experiment_name",
         "run_folder_uri",
-        "status",
-        "run_date",
-        "run_time",
     ]
 
     id: uuid.UUID | None = Field(default_factory=uuid.uuid4, primary_key=True)
