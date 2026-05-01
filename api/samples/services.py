@@ -20,7 +20,11 @@ from api.files.models import File, FileHash, FileTag, FileSample, FileProject
 from api.project.models import Project
 from api.runs.models import SequencingRun, SampleSequencingRun
 from api.search.models import SearchDocument
-from api.search.services import add_object_to_index, delete_index
+from api.search.services import (
+    add_object_to_index,
+    add_objects_to_index,
+    reset_index,
+)
 
 
 def resolve_or_create_sample(
@@ -228,13 +232,16 @@ def reindex_samples(session: Session, client: OpenSearch):
     """
     Index all samples in database with OpenSearch
     """
-    delete_index(client, "samples")
-    samples = session.exec(
-        select(Sample)
-    ).all()
+    samples = session.exec(select(Sample)).all()
+
+    # Prepare all documents
+    search_docs = []
     for sample in samples:
-        search_doc = SearchDocument(id=str(sample.id), body=sample)
-        add_object_to_index(client, search_doc, index="samples")
+        search_docs.append(SearchDocument(id=str(sample.id), body=sample))
+
+    reset_index(client, "samples")
+    # Bulk index all documents in one call
+    add_objects_to_index(client, search_docs, "samples")
 
 
 # ---------------------------------------------------------------------------
@@ -546,14 +553,15 @@ def bulk_create_samples(
     session.commit()
 
     # ── Post-commit: index newly created samples in OpenSearch ────────
-    if opensearch_client:
+    if opensearch_client and newly_created_samples:
+        search_docs = []
         for sample in newly_created_samples:
             session.refresh(sample)
-            search_doc = SearchDocument(id=str(sample.id), body=sample)
-            try:
-                add_object_to_index(opensearch_client, search_doc, index="samples")
-            except Exception:
-                pass  # best-effort indexing
+            search_docs.append(SearchDocument(id=str(sample.id), body=sample))
+        try:
+            add_objects_to_index(opensearch_client, search_docs, index="samples")
+        except Exception:
+            pass  # best-effort indexing
 
     return BulkSampleCreateResponse(
         project_id=project.project_id,

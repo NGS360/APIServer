@@ -73,7 +73,6 @@ class WorkflowSummary(SQLModel):
     """Lightweight workflow reference for inclusion in pipeline responses."""
     id: uuid.UUID
     name: str
-    version: str | None = None
 
 
 class PipelineCreate(SQLModel):
