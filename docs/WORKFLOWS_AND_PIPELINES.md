@@ -139,7 +139,9 @@ Pipeline membership is currently unordered — the workflows in a pipeline are a
 
 **Pipelines are version-agnostic**
 
-Pipelines are purely organisational — a pipeline references workflows, not specific workflow versions. They do not directly affect how workflow versions are deployed on platforms. A pipeline groups workflows; each workflow independently manages its own versions, aliases, and deployments. For instance - a WES pipeline could be composed of an alignment workflow, a variant calling workflow, and a variant annotation workflow; updating the version of a tool in the alignment workflow would increment the version, but the high-level pipeline (and the workflows that comprise it) remains unchanged, while the workflow versions and deployments to platforms would be updated. The updated workflow version could be tested under a "Dev" alias, and then promoted to "Prod" once testing is complete.
+Pipelines are purely organisational — a pipeline references workflows, not specific workflow versions. They do not directly affect how workflow versions are deployed on platforms. A pipeline groups workflows; each workflow independently manages its own versions, aliases, and deployments.
+
+For instance - a WES pipeline could be composed of an alignment workflow, a variant calling workflow, and a variant annotation workflow; updating the version of a tool in the alignment workflow would increment the version, but the high-level pipeline (and the workflows that comprise it) remains unchanged, while the workflow versions and deployments to platforms would be updated. The updated workflow version could be tested under a "Dev" alias, and then promoted to "Prod" once testing is complete.
 
 ## Database Models
 
