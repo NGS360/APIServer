@@ -1,6 +1,6 @@
-# Workflows, Pipelines & Execution Provenance
+# Workflows & Pipelines
 
-This document describes the Workflow and Pipeline systems — how workflows are defined, versioned, deployed on compute platforms, executed, and organised into named collections.
+This document describes the Workflow and Pipeline systems — how workflows are defined, versioned, deployed on compute platforms, and organised into named collections.
 
 ## Overview
 
@@ -119,7 +119,6 @@ erDiagram
 A workflow definition evolves over time. The `Workflow` table captures the logical identity (e.g., "Alignment") while `WorkflowVersion` captures each revision with its own version string and definition URI. This means:
 
 - Creating a new version doesn't create a new workflow — it adds a row to `WorkflowVersion`
-- All runs across all versions of the same workflow are aggregable via `WorkflowVersion.workflow_id`
 - Pipelines reference the logical workflow, not a specific version
 
 **Why a separate alias table?**
@@ -140,7 +139,9 @@ Pipeline membership is currently unordered — the workflows in a pipeline are a
 
 **Pipelines are version-agnostic**
 
-Pipelines are purely organisational — a pipeline references workflows, not specific workflow versions. They do not directly affect how workflow versions are deployed on platforms or how runs are tracked. A pipeline groups workflows; each workflow independently manages its own versions, aliases, deployments, and runs.
+Pipelines are purely organisational — a pipeline references workflows, not specific workflow versions. They do not directly affect how workflow versions are deployed on platforms. A pipeline groups workflows; each workflow independently manages its own versions, aliases, and deployments.
+
+For instance - a WES pipeline could be composed of an alignment workflow, a variant calling workflow, and a variant annotation workflow; updating the version of a tool in the alignment workflow would increment the version, but the high-level pipeline (and the workflows that comprise it) remains unchanged, while the workflow versions and deployments to platforms would be updated. The updated workflow version could be tested under a "Dev" alias, and then promoted to "Prod" once testing is complete.
 
 ## Database Models
 
@@ -661,7 +662,7 @@ DELETE /pipelines/{pipeline_id}/workflows/{workflow_id}
 | `api/platforms/models.py` | Platform table model and schemas |
 | `api/platforms/services.py` | Platform CRUD services |
 | `api/platforms/routes.py` | Platform endpoint handlers |
-| `api/workflow/models.py` | Workflow/Version/Alias/Deployment/Run table definitions and schemas |
+| `api/workflow/models.py` | Workflow/Version/Alias/Deployment table definitions and schemas |
 | `api/workflow/services.py` | Workflow business logic (create, list, version/alias CRUD, engine validation) |
 | `api/workflow/routes.py` | Workflow endpoint handlers |
 | `api/pipeline/models.py` | Pipeline/PipelineAttribute/PipelineWorkflow tables and schemas |
