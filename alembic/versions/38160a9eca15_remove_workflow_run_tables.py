@@ -1,4 +1,4 @@
-"""remove workflow run tables, add version attributes, auto-increment version
+"""remove workflow run tables, add version attributes, auto-increment version, platform uuid PK
 
 Revision ID: 38160a9eca15
 Revises: 8a5d5a8bb9f6
@@ -26,6 +26,7 @@ def upgrade() -> None:
        Workflow run tracking is now handled by an external database.
     2. Create WorkflowVersionAttribute table for key-value metadata on versions.
     3. Change WorkflowVersion.version from VARCHAR to INTEGER (auto-increment).
+    4. Add UUID primary key to Platform table (name becomes unique constraint).
 
     Order: FK constraints first, then dependent tables, then parent table.
     """
@@ -67,6 +68,26 @@ def upgrade() -> None:
         existing_nullable=False,
         postgresql_using='version::integer',
     )
+
+    # --- Part 4: Add UUID primary key to Platform table ---
+    # Currently platform.name is the PK. We add a UUID id column as the new PK
+    # and demote name to a unique constraint.
+    # Note: table is assumed empty (no existing rows to backfill).
+
+    # 4a. Drop the existing PK on name
+    op.execute("ALTER TABLE platform DROP PRIMARY KEY")
+
+    # 4b. Add the id column (CHAR(32) for UUID storage, NOT NULL)
+    op.add_column(
+        'platform',
+        sa.Column('id', sa.CHAR(length=32), nullable=False),
+    )
+
+    # 4c. Set id as the new primary key
+    op.create_primary_key('pk_platform', 'platform', ['id'])
+
+    # 4d. Add unique constraint on name
+    op.create_unique_constraint('uq_platform_name', 'platform', ['name'])
 
 
 def downgrade() -> None:
