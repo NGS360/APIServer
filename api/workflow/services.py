@@ -604,5 +604,3 @@ def delete_workflow_deployment(
         )
     session.delete(deployment)
     session.commit()
-
-

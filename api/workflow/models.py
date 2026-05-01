@@ -213,5 +213,3 @@ class WorkflowDeploymentPublic(SQLModel):
     external_id: str
     created_at: datetime
     created_by: str
-
-
