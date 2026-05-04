@@ -41,9 +41,10 @@ def create_pipeline(
 
     # Handle attributes
     if pipeline_in.attributes:
+        # Prevent duplicate keys (case-insensitive to match MySQL collation)
         seen: set[str] = set()
         keys = [attr.key for attr in pipeline_in.attributes]
-        dups = [k for k in keys if k in seen or seen.add(k)]
+        dups = [k for k in keys if k.lower() in seen or seen.add(k.lower())]
         if dups:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,

@@ -104,10 +104,10 @@ def add_sample_to_project(
 
     # Handle attribute mapping
     if sample_in.attributes:
-        # Prevent duplicate keys
+        # Prevent duplicate keys (case-insensitive to match MySQL collation)
         seen = set()
         keys = [attr.key for attr in sample_in.attributes]
-        dups = [k for k in keys if k in seen or seen.add(k)]
+        dups = [k for k in keys if k.lower() in seen or seen.add(k.lower())]
         if dups:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
