@@ -915,14 +915,14 @@ def update_sample_in_project(
             detail=f"Sample {sample_id} in project {project.project_id} not found.",
         )
 
-    # Check if the attribute exists (case-insensitive key lookup to
-    # match MySQL's default collation and avoid duplicate-key errors)
-    sample_attribute = session.exec(
-        select(SampleAttribute).where(
-            SampleAttribute.sample_id == sample.id,
-            func.lower(SampleAttribute.key) == attribute.key.lower()
-        )
-    ).first()
+    # Load all attributes for this sample and build a case-insensitive
+    # lookup map (avoids func.lower() in SQL which suppresses index use
+    # and mirrors the approach in bulk_create_samples).
+    existing_attrs = session.exec(
+        select(SampleAttribute).where(SampleAttribute.sample_id == sample.id)
+    ).all()
+    attr_map = {a.key.lower(): a for a in existing_attrs}
+    sample_attribute = attr_map.get(attribute.key.lower())
 
     if sample_attribute:
         # Update existing attribute
