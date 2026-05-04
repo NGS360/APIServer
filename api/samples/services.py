@@ -3,6 +3,7 @@ import uuid
 from typing import List, Literal
 
 from fastapi import HTTPException, status
+from api.utils import check_duplicate_attribute_keys
 from sqlmodel import Session, select, func
 from opensearchpy import OpenSearch
 
@@ -104,15 +105,9 @@ def add_sample_to_project(
 
     # Handle attribute mapping
     if sample_in.attributes:
-        # Prevent duplicate keys (case-insensitive to match MySQL collation)
-        seen = set()
-        keys = [attr.key for attr in sample_in.attributes]
-        dups = [k for k in keys if k.lower() in seen or seen.add(k.lower())]
-        if dups:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Duplicate keys ({', '.join(dups)}) are not allowed in project attributes.",
-            )
+        check_duplicate_attribute_keys(
+            sample_in.attributes, "sample attributes"
+        )
 
         # Parse and create project attributes (skip empty/whitespace-only values)
         sample_attributes = [
