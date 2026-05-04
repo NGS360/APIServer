@@ -64,7 +64,7 @@ def test_create_pipeline_with_version_and_attributes(client: TestClient):
 def test_create_pipeline_rejects_case_insensitive_duplicate_attributes(
     client: TestClient,
 ):
-    """Duplicate attribute keys differing only in case should be rejected."""
+    """Test that creating a pipeline with attribute keys differing only in case returns 400."""
     body = {
         "name": "Dup Attr Pipeline",
         "attributes": [

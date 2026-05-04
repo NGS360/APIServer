@@ -549,7 +549,7 @@ class TestBulkSampleCreation:
     def test_bulk_case_insensitive_duplicate_attribute_keys_rejected(
         self, client: TestClient, session: Session
     ):
-        """Duplicate attribute keys differing only in case should be rejected."""
+        """Test that bulk create rejects samples with attribute keys differing only in case."""
         pid = _create_project(session)
 
         response = client.post(

@@ -288,13 +288,9 @@ class TestSampleUploadCaseMismatch:
     def test_reupload_with_case_mismatch_attributes(
         self, client: TestClient, session: Session
     ):
-        """Scenario: existing sample has UPPERCASE attribute keys in DB.
-        User downloads metadata, fills in new samples, re-uploads TSV
-        with lowercase column headers.
-
-        Expected behavior: the upsert should match existing attributes
-        case-insensitively and update the value rather than creating a
-        duplicate row.
+        """Test that re-uploading a TSV with different-cased column headers
+        than existing attributes matches case-insensitively and updates
+        rather than creating duplicates.
         """
         pid = _create_project(session)
 

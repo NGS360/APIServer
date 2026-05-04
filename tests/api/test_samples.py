@@ -191,9 +191,7 @@ def test_fail_to_add__sample_with_duplicate_attributes(
 def test_fail_to_add_sample_with_case_insensitive_duplicate_attributes(
     client: TestClient, session: Session
 ):
-    """
-    Duplicate keys differing only in case should be rejected.
-    """
+    """Test that adding a sample with attribute keys differing only in case returns 400."""
     new_project = Project(name="Test Project")
     new_project.project_id = generate_project_id(session=session)
     new_project.attributes = []

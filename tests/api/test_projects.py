@@ -277,7 +277,7 @@ def test_create_project_fails_with_duplicate_attribute(client: TestClient):
 def test_create_project_fails_with_case_insensitive_duplicate_attribute(
     client: TestClient,
 ):
-    """Duplicate keys differing only in case should be rejected."""
+    """Test that creating a project with attribute keys differing only in case returns 400."""
     data = {
         "name": "Test Project",
         "attributes": [
@@ -456,7 +456,7 @@ def test_update_project_with_duplicate_attributes(client: TestClient, session: S
 def test_update_project_with_case_insensitive_duplicate_attributes(
     client: TestClient, session: Session
 ):
-    """Duplicate keys differing only in case should be rejected on PUT."""
+    """Test that PUT update with attribute keys differing only in case returns 400."""
     new_project = Project(name="Test Project")
     new_project.project_id = generate_project_id(session=session)
     new_project.attributes = []
@@ -728,7 +728,7 @@ def test_patch_project_duplicate_attribute_keys(
 def test_patch_project_case_insensitive_duplicate_attribute_keys(
     client: TestClient, session: Session
 ):
-    """PATCH with case-mismatched duplicate keys should be rejected."""
+    """Test that PATCH with attribute keys differing only in case returns 400."""
     new_project = Project(name="Test Project")
     new_project.project_id = generate_project_id(session=session)
     new_project.attributes = []
@@ -752,7 +752,8 @@ def test_patch_project_case_insensitive_duplicate_attribute_keys(
 def test_patch_project_upserts_attribute_case_insensitively(
     client: TestClient, session: Session
 ):
-    """PATCH should match existing attributes case-insensitively (like MySQL collation)."""
+    """Test that PATCH matches existing attributes case-insensitively
+    and updates the value without creating a duplicate."""
     new_project = Project(name="Test Project")
     new_project.project_id = generate_project_id(session=session)
     new_project.attributes = [
