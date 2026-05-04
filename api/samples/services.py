@@ -534,15 +534,17 @@ def bulk_create_samples(
             ),
         )
 
-    # 3. Validate no duplicate attribute keys per sample
+    # 3. Validate no duplicate attribute keys per sample (case-insensitive,
+    #    matching MySQL's default collation behaviour)
     for item in samples_in:
         if item.attributes:
             seen_keys: set[str] = set()
             dup_keys: list[str] = []
             for attr in item.attributes:
-                if attr.key in seen_keys:
+                key_lower = attr.key.lower() if attr.key else ""
+                if key_lower in seen_keys:
                     dup_keys.append(attr.key)
-                seen_keys.add(attr.key)
+                seen_keys.add(key_lower)
             if dup_keys:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
@@ -582,17 +584,20 @@ def bulk_create_samples(
 
             # ── Merge/upsert attributes on existing sample ────────
             if item.attributes:
-                # Build a map of existing attributes for this sample
+                # Build a case-insensitive map of existing attributes
+                # so that e.g. "SAMPLENAME_VENDOR" matches "samplename_vendor"
+                # (MySQL's default collation is case-insensitive).
                 existing_attrs = session.exec(
                     select(SampleAttribute).where(
                         SampleAttribute.sample_id == sample.id
                     )
                 ).all()
-                existing_attr_map = {a.key: a for a in existing_attrs}
+                existing_attr_map = {a.key.lower(): a for a in existing_attrs}
 
                 for attr in item.attributes:
                     is_empty = attr.value is None or attr.value.strip() == ""
-                    ea = existing_attr_map.get(attr.key)
+                    key_lower = attr.key.lower() if attr.key else ""
+                    ea = existing_attr_map.get(key_lower)
 
                     if is_empty:
                         # Column present but value blank → delete
@@ -602,6 +607,11 @@ def bulk_create_samples(
                     elif ea:
                         if ea.value != attr.value:
                             ea.value = attr.value
+                            updated = True
+                        # Adopt the incoming key casing so the DB
+                        # stays consistent with the latest upload.
+                        if ea.key != attr.key:
+                            ea.key = attr.key
                             updated = True
                     else:
                         session.add(

@@ -713,10 +713,10 @@ def add_sample_to_project(
 
     # Handle attribute mapping
     if sample_in.attributes:
-        # Prevent duplicate keys
-        seen = set()
+        # Prevent duplicate keys (case-insensitive to match MySQL collation)
+        seen: set[str] = set()
         keys = [attr.key for attr in sample_in.attributes]
-        dups = [k for k in keys if k in seen or seen.add(k)]
+        dups = [k for k in keys if k.lower() in seen or seen.add(k.lower())]
         if dups:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -915,17 +915,21 @@ def update_sample_in_project(
             detail=f"Sample {sample_id} in project {project.project_id} not found.",
         )
 
-    # Check if the attribute exists
+    # Check if the attribute exists (case-insensitive key lookup to
+    # match MySQL's default collation and avoid duplicate-key errors)
     sample_attribute = session.exec(
         select(SampleAttribute).where(
             SampleAttribute.sample_id == sample.id,
-            SampleAttribute.key == attribute.key
+            func.lower(SampleAttribute.key) == attribute.key.lower()
         )
     ).first()
 
     if sample_attribute:
         # Update existing attribute
         sample_attribute.value = attribute.value
+        # Adopt the incoming key casing so the DB stays consistent
+        if sample_attribute.key != attribute.key:
+            sample_attribute.key = attribute.key
     else:
         # Create new attribute
         new_attribute = SampleAttribute(
