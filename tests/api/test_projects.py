@@ -274,6 +274,22 @@ def test_create_project_fails_with_duplicate_attribute(client: TestClient):
     assert response.status_code == 400
 
 
+def test_create_project_fails_with_case_insensitive_duplicate_attribute(
+    client: TestClient,
+):
+    """Duplicate keys differing only in case should be rejected."""
+    data = {
+        "name": "Test Project",
+        "attributes": [
+            {"key": "Priority", "value": "High"},
+            {"key": "priority", "value": "Low"},
+        ],
+    }
+    response = client.post("/api/v1/projects", json=data)
+    assert response.status_code == 400
+    assert "duplicate" in response.json()["detail"].lower()
+
+
 def test_generate_project_id(session: Session):
     """Test that we can generate a project id"""
     # Generate a project id
@@ -433,6 +449,29 @@ def test_update_project_with_duplicate_attributes(client: TestClient, session: S
     }
     response = client.put(f"/api/v1/projects/{new_project.project_id}", json=update_data)
 
+    assert response.status_code == 400
+    assert "duplicate" in response.json()["detail"].lower()
+
+
+def test_update_project_with_case_insensitive_duplicate_attributes(
+    client: TestClient, session: Session
+):
+    """Duplicate keys differing only in case should be rejected on PUT."""
+    new_project = Project(name="Test Project")
+    new_project.project_id = generate_project_id(session=session)
+    new_project.attributes = []
+    session.add(new_project)
+    session.commit()
+
+    update_data = {
+        "attributes": [
+            {"key": "Priority", "value": "High"},
+            {"key": "priority", "value": "Low"},
+        ]
+    }
+    response = client.put(
+        f"/api/v1/projects/{new_project.project_id}", json=update_data
+    )
     assert response.status_code == 400
     assert "duplicate" in response.json()["detail"].lower()
 
@@ -684,6 +723,59 @@ def test_patch_project_duplicate_attribute_keys(
 
     assert response.status_code == 400
     assert "duplicate" in response.json()["detail"].lower()
+
+
+def test_patch_project_case_insensitive_duplicate_attribute_keys(
+    client: TestClient, session: Session
+):
+    """PATCH with case-mismatched duplicate keys should be rejected."""
+    new_project = Project(name="Test Project")
+    new_project.project_id = generate_project_id(session=session)
+    new_project.attributes = []
+    session.add(new_project)
+    session.commit()
+
+    update_data = {
+        "attributes": [
+            {"key": "Priority", "value": "High"},
+            {"key": "priority", "value": "Low"},
+        ]
+    }
+    response = client.patch(
+        f"/api/v1/projects/{new_project.project_id}",
+        json=update_data,
+    )
+    assert response.status_code == 400
+    assert "duplicate" in response.json()["detail"].lower()
+
+
+def test_patch_project_upserts_attribute_case_insensitively(
+    client: TestClient, session: Session
+):
+    """PATCH should match existing attributes case-insensitively (like MySQL collation)."""
+    new_project = Project(name="Test Project")
+    new_project.project_id = generate_project_id(session=session)
+    new_project.attributes = [
+        ProjectAttribute(key="Department", value="R&D"),
+    ]
+    session.add(new_project)
+    session.commit()
+
+    # Patch with different casing — should update existing, not create duplicate
+    update_data = {
+        "attributes": [
+            {"key": "department", "value": "Engineering"},
+        ]
+    }
+    response = client.patch(
+        f"/api/v1/projects/{new_project.project_id}",
+        json=update_data,
+    )
+    assert response.status_code == 200
+    attrs = response.json()["attributes"]
+    assert len(attrs) == 1
+    assert attrs[0]["key"] == "department"
+    assert attrs[0]["value"] == "Engineering"
 
 
 ###############################################################################

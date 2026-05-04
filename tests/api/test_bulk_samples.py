@@ -546,6 +546,29 @@ class TestBulkSampleCreation:
         assert response.status_code == 400
         assert "duplicate" in response.json()["detail"].lower()
 
+    def test_bulk_case_insensitive_duplicate_attribute_keys_rejected(
+        self, client: TestClient, session: Session
+    ):
+        """Duplicate attribute keys differing only in case should be rejected."""
+        pid = _create_project(session)
+
+        response = client.post(
+            f"/api/v1/projects/{pid}/samples/bulk",
+            json={
+                "samples": [
+                    {
+                        "sample_id": "ATTR_CI",
+                        "attributes": [
+                            {"key": "Tissue", "value": "Liver"},
+                            {"key": "tissue", "value": "Heart"},
+                        ],
+                    },
+                ]
+            },
+        )
+        assert response.status_code == 400
+        assert "duplicate" in response.json()["detail"].lower()
+
     def test_bulk_nonexistent_project(
         self, client: TestClient, session: Session
     ):
