@@ -6,6 +6,7 @@ from datetime import datetime
 from typing import Literal
 import boto3
 from fastapi import HTTPException, status
+from api.utils import check_duplicate_attribute_keys
 from pydantic import PositiveInt
 from pytz import timezone
 from sqlmodel import Session, func, select
@@ -87,15 +88,9 @@ def create_project(
 
     # Handle attribute mapping
     if project_in.attributes:
-        # Prevent duplicate keys
-        seen = set()
-        keys = [attr.key for attr in project_in.attributes]
-        dups = [k for k in keys if k in seen or seen.add(k)]
-        if dups:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Duplicate keys ({', '.join(dups)}) are not allowed in project attributes.",
-            )
+        check_duplicate_attribute_keys(
+            project_in.attributes, "project attributes"
+        )
 
         # Parse and create project attributes
         # linking to new project
@@ -268,15 +263,9 @@ def update_project(
 
     # Handle attributes if provided
     if update_request.attributes is not None:
-        # Prevent duplicate keys
-        seen = set()
-        keys = [attr.key for attr in update_request.attributes]
-        dups = [k for k in keys if k in seen or seen.add(k)]
-        if dups:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Duplicate keys ({', '.join(dups)}) are not allowed in project attributes.",
-            )
+        check_duplicate_attribute_keys(
+            update_request.attributes, "project attributes"
+        )
 
         # Delete all existing attributes for this project
         existing_attributes = session.exec(
@@ -356,29 +345,26 @@ def patch_project(
         update_request.attributes is not None
         and len(update_request.attributes) > 0
     ):
-        # Prevent duplicate keys in the request
-        seen = set()
-        keys = [attr.key for attr in update_request.attributes]
-        dups = [k for k in keys if k in seen or seen.add(k)]
-        if dups:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=(
-                    f"Duplicate keys ({', '.join(dups)}) are not "
-                    f"allowed in project attributes."
-                ),
+        check_duplicate_attribute_keys(
+            update_request.attributes, "project attributes"
+        )
+
+        # Load all existing attributes and build case-insensitive lookup map
+        existing_attrs = session.exec(
+            select(ProjectAttribute).where(
+                ProjectAttribute.project_id == project.id
             )
+        ).all()
+        attr_map = {a.key.lower(): a for a in existing_attrs}
 
         for attr in update_request.attributes:
-            existing_attr = session.exec(
-                select(ProjectAttribute).where(
-                    ProjectAttribute.project_id == project.id,
-                    ProjectAttribute.key == attr.key,
-                )
-            ).first()
+            existing_attr = attr_map.get(attr.key.lower())
 
             if existing_attr:
                 existing_attr.value = attr.value
+                # Adopt the incoming key casing so the DB stays consistent
+                if existing_attr.key != attr.key:
+                    existing_attr.key = attr.key
             else:
                 session.add(
                     ProjectAttribute(
@@ -713,15 +699,9 @@ def add_sample_to_project(
 
     # Handle attribute mapping
     if sample_in.attributes:
-        # Prevent duplicate keys
-        seen = set()
-        keys = [attr.key for attr in sample_in.attributes]
-        dups = [k for k in keys if k in seen or seen.add(k)]
-        if dups:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Duplicate keys ({', '.join(dups)}) are not allowed in sample attributes.",
-            )
+        check_duplicate_attribute_keys(
+            sample_in.attributes, "sample attributes"
+        )
 
         # Create sample attributes
         sample_attributes = [
@@ -915,17 +895,21 @@ def update_sample_in_project(
             detail=f"Sample {sample_id} in project {project.project_id} not found.",
         )
 
-    # Check if the attribute exists
-    sample_attribute = session.exec(
-        select(SampleAttribute).where(
-            SampleAttribute.sample_id == sample.id,
-            SampleAttribute.key == attribute.key
-        )
-    ).first()
+    # Load all attributes for this sample and build a case-insensitive
+    # lookup map (avoids func.lower() in SQL which suppresses index use
+    # and mirrors the approach in bulk_create_samples).
+    existing_attrs = session.exec(
+        select(SampleAttribute).where(SampleAttribute.sample_id == sample.id)
+    ).all()
+    attr_map = {a.key.lower(): a for a in existing_attrs}
+    sample_attribute = attr_map.get(attribute.key.lower())
 
     if sample_attribute:
         # Update existing attribute
         sample_attribute.value = attribute.value
+        # Adopt the incoming key casing so the DB stays consistent
+        if sample_attribute.key != attribute.key:
+            sample_attribute.key = attribute.key
     else:
         # Create new attribute
         new_attribute = SampleAttribute(
