@@ -563,6 +563,23 @@ class FileSummary(SQLModel):
     samples: List[FileSamplePublic] = []
 
 
+class FileUpdate(SQLModel):
+    """
+    Request model for updating a file record.
+
+    All fields are optional — only provided fields are updated.
+    Primary use case: correcting a URI (e.g., wrong bucket name).
+    """
+    uri: str | None = None
+    original_filename: str | None = None
+    size: int | None = None
+    source: str | None = None
+    created_by: str | None = None
+    storage_backend: str | None = None
+
+    model_config = ConfigDict(extra="forbid")
+
+
 class FilesPublic(SQLModel):
     """Paginated list of files."""
     data: List[FilePublic]

@@ -23,10 +23,12 @@ from api.files.models import (
     FilePublic,
     FilesPublic,
     FileCreate,
+    FileUpdate,
     FileBrowserData,
     file_to_public,
 )
 from api.files import services
+from api.auth.deps import CurrentSuperuser
 from core.deps import get_s3_client, SessionDep
 
 router = APIRouter(prefix="/files", tags=["File Endpoints"])
@@ -250,6 +252,55 @@ def download_file(
         s3_path=path, s3_client=s3_client
     )
     return RedirectResponse(url=presigned_url, status_code=307)
+
+
+@router.patch(
+    "/{file_id}",
+    response_model=FilePublic,
+    summary="Update a file record (superuser only)",
+)
+def update_file(
+    file_id: uuid.UUID,
+    session: SessionDep,
+    file_update: FileUpdate,
+    current_user: CurrentSuperuser,
+) -> FilePublic:
+    """
+    Update scalar fields on a file record.
+
+    Only fields included in the request body are updated; all others
+    (including entity associations, hashes, tags, and samples) remain
+    unchanged.
+
+    **Primary use case:** correcting a URI (e.g., wrong S3 bucket).
+
+    Requires superuser privileges.
+    """
+    file_record = services.update_file(session, file_id, file_update)
+    return file_to_public(file_record)
+
+
+@router.delete(
+    "/{file_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Delete a file record (superuser only)",
+)
+def delete_file(
+    file_id: uuid.UUID,
+    session: SessionDep,
+    current_user: CurrentSuperuser,
+) -> None:
+    """
+    Hard-delete a file record and all associated child rows.
+
+    Cascade-deletes: FileHash, FileTag, FileSample, FileProject,
+    FileSequencingRun, FileQCRecord, FileWorkflowRun, FilePipeline.
+
+    **This action is irreversible.**
+
+    Requires superuser privileges.
+    """
+    services.delete_file(session, file_id)
 
 
 @router.get(

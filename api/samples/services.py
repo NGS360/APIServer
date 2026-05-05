@@ -1,8 +1,8 @@
+import logging
 import uuid
 from typing import List, Literal
 
 from fastapi import HTTPException, status
-from pydantic import PositiveInt
 from sqlmodel import Session, select, func
 from opensearchpy import OpenSearch
 
@@ -25,6 +25,8 @@ from api.search.services import (
     add_objects_to_index,
     reset_index,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def resolve_or_create_sample(
@@ -112,15 +114,16 @@ def add_sample_to_project(
                 detail=f"Duplicate keys ({', '.join(dups)}) are not allowed in project attributes.",
             )
 
-        # Parse and create project attributes
-        # linking to new project
+        # Parse and create project attributes (skip empty/whitespace-only values)
         sample_attributes = [
             SampleAttribute(sample_id=sample.id, key=attr.key, value=attr.value)
             for attr in sample_in.attributes
+            if attr.value is not None and attr.value.strip() != ""
         ]
 
         # Update database with attribute links
-        session.add_all(sample_attributes)
+        if sample_attributes:
+            session.add_all(sample_attributes)
 
     # With orm_mode=True, attributes will be eagerly loaded
     # and mapped to SamplePublic via response model
@@ -139,8 +142,8 @@ def get_samples(
     *,
     session: Session,
     project_id: str,
-    page: PositiveInt,
-    per_page: PositiveInt,
+    skip: int = 0,
+    limit: int = 100,
     sort_by: str,
     sort_order: Literal["asc", "desc"],
 ) -> SamplesPublic:
@@ -150,8 +153,8 @@ def get_samples(
     Args:
         session: Database session
         project_id: Project ID to filter samples by
-        page: Page number (1-based)
-        per_page: Number of items per page
+        skip: Number of records to skip (offset)
+        limit: Maximum number of records to return
         sort_by: Column name to sort by
         sort_order: Sort direction ('asc' or 'desc')
 
@@ -162,12 +165,6 @@ def get_samples(
     total_count = session.exec(
         select(func.count()).select_from(Sample).where(Sample.project_id == project_id)
     ).one()
-
-    # Compute total pages
-    total_pages = (total_count + per_page - 1) // per_page  # Ceiling division
-
-    # Calculate offset for pagination
-    offset = (page - 1) * per_page
 
     # Build the select statement
     statement = select(Sample).where(Sample.project_id == project_id)
@@ -180,7 +177,7 @@ def get_samples(
         statement = statement.order_by(sort_column)
 
     # Add pagination
-    statement = statement.offset(offset).limit(per_page)
+    statement = statement.offset(skip).limit(limit)
 
     # Execute the query
     samples = session.exec(statement).all()
@@ -191,9 +188,6 @@ def get_samples(
             sample_id=sample.sample_id,
             project_id=sample.project_id,
             attributes=sample.attributes,
-            # [
-            #    {"key": attr.key, "value": attr.value} for attr in (sample.attributes or [])
-            # ] if sample.attributes else []
         )
         for sample in samples
     ]
@@ -212,11 +206,10 @@ def get_samples(
         data=public_samples,
         data_cols=data_cols,
         total_items=total_count,
-        total_pages=total_pages,
-        current_page=page,
-        per_page=per_page,
-        has_next=page < total_pages,
-        has_prev=page > 1,
+        skip=skip,
+        limit=limit,
+        has_next=(skip + limit) < total_count,
+        has_prev=skip > 0,
     )
 
 
@@ -228,20 +221,123 @@ def get_sample_by_sample_id(session: Session, sample_id: str) -> Sample:
     return None
 
 
-def reindex_samples(session: Session, client: OpenSearch):
+def reindex_samples(
+    session: Session, client: OpenSearch, batch_size: int = 5000
+):
     """
-    Index all samples in database with OpenSearch
+    Index all samples in database with OpenSearch.
+
+    Processes samples in batches to bound memory usage for large datasets.
     """
-    samples = session.exec(select(Sample)).all()
+    total = session.exec(
+        select(func.count()).select_from(Sample)
+    ).one()
+    total_batches = (total + batch_size - 1) // batch_size if total else 0
 
-    # Prepare all documents
-    search_docs = []
-    for sample in samples:
-        search_docs.append(SearchDocument(id=str(sample.id), body=sample))
-
+    logger.info("Reindexing %d samples in %d batch(es) of %d", total, total_batches, batch_size)
     reset_index(client, "samples")
-    # Bulk index all documents in one call
-    add_objects_to_index(client, search_docs, "samples")
+
+    indexed = 0
+    batch_num = 0
+    while True:
+        samples = session.exec(
+            select(Sample).offset(indexed).limit(batch_size)
+        ).all()
+
+        if not samples:
+            break
+
+        batch_num += 1
+        search_docs = [
+            SearchDocument(id=str(s.id), body=s) for s in samples
+        ]
+        add_objects_to_index(client, search_docs, "samples")
+
+        indexed += len(samples)
+        logger.info(
+            "Indexing batch %d/%d — %d samples indexed out of %d total",
+            batch_num, total_batches, indexed, total,
+        )
+
+        if len(samples) < batch_size:
+            break
+
+    logger.info("Reindex complete: %d samples indexed", indexed)
+
+
+# ---------------------------------------------------------------------------
+# Sample deletion
+# ---------------------------------------------------------------------------
+
+
+def delete_sample(
+    session: Session,
+    project_id: str,
+    sample_id: str,
+) -> None:
+    """
+    Hard-delete a sample and all its child rows.
+
+    Explicitly deletes:
+    - SampleAttribute rows (sample metadata)
+    - FileSample rows (file associations — the File records themselves are NOT deleted)
+    - SampleSequencingRun rows (run associations)
+
+    Then deletes the Sample record itself.
+
+    Args:
+        session: Database session
+        project_id: Project business key (string)
+        sample_id: Sample identifier (Sample.sample_id, not the UUID)
+
+    Raises:
+        HTTPException 404: If sample not found in the given project
+    """
+    sample = session.exec(
+        select(Sample).where(
+            Sample.sample_id == sample_id,
+            Sample.project_id == project_id,
+        )
+    ).first()
+
+    if not sample:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Sample '{sample_id}' not found in project '{project_id}'",
+        )
+
+    # Delete child rows explicitly (no cascade configured on Sample)
+    # 1. SampleAttribute
+    attrs = session.exec(
+        select(SampleAttribute).where(SampleAttribute.sample_id == sample.id)
+    ).all()
+    for attr in attrs:
+        session.delete(attr)
+
+    # 2. FileSample (junction to files — files themselves are preserved)
+    file_samples = session.exec(
+        select(FileSample).where(FileSample.sample_id == sample.id)
+    ).all()
+    for fs in file_samples:
+        session.delete(fs)
+
+    # 3. SampleSequencingRun (junction to runs)
+    run_assocs = session.exec(
+        select(SampleSequencingRun).where(
+            SampleSequencingRun.sample_id == sample.id
+        )
+    ).all()
+    for ra in run_assocs:
+        session.delete(ra)
+
+    # Delete the sample itself
+    session.delete(sample)
+    session.commit()
+
+    logger.info(
+        "Deleted sample '%s' (UUID %s) from project '%s'",
+        sample_id, sample.id, project_id,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -460,15 +556,18 @@ def bulk_create_samples(
 
     samples_created = 0
     samples_existing = 0
+    samples_updated = 0
     associations_created = 0
     associations_existing = 0
     total_files_created = 0
     total_files_skipped = 0
     items: list[BulkSampleItemResponse] = []
     newly_created_samples: list[Sample] = []
+    updated_samples: list[Sample] = []
 
     for item in samples_in:
         created = False
+        updated = False
 
         # Resolve or create the sample
         existing = session.exec(
@@ -480,7 +579,51 @@ def bulk_create_samples(
 
         if existing:
             sample = existing
-            samples_existing += 1
+
+            # ── Merge/upsert attributes on existing sample ────────
+            if item.attributes:
+                # Build a map of existing attributes for this sample
+                existing_attrs = session.exec(
+                    select(SampleAttribute).where(
+                        SampleAttribute.sample_id == sample.id
+                    )
+                ).all()
+                existing_attr_map = {a.key: a for a in existing_attrs}
+
+                for attr in item.attributes:
+                    is_empty = attr.value is None or attr.value.strip() == ""
+                    ea = existing_attr_map.get(attr.key)
+
+                    if is_empty:
+                        # Column present but value blank → delete
+                        if ea:
+                            session.delete(ea)
+                            updated = True
+                    elif ea:
+                        if ea.value != attr.value:
+                            ea.value = attr.value
+                            updated = True
+                    else:
+                        session.add(
+                            SampleAttribute(
+                                sample_id=sample.id,
+                                key=attr.key,
+                                value=attr.value,
+                            )
+                        )
+                        updated = True
+
+                # Remove auto_created_stub tag if real attributes arrive
+                stub_attr = existing_attr_map.get("auto_created_stub")
+                if stub_attr is not None:
+                    session.delete(stub_attr)
+                    updated = True
+
+            if updated:
+                samples_updated += 1
+                updated_samples.append(sample)
+            else:
+                samples_existing += 1
         else:
             sample = Sample(
                 sample_id=item.sample_id,
@@ -489,15 +632,17 @@ def bulk_create_samples(
             session.add(sample)
             session.flush()  # get the UUID
 
-            # Create attributes
+            # Create attributes (skip empty/whitespace-only values)
             if item.attributes:
                 attrs = [
                     SampleAttribute(
                         sample_id=sample.id, key=a.key, value=a.value
                     )
                     for a in item.attributes
+                    if a.value is not None and a.value.strip() != ""
                 ]
-                session.add_all(attrs)
+                if attrs:
+                    session.add_all(attrs)
 
             samples_created += 1
             created = True
@@ -541,6 +686,7 @@ def bulk_create_samples(
                 sample_uuid=sample.id,
                 project_id=project.project_id,
                 created=created,
+                updated=updated,
                 run_id=item.run_id,
                 files_created=item_files_created,
                 files_skipped=item_files_skipped,
@@ -552,10 +698,10 @@ def bulk_create_samples(
     # Single commit — all or nothing
     session.commit()
 
-    # ── Post-commit: index newly created samples in OpenSearch ────────
-    if opensearch_client and newly_created_samples:
+    # ── Post-commit: index newly created and updated samples in OpenSearch ────────
+    if opensearch_client and (newly_created_samples or updated_samples):
         search_docs = []
-        for sample in newly_created_samples:
+        for sample in newly_created_samples + updated_samples:
             session.refresh(sample)
             search_docs.append(SearchDocument(id=str(sample.id), body=sample))
         try:
@@ -567,6 +713,7 @@ def bulk_create_samples(
         project_id=project.project_id,
         samples_created=samples_created,
         samples_existing=samples_existing,
+        samples_updated=samples_updated,
         associations_created=associations_created,
         associations_existing=associations_existing,
         files_created=total_files_created,

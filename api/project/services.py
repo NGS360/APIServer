@@ -769,8 +769,8 @@ def get_project_samples(
     *,
     session: Session,
     project: Project,
-    page: PositiveInt,
-    per_page: PositiveInt,
+    skip: int = 0,
+    limit: int = 100,
     sort_by: str,
     sort_order: Literal["asc", "desc"],
     include: list[str] | None = None,
@@ -781,8 +781,8 @@ def get_project_samples(
     Args:
         session: Database session
         project: The project object (already validated)
-        page: Page number (1-based)
-        per_page: Number of items per page
+        skip: Number of records to skip (offset).
+        limit: Maximum number of records to return.
         sort_by: Column name to sort by
         sort_order: Sort direction ('asc' or 'desc')
         include: Optional list of related data to include (e.g. ``["files"]``)
@@ -800,12 +800,6 @@ def get_project_samples(
     total_count = session.exec(
         select(func.count()).select_from(Sample).where(Sample.project_id == project.project_id)
     ).one()
-
-    # Compute total pages
-    total_pages = (total_count + per_page - 1) // per_page  # Ceiling division
-
-    # Calculate offset for pagination
-    offset = (page - 1) * per_page
 
     # Build the select statement
     statement = select(Sample).where(Sample.project_id == project.project_id)
@@ -826,7 +820,7 @@ def get_project_samples(
         statement = statement.order_by(sort_column)
 
     # Add pagination
-    statement = statement.offset(offset).limit(per_page)
+    statement = statement.offset(skip).limit(limit)
 
     # Execute the query
     samples = session.exec(statement).all()
@@ -862,11 +856,10 @@ def get_project_samples(
             data=public_samples,
             data_cols=data_cols,
             total_items=total_count,
-            total_pages=total_pages,
-            current_page=page,
-            per_page=per_page,
-            has_next=page < total_pages,
-            has_prev=page > 1,
+            skip=skip,
+            limit=limit,
+            has_next=(skip + limit) < total_count,
+            has_prev=skip > 0,
         )
 
     # Default: no files
@@ -883,11 +876,10 @@ def get_project_samples(
         data=public_samples_plain,
         data_cols=data_cols,
         total_items=total_count,
-        total_pages=total_pages,
-        current_page=page,
-        per_page=per_page,
-        has_next=page < total_pages,
-        has_prev=page > 1,
+        skip=skip,
+        limit=limit,
+        has_next=(skip + limit) < total_count,
+        has_prev=skip > 0,
     )
 
 

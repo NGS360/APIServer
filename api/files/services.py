@@ -30,6 +30,7 @@ from api.files.models import (
     FileQCRecord,
     FilePipeline,
     FileCreate,
+    FileUpdate,
     FileUploadCreate,
     FileBrowserData,
     FileBrowserFile,
@@ -287,6 +288,88 @@ def create_file_upload(
     session.refresh(file_record)
 
     return file_record
+
+
+# ============================================================================
+# File Update / Delete Functions
+# ============================================================================
+
+
+def update_file(
+    session: Session,
+    file_id: uuid_module.UUID,
+    file_update: FileUpdate,
+) -> File:
+    """
+    Update scalar fields on a file record.
+
+    Only fields explicitly set (not None) in file_update are applied.
+    All associations (entity junctions, hashes, tags, samples) remain intact.
+
+    Primary use case: correcting a URI (e.g., wrong S3 bucket).
+
+    Args:
+        session: Database session
+        file_id: UUID of the file to update
+        file_update: FileUpdate model with fields to change
+
+    Returns:
+        Updated File object with relationships loaded
+
+    Raises:
+        HTTPException: If file not found
+    """
+    file_record = session.get(File, file_id)
+    if not file_record:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"File not found: {file_id}",
+        )
+
+    update_data = file_update.model_dump(exclude_unset=True)
+    if not update_data:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No fields to update",
+        )
+
+    for field, value in update_data.items():
+        setattr(file_record, field, value)
+
+    session.add(file_record)
+    session.commit()
+    session.refresh(file_record)
+
+    return file_record
+
+
+def delete_file(
+    session: Session,
+    file_id: uuid_module.UUID,
+) -> None:
+    """
+    Hard-delete a file record and all child rows.
+
+    Child rows (FileHash, FileTag, FileSample, FileProject,
+    FileSequencingRun, FileQCRecord, FileWorkflowRun, FilePipeline)
+    are cascade-deleted automatically by SQLAlchemy.
+
+    Args:
+        session: Database session
+        file_id: UUID of the file to delete
+
+    Raises:
+        HTTPException: If file not found
+    """
+    file_record = session.get(File, file_id)
+    if not file_record:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"File not found: {file_id}",
+        )
+
+    session.delete(file_record)
+    session.commit()
 
 
 # ============================================================================
