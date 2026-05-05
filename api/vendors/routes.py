@@ -51,8 +51,10 @@ def add_vendor(
 )
 def get_vendors(
     session: SessionDep,
-    page: int = Query(1, description="Page number (1-indexed)"),
-    per_page: int = Query(20, description="Number of items per page"),
+    skip: int = Query(0, ge=0, description="Number of records to skip"),
+    limit: int = Query(
+        100, ge=1, le=10000, description="Maximum number of records to return"
+    ),
     sort_by: str = Query("vendor_id", description="Field to sort by"),
     sort_order: Literal["asc", "desc"] = Query(
         "asc", description="Sort order (asc or desc)"
@@ -63,8 +65,8 @@ def get_vendors(
     """
     return services.get_vendors(
         session=session,
-        page=page,
-        per_page=per_page,
+        skip=skip,
+        limit=limit,
         sort_by=sort_by,
         sort_order=sort_order,
     )

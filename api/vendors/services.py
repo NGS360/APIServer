@@ -41,17 +41,14 @@ def add_vendor(session: SessionDep, vendor_in: VendorCreate) -> VendorPublic:
 
 def get_vendors(
     session: SessionDep,
-    page: int,
-    per_page: int,
+    skip: int,
+    limit: int,
     sort_by: str,
     sort_order: str
 ) -> VendorsPublic:
     """ Get list of vendors """
-    # Get total run count
+    # Get total vendor count
     total_count = session.exec(select(func.count()).select_from(Vendor)).one()
-
-    # Compute total pages
-    total_pages = (total_count + per_page - 1) // per_page  # Ceiling division
 
     sort_field = getattr(Vendor, sort_by, Vendor.vendor_id)
     sort_direction = sort_field.asc() if sort_order == "asc" else sort_field.desc()
@@ -60,8 +57,8 @@ def get_vendors(
     vendors = session.exec(
         select(Vendor)
         .order_by(sort_direction)
-        .limit(per_page)
-        .offset((page - 1) * per_page)
+        .offset(skip)
+        .limit(limit)
     ).all()
 
     # Map to vendor
@@ -72,11 +69,10 @@ def get_vendors(
     return VendorsPublic(
         data=vendors_public,
         total_items=total_count,
-        total_pages=total_pages,
-        current_page=page,
-        per_page=per_page,
-        has_next=page < total_pages,
-        has_prev=page > 1,
+        skip=skip,
+        limit=limit,
+        has_next=(skip + limit) < total_count,
+        has_prev=skip > 0,
     )
 
 
