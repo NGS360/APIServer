@@ -1,7 +1,5 @@
 """Shared utilities for the API layer."""
 
-from __future__ import annotations
-
 from typing import Sequence
 
 from fastapi import HTTPException, status
