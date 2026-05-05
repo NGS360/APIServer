@@ -5,7 +5,7 @@ Routes/endpoints for the Project API
 from typing import Literal, List as TypingList
 from fastapi import APIRouter, HTTPException, Query, UploadFile, status
 from core.deps import SessionDep, OpenSearchDep, S3ClientDep
-from api.auth.deps import CurrentUser
+from api.auth.deps import CurrentUser, CurrentSuperuser
 from api.jobs.models import BatchJobPublic
 from api.project.deps import ProjectDep
 from api.project.models import (
@@ -329,8 +329,10 @@ def bulk_create_samples(
 def get_project_samples(
     session: SessionDep,
     project: ProjectDep,
-    page: int = Query(1, description="Page number (1-indexed)"),
-    per_page: int = Query(20, description="Number of items per page"),
+    skip: int = Query(0, ge=0, description="Number of records to skip"),
+    limit: int = Query(
+        100, ge=1, le=10000, description="Maximum number of records to return"
+    ),
     sort_by: str = Query("sample_id", description="Field to sort by"),
     sort_order: Literal["asc", "desc"] = Query(
         "asc", description="Sort order (asc or desc)"
@@ -340,18 +342,46 @@ def get_project_samples(
     ),
 ) -> SamplesWithFilesPublic | SamplesPublic:
     """
-    Returns a paginated list of samples.
+    Returns a list of samples for a project.
 
-    Pass ``?include=files`` to eagerly load file metadata for each sample.
+    Pagination is offset-based: ``skip`` is the number of records to skip
+    and ``limit`` caps the page size. Pass ``?include=files`` to eagerly
+    load file metadata for each sample.
     """
     return services.get_project_samples(
         session=session,
         project=project,
-        page=page,
-        per_page=per_page,
+        skip=skip,
+        limit=limit,
         sort_by=sort_by,
         sort_order=sort_order,
         include=include,
+    )
+
+
+@router.delete(
+    "/{project_id}/samples/{sample_id}",
+    tags=["Project Endpoints"],
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def delete_sample_from_project(
+    session: SessionDep,
+    project: ProjectDep,
+    sample_id: str,
+    current_user: CurrentSuperuser,
+) -> None:
+    """
+    Hard-delete a sample and all its child rows (superuser only).
+
+    Deletes: SampleAttribute, FileSample, SampleSequencingRun rows.
+    Associated File records are NOT deleted (they may belong to other entities).
+
+    **This action is irreversible.**
+    """
+    sample_services.delete_sample(
+        session=session,
+        project_id=project.project_id,
+        sample_id=sample_id,
     )
 
 
