@@ -3,6 +3,7 @@ import uuid
 from typing import List, Literal
 
 from fastapi import HTTPException, status
+from api.utils import check_duplicate_attribute_keys
 from sqlmodel import Session, select, func
 from opensearchpy import OpenSearch
 
@@ -104,15 +105,9 @@ def add_sample_to_project(
 
     # Handle attribute mapping
     if sample_in.attributes:
-        # Prevent duplicate keys
-        seen = set()
-        keys = [attr.key for attr in sample_in.attributes]
-        dups = [k for k in keys if k in seen or seen.add(k)]
-        if dups:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Duplicate keys ({', '.join(dups)}) are not allowed in project attributes.",
-            )
+        check_duplicate_attribute_keys(
+            sample_in.attributes, "sample attributes"
+        )
 
         # Parse and create project attributes (skip empty/whitespace-only values)
         sample_attributes = [
@@ -534,15 +529,17 @@ def bulk_create_samples(
             ),
         )
 
-    # 3. Validate no duplicate attribute keys per sample
+    # 3. Validate no duplicate attribute keys per sample (case-insensitive,
+    #    matching MySQL's default collation behaviour)
     for item in samples_in:
         if item.attributes:
             seen_keys: set[str] = set()
             dup_keys: list[str] = []
             for attr in item.attributes:
-                if attr.key in seen_keys:
+                key_lower = attr.key.lower() if attr.key else ""
+                if key_lower in seen_keys:
                     dup_keys.append(attr.key)
-                seen_keys.add(attr.key)
+                seen_keys.add(key_lower)
             if dup_keys:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
@@ -582,17 +579,20 @@ def bulk_create_samples(
 
             # ── Merge/upsert attributes on existing sample ────────
             if item.attributes:
-                # Build a map of existing attributes for this sample
+                # Build a case-insensitive map of existing attributes
+                # so that e.g. "SAMPLENAME_VENDOR" matches "samplename_vendor"
+                # (MySQL's default collation is case-insensitive).
                 existing_attrs = session.exec(
                     select(SampleAttribute).where(
                         SampleAttribute.sample_id == sample.id
                     )
                 ).all()
-                existing_attr_map = {a.key: a for a in existing_attrs}
+                existing_attr_map = {a.key.lower(): a for a in existing_attrs}
 
                 for attr in item.attributes:
                     is_empty = attr.value is None or attr.value.strip() == ""
-                    ea = existing_attr_map.get(attr.key)
+                    key_lower = attr.key.lower() if attr.key else ""
+                    ea = existing_attr_map.get(key_lower)
 
                     if is_empty:
                         # Column present but value blank → delete
@@ -602,6 +602,11 @@ def bulk_create_samples(
                     elif ea:
                         if ea.value != attr.value:
                             ea.value = attr.value
+                            updated = True
+                        # Adopt the incoming key casing so the DB
+                        # stays consistent with the latest upload.
+                        if ea.key != attr.key:
+                            ea.key = attr.key
                             updated = True
                     else:
                         session.add(

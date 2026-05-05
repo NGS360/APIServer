@@ -188,6 +188,31 @@ def test_fail_to_add__sample_with_duplicate_attributes(
     assert response.status_code == 400
 
 
+def test_fail_to_add_sample_with_case_insensitive_duplicate_attributes(
+    client: TestClient, session: Session
+):
+    """Test that adding a sample with attribute keys differing only in case returns 400."""
+    new_project = Project(name="Test Project")
+    new_project.project_id = generate_project_id(session=session)
+    new_project.attributes = []
+    session.add(new_project)
+    session.commit()
+
+    sample_data = {
+        "sample_id": "Sample_1",
+        "attributes": [
+            {"key": "Tissue", "value": "Liver"},
+            {"key": "tissue", "value": "Heart"},
+        ],
+    }
+
+    response = client.post(
+        f"/api/v1/projects/{new_project.project_id}/samples", json=sample_data
+    )
+    assert response.status_code == 400
+    assert "duplicate" in response.json()["detail"].lower()
+
+
 def test_fail_to_add_sample_to_project(client: TestClient, session: Session):
     """
     Test that we fail to add a sample to a project when a projecT_id is provided in sample data

@@ -269,3 +269,126 @@ class TestSampleUploadErrors:
         response = _upload(client, pid, "", filename="empty.csv")
         assert response.status_code == 400
         assert "empty" in response.json()["detail"].lower()
+
+
+# ===================================================================
+# Case-insensitive attribute key tests
+# ===================================================================
+
+
+class TestSampleUploadCaseMismatch:
+    """Reproduce the autoflush IntegrityError on re-upload with case-
+    mismatched attribute keys.
+
+    On MySQL the case-insensitive unique constraint rejects duplicate
+    INSERTs.  On SQLite the INSERT succeeds, but creates duplicate
+    attribute rows differing only in case — still a bug.
+    """
+
+    def test_reupload_with_case_mismatch_attributes(
+        self, client: TestClient, session: Session
+    ):
+        """Test that re-uploading a TSV with different-cased column headers
+        than existing attributes matches case-insensitively and updates
+        rather than creating duplicates.
+        """
+        pid = _create_project(session)
+
+        # Step 1: Create sample with UPPERCASE attribute keys
+        csv_upper = (
+            "SampleID,SAMPLE_NAME,SOURCE,SOURCE_PROJECT,"
+            "SOURCE_ID,EXT_PROJECT_ID,PROJECT_DESC,ASSAY_TYPE,"
+            "ORGANISM,PLATFORM,CAPTURE_METHOD\n"
+            "sample_alpha_R1,"
+            "sample_alpha_R1,"
+            "External Lab A,"
+            "PRJ-0001,"
+            "sample_alpha_R1,"
+            "PRJ-0001,"
+            "Lymphoma_scRNA_study,"
+            "single cell mRNA-Seq,"
+            "Homo sapiens,"
+            "SequencerX 500,"
+            "Droplet Capture\n"
+        )
+        r1 = _upload(client, pid, csv_upper)
+        assert r1.status_code == 201, f"First upload failed: {r1.json()}"
+        assert r1.json()["samples_created"] == 1
+
+        # Verify UPPERCASE keys are in DB
+        sample = session.exec(
+            select(Sample).where(
+                Sample.sample_id == "sample_alpha_R1",
+                Sample.project_id == pid,
+            )
+        ).one()
+        attrs_before = session.exec(
+            select(SampleAttribute).where(
+                SampleAttribute.sample_id == sample.id
+            )
+        ).all()
+        keys_before = {a.key for a in attrs_before}
+        assert "SAMPLE_NAME" in keys_before
+        assert len(attrs_before) == 10  # 10 attribute columns
+
+        # Step 2: Re-upload with lowercase column headers (the user's TSV)
+        # Includes the existing sample + a new sample.
+        csv_lower = (
+            "SampleID,sample_name,source,source_project,"
+            "source_id,ext_project_id,project_desc,assay_type,"
+            "organism,platform,capture_method\n"
+            "sample_alpha_R1,"
+            "sample_alpha_R1,"
+            "External Lab A,"
+            "PRJ-0001,"
+            "sample_alpha_R1,"
+            "PRJ-0001,"
+            "Lymphoma_scRNA_study,"
+            "single cell mRNA-Seq,"
+            "Homo sapiens,"
+            "SequencerX 500,"
+            "Droplet Capture\n"
+            "sample_beta_R1,"
+            "sample_beta_R1,"
+            "External Lab A,"
+            "PRJ-0001,"
+            "sample_beta_R1,"
+            "PRJ-0001,"
+            "Lymphoma_scRNA_study,"
+            "single cell mRNA-Seq,"
+            "Homo sapiens,"
+            "SequencerX 500,"
+            "Droplet Capture\n"
+        )
+        r2 = _upload(client, pid, csv_lower)
+        assert r2.status_code == 201, (
+            f"Re-upload with case-mismatched keys failed: {r2.json()}"
+        )
+
+        # Verify no duplicate attributes (case-insensitive) on the
+        # existing sample.  On MySQL this would have been an
+        # IntegrityError; on SQLite we check for correctness.
+        session.expire_all()
+        attrs_after = session.exec(
+            select(SampleAttribute).where(
+                SampleAttribute.sample_id == sample.id
+            )
+        ).all()
+
+        # Group by lowered key — each key should appear only once
+        key_counts: dict[str, int] = {}
+        for a in attrs_after:
+            lk = a.key.lower()
+            key_counts[lk] = key_counts.get(lk, 0) + 1
+
+        duplicates = {k: v for k, v in key_counts.items() if v > 1}
+        assert not duplicates, (
+            f"Duplicate attributes (case-insensitive) found: {duplicates}. "
+            f"All keys: {[a.key for a in attrs_after]}"
+        )
+
+        # Should still have exactly 10 attributes (not 20)
+        assert len(attrs_after) == 10, (
+            f"Expected 10 attributes, got {len(attrs_after)}: "
+            f"{[a.key for a in attrs_after]}"
+        )
