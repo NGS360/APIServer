@@ -392,4 +392,3 @@ class TestSampleUploadCaseMismatch:
             f"Expected 10 attributes, got {len(attrs_after)}: "
             f"{[a.key for a in attrs_after]}"
         )
-
