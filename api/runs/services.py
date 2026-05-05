@@ -123,12 +123,7 @@ def get_runs(
     # Compute total pages
     total_pages = (total_count + per_page - 1) // per_page  # Ceiling division
 
-    # Resolve sort column, falling back to run_date if the requested field
-    # is unknown or not a sortable column.
-    sort_field = getattr(SequencingRun, sort_by, None)
-    if sort_field is None or not hasattr(sort_field, "asc"):
-        sort_by = "run_date"
-        sort_field = getattr(SequencingRun, sort_by)
+    sort_field = getattr(SequencingRun, sort_by, "run_date")
 
     descending = sort_order == "desc"
     order_sort_clauses = [sort_field.desc() if descending else sort_field.asc()]
