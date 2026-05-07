@@ -214,6 +214,7 @@ typing-extensions==4.15.0
     #   pydantic-extra-types
     #   rich-toolkit
     #   sqlalchemy
+    #   sqlmodel
     #   typing-inspection
 typing-inspection==0.4.2
     # via
