@@ -2,7 +2,7 @@
 Services for the Project API
 """
 
-from datetime import datetime
+from datetime import datetime, timezone as tz
 from typing import Literal
 import boto3
 from fastapi import HTTPException, status
@@ -693,7 +693,11 @@ def add_sample_to_project(
             )
 
     # Create initial sample
-    sample = Sample(sample_id=sample_in.sample_id, project_id=project.project_id)
+    sample = Sample(
+        sample_id=sample_in.sample_id,
+        project_id=project.project_id,
+        created_at=datetime.now(tz.utc),
+    )
     session.add(sample)
     session.flush()
 
@@ -919,6 +923,7 @@ def update_sample_in_project(
         )
         session.add(new_attribute)
 
+    sample.updated_at = datetime.now(tz.utc)
     session.commit()
     session.refresh(sample)
 

@@ -3,6 +3,7 @@ Models for the Sample API
 """
 
 import uuid
+from datetime import datetime
 from typing import List, TYPE_CHECKING
 from sqlmodel import SQLModel, Field, Relationship, UniqueConstraint
 from pydantic import ConfigDict, field_validator
@@ -33,6 +34,8 @@ class Sample(SQLModel, table=True):
     id: uuid.UUID | None = Field(default_factory=uuid.uuid4, primary_key=True)
     sample_id: str
     project_id: str = Field(foreign_key="project.project_id")
+    created_at: datetime | None = Field(default=None)
+    updated_at: datetime | None = Field(default=None)
     attributes: List[SampleAttribute] | None = Relationship(back_populates="sample")
     project: "Project" = Relationship(back_populates="samples")
     file_samples: List["FileSample"] | None = Relationship(back_populates="sample")
