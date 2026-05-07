@@ -41,7 +41,7 @@ def create_qcrecord(
     **Authentication required:** Bearer token must be provided.
 
     **Scoping:** Provide exactly one of `project_id` (project-scoped) or
-    `sequencing_run_barcode` (run-scoped, e.g. demux stats).
+    `sequencing_run_id` (run-scoped, e.g. demux stats).
 
     **Example — project-scoped:**
 
@@ -67,7 +67,7 @@ def create_qcrecord(
       -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \\
       -H "Content-Type: application/json" \\
       -d '{
-        "sequencing_run_barcode": "240101_A00000_0001_FLOWCELLID",
+        "sequencing_run_id": "240101_A00000_0001_FLOWCELLID",
         "metadata": { "pipeline": "bcl-convert", "version": "4.3" },
         "metrics": [{
           "name": "demux_summary",
@@ -98,16 +98,12 @@ def create_qcrecord(
 def search_qcrecords_get(
     session: SessionDep,
     project_id: Optional[str] = Query(None, description="Filter by project ID"),
-    sequencing_run_barcode: Optional[str] = Query(
+    sequencing_run_id: Optional[str] = Query(
         None,
-        description="Filter by sequencing run barcode (run-scoped records)",
+        description="Filter by sequencing run_id string (record or metric level)",
     ),
     workflow_run_id: Optional[str] = Query(
         None, description="Filter by workflow run ID (provenance)"
-    ),
-    sequencing_run_id: Optional[str] = Query(
-        None,
-        description="Filter by sequencing run UUID (metric-level)",
     ),
     latest: bool = Query(
         True,
@@ -121,9 +117,8 @@ def search_qcrecords_get(
 
     **Parameters:**
     - `project_id`: Filter to records scoped to a specific project
-    - `sequencing_run_barcode`: Filter to records scoped to a sequencing run
+    - `sequencing_run_id`: Filter by sequencing run_id string (record or metric level)
     - `workflow_run_id`: Filter by the workflow run that produced the QC data
-    - `sequencing_run_id`: Filter by sequencing run UUID (record or metric level)
     - `latest`: If true (default), returns only the most recent record per scope
     - `page`: Page number for pagination (starts at 1)
     - `per_page`: Number of results per page (max 1000)
@@ -131,20 +126,17 @@ def search_qcrecords_get(
     **Example:**
     ```
     GET /api/v1/qcmetrics/search?project_id=P-1234&latest=true
-    GET /api/v1/qcmetrics/search?sequencing_run_barcode=240101_A00000_0001_XYZ
+    GET /api/v1/qcmetrics/search?sequencing_run_id=240101_A00000_0001_XYZ
     GET /api/v1/qcmetrics/search?workflow_run_id=<uuid>&latest=false
-    GET /api/v1/qcmetrics/search?sequencing_run_id=<uuid>
     ```
     """
     filter_on = {}
     if project_id:
         filter_on["project_id"] = project_id
-    if sequencing_run_barcode:
-        filter_on["sequencing_run_barcode"] = sequencing_run_barcode
-    if workflow_run_id:
-        filter_on["workflow_run_id"] = workflow_run_id
     if sequencing_run_id:
         filter_on["sequencing_run_id"] = sequencing_run_id
+    if workflow_run_id:
+        filter_on["workflow_run_id"] = workflow_run_id
 
     return services.search_qcrecords(
         session,
@@ -185,7 +177,7 @@ def search_qcrecords_post(
 
     **Filter options:**
     - `project_id`: Single value or list of project IDs
-    - `sequencing_run_barcode`: Filter to records scoped to a sequencing run
+    - `sequencing_run_id`: Filter to records scoped to a sequencing run
     - `metadata`: Key-value pairs to match against pipeline metadata
 
     **Pagination:**

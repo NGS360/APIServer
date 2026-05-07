@@ -172,13 +172,11 @@ erDiagram
     File ||--o{ FileProject : "belongs to project"
     File ||--o{ FileSequencingRun : "belongs to run"
     File ||--o{ FileQCRecord : "belongs to qcrecord"
-    File ||--o{ FileWorkflowRun : "belongs to workflow run"
     File ||--o{ FilePipeline : "belongs to pipeline"
     
     Project ||--o{ FileProject : "has files"
     SequencingRun ||--o{ FileSequencingRun : "has files"
     QCRecord ||--o{ FileQCRecord : "has files"
-    WorkflowRun ||--o{ FileWorkflowRun : "has files"
     Pipeline ||--o{ FilePipeline : "has files"
     
     File {
@@ -234,13 +232,6 @@ erDiagram
         string role
     }
     
-    FileWorkflowRun {
-        uuid id PK
-        uuid file_id FK
-        uuid workflow_run_id FK
-        string role
-    }
-    
     FilePipeline {
         uuid id PK
         uuid file_id FK
@@ -254,11 +245,9 @@ erDiagram
     
     QCRecord ||--o{ QCRecordMetadata : "has"
     QCRecord ||--o{ QCMetric : "contains"
-    WorkflowRun ||--o{ QCRecord : "produces"
     
     Project ||--o{ QCRecord : "has QC data"
     SequencingRun ||--o{ QCMetric : "has QC metrics"
-    WorkflowRun ||--o{ QCMetric : "has QC metrics"
     
     QCRecord {
         uuid id PK
@@ -266,7 +255,7 @@ erDiagram
         string created_by
         string project_id FK "nullable — CHECK exactly one scope"
         uuid sequencing_run_id FK "nullable — CHECK exactly one scope"
-        uuid workflow_run_id FK "nullable — provenance"
+        uuid workflow_run_id "nullable — soft ref to external DB"
     }
     
     QCRecordMetadata {
@@ -284,7 +273,7 @@ erDiagram
         uuid qcrecord_id FK
         string name
         uuid sequencing_run_id FK "nullable — direct FK"
-        uuid workflow_run_id FK "nullable — direct FK"
+        uuid workflow_run_id "nullable — soft ref to external DB"
     }
     
     QCMetricValue {
@@ -307,23 +296,23 @@ erDiagram
     %% Workflows & Platforms
     %% ==========================================
     
-    Platform ||--o{ WorkflowRegistration : "hosts"
-    Platform ||--o{ WorkflowRun : "executes"
+    Platform ||--o{ WorkflowDeployment : "hosts"
     
     Platform {
-        string name PK
+        uuid id PK
+        string name UK
     }
     
     Workflow ||--o{ WorkflowAttribute : "has"
-    Workflow ||--o{ WorkflowRegistration : "registered on"
-    Workflow ||--o{ WorkflowRun : "has executions"
+    Workflow ||--o{ WorkflowVersion : "has versions"
+    Workflow ||--o{ WorkflowVersionAlias : "has aliases"
     Workflow ||--o{ PipelineWorkflow : "member of"
+    WorkflowVersion ||--o{ WorkflowDeployment : "deployed on"
+    WorkflowVersionAlias }o--|| WorkflowVersion : "points to"
     
     Workflow {
         uuid id PK
         string name
-        string version
-        string definition_uri
         datetime created_at
         string created_by
     }
@@ -335,31 +324,31 @@ erDiagram
         string value
     }
     
-    WorkflowRegistration {
+    WorkflowVersion {
         uuid id PK
         uuid workflow_id FK
+        string version
+        string definition_uri
+        datetime created_at
+        string created_by
+    }
+    
+    WorkflowVersionAlias {
+        uuid id PK
+        uuid workflow_id FK
+        string alias
+        uuid workflow_version_id FK
+        datetime created_at
+        string created_by
+    }
+    
+    WorkflowDeployment {
+        uuid id PK
+        uuid workflow_version_id FK
         string engine FK
         string external_id
         datetime created_at
         string created_by
-    }
-    
-    WorkflowRun ||--o{ WorkflowRunAttribute : "has"
-    
-    WorkflowRun {
-        uuid id PK
-        uuid workflow_id FK
-        string engine FK
-        string external_run_id
-        datetime created_at
-        string created_by
-    }
-    
-    WorkflowRunAttribute {
-        uuid id PK
-        uuid workflow_run_id FK
-        string key
-        string value
     }
     
     %% ==========================================
@@ -445,25 +434,24 @@ erDiagram
 - **FileProject**: Junction table linking files to projects (with optional role)
 - **FileSequencingRun**: Junction table linking files to sequencing runs (with optional role)
 - **FileQCRecord**: Junction table linking files to QC records (with optional role)
-- **FileWorkflowRun**: Junction table linking files to workflow runs (with optional role)
 - **FilePipeline**: Junction table linking files to pipelines (with optional role)
 
 ### QC Metrics & Records
 
-- **QCRecord**: Main QC record entity - one per pipeline execution per scope. Dual scoping via CHECK constraint (`ck_qcrecord_scope`): exactly one of `project_id` or `sequencing_run_id` must be non-NULL. `project_id` FK to `project.project_id` (referential integrity). `sequencing_run_id` FK to `sequencingrun.id` (for run-scoped records like demux stats). Optional `workflow_run_id` FK for provenance (which execution produced this data)
+- **QCRecord**: Main QC record entity - one per pipeline execution per scope. Dual scoping via CHECK constraint (`ck_qcrecord_scope`): exactly one of `project_id` or `sequencing_run_id` must be non-NULL. `project_id` FK to `project.project_id` (referential integrity). `sequencing_run_id` FK to `sequencingrun.id` (for run-scoped records like demux stats). Optional `workflow_run_id` plain UUID for provenance (soft reference to external workflow execution DB)
 - **QCRecordMetadata**: Pipeline-level metadata (pipeline name, version, configuration)
-- **QCMetric**: Named groups of metrics within a QC record. Direct nullable FKs: `sequencing_run_id` (what sequencing run the metric is about) and `workflow_run_id` (what workflow execution the metric is about)
+- **QCMetric**: Named groups of metrics within a QC record. Direct nullable FK: `sequencing_run_id` (what sequencing run the metric is about). Plain UUID: `workflow_run_id` (soft reference to external workflow execution DB)
 - **QCMetricValue**: Individual metric key-value pairs (stores both string and numeric values)
 - **QCMetricSample**: Associates samples with metrics (supports workflow-level, single-sample, and multi-sample metrics)
 
 ### Workflows & Platforms
 
 - **Platform**: Registered workflow execution platforms (e.g., Arvados, SevenBridges)
-- **Workflow**: Platform-agnostic workflow definitions
+- **Workflow**: Platform-agnostic workflow identity (name only)
 - **WorkflowAttribute**: Key-value attributes for workflows
-- **WorkflowRegistration**: Platform-specific registrations of workflows (links workflow to platform)
-- **WorkflowRun**: Execution records of workflows on specific platforms (provenance tracking)
-- **WorkflowRunAttribute**: Key-value metadata for workflow runs
+- **WorkflowVersion**: Versioned workflow definitions (version string + definition URI)
+- **WorkflowVersionAlias**: Named pointers (e.g. production, development) to specific versions
+- **WorkflowDeployment**: Platform-specific deployments of workflow versions (links version to platform)
 
 ### Batch Jobs
 
@@ -477,19 +465,19 @@ erDiagram
 4. **File → FileProject → Project**: Many-to-many (files can belong to projects via typed junction table)
 5. **File → FileSequencingRun → SequencingRun**: Many-to-many (files can belong to sequencing runs)
 6. **File → FileQCRecord → QCRecord**: Many-to-many (files can belong to QC records)
-7. **File → FileWorkflowRun → WorkflowRun**: Many-to-many (files can belong to workflow runs)
-8. **File → FilePipeline → Pipeline**: Many-to-many (files can belong to pipelines)
+7. **File → FilePipeline → Pipeline**: Many-to-many (files can belong to pipelines)
 9. **Project → QCRecord**: One-to-many (a project can have multiple QC records, enforced by FK on `qcrecord.project_id`). Nullable — run-scoped records have no project
 9a. **SequencingRun → QCRecord**: One-to-many (a sequencing run can have multiple QC records, enforced by FK on `qcrecord.sequencing_run_id`). Nullable — project-scoped records have no run. CHECK constraint ensures exactly one scope
 9b. **QCRecord → QCMetric → QCMetricSample → Sample**: QC metrics are organized hierarchically and can be associated with samples
-9c. **QCRecord.workflow_run_id → WorkflowRun**: Provenance link — which workflow execution produced this QC data
+9c. **QCRecord.workflow_run_id**: Soft reference (plain UUID) to an external workflow execution DB — provenance tracking
 9d. **QCMetric.sequencing_run_id → SequencingRun**: Direct FK — which sequencing run the metric is about (e.g., demux stats)
-9e. **QCMetric.workflow_run_id → WorkflowRun**: Direct FK — which workflow execution the metric is about (e.g., runtime stats)
+9e. **QCMetric.workflow_run_id**: Soft reference (plain UUID) to an external workflow execution DB
 10. **User → Authentication Tokens**: One-to-many (users can have multiple active sessions and tokens)
-11. **Workflow → WorkflowRegistration → Platform**: Many-to-many (workflows can be registered on multiple platforms)
-12. **Workflow → WorkflowRun**: One-to-many (workflows have multiple execution instances)
-13. **Platform → WorkflowRegistration**: One-to-many (platforms host multiple workflow registrations)
-14. **Platform → WorkflowRun**: One-to-many (platforms execute multiple workflow runs)
+11. **Workflow → WorkflowVersion**: One-to-many (a workflow has multiple versions)
+12. **WorkflowVersion → WorkflowVersionAlias**: One-to-many (a version can hold aliases such as `production` or `development`)
+13. **WorkflowVersion → WorkflowDeployment → Platform**: Many-to-many (versions are deployed on specific platforms)
+14. **Platform → WorkflowDeployment**: One-to-many (platforms host multiple workflow deployments)
+15. **Pipeline → PipelineWorkflow → Workflow**: Many-to-many (version-agnostic grouping)
 
 ## Unique Constraints
 
@@ -498,12 +486,12 @@ erDiagram
 - **FileProject**: `(file_id, project_id)` - Prevents duplicate file-project associations
 - **FileSequencingRun**: `(file_id, sequencing_run_id)` - Prevents duplicate file-run associations
 - **FileQCRecord**: `(file_id, qcrecord_id)` - Prevents duplicate file-qcrecord associations
-- **FileWorkflowRun**: `(file_id, workflow_run_id)` - Prevents duplicate file-workflowrun associations
 - **FilePipeline**: `(file_id, pipeline_id)` - Prevents duplicate file-pipeline associations
 - **FileSample**: `(file_id, sample_id)` - Prevents duplicate file-sample associations
 - **QCMetricSample**: `(qc_metric_id, sample_id)` - Prevents duplicate metric-sample associations
 - **SampleSequencingRun**: `(sample_id, sequencing_run_id)` - Prevents duplicate sample-run associations
-- **WorkflowRegistration**: `(workflow_id, engine)` - One registration per workflow per platform
+- **WorkflowDeployment**: `(workflow_version_id, engine)` - One deployment per version per platform
+- **WorkflowVersionAlias**: `(workflow_id, alias)` - One alias name per workflow
 - **ProjectAttribute**: `(project_id, key)` - One value per key per project
 - **SampleAttribute**: `(sample_id, key)` - One value per key per sample
 
@@ -528,15 +516,18 @@ Files support versioning through the composite unique constraint on `(uri, creat
 ### Sample-Run Association
 The **SampleSequencingRun** junction table tracks which samples were processed in which sequencing runs, with audit fields (`created_at`, `created_by`) for provenance.
 
-### Workflow Provenance
-The workflow system supports full provenance tracking:
-- **Workflow**: Platform-agnostic definition
-- **WorkflowRegistration**: Links workflows to specific platforms (e.g., workflow X registered on Arvados)
-- **WorkflowRun**: Records each execution with platform-specific external IDs and metadata
+### Workflow Definition & Deployment
+The workflow system supports definition, versioning, and cross-platform deployment:
+- **Workflow**: Platform-agnostic identity (name + attributes)
+- **WorkflowVersion**: Immutable snapshot with a `version` string and `definition_uri`
+- **WorkflowVersionAlias**: Labels a specific version with a free-text alias name (re-pointable)
+- **WorkflowDeployment**: Links a version to a specific platform (e.g., version 1.2.0 deployed on Arvados)
+
+Workflow execution tracking (runs) is handled by an external database via the GA4GH WES API. The `workflow_run_id` fields on QCRecord and QCMetric are plain UUIDs that act as soft references to that external system.
 
 ### Flexible Metadata
 Multiple tables use key-value pairs for extensible metadata:
-- ProjectAttribute, SampleAttribute, WorkflowAttribute, WorkflowRunAttribute
+- ProjectAttribute, SampleAttribute, WorkflowAttribute
 - QCRecordMetadata, QCMetricValue
 - FileTag
 

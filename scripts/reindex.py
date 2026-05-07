@@ -37,13 +37,13 @@ def reindex_sequencingruns(client, session, index="illumina_runs"):
     ).all()
 
     # Sort the runs by barcode to ensure consistent indexing order
-    runs.sort(key=lambda r: r.barcode)
+    runs.sort(key=lambda r: r.run_id)
 
     # Prepare all documents
     search_docs = []
     for run in runs:
-        logger.debug(f"Preparing run {run.barcode} for indexing")
-        search_doc = SearchDocument(id=run.barcode, body=run)
+        logger.debug(f"Preparing run {run.run_id} for indexing")
+        search_doc = SearchDocument(id=run.run_id, body=run)
         search_docs.append(search_doc)
 
     reset_index(client, index)
@@ -79,7 +79,7 @@ def test_illumina_runs(client, session):
         query="",
         page=1,
         per_page=10,
-        sort_by="barcode",
+        sort_by="run_id",
         sort_order="desc"
     )
     logger.info(f"Test search returned {len(runs.data)} runs")

@@ -124,7 +124,6 @@ class QCMetric(SQLModel, table=True):
     )
     workflow_run_id: uuid.UUID | None = Field(
         default=None,
-        foreign_key="workflowrun.id",
         nullable=True,
         index=True,
     )
@@ -179,10 +178,9 @@ class QCRecord(SQLModel, table=True):
         index=True,
     )
 
-    # Optional provenance link to the execution that produced this data
+    # Optional provenance link to external workflow execution (no FK — external DB)
     workflow_run_id: uuid.UUID | None = Field(
         default=None,
-        foreign_key="workflowrun.id",
         nullable=True,
         index=True,
     )
@@ -233,8 +231,8 @@ class MetricInput(SQLModel):
     """Input model for a metric group."""
     name: str
     samples: List[MetricSampleInput] | None = None
-    # Human-readable barcode, resolved to UUID at service layer
-    sequencing_run_barcode: str | None = None
+    # Human-readable run_id, resolved to UUID at service layer
+    sequencing_run_id: str | None = None
     workflow_run_id: uuid.UUID | None = None
     values: dict[str, str | int | float]  # {"reads": 50000000, "alignment_rate": 95.5}
 
@@ -243,15 +241,15 @@ class QCRecordCreate(BaseModel):
     """
     Request model for creating a QC record.
 
-    Scoping: Provide exactly one of project_id or sequencing_run_barcode.
+    Scoping: Provide exactly one of project_id or sequencing_run_id.
     - project_id: Project-scoped record (e.g., alignment QC, variant QC)
-    - sequencing_run_barcode: Run-scoped record (e.g., demux stats)
+    - sequencing_run_id: Run-scoped record (e.g., demux stats)
 
     Uses the explicit metrics format with sample associations supporting
     workflow-level, single-sample, and paired-sample (tumor/normal) metrics.
     """
     project_id: str | None = None
-    sequencing_run_barcode: str | None = None  # Human-readable barcode, resolved to UUID
+    sequencing_run_id: str | None = None  # Human-readable run_id, resolved to UUID
     workflow_run_id: uuid.UUID | None = None  # Optional provenance link
     metadata: dict[str, str] | None = None  # {"pipeline": "RNA-Seq", "version": "2.0"}
     metrics: List[MetricInput] | None = None  # Metrics with explicit sample associations
@@ -266,7 +264,7 @@ class QCRecordCreate(BaseModel):
         Auto-propagate record-level identifiers to nested objects.
 
         1. Propagate project_id to output_files (FileCreate needs an entity).
-        2. Propagate sequencing_run_barcode to metrics that omit it.
+        2. Propagate sequencing_run_id to metrics that omit it.
         """
         if isinstance(data, dict):
             # Propagate project_id to output_files
@@ -276,26 +274,26 @@ class QCRecordCreate(BaseModel):
                     if isinstance(f, dict) and not f.get("project_id"):
                         f["project_id"] = project_id
 
-            # Propagate sequencing_run_barcode to metrics
-            run_barcode = data.get("sequencing_run_barcode")
-            if run_barcode and data.get("metrics"):
+            # Propagate sequencing_run_id to metrics
+            run_id = data.get("sequencing_run_id")
+            if run_id and data.get("metrics"):
                 for m in data["metrics"]:
-                    if isinstance(m, dict) and not m.get("sequencing_run_barcode"):
-                        m["sequencing_run_barcode"] = run_barcode
+                    if isinstance(m, dict) and not m.get("sequencing_run_id"):
+                        m["sequencing_run_id"] = run_id
         return data
 
     @model_validator(mode="after")
     def validate_scope(self):
-        """Ensure exactly one of project_id or sequencing_run_barcode is provided."""
+        """Ensure exactly one of project_id or sequencing_run_id is provided."""
         has_project = self.project_id is not None
-        has_run = self.sequencing_run_barcode is not None
+        has_run = self.sequencing_run_id is not None
         if not has_project and not has_run:
             raise ValueError(
-                "Either project_id or sequencing_run_barcode must be provided"
+                "Either project_id or sequencing_run_id must be provided"
             )
         if has_project and has_run:
             raise ValueError(
-                "Cannot provide both project_id and sequencing_run_barcode; "
+                "Cannot provide both project_id and sequencing_run_id; "
                 "a QCRecord is scoped to one or the other"
             )
         return self
@@ -317,8 +315,7 @@ class MetricPublic(SQLModel):
     """Public representation of a metric group."""
     name: str
     samples: List[MetricSamplePublic]
-    sequencing_run_id: uuid.UUID | None = None
-    sequencing_run_barcode: str | None = None
+    sequencing_run_id: str | None = None
     workflow_run_id: uuid.UUID | None = None
     values: List[MetricValuePublic]
 
@@ -329,8 +326,7 @@ class QCRecordPublic(BaseModel):
     created_on: datetime
     created_by: str
     project_id: str | None = None
-    sequencing_run_id: uuid.UUID | None = None
-    sequencing_run_barcode: str | None = None
+    sequencing_run_id: str | None = None
     workflow_run_id: uuid.UUID | None = None
     metadata: List[MetadataKeyValue]
     metrics: List[MetricPublic]
@@ -348,8 +344,7 @@ class QCRecordCreated(SQLModel):
     created_on: datetime
     created_by: str
     project_id: str | None = None
-    sequencing_run_id: uuid.UUID | None = None
-    sequencing_run_barcode: str | None = None
+    sequencing_run_id: str | None = None
     workflow_run_id: uuid.UUID | None = None
     is_duplicate: bool = False
 

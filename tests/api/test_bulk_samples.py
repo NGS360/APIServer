@@ -1,4 +1,4 @@
-"""Tests for single-sample run_barcode enrichment and bulk sample creation endpoint."""
+"""Tests for single-sample run_id enrichment and bulk sample creation endpoint."""
 
 from datetime import date
 
@@ -30,14 +30,16 @@ def _create_project(session: Session, name: str = "Test Project") -> str:
 def _create_run(
     session: Session,
     *,
+    run_id: str = "240315_M00001_0042_HXXXXXXXXX",
     run_date: date = date(2024, 3, 15),
     machine_id: str = "M00001",
     run_number: int = 42,
     flowcell_id: str = "HXXXXXXXXX",
     experiment_name: str = "TestExp",
 ) -> str:
-    """Insert a sequencing run and return its barcode."""
+    """Insert a sequencing run and return its run_id."""
     run = SequencingRun(
+        run_id=run_id,
         run_date=run_date,
         machine_id=machine_id,
         run_number=run_number,
@@ -47,13 +49,14 @@ def _create_run(
     session.add(run)
     session.commit()
     session.refresh(run)
-    return run.barcode  # e.g. "240315_M00001_0042_HXXXXXXXXX"
+    return run.run_id
 
 
 def _create_second_run(session: Session) -> str:
     """Insert a second, distinct sequencing run."""
     return _create_run(
         session,
+        run_id="240420_M00002_0099_JYYYYYYYYY",
         run_date=date(2024, 4, 20),
         machine_id="M00002",
         run_number=99,
@@ -63,25 +66,25 @@ def _create_second_run(session: Session) -> str:
 
 
 # ===================================================================
-# Single-sample endpoint with run_barcode
+# Single-sample endpoint with run_id
 # ===================================================================
 
 
-class TestSingleSampleWithRunBarcode:
-    """POST /projects/{project_id}/samples with optional run_barcode."""
+class TestSingleSampleWithRunId:
+    """POST /projects/{project_id}/samples with optional run_id."""
 
-    def test_create_sample_with_run_barcode(
+    def test_create_sample_with_run_id(
         self, client: TestClient, session: Session
     ):
-        """Happy path: sample + SampleSequencingRun created in one call."""
+        """Test that a sample and SampleSequencingRun are created in one call."""
         pid = _create_project(session)
-        barcode = _create_run(session)
+        run_id = _create_run(session)
 
         response = client.post(
             f"/api/v1/projects/{pid}/samples",
             json={
                 "sample_id": "S001",
-                "run_barcode": barcode,
+                "run_id": run_id,
                 "attributes": [{"key": "Tissue", "value": "Liver"}],
             },
         )
@@ -89,11 +92,13 @@ class TestSingleSampleWithRunBarcode:
         body = response.json()
         assert body["sample_id"] == "S001"
         assert body["project_id"] == pid
-        assert body["run_barcode"] == barcode
+        assert body["run_id"] == run_id
 
         # Verify the association was persisted
         sample = session.exec(
-            select(Sample).where(Sample.sample_id == "S001", Sample.project_id == pid)
+            select(Sample).where(
+                Sample.sample_id == "S001", Sample.project_id == pid
+            )
         ).one()
         assoc = session.exec(
             select(SampleSequencingRun).where(
@@ -103,10 +108,10 @@ class TestSingleSampleWithRunBarcode:
         assert assoc is not None
         assert assoc.created_by == "testuser"
 
-    def test_create_sample_without_run_barcode_backward_compat(
+    def test_create_sample_without_run_id(
         self, client: TestClient, session: Session
     ):
-        """Omitting run_barcode still works as before."""
+        """Test that a sample is created successfully when run_id is omitted."""
         pid = _create_project(session)
 
         response = client.post(
@@ -116,11 +121,13 @@ class TestSingleSampleWithRunBarcode:
         assert response.status_code == 201
         body = response.json()
         assert body["sample_id"] == "S002"
-        assert body["run_barcode"] is None
+        assert body["run_id"] is None
 
         # No association created
         sample = session.exec(
-            select(Sample).where(Sample.sample_id == "S002", Sample.project_id == pid)
+            select(Sample).where(
+                Sample.sample_id == "S002", Sample.project_id == pid
+            )
         ).one()
         assocs = session.exec(
             select(SampleSequencingRun).where(
@@ -129,37 +136,42 @@ class TestSingleSampleWithRunBarcode:
         ).all()
         assert len(assocs) == 0
 
-    def test_create_sample_with_invalid_run_barcode(
+    def test_create_sample_with_invalid_run_id(
         self, client: TestClient, session: Session
     ):
-        """Invalid barcode returns 404; no sample is created."""
+        """Test that an invalid run_id returns 404; no sample is created."""
         pid = _create_project(session)
 
         response = client.post(
             f"/api/v1/projects/{pid}/samples",
-            json={"sample_id": "S003", "run_barcode": "240101_XFAKE_0001_ZZZZZZZZZZ"},
+            json={
+                "sample_id": "S003",
+                "run_id": "240101_XFAKE_0001_ZZZZZZZZZZ",
+            },
         )
         assert response.status_code == 404
         assert "not found" in response.json()["detail"].lower()
 
         # Sample should NOT have been created
         sample = session.exec(
-            select(Sample).where(Sample.sample_id == "S003", Sample.project_id == pid)
+            select(Sample).where(
+                Sample.sample_id == "S003", Sample.project_id == pid
+            )
         ).first()
         assert sample is None
 
-    def test_create_sample_with_null_run_barcode(
+    def test_create_sample_with_null_run_id(
         self, client: TestClient, session: Session
     ):
-        """Explicitly passing null run_barcode is the same as omitting it."""
+        """Test that explicitly passing null run_id is the same as omitting it."""
         pid = _create_project(session)
 
         response = client.post(
             f"/api/v1/projects/{pid}/samples",
-            json={"sample_id": "S004", "run_barcode": None},
+            json={"sample_id": "S004", "run_id": None},
         )
         assert response.status_code == 201
-        assert response.json()["run_barcode"] is None
+        assert response.json()["run_id"] is None
 
 
 # ===================================================================
@@ -173,7 +185,7 @@ class TestBulkSampleCreation:
     # ----- Happy-path / basic -----
 
     def test_bulk_create_basic(self, client: TestClient, session: Session):
-        """Create multiple samples without run associations."""
+        """Test that multiple samples can be created without run associations."""
         pid = _create_project(session)
 
         response = client.post(
@@ -196,19 +208,19 @@ class TestBulkSampleCreation:
         assert len(body["items"]) == 3
         assert all(item["created"] is True for item in body["items"])
 
-    def test_bulk_create_with_run_barcode(
+    def test_bulk_create_with_run_id(
         self, client: TestClient, session: Session
     ):
-        """All samples associated with a run in one call."""
+        """Test that all samples are associated with a run in one call."""
         pid = _create_project(session)
-        barcode = _create_run(session)
+        run_id = _create_run(session)
 
         response = client.post(
             f"/api/v1/projects/{pid}/samples/bulk",
             json={
                 "samples": [
-                    {"sample_id": "R001", "run_barcode": barcode},
-                    {"sample_id": "R002", "run_barcode": barcode},
+                    {"sample_id": "R001", "run_id": run_id},
+                    {"sample_id": "R002", "run_id": run_id},
                 ]
             },
         )
@@ -217,7 +229,7 @@ class TestBulkSampleCreation:
         assert body["samples_created"] == 2
         assert body["associations_created"] == 2
         for item in body["items"]:
-            assert item["run_barcode"] == barcode
+            assert item["run_id"] == run_id
 
         # Verify associations in DB
         for sid in ("R001", "R002"):
@@ -236,7 +248,7 @@ class TestBulkSampleCreation:
     def test_bulk_create_with_attributes(
         self, client: TestClient, session: Session
     ):
-        """Attributes are persisted for each sample in the batch."""
+        """Test that attributes are persisted for each sample in the batch."""
         pid = _create_project(session)
 
         response = client.post(
@@ -269,7 +281,9 @@ class TestBulkSampleCreation:
             )
         ).one()
         attrs1 = session.exec(
-            select(SampleAttribute).where(SampleAttribute.sample_id == s1.id)
+            select(SampleAttribute).where(
+                SampleAttribute.sample_id == s1.id
+            )
         ).all()
         assert len(attrs1) == 2
         keys = {a.key for a in attrs1}
@@ -281,64 +295,43 @@ class TestBulkSampleCreation:
             )
         ).one()
         attrs2 = session.exec(
-            select(SampleAttribute).where(SampleAttribute.sample_id == s2.id)
+            select(SampleAttribute).where(
+                SampleAttribute.sample_id == s2.id
+            )
         ).all()
         assert len(attrs2) == 1
         assert attrs2[0].key == "Tissue"
         assert attrs2[0].value == "Heart"
-
-    def test_bulk_create_mixed_with_and_without_run(
-        self, client: TestClient, session: Session
-    ):
-        """Some samples have run_barcode, some don't."""
-        pid = _create_project(session)
-        barcode = _create_run(session)
-
-        response = client.post(
-            f"/api/v1/projects/{pid}/samples/bulk",
-            json={
-                "samples": [
-                    {"sample_id": "M001", "run_barcode": barcode},
-                    {"sample_id": "M002"},
-                    {"sample_id": "M003", "run_barcode": barcode},
-                ]
-            },
-        )
-        assert response.status_code == 201
-        body = response.json()
-        assert body["samples_created"] == 3
-        assert body["associations_created"] == 2
-
-        items = {i["sample_id"]: i for i in body["items"]}
-        assert items["M001"]["run_barcode"] == barcode
-        assert items["M002"]["run_barcode"] is None
-        assert items["M003"]["run_barcode"] == barcode
 
     # ----- Idempotency -----
 
     def test_bulk_idempotent_resubmission(
         self, client: TestClient, session: Session
     ):
-        """Re-submitting the same batch reuses existing samples/associations."""
+        """Test that re-submitting the same batch reuses existing samples/associations."""
         pid = _create_project(session)
-        barcode = _create_run(session)
+        run_id = _create_run(session)
 
         payload = {
             "samples": [
-                {"sample_id": "I001", "run_barcode": barcode},
-                {"sample_id": "I002", "run_barcode": barcode},
+                {"sample_id": "I001", "run_id": run_id},
+                {"sample_id": "I002", "run_id": run_id},
             ]
         }
 
         # First submission
-        r1 = client.post(f"/api/v1/projects/{pid}/samples/bulk", json=payload)
+        r1 = client.post(
+            f"/api/v1/projects/{pid}/samples/bulk", json=payload
+        )
         assert r1.status_code == 201
         b1 = r1.json()
         assert b1["samples_created"] == 2
         assert b1["associations_created"] == 2
 
         # Second identical submission
-        r2 = client.post(f"/api/v1/projects/{pid}/samples/bulk", json=payload)
+        r2 = client.post(
+            f"/api/v1/projects/{pid}/samples/bulk", json=payload
+        )
         assert r2.status_code == 201
         b2 = r2.json()
         assert b2["samples_created"] == 0
@@ -348,14 +341,18 @@ class TestBulkSampleCreation:
         assert all(item["created"] is False for item in b2["items"])
 
         # UUIDs should match between submissions
-        uuids1 = {i["sample_id"]: i["sample_uuid"] for i in b1["items"]}
-        uuids2 = {i["sample_id"]: i["sample_uuid"] for i in b2["items"]}
+        uuids1 = {
+            i["sample_id"]: i["sample_uuid"] for i in b1["items"]
+        }
+        uuids2 = {
+            i["sample_id"]: i["sample_uuid"] for i in b2["items"]
+        }
         assert uuids1 == uuids2
 
     def test_bulk_partial_idempotency(
         self, client: TestClient, session: Session
     ):
-        """Batch with some existing and some new samples."""
+        """Test that a batch correctly reports existing and newly created samples."""
         pid = _create_project(session)
 
         # Pre-create one sample
@@ -387,18 +384,18 @@ class TestBulkSampleCreation:
     def test_bulk_redemux_new_run_existing_samples(
         self, client: TestClient, session: Session
     ):
-        """Samples already exist; new run association is added (re-demux)."""
+        """Test that existing samples get new run associations on re-demux."""
         pid = _create_project(session)
-        barcode1 = _create_run(session)
-        barcode2 = _create_second_run(session)
+        run_id_1 = _create_run(session)
+        run_id_2 = _create_second_run(session)
 
         # First submission on run 1
         r1 = client.post(
             f"/api/v1/projects/{pid}/samples/bulk",
             json={
                 "samples": [
-                    {"sample_id": "D001", "run_barcode": barcode1},
-                    {"sample_id": "D002", "run_barcode": barcode1},
+                    {"sample_id": "D001", "run_id": run_id_1},
+                    {"sample_id": "D002", "run_id": run_id_1},
                 ]
             },
         )
@@ -410,8 +407,8 @@ class TestBulkSampleCreation:
             f"/api/v1/projects/{pid}/samples/bulk",
             json={
                 "samples": [
-                    {"sample_id": "D001", "run_barcode": barcode2},
-                    {"sample_id": "D002", "run_barcode": barcode2},
+                    {"sample_id": "D001", "run_id": run_id_2},
+                    {"sample_id": "D002", "run_id": run_id_2},
                 ]
             },
         )
@@ -441,7 +438,7 @@ class TestBulkSampleCreation:
     def test_bulk_empty_samples_list(
         self, client: TestClient, session: Session
     ):
-        """Empty samples list is rejected by the validator."""
+        """Test that an empty samples list is rejected by the validator."""
         pid = _create_project(session)
 
         response = client.post(
@@ -453,7 +450,7 @@ class TestBulkSampleCreation:
     def test_bulk_duplicate_sample_ids_in_request(
         self, client: TestClient, session: Session
     ):
-        """Duplicate sample_ids within a single request are rejected."""
+        """Test that duplicate sample_ids within a single request are rejected."""
         pid = _create_project(session)
 
         response = client.post(
@@ -468,17 +465,20 @@ class TestBulkSampleCreation:
         assert response.status_code == 422
         assert "duplicate" in response.json()["detail"].lower()
 
-    def test_bulk_invalid_run_barcode(
+    def test_bulk_invalid_run_id(
         self, client: TestClient, session: Session
     ):
-        """Invalid run barcode fails the entire batch (no partial commit)."""
+        """Test that an invalid run_id fails the entire batch (no partial commit)."""
         pid = _create_project(session)
 
         response = client.post(
             f"/api/v1/projects/{pid}/samples/bulk",
             json={
                 "samples": [
-                    {"sample_id": "BAD1", "run_barcode": "240101_XFAKE_0001_ZZZZZZZZZZ"},
+                    {
+                        "sample_id": "BAD1",
+                        "run_id": "240101_XFAKE_0001_ZZZZZZZZZZ",
+                    },
                 ]
             },
         )
@@ -493,19 +493,22 @@ class TestBulkSampleCreation:
         ).first()
         assert sample is None
 
-    def test_bulk_mixed_valid_and_invalid_barcode_fails_all(
+    def test_bulk_mixed_valid_and_invalid_run_id_fails_all(
         self, client: TestClient, session: Session
     ):
-        """One bad barcode causes the whole batch to be rejected."""
+        """Test that one bad run_id causes the whole batch to be rejected."""
         pid = _create_project(session)
-        good_barcode = _create_run(session)
+        good_run_id = _create_run(session)
 
         response = client.post(
             f"/api/v1/projects/{pid}/samples/bulk",
             json={
                 "samples": [
-                    {"sample_id": "MIX1", "run_barcode": good_barcode},
-                    {"sample_id": "MIX2", "run_barcode": "240101_XFAKE_0001_ZZZZZZZZZZ"},
+                    {"sample_id": "MIX1", "run_id": good_run_id},
+                    {
+                        "sample_id": "MIX2",
+                        "run_id": "240101_XFAKE_0001_ZZZZZZZZZZ",
+                    },
                 ]
             },
         )
@@ -523,7 +526,7 @@ class TestBulkSampleCreation:
     def test_bulk_duplicate_attribute_keys_rejected(
         self, client: TestClient, session: Session
     ):
-        """Duplicate attribute keys on a single sample are rejected."""
+        """Test that duplicate attribute keys on a single sample are rejected."""
         pid = _create_project(session)
 
         response = client.post(
@@ -543,8 +546,33 @@ class TestBulkSampleCreation:
         assert response.status_code == 400
         assert "duplicate" in response.json()["detail"].lower()
 
-    def test_bulk_nonexistent_project(self, client: TestClient, session: Session):
-        """Bulk endpoint against non-existent project returns 404."""
+    def test_bulk_case_insensitive_duplicate_attribute_keys_rejected(
+        self, client: TestClient, session: Session
+    ):
+        """Test that bulk create rejects samples with attribute keys differing only in case."""
+        pid = _create_project(session)
+
+        response = client.post(
+            f"/api/v1/projects/{pid}/samples/bulk",
+            json={
+                "samples": [
+                    {
+                        "sample_id": "ATTR_CI",
+                        "attributes": [
+                            {"key": "Tissue", "value": "Liver"},
+                            {"key": "tissue", "value": "Heart"},
+                        ],
+                    },
+                ]
+            },
+        )
+        assert response.status_code == 400
+        assert "duplicate" in response.json()["detail"].lower()
+
+    def test_bulk_nonexistent_project(
+        self, client: TestClient, session: Session
+    ):
+        """Test that bulk endpoint against non-existent project returns 404."""
         response = client.post(
             "/api/v1/projects/P-NONEXISTENT-9999/samples/bulk",
             json={"samples": [{"sample_id": "X1"}]},
@@ -554,7 +582,7 @@ class TestBulkSampleCreation:
     def test_bulk_extra_field_rejected(
         self, client: TestClient, session: Session
     ):
-        """Extra fields in SampleCreate (model has extra='forbid') are rejected."""
+        """Test that extra fields in SampleCreate (model has extra='forbid') are rejected."""
         pid = _create_project(session)
 
         response = client.post(
@@ -570,15 +598,15 @@ class TestBulkSampleCreation:
     def test_bulk_create_created_by_is_recorded(
         self, client: TestClient, session: Session
     ):
-        """created_by on SampleSequencingRun reflects the authenticated user."""
+        """Test that created_by on SampleSequencingRun reflects the authenticated user."""
         pid = _create_project(session)
-        barcode = _create_run(session)
+        run_id = _create_run(session)
 
         response = client.post(
             f"/api/v1/projects/{pid}/samples/bulk",
             json={
                 "samples": [
-                    {"sample_id": "CB1", "run_barcode": barcode},
+                    {"sample_id": "CB1", "run_id": run_id},
                 ]
             },
         )
@@ -599,17 +627,17 @@ class TestBulkSampleCreation:
     def test_bulk_multiple_runs_in_same_batch(
         self, client: TestClient, session: Session
     ):
-        """Samples in one batch can reference different runs."""
+        """Test that samples in one batch can reference different runs."""
         pid = _create_project(session)
-        barcode1 = _create_run(session)
-        barcode2 = _create_second_run(session)
+        run_id_1 = _create_run(session)
+        run_id_2 = _create_second_run(session)
 
         response = client.post(
             f"/api/v1/projects/{pid}/samples/bulk",
             json={
                 "samples": [
-                    {"sample_id": "MR1", "run_barcode": barcode1},
-                    {"sample_id": "MR2", "run_barcode": barcode2},
+                    {"sample_id": "MR1", "run_id": run_id_1},
+                    {"sample_id": "MR2", "run_id": run_id_2},
                     {"sample_id": "MR3"},
                 ]
             },
@@ -620,9 +648,9 @@ class TestBulkSampleCreation:
         assert body["associations_created"] == 2
 
         items = {i["sample_id"]: i for i in body["items"]}
-        assert items["MR1"]["run_barcode"] == barcode1
-        assert items["MR2"]["run_barcode"] == barcode2
-        assert items["MR3"]["run_barcode"] is None
+        assert items["MR1"]["run_id"] == run_id_1
+        assert items["MR2"]["run_id"] == run_id_2
+        assert items["MR3"]["run_id"] is None
 
 
 # ===================================================================
@@ -636,7 +664,7 @@ class TestBulkSampleWithFiles:
     def test_bulk_with_files_happy_path(
         self, client: TestClient, session: Session
     ):
-        """Create samples with files; verify File, FileSample, FileProject, tags, hashes."""
+        """Test that samples with files create File, FileSample, FileProject, tags, hashes."""
         pid = _create_project(session)
 
         response = client.post(
@@ -689,7 +717,9 @@ class TestBulkSampleWithFiles:
         ).one()
 
         file_samples = session.exec(
-            select(FileSample).where(FileSample.sample_id == sample_f001.id)
+            select(FileSample).where(
+                FileSample.sample_id == sample_f001.id
+            )
         ).all()
         assert len(file_samples) == 2
 
@@ -719,7 +749,9 @@ class TestBulkSampleWithFiles:
             select(Project).where(Project.project_id == pid)
         ).one()
         file_projects = session.exec(
-            select(FileProject).where(FileProject.file_id == r1_file.id)
+            select(FileProject).where(
+                FileProject.file_id == r1_file.id
+            )
         ).all()
         assert len(file_projects) == 1
         assert file_projects[0].project_id == project.id
@@ -727,7 +759,7 @@ class TestBulkSampleWithFiles:
     def test_bulk_idempotent_resubmission_no_hashes(
         self, client: TestClient, session: Session
     ):
-        """Re-submitting same batch without hashes → files_skipped, no duplicates."""
+        """Test that re-submitting same batch without hashes skips files, no duplicates."""
         pid = _create_project(session)
 
         payload = {
@@ -743,14 +775,18 @@ class TestBulkSampleWithFiles:
         }
 
         # First submission
-        r1 = client.post(f"/api/v1/projects/{pid}/samples/bulk", json=payload)
+        r1 = client.post(
+            f"/api/v1/projects/{pid}/samples/bulk", json=payload
+        )
         assert r1.status_code == 201
         b1 = r1.json()
         assert b1["files_created"] == 2
         assert b1["files_skipped"] == 0
 
         # Second identical submission (no hashes → skip)
-        r2 = client.post(f"/api/v1/projects/{pid}/samples/bulk", json=payload)
+        r2 = client.post(
+            f"/api/v1/projects/{pid}/samples/bulk", json=payload
+        )
         assert r2.status_code == 201
         b2 = r2.json()
         assert b2["files_created"] == 0
@@ -770,7 +806,7 @@ class TestBulkSampleWithFiles:
     def test_bulk_idempotent_resubmission_matching_hashes(
         self, client: TestClient, session: Session
     ):
-        """Re-submitting with matching hashes → files_skipped."""
+        """Test that re-submitting with matching hashes skips files."""
         pid = _create_project(session)
 
         payload = {
@@ -788,12 +824,16 @@ class TestBulkSampleWithFiles:
         }
 
         # First submission
-        r1 = client.post(f"/api/v1/projects/{pid}/samples/bulk", json=payload)
+        r1 = client.post(
+            f"/api/v1/projects/{pid}/samples/bulk", json=payload
+        )
         assert r1.status_code == 201
         assert r1.json()["files_created"] == 1
 
         # Second submission with same hash
-        r2 = client.post(f"/api/v1/projects/{pid}/samples/bulk", json=payload)
+        r2 = client.post(
+            f"/api/v1/projects/{pid}/samples/bulk", json=payload
+        )
         assert r2.status_code == 201
         b2 = r2.json()
         assert b2["files_created"] == 0
@@ -802,7 +842,7 @@ class TestBulkSampleWithFiles:
     def test_hash_mismatch_creates_new_version(
         self, client: TestClient, session: Session
     ):
-        """Same URI but different hash → new File version created."""
+        """Test that same URI but different hash creates a new File version."""
         pid = _create_project(session)
 
         # First submission
@@ -877,7 +917,7 @@ class TestBulkSampleWithFiles:
     def test_bulk_mixed_samples_with_and_without_files(
         self, client: TestClient, session: Session
     ):
-        """Some samples have files, some don't."""
+        """Test that some samples have files while others don't."""
         pid = _create_project(session)
 
         response = client.post(
@@ -915,10 +955,10 @@ class TestBulkSampleWithFiles:
         assert items["MF002"]["files_created"] == 0
         assert items["MF003"]["files_created"] == 2
 
-    def test_bulk_backward_compatible_no_files(
+    def test_bulk_no_files_field(
         self, client: TestClient, session: Session
     ):
-        """Existing payloads without files field still work; counts are 0."""
+        """Test that payloads without files field succeed with zero file counts."""
         pid = _create_project(session)
 
         response = client.post(
@@ -944,7 +984,7 @@ class TestSingleSampleWithFiles:
     def test_single_sample_with_files(
         self, client: TestClient, session: Session
     ):
-        """Create a single sample with files attached."""
+        """Test that a single sample with files is created correctly."""
         pid = _create_project(session)
 
         response = client.post(
@@ -983,7 +1023,9 @@ class TestSingleSampleWithFiles:
 
         # Check hash
         hashes = session.exec(
-            select(FileHash).where(FileHash.file_id == file_record.id)
+            select(FileHash).where(
+                FileHash.file_id == file_record.id
+            )
         ).all()
         assert len(hashes) == 1
         assert hashes[0].algorithm == "md5"
@@ -1000,7 +1042,7 @@ class TestSingleSampleWithFiles:
     def test_single_sample_file_dedup_no_hashes(
         self, client: TestClient, session: Session
     ):
-        """Re-creating same sample+file (no hashes) — file already linked, silently skipped."""
+        """Test that re-creating same sample+file (no hashes) silently skips."""
         pid = _create_project(session)
 
         # First: create via bulk (to get the sample + file)
@@ -1047,10 +1089,10 @@ class TestSingleSampleWithFiles:
         ).all()
         assert len(file_samples) == 1
 
-    def test_single_sample_without_files_backward_compat(
+    def test_single_sample_without_files(
         self, client: TestClient, session: Session
     ):
-        """Omitting files field still works as before."""
+        """Test that a sample is created successfully when files field is omitted."""
         pid = _create_project(session)
 
         response = client.post(
@@ -1059,3 +1101,461 @@ class TestSingleSampleWithFiles:
         )
         assert response.status_code == 201
         assert response.json()["sample_id"] == "NOFILE001"
+
+
+# ===================================================================
+# Bulk sample attribute upsert (merge semantics)
+# ===================================================================
+
+
+class TestBulkSampleAttributeUpsert:
+    """POST /projects/{project_id}/samples/bulk – attribute merge/upsert on existing samples."""
+
+    def test_bulk_upsert_attributes_on_existing_sample(
+        self, client: TestClient, session: Session
+    ):
+        """Test that bulk endpoint upserts changed and new attributes on
+        an existing sample while preserving unmentioned attributes."""
+        pid = _create_project(session)
+
+        # First submission: create sample with Tissue and Condition
+        r1 = client.post(
+            f"/api/v1/projects/{pid}/samples/bulk",
+            json={
+                "samples": [
+                    {
+                        "sample_id": "U001",
+                        "attributes": [
+                            {"key": "Tissue", "value": "Liver"},
+                            {"key": "Condition", "value": "Healthy"},
+                        ],
+                    },
+                ]
+            },
+        )
+        assert r1.status_code == 201
+        assert r1.json()["samples_created"] == 1
+
+        # Second submission: change Tissue, add Stage (omit Condition)
+        r2 = client.post(
+            f"/api/v1/projects/{pid}/samples/bulk",
+            json={
+                "samples": [
+                    {
+                        "sample_id": "U001",
+                        "attributes": [
+                            {"key": "Tissue", "value": "Heart"},
+                            {"key": "Stage", "value": "III"},
+                        ],
+                    },
+                ]
+            },
+        )
+        assert r2.status_code == 201
+        b2 = r2.json()
+        assert b2["samples_created"] == 0
+        assert b2["samples_updated"] == 1
+        assert b2["samples_existing"] == 0
+        assert b2["items"][0]["updated"] is True
+
+        # Verify DB: Tissue updated, Condition preserved, Stage added
+        sample = session.exec(
+            select(Sample).where(
+                Sample.sample_id == "U001", Sample.project_id == pid
+            )
+        ).one()
+        attrs = session.exec(
+            select(SampleAttribute).where(
+                SampleAttribute.sample_id == sample.id
+            )
+        ).all()
+        attr_dict = {a.key: a.value for a in attrs}
+        assert attr_dict == {
+            "Tissue": "Heart",
+            "Condition": "Healthy",
+            "Stage": "III",
+        }
+
+    def test_bulk_no_attributes_field_preserves_existing(
+        self, client: TestClient, session: Session
+    ):
+        """Test that existing attributes are preserved when the attributes
+        field is omitted from the resubmission payload."""
+        pid = _create_project(session)
+
+        # Create with attributes
+        client.post(
+            f"/api/v1/projects/{pid}/samples/bulk",
+            json={
+                "samples": [
+                    {
+                        "sample_id": "U002",
+                        "attributes": [{"key": "Tissue", "value": "Liver"}],
+                    },
+                ]
+            },
+        )
+
+        # Resubmit without attributes field
+        r2 = client.post(
+            f"/api/v1/projects/{pid}/samples/bulk",
+            json={"samples": [{"sample_id": "U002"}]},
+        )
+        assert r2.status_code == 201
+        b2 = r2.json()
+        assert b2["samples_updated"] == 0
+        assert b2["samples_existing"] == 1
+        assert b2["items"][0]["updated"] is False
+
+        # Verify existing attribute still present
+        sample = session.exec(
+            select(Sample).where(
+                Sample.sample_id == "U002", Sample.project_id == pid
+            )
+        ).one()
+        attrs = session.exec(
+            select(SampleAttribute).where(
+                SampleAttribute.sample_id == sample.id
+            )
+        ).all()
+        assert len(attrs) == 1
+        assert attrs[0].key == "Tissue"
+        assert attrs[0].value == "Liver"
+
+    def test_bulk_empty_attributes_list_preserves_existing(
+        self, client: TestClient, session: Session
+    ):
+        """Test that existing attributes are preserved when the attributes
+        field is an empty list in the resubmission payload."""
+        pid = _create_project(session)
+
+        # Create with attributes
+        client.post(
+            f"/api/v1/projects/{pid}/samples/bulk",
+            json={
+                "samples": [
+                    {
+                        "sample_id": "U003",
+                        "attributes": [{"key": "Tissue", "value": "Liver"}],
+                    },
+                ]
+            },
+        )
+
+        # Resubmit with empty attributes list
+        r2 = client.post(
+            f"/api/v1/projects/{pid}/samples/bulk",
+            json={
+                "samples": [{"sample_id": "U003", "attributes": []}]
+            },
+        )
+        assert r2.status_code == 201
+        b2 = r2.json()
+        assert b2["samples_updated"] == 0
+        assert b2["samples_existing"] == 1
+
+        # Verify existing attribute still present
+        sample = session.exec(
+            select(Sample).where(
+                Sample.sample_id == "U003", Sample.project_id == pid
+            )
+        ).one()
+        attrs = session.exec(
+            select(SampleAttribute).where(
+                SampleAttribute.sample_id == sample.id
+            )
+        ).all()
+        assert len(attrs) == 1
+        assert attrs[0].key == "Tissue"
+
+    def test_bulk_mixed_new_and_existing_with_attributes(
+        self, client: TestClient, session: Session
+    ):
+        """Test that a batch containing both new samples and existing
+        samples with changed attributes reports correct counters."""
+        pid = _create_project(session)
+
+        # Pre-create one sample with attributes
+        client.post(
+            f"/api/v1/projects/{pid}/samples/bulk",
+            json={
+                "samples": [
+                    {
+                        "sample_id": "M001",
+                        "attributes": [{"key": "Tissue", "value": "Liver"}],
+                    },
+                ]
+            },
+        )
+
+        # Submit batch with existing (changed attrs) + new sample
+        r2 = client.post(
+            f"/api/v1/projects/{pid}/samples/bulk",
+            json={
+                "samples": [
+                    {
+                        "sample_id": "M001",
+                        "attributes": [{"key": "Tissue", "value": "Heart"}],
+                    },
+                    {
+                        "sample_id": "M002",
+                        "attributes": [{"key": "Tissue", "value": "Lung"}],
+                    },
+                ]
+            },
+        )
+        assert r2.status_code == 201
+        b2 = r2.json()
+        assert b2["samples_created"] == 1
+        assert b2["samples_updated"] == 1
+        assert b2["samples_existing"] == 0
+
+        items = {i["sample_id"]: i for i in b2["items"]}
+        assert items["M001"]["created"] is False
+        assert items["M001"]["updated"] is True
+        assert items["M002"]["created"] is True
+        assert items["M002"]["updated"] is False
+
+    def test_bulk_removes_auto_created_stub_tag(
+        self, client: TestClient, session: Session
+    ):
+        """Test that the auto_created_stub attribute is removed when
+        real attributes are submitted for a stub sample."""
+        pid = _create_project(session)
+        from api.samples.services import resolve_or_create_sample
+
+        # Create a stub sample
+        stub_uuid = resolve_or_create_sample(
+            session=session,
+            sample_name="STUB001",
+            project_id=pid,
+        )
+        session.commit()
+
+        # Verify stub tag exists
+        stub_attrs = session.exec(
+            select(SampleAttribute).where(
+                SampleAttribute.sample_id == stub_uuid
+            )
+        ).all()
+        stub_keys = {a.key for a in stub_attrs}
+        assert "auto_created_stub" in stub_keys
+
+        # Submit real attributes via bulk endpoint
+        r = client.post(
+            f"/api/v1/projects/{pid}/samples/bulk",
+            json={
+                "samples": [
+                    {
+                        "sample_id": "STUB001",
+                        "attributes": [
+                            {"key": "Tissue", "value": "Brain"},
+                            {"key": "STUDYID", "value": "S-123"},
+                        ],
+                    },
+                ]
+            },
+        )
+        assert r.status_code == 201
+        body = r.json()
+        assert body["samples_updated"] == 1
+
+        # Verify auto_created_stub is gone and real attrs present
+        attrs = session.exec(
+            select(SampleAttribute).where(
+                SampleAttribute.sample_id == stub_uuid
+            )
+        ).all()
+        attr_dict = {a.key: a.value for a in attrs}
+        assert "auto_created_stub" not in attr_dict
+        assert attr_dict["Tissue"] == "Brain"
+        assert attr_dict["STUDYID"] == "S-123"
+
+    def test_bulk_idempotent_resubmission_same_attributes(
+        self, client: TestClient, session: Session
+    ):
+        """Test that resubmitting identical attributes results in zero
+        samples_updated because no values actually changed."""
+        pid = _create_project(session)
+
+        payload = {
+            "samples": [
+                {
+                    "sample_id": "IDEM001",
+                    "attributes": [
+                        {"key": "Tissue", "value": "Liver"},
+                        {"key": "Condition", "value": "Healthy"},
+                    ],
+                },
+            ]
+        }
+
+        # First submission
+        r1 = client.post(
+            f"/api/v1/projects/{pid}/samples/bulk", json=payload
+        )
+        assert r1.status_code == 201
+        assert r1.json()["samples_created"] == 1
+
+        # Identical resubmission
+        r2 = client.post(
+            f"/api/v1/projects/{pid}/samples/bulk", json=payload
+        )
+        assert r2.status_code == 201
+        b2 = r2.json()
+        assert b2["samples_created"] == 0
+        assert b2["samples_updated"] == 0
+        assert b2["samples_existing"] == 1
+        assert b2["items"][0]["updated"] is False
+
+    def test_bulk_empty_value_deletes_existing_attribute(
+        self, client: TestClient, session: Session
+    ):
+        """Test that submitting an attribute with value='' deletes the
+        previously-set attribute from the database while attributes not
+        mentioned in the request are preserved."""
+        pid = _create_project(session)
+
+        # First: create sample with Tissue and Condition
+        payload1 = {
+            "samples": [
+                {
+                    "sample_id": "DEL001",
+                    "attributes": [
+                        {"key": "Tissue", "value": "Liver"},
+                        {"key": "Condition", "value": "Healthy"},
+                    ],
+                },
+            ]
+        }
+        r1 = client.post(
+            f"/api/v1/projects/{pid}/samples/bulk", json=payload1
+        )
+        assert r1.status_code == 201
+        assert r1.json()["samples_created"] == 1
+
+        # Second: send Tissue="" to delete it, add Stage
+        payload2 = {
+            "samples": [
+                {
+                    "sample_id": "DEL001",
+                    "attributes": [
+                        {"key": "Tissue", "value": ""},
+                        {"key": "Stage", "value": "III"},
+                    ],
+                },
+            ]
+        }
+        r2 = client.post(
+            f"/api/v1/projects/{pid}/samples/bulk", json=payload2
+        )
+        assert r2.status_code == 201
+        assert r2.json()["samples_updated"] == 1
+
+        # Verify DB
+        sample = session.exec(
+            select(Sample).where(
+                Sample.sample_id == "DEL001", Sample.project_id == pid
+            )
+        ).one()
+        attrs = session.exec(
+            select(SampleAttribute).where(
+                SampleAttribute.sample_id == sample.id
+            )
+        ).all()
+        attr_dict = {a.key: a.value for a in attrs}
+        assert "Tissue" not in attr_dict, "Empty value should delete existing attribute"
+        assert attr_dict["Condition"] == "Healthy", "Unmentioned attribute should be preserved"
+        assert attr_dict["Stage"] == "III"
+
+    def test_bulk_whitespace_only_value_deletes_existing_attribute(
+        self, client: TestClient, session: Session
+    ):
+        """Test that submitting an attribute with a whitespace-only value
+        deletes the previously-set attribute from the database."""
+        pid = _create_project(session)
+
+        # Create sample with Tissue
+        payload1 = {
+            "samples": [
+                {
+                    "sample_id": "WS001",
+                    "attributes": [
+                        {"key": "Tissue", "value": "Liver"},
+                    ],
+                },
+            ]
+        }
+        r1 = client.post(
+            f"/api/v1/projects/{pid}/samples/bulk", json=payload1
+        )
+        assert r1.status_code == 201
+
+        # Send Tissue="  " (whitespace only) to delete it
+        payload2 = {
+            "samples": [
+                {
+                    "sample_id": "WS001",
+                    "attributes": [
+                        {"key": "Tissue", "value": "   "},
+                    ],
+                },
+            ]
+        }
+        r2 = client.post(
+            f"/api/v1/projects/{pid}/samples/bulk", json=payload2
+        )
+        assert r2.status_code == 201
+        assert r2.json()["samples_updated"] == 1
+
+        # Verify Tissue is gone
+        sample = session.exec(
+            select(Sample).where(
+                Sample.sample_id == "WS001", Sample.project_id == pid
+            )
+        ).one()
+        attrs = session.exec(
+            select(SampleAttribute).where(
+                SampleAttribute.sample_id == sample.id
+            )
+        ).all()
+        attr_keys = [a.key for a in attrs]
+        assert "Tissue" not in attr_keys
+
+    def test_bulk_empty_value_on_new_sample_skips_attribute(
+        self, client: TestClient, session: Session
+    ):
+        """Test that creating a new sample with value='' does not persist
+        an attribute row for that key."""
+        pid = _create_project(session)
+
+        payload = {
+            "samples": [
+                {
+                    "sample_id": "SKIP001",
+                    "attributes": [
+                        {"key": "Tissue", "value": "Liver"},
+                        {"key": "Condition", "value": ""},
+                    ],
+                },
+            ]
+        }
+        r = client.post(
+            f"/api/v1/projects/{pid}/samples/bulk", json=payload
+        )
+        assert r.status_code == 201
+        assert r.json()["samples_created"] == 1
+
+        sample = session.exec(
+            select(Sample).where(
+                Sample.sample_id == "SKIP001", Sample.project_id == pid
+            )
+        ).one()
+        attrs = session.exec(
+            select(SampleAttribute).where(
+                SampleAttribute.sample_id == sample.id
+            )
+        ).all()
+        attr_dict = {a.key: a.value for a in attrs}
+        assert attr_dict == {"Tissue": "Liver"}
+        assert "Condition" not in attr_dict

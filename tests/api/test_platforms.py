@@ -12,7 +12,9 @@ def test_create_platform(client: TestClient):
     body = {"name": "Arvados"}
     resp = client.post("/api/v1/platforms", json=body)
     assert resp.status_code == 201
-    assert resp.json()["name"] == "Arvados"
+    data = resp.json()
+    assert data["name"] == "Arvados"
+    assert "id" in data
 
 
 def test_create_platform_duplicate(client: TestClient):

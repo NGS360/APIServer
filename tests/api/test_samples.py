@@ -24,12 +24,11 @@ def test_get_samples_for_a_project_with_no_samples(
     response = client.get(f"/api/v1/projects/{new_project.project_id}/samples")
     assert response.status_code == 200
     assert response.json() == {
-        "current_page": 1,
         "data": [],
         "data_cols": None,
-        "per_page": 20,
         "total_items": 0,
-        "total_pages": 0,
+        "skip": 0,
+        "limit": 100,
         "has_next": False,
         "has_prev": False,
     }
@@ -187,6 +186,31 @@ def test_fail_to_add__sample_with_duplicate_attributes(
         f"/api/v1/projects/{new_project.project_id}/samples", json=sample_data
     )
     assert response.status_code == 400
+
+
+def test_fail_to_add_sample_with_case_insensitive_duplicate_attributes(
+    client: TestClient, session: Session
+):
+    """Test that adding a sample with attribute keys differing only in case returns 400."""
+    new_project = Project(name="Test Project")
+    new_project.project_id = generate_project_id(session=session)
+    new_project.attributes = []
+    session.add(new_project)
+    session.commit()
+
+    sample_data = {
+        "sample_id": "Sample_1",
+        "attributes": [
+            {"key": "Tissue", "value": "Liver"},
+            {"key": "tissue", "value": "Heart"},
+        ],
+    }
+
+    response = client.post(
+        f"/api/v1/projects/{new_project.project_id}/samples", json=sample_data
+    )
+    assert response.status_code == 400
+    assert "duplicate" in response.json()["detail"].lower()
 
 
 def test_fail_to_add_sample_to_project(client: TestClient, session: Session):
@@ -472,17 +496,17 @@ def test_get_samples_include_files_pagination_works(
         )
     session.commit()
 
-    # Page 1, per_page=2
+    # First page: skip=0, limit=2
     response = client.get(
         f"/api/v1/projects/{project.project_id}/samples",
-        params={"include": "files", "per_page": 2, "page": 1},
+        params={"include": "files", "limit": 2, "skip": 0},
     )
     assert response.status_code == 200
 
     data = response.json()
     assert data["total_items"] == 5
-    assert data["per_page"] == 2
-    assert data["current_page"] == 1
+    assert data["limit"] == 2
+    assert data["skip"] == 0
     assert data["has_next"] is True
     assert len(data["data"]) == 2
 
@@ -491,10 +515,10 @@ def test_get_samples_include_files_pagination_works(
         assert sample_item["files"] is not None
         assert len(sample_item["files"]) == 1
 
-    # Page 3 (last), per_page=2 → 1 sample
+    # Last page: skip=4, limit=2 → 1 sample
     response = client.get(
         f"/api/v1/projects/{project.project_id}/samples",
-        params={"include": "files", "per_page": 2, "page": 3},
+        params={"include": "files", "limit": 2, "skip": 4},
     )
     assert response.status_code == 200
 
