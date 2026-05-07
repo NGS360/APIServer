@@ -8,9 +8,8 @@ This module provides a unified file metadata system that supports:
 - Multi-algorithm hash storage via FileHash
 - Flexible key-value tags via FileTag
 
-Phase 2 replaced the polymorphic FileEntity pattern with typed junction tables:
-  FileProject, FileSequencingRun, FileQCRecord, FileWorkflowRun, FilePipeline
-Each has real FK constraints and cascade deletes.
+Entity associations use typed junction tables (FileProject, FileSequencingRun,
+FileQCRecord, FilePipeline) with real FK constraints and cascade deletes.
 """
 
 from datetime import datetime, timezone
@@ -166,26 +165,6 @@ class FileQCRecord(SQLModel, table=True):
     file: "File" = Relationship(back_populates="qcrecords")
 
 
-class FileWorkflowRun(SQLModel, table=True):
-    """
-    Associates a file with a workflow execution.
-
-    Common roles: input, output, log, intermediate.
-    """
-    __tablename__ = "fileworkflowrun"
-    __table_args__ = (
-        UniqueConstraint("file_id", "workflow_run_id", name="uq_fileworkflowrun"),
-    )
-
-    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
-    file_id: uuid.UUID = Field(foreign_key="file.id", nullable=False)
-    workflow_run_id: uuid.UUID = Field(foreign_key="workflowrun.id", nullable=False)
-    role: str | None = Field(default=None, max_length=50)
-
-    # Relationship back to parent file
-    file: "File" = Relationship(back_populates="workflow_runs")
-
-
 class FilePipeline(SQLModel, table=True):
     """
     Associates a file with a pipeline.
@@ -267,10 +246,6 @@ class File(SQLModel, table=True):
         sa_relationship_kwargs={"cascade": "all, delete-orphan"}
     )
     qcrecords: List["FileQCRecord"] = Relationship(
-        back_populates="file",
-        sa_relationship_kwargs={"cascade": "all, delete-orphan"}
-    )
-    workflow_runs: List["FileWorkflowRun"] = Relationship(
         back_populates="file",
         sa_relationship_kwargs={"cascade": "all, delete-orphan"}
     )
@@ -417,7 +392,6 @@ class FileCreate(SQLModel):
     # Typed entity associations (replaces polymorphic EntityInput)
     sequencing_run_id: uuid.UUID | None = None
     qcrecord_id: uuid.UUID | None = None
-    workflow_run_id: uuid.UUID | None = None
     pipeline_id: uuid.UUID | None = None
 
     # Existing
@@ -434,13 +408,12 @@ class FileCreate(SQLModel):
             self.project_id,
             self.sequencing_run_id,
             self.qcrecord_id,
-            self.workflow_run_id,
             self.pipeline_id,
         ]
         if not any(e is not None for e in entities):
             raise ValueError(
                 "At least one entity association is required "
-                "(project_id, sequencing_run_id, qcrecord_id, workflow_run_id, or pipeline_id)"
+                "(project_id, sequencing_run_id, qcrecord_id, or pipeline_id)"
             )
         return self
 
@@ -469,7 +442,6 @@ class FileUploadCreate(SQLModel):
     project_id: str | None = None  # String business key
     sequencing_run_id: uuid.UUID | None = None
     qcrecord_id: uuid.UUID | None = None
-    workflow_run_id: uuid.UUID | None = None
     pipeline_id: uuid.UUID | None = None
 
     role: str | None = None  # e.g., samplesheet
@@ -487,14 +459,13 @@ class FileUploadCreate(SQLModel):
             self.project_id,
             self.sequencing_run_id,
             self.qcrecord_id,
-            self.workflow_run_id,
             self.pipeline_id,
         ]
         provided = [e for e in entities if e is not None]
         if len(provided) == 0:
             raise ValueError(
                 "At least one entity association is required "
-                "(project_id, sequencing_run_id, qcrecord_id, workflow_run_id, or pipeline_id)"
+                "(project_id, sequencing_run_id, qcrecord_id, or pipeline_id)"
             )
         if len(provided) > 1:
             raise ValueError(
@@ -511,8 +482,6 @@ class FileUploadCreate(SQLModel):
             return "run"
         if self.qcrecord_id is not None:
             return "qcrecord"
-        if self.workflow_run_id is not None:
-            return "workflowrun"
         if self.pipeline_id is not None:
             return "pipeline"
         return "unknown"
@@ -526,8 +495,6 @@ class FileUploadCreate(SQLModel):
             return str(self.sequencing_run_id)
         if self.qcrecord_id is not None:
             return str(self.qcrecord_id)
-        if self.workflow_run_id is not None:
-            return str(self.workflow_run_id)
         if self.pipeline_id is not None:
             return str(self.pipeline_id)
         return "unknown"
@@ -558,7 +525,7 @@ class FileAssociationPublic(SQLModel):
     Unifies all typed junction tables into a single response format.
     The underlying storage uses proper FK-backed junction tables.
     """
-    entity_type: str  # PROJECT, SEQUENCING_RUN, QCRECORD, WORKFLOW_RUN, PIPELINE
+    entity_type: str  # PROJECT, SEQUENCING_RUN, QCRECORD, PIPELINE
     entity_id: uuid.UUID
     role: str | None
 
@@ -665,10 +632,6 @@ def file_to_public(file: File) -> FilePublic:
     for fqr in file.qcrecords:
         associations.append(FileAssociationPublic(
             entity_type="QCRECORD", entity_id=fqr.qcrecord_id, role=fqr.role
-        ))
-    for fwr in file.workflow_runs:
-        associations.append(FileAssociationPublic(
-            entity_type="WORKFLOW_RUN", entity_id=fwr.workflow_run_id, role=fwr.role
         ))
     for fpl in file.pipelines:
         associations.append(FileAssociationPublic(

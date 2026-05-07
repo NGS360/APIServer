@@ -17,6 +17,9 @@ wheels/
 *.env
 .env.*
 
+# LLM-generated plans (local only)
+plans/
+
 # Local computer files
 *.DS_Store
 .vscode

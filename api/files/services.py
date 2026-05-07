@@ -7,8 +7,8 @@ This module provides functions for:
 - Managing file uploads to S3 or local storage
 - Browsing S3 file systems
 
-Phase 2 replaced polymorphic FileEntity with typed junction tables:
-  FileProject, FileSequencingRun, FileQCRecord, FileWorkflowRun, FilePipeline
+Entity associations use typed junction tables (FileProject, FileSequencingRun,
+FileQCRecord, FilePipeline) with real FK constraints.
 """
 
 from datetime import datetime, timezone
@@ -28,7 +28,6 @@ from api.files.models import (
     FileProject,
     FileSequencingRun,
     FileQCRecord,
-    FileWorkflowRun,
     FilePipeline,
     FileCreate,
     FileUpdate,
@@ -106,13 +105,6 @@ def create_file(
             file_id=file_record.id,
             qcrecord_id=file_create.qcrecord_id,
             role="output",
-        ))
-
-    if file_create.workflow_run_id:
-        _validate_exists_by_uuid(session, "WorkflowRun", file_create.workflow_run_id)
-        session.add(FileWorkflowRun(
-            file_id=file_record.id,
-            workflow_run_id=file_create.workflow_run_id,
         ))
 
     if file_create.pipeline_id:
@@ -528,17 +520,6 @@ def list_files_by_entity(
             .where(FileQCRecord.qcrecord_id == record_uuid)
         )
 
-    elif normalized == "WORKFLOW_RUN":
-        try:
-            wr_uuid = uuid_module.UUID(entity_id)
-        except ValueError:
-            return []
-        query = (
-            select(File)
-            .join(FileWorkflowRun)
-            .where(FileWorkflowRun.workflow_run_id == wr_uuid)
-        )
-
     elif normalized == "PIPELINE":
         try:
             pl_uuid = uuid_module.UUID(entity_id)
@@ -641,7 +622,6 @@ def _validate_exists_by_uuid(
     model_map = {
         "SequencingRun": ("api.runs.models", "SequencingRun"),
         "QCRecord": ("api.qcmetrics.models", "QCRecord"),
-        "WorkflowRun": ("api.workflow.models", "WorkflowRun"),
         "Pipeline": ("api.pipeline.models", "Pipeline"),
     }
 
@@ -684,9 +664,6 @@ def _validate_upload_entity_exists(
     elif file_upload.qcrecord_id is not None:
         _validate_exists_by_uuid(session, "QCRecord", file_upload.qcrecord_id)
 
-    elif file_upload.workflow_run_id is not None:
-        _validate_exists_by_uuid(session, "WorkflowRun", file_upload.workflow_run_id)
-
     elif file_upload.pipeline_id is not None:
         _validate_exists_by_uuid(session, "Pipeline", file_upload.pipeline_id)
 
@@ -723,13 +700,6 @@ def _create_upload_entity_association(
         session.add(FileQCRecord(
             file_id=file_id,
             qcrecord_id=file_upload.qcrecord_id,
-            role=file_upload.role,
-        ))
-
-    elif file_upload.workflow_run_id is not None:
-        session.add(FileWorkflowRun(
-            file_id=file_id,
-            workflow_run_id=file_upload.workflow_run_id,
             role=file_upload.role,
         ))
 
