@@ -29,3 +29,4 @@ def upgrade() -> None:
 def downgrade() -> None:
     """Downgrade schema."""
     op.drop_constraint('uq_sequencingrun_run_id', 'sequencingrun', type_='unique')
+    # ### end Alembic commands ###
