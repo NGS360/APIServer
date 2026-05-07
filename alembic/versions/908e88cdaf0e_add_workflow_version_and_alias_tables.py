@@ -1,7 +1,7 @@
 """add workflow version and alias tables
 
 Revision ID: 908e88cdaf0e
-Revises: 0706aaf19b43
+Revises: b37c101f44a0
 Create Date: 2026-03-23 14:25:38.423849
 
 """
@@ -14,7 +14,7 @@ from sqlalchemy.dialects import mysql
 
 # revision identifiers, used by Alembic.
 revision: str = '908e88cdaf0e'
-down_revision: Union[str, Sequence[str], None] = '0706aaf19b43'
+down_revision: Union[str, Sequence[str], None] = 'b37c101f44a0'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
