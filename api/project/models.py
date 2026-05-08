@@ -9,6 +9,9 @@ from pydantic import ConfigDict
 
 if TYPE_CHECKING:
     from api.samples.models import Sample
+    from api.qcmetrics.models import QCRecord
+
+from api.runs.models import SequencingRunPublic
 
 
 class Attribute(SQLModel):
@@ -34,6 +37,7 @@ class Project(SQLModel, table=True):
     name: str | None = Field(max_length=2048)
     attributes: List[ProjectAttribute] | None = Relationship(back_populates="projects")
     samples: List["Sample"] = Relationship(back_populates="project")
+    qcrecords: List["QCRecord"] = Relationship(back_populates="project")
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -58,6 +62,7 @@ class ProjectPublic(SQLModel):
     data_folder_uri: str | None
     results_folder_uri: str | None
     attributes: List[Attribute] | None
+    sequencing_runs: List[SequencingRunPublic] | None = None
 
 
 class ProjectsPublic(SQLModel):

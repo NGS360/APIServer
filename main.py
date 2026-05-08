@@ -24,6 +24,8 @@ from api.search.routes import router as search_router
 from api.settings.routes import router as settings_router
 from api.vendors.routes import router as vendors_router
 from api.workflow.routes import router as workflow_router
+from api.pipeline.routes import router as pipeline_router
+from api.platforms.routes import router as platforms_router
 
 
 # Customize route id's
@@ -78,7 +80,7 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
         hint = "Please check the errors below and correct your request"
 
     return JSONResponse(
-        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
         content={
             "detail": message,
             "hint": hint,
@@ -133,6 +135,8 @@ app.include_router(search_router, prefix=API_PREFIX)
 app.include_router(settings_router, prefix=API_PREFIX)
 app.include_router(vendors_router, prefix=API_PREFIX)
 app.include_router(workflow_router, prefix=API_PREFIX)
+app.include_router(pipeline_router, prefix=API_PREFIX)
+app.include_router(platforms_router, prefix=API_PREFIX)
 
 
 if __name__ == "__main__":

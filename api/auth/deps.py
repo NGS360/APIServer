@@ -1,16 +1,19 @@
 """
 Authentication dependencies for protecting endpoints
 """
+from datetime import datetime, timezone
 from typing import Annotated
 import uuid
 
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError
+from sqlmodel import Session, select
 
 from core.deps import SessionDep
-from core.security import decode_token
-from api.auth.models import User
+from core.security import decode_token, hash_api_key
+from api.auth.models import User, APIKey
+from api.auth.services import ensure_timezone_aware
 
 # OAuth2 scheme for token extraction
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
@@ -22,16 +25,52 @@ oauth2_scheme_optional = OAuth2PasswordBearer(
 )
 
 
+def authenticate_api_key(session: Session, token: str) -> User:
+    """Authenticate a user via API key."""
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Could not validate credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+
+    hashed = hash_api_key(token)
+    api_key = session.exec(
+        select(APIKey).where(
+            APIKey.hashed_key == hashed,
+            APIKey.is_active.is_(True),
+        )
+    ).first()
+
+    if api_key is None:
+        raise credentials_exception
+
+    # Check expiration
+    expires_at = ensure_timezone_aware(api_key.expires_at)
+    if expires_at is not None and expires_at < datetime.now(timezone.utc):
+        raise credentials_exception
+
+    user = session.get(User, api_key.user_id)
+    if user is None:
+        raise credentials_exception
+
+    # Update last_used_at
+    api_key.last_used_at = datetime.now(timezone.utc)
+    session.add(api_key)
+    session.commit()
+
+    return user
+
+
 def get_current_user(
     session: SessionDep,
     token: Annotated[str, Depends(oauth2_scheme)]
 ) -> User:
     """
-    Get current authenticated user from JWT token
+    Get current authenticated user from JWT token or API key.
 
     Args:
         session: Database session
-        token: JWT access token
+        token: JWT access token or API key
 
     Returns:
         Current User object
@@ -39,6 +78,9 @@ def get_current_user(
     Raises:
         HTTPException: If token is invalid or user not found
     """
+    if token.startswith("ngs360_"):
+        return authenticate_api_key(session, token)
+
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
@@ -127,13 +169,19 @@ def optional_current_user(
 
     Args:
         session: Database session
-        token: Optional JWT access token
+        token: Optional JWT access token or API key
 
     Returns:
         Current User object or None
     """
     if token is None:
         return None
+
+    if token.startswith("ngs360_"):
+        try:
+            return authenticate_api_key(session, token)
+        except HTTPException:
+            return None
 
     try:
         payload = decode_token(token)

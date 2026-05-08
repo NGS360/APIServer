@@ -31,8 +31,7 @@ from api.files.models import (
     FileHash,
     FileTag,
     FileSample,
-    FileEntity,
-    FileEntityType,
+    FileQCRecord,
     FileCreate,
     FileSummary,
     HashPublic,
@@ -41,9 +40,29 @@ from api.files.models import (
 )
 from api.samples.services import resolve_or_create_sample
 from api.samples.models import Sample
+from api.runs.models import SequencingRun
+from api.runs.services import get_run as get_sequencing_run
 
 
 logger = logging.getLogger(__name__)
+
+
+def _resolve_run_id_to_run(
+    session: Session,
+    run_id_str: str,
+) -> SequencingRun:
+    """
+    Resolve a human-readable run_id string to a SequencingRun object.
+
+    Raises HTTPException(422) if run_id doesn't match any run.
+    """
+    run = get_sequencing_run(session=session, run_id=run_id_str)
+    if run is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=f"SequencingRun not found for run_id: {run_id_str}"
+        )
+    return run
 
 
 def create_qcrecord(
@@ -54,38 +73,73 @@ def create_qcrecord(
     """
     Create a new QC record with all associated data.
 
-    Metrics can have numeric values (int, float) which are stored as strings
-    in the database.
+    Supports two scoping modes:
+    - project_id: project-scoped (e.g., alignment QC, variant QC)
+    - sequencing_run_id: run-scoped (e.g., demux stats)
 
-    Returns a minimal response with essential fields. Use get_qcrecord_by_id()
-    to retrieve full details.
+    Run ID strings are resolved to UUIDs at this layer.
     """
-    # Check for duplicate record
-    existing = _check_duplicate_record(session, qcrecord_create)
+    # ── Resolve sequencing_run_id string → UUID ───────────────────
+    resolved_run_uuid: uuid_module.UUID | None = None
+    resolved_run_id_str: str | None = None
+    if qcrecord_create.sequencing_run_id:
+        run = _resolve_run_id_to_run(
+            session, qcrecord_create.sequencing_run_id
+        )
+        resolved_run_uuid = run.id
+        resolved_run_id_str = run.run_id
+
+    # ── Check for duplicate record ────────────────────────────────
+    existing = _check_duplicate_record(
+        session, qcrecord_create, resolved_run_uuid
+    )
     if existing:
+        scope_label = (
+            f"project {qcrecord_create.project_id}"
+            if qcrecord_create.project_id
+            else f"run {resolved_run_id_str}"
+        )
         logger.info(
-            "Equivalent QC record already exists for project %s: %s",
-            qcrecord_create.project_id,
-            existing.id
+            "Equivalent QC record already exists for %s: %s",
+            scope_label, existing.id
         )
         return QCRecordCreated(
             id=existing.id,
             created_on=existing.created_on,
             created_by=existing.created_by,
             project_id=existing.project_id,
+            sequencing_run_id=resolved_run_id_str,
             is_duplicate=True,
         )
 
-    # Create main QC record
+    # ── Validate project_id FK (only for project-scoped) ─────────
+    if qcrecord_create.project_id:
+        from api.project.models import Project
+        project = session.exec(
+            select(Project).where(
+                Project.project_id == qcrecord_create.project_id
+            )
+        ).first()
+        if not project:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail=(
+                    f"Project not found: {qcrecord_create.project_id}"
+                )
+            )
+
+    # ── Create main QC record ─────────────────────────────────────
     qcrecord = QCRecord(
         created_on=datetime.now(timezone.utc),
         created_by=created_by,
         project_id=qcrecord_create.project_id,
+        sequencing_run_id=resolved_run_uuid,
+        workflow_run_id=qcrecord_create.workflow_run_id,
     )
     session.add(qcrecord)
     session.flush()  # Get the ID
 
-    # Add metadata
+    # ── Add metadata ──────────────────────────────────────────────
     if qcrecord_create.metadata:
         for key, value in qcrecord_create.metadata.items():
             metadata_entry = QCRecordMetadata(
@@ -95,18 +149,22 @@ def create_qcrecord(
             )
             session.add(metadata_entry)
 
-    # Add metrics
+    # ── Add metrics ───────────────────────────────────────────────
     if qcrecord_create.metrics:
         for metric_input in qcrecord_create.metrics:
-            _create_metric(session, qcrecord.id, metric_input, qcrecord_create.project_id)
+            _create_metric(
+                session,
+                qcrecord.id,
+                metric_input,
+                qcrecord_create.project_id,
+            )
 
-    # Add output files
+    # ── Add output files ──────────────────────────────────────────
     if qcrecord_create.output_files:
         for file_create in qcrecord_create.output_files:
             _create_file_for_qcrecord(
                 session,
-                entity_type=FileEntityType.QCRECORD,
-                entity_id=qcrecord.id,
+                qcrecord_id=qcrecord.id,
                 file_create=file_create,
                 project_id=qcrecord_create.project_id,
             )
@@ -114,11 +172,14 @@ def create_qcrecord(
     session.commit()
     session.refresh(qcrecord)
 
+    scope_label = (
+        f"project {qcrecord.project_id}"
+        if qcrecord.project_id
+        else f"run {resolved_run_id_str}"
+    )
     logger.info(
-        "Created QC record %s for project %s by %s",
-        qcrecord.id,
-        qcrecord.project_id,
-        created_by
+        "Created QC record %s for %s by %s",
+        qcrecord.id, scope_label, created_by
     )
 
     return QCRecordCreated(
@@ -126,6 +187,8 @@ def create_qcrecord(
         created_on=qcrecord.created_on,
         created_by=qcrecord.created_by,
         project_id=qcrecord.project_id,
+        sequencing_run_id=resolved_run_id_str,
+        workflow_run_id=qcrecord.workflow_run_id,
         is_duplicate=False,
     )
 
@@ -134,12 +197,24 @@ def _create_metric(
     session: Session,
     qcrecord_id,
     metric_input: MetricInput,
-    project_id: str,
+    project_id: str | None,
 ) -> QCMetric:
     """Create a metric group with its samples and values."""
+    # Resolve sequencing_run_id string → UUID if provided
+    sr_id = None
+    if metric_input.sequencing_run_id:
+        run = _resolve_run_id_to_run(
+            session, metric_input.sequencing_run_id
+        )
+        sr_id = run.id
+
+    wr_id = metric_input.workflow_run_id
+
     metric = QCMetric(
         qcrecord_id=qcrecord_id,
         name=metric_input.name,
+        sequencing_run_id=sr_id,
+        workflow_run_id=wr_id,
     )
     session.add(metric)
     session.flush()
@@ -198,12 +273,11 @@ def _create_metric(
 
 def _create_file_for_qcrecord(
     session: Session,
-    entity_type: str,
-    entity_id,
+    qcrecord_id,
     file_create: FileCreate,
     project_id: str,
 ) -> File:
-    """Create a file record with its hashes, tags, samples, and entity association."""
+    """Create a file record with its hashes, tags, samples, and QCRecord association."""
     file_record = File(
         uri=file_create.uri,
         size=file_create.size,
@@ -212,13 +286,13 @@ def _create_file_for_qcrecord(
     session.add(file_record)
     session.flush()
 
-    # Add entity association
-    entity_assoc = FileEntity(
+    # Add typed QCRecord association (replaces polymorphic FileEntity)
+    qcrecord_assoc = FileQCRecord(
         file_id=file_record.id,
-        entity_type=entity_type,
-        entity_id=str(entity_id),  # Convert UUID to string
+        qcrecord_id=qcrecord_id,
+        role="output",
     )
-    session.add(entity_assoc)
+    session.add(qcrecord_assoc)
 
     # Add hashes (dictionary: {"algorithm": "value"})
     if file_create.hashes:
@@ -261,25 +335,33 @@ def _create_file_for_qcrecord(
 def _check_duplicate_record(
     session: Session,
     qcrecord_create: QCRecordCreate,
+    resolved_run_id: uuid_module.UUID | None = None,
 ) -> QCRecord | None:
     """
     Check if an equivalent QC record already exists.
 
-    Returns the existing record if found, None otherwise.
+    Scoped by project_id (project-scoped) or sequencing_run_id
+    (run-scoped). Returns the existing record if found, None otherwise.
     """
-    # Find existing records for this project
-    stmt = select(QCRecord).where(
-        QCRecord.project_id == qcrecord_create.project_id
-    ).order_by(col(QCRecord.created_on).desc())
+    # Build scope filter based on project vs run
+    if qcrecord_create.project_id:
+        stmt = select(QCRecord).where(
+            QCRecord.project_id == qcrecord_create.project_id
+        )
+    elif resolved_run_id:
+        stmt = select(QCRecord).where(
+            QCRecord.sequencing_run_id == resolved_run_id
+        )
+    else:
+        return None
 
+    stmt = stmt.order_by(col(QCRecord.created_on).desc())
     existing_records = session.exec(stmt).all()
 
     if not existing_records:
         return None
 
-    # For now, just check the latest record
-    # A full comparison would require comparing all nested data
-    # This is a simplified version that checks metadata keys
+    # Check the latest record — simplified duplicate detection
     latest = existing_records[0]
 
     # Get existing metadata
@@ -295,8 +377,6 @@ def _check_duplicate_record(
     # Compare metadata
     new_metadata = qcrecord_create.metadata or {}
     if existing_metadata == {k: str(v) for k, v in new_metadata.items()}:
-        # Metadata matches - could do deeper comparison here
-        # For now, consider it a duplicate if metadata matches
         return latest
 
     return None
@@ -317,7 +397,9 @@ def search_qcrecords(
         filter_on: Dictionary of fields to filter by
         page: Page number (1-based)
         per_page: Results per page
-        latest: If True, return only the newest record per project
+        latest: If True, return only the newest record per scope
+                (project_id for project-scoped, sequencing_run_id
+                 for run-scoped)
     """
     filter_on = filter_on or {}
 
@@ -328,14 +410,44 @@ def search_qcrecords(
     if "project_id" in filter_on:
         project_ids = filter_on["project_id"]
         if isinstance(project_ids, list):
-            stmt = stmt.where(col(QCRecord.project_id).in_(project_ids))
+            stmt = stmt.where(
+                col(QCRecord.project_id).in_(project_ids)
+            )
         else:
             stmt = stmt.where(QCRecord.project_id == project_ids)
 
+    # Filter by sequencing_run_id string (resolve to UUID)
+    if "sequencing_run_id" in filter_on:
+        run_id_str = filter_on["sequencing_run_id"]
+        run = get_sequencing_run(
+            session=session, run_id=run_id_str
+        )
+        if run:
+            # Check both record-level and metric-level
+            sr_subq = (
+                select(QCMetric.qcrecord_id)
+                .where(QCMetric.sequencing_run_id == run.id)
+            )
+            stmt = stmt.where(
+                (QCRecord.sequencing_run_id == run.id)
+                | col(QCRecord.id).in_(sr_subq)
+            )
+        else:
+            # No matching run → return empty results
+            stmt = stmt.where(QCRecord.id == None)  # noqa: E711
+
+    # Filter by workflow_run_id (provenance)
+    if "workflow_run_id" in filter_on:
+        wf_run_id = filter_on["workflow_run_id"]
+        if isinstance(wf_run_id, str):
+            wf_run_id = uuid_module.UUID(wf_run_id)
+        stmt = stmt.where(QCRecord.workflow_run_id == wf_run_id)
+
     # Handle metadata filtering
-    if "metadata" in filter_on and isinstance(filter_on["metadata"], dict):
+    if "metadata" in filter_on and isinstance(
+        filter_on["metadata"], dict
+    ):
         for key, value in filter_on["metadata"].items():
-            # Subquery to find QCRecords with matching metadata
             subq = select(QCRecordMetadata.qcrecord_id).where(
                 QCRecordMetadata.key == key,
                 QCRecordMetadata.value == str(value)
@@ -348,14 +460,24 @@ def search_qcrecords(
     # Execute to get all matching records
     all_records = list(session.exec(stmt).all())
 
-    # Apply "latest" filter - keep only newest per project
+    # Apply "latest" filter — newest per scope
+    # Project-scoped: group by project_id
+    # Run-scoped: group by sequencing_run_id
     if latest:
-        seen_projects = set()
+        seen_scopes: set = set()
         filtered_records = []
         for record in all_records:
-            if record.project_id not in seen_projects:
+            if record.project_id:
+                scope_key = ("project", record.project_id)
+            elif record.sequencing_run_id:
+                scope_key = (
+                    "run", str(record.sequencing_run_id)
+                )
+            else:
+                scope_key = ("id", str(record.id))
+            if scope_key not in seen_scopes:
                 filtered_records.append(record)
-                seen_projects.add(record.project_id)
+                seen_scopes.add(scope_key)
         all_records = filtered_records
 
     # Calculate pagination
@@ -365,7 +487,10 @@ def search_qcrecords(
     paginated_records = all_records[start_idx:end_idx]
 
     # Convert to public format
-    data = [_qcrecord_to_public(session, record) for record in paginated_records]
+    data = [
+        _qcrecord_to_public(session, record)
+        for record in paginated_records
+    ]
 
     return QCRecordsPublic(
         data=data,
@@ -413,17 +538,16 @@ def delete_qcrecord(session: Session, qcrecord_id: str) -> dict:
             detail=f"QC record not found: {qcrecord_id}"
         )
 
-    # Delete associated file records via FileEntity junction table
-    file_entities = session.exec(
-        select(FileEntity).where(
-            FileEntity.entity_type == FileEntityType.QCRECORD,
-            FileEntity.entity_id == str(record_uuid)
+    # Delete associated file records via FileQCRecord junction table
+    file_qcrecords = session.exec(
+        select(FileQCRecord).where(
+            FileQCRecord.qcrecord_id == record_uuid
         )
     ).all()
 
-    for file_entity in file_entities:
-        # Get the file and delete it (cascades to hashes, tags, samples, entities)
-        file_record = session.get(File, file_entity.file_id)
+    for fqr in file_qcrecords:
+        # Get the file and delete it (cascades to hashes, tags, samples, junction rows)
+        file_record = session.get(File, fqr.file_id)
         if file_record:
             session.delete(file_record)
 
@@ -447,8 +571,26 @@ def _convert_value_to_type(
     return value_string
 
 
-def _qcrecord_to_public(session: Session, record: QCRecord) -> QCRecordPublic:
+def _resolve_run_id_string(
+    session: Session,
+    sequencing_run_uuid: uuid_module.UUID | None,
+) -> str | None:
+    """Resolve a sequencing_run_id UUID to its run_id string."""
+    if not sequencing_run_uuid:
+        return None
+    run = session.get(SequencingRun, sequencing_run_uuid)
+    return run.run_id if run else None
+
+
+def _qcrecord_to_public(
+    session: Session, record: QCRecord
+) -> QCRecordPublic:
     """Convert a QCRecord database object to public format."""
+    # Resolve run_id string for record-level and metric-level
+    record_run_id_str = _resolve_run_id_string(
+        session, record.sequencing_run_id
+    )
+
     # Get metadata
     metadata_entries = session.exec(
         select(QCRecordMetadata).where(
@@ -470,47 +612,63 @@ def _qcrecord_to_public(session: Session, record: QCRecord) -> QCRecordPublic:
     for metric in metric_entries:
         # Get metric values
         values = session.exec(
-            select(QCMetricValue).where(QCMetricValue.qc_metric_id == metric.id)
+            select(QCMetricValue).where(
+                QCMetricValue.qc_metric_id == metric.id
+            )
         ).all()
 
-        # Get metric samples (resolve sample_id → Sample.sample_id for display)
+        # Get metric samples
         metric_samples = session.exec(
-            select(QCMetricSample).where(QCMetricSample.qc_metric_id == metric.id)
+            select(QCMetricSample).where(
+                QCMetricSample.qc_metric_id == metric.id
+            )
         ).all()
 
         metric_sample_publics = []
         for ms in metric_samples:
             sample = session.get(Sample, ms.sample_id)
-            sample_name = sample.sample_id if sample else str(ms.sample_id)
-            metric_sample_publics.append(
-                MetricSamplePublic(sample_name=sample_name, role=ms.role)
+            sample_name = (
+                sample.sample_id if sample else str(ms.sample_id)
             )
+            metric_sample_publics.append(
+                MetricSamplePublic(
+                    sample_name=sample_name, role=ms.role
+                )
+            )
+
+        # Resolve metric-level run_id string (may differ from record)
+        metric_run_id_str = _resolve_run_id_string(
+            session, metric.sequencing_run_id
+        )
 
         metrics.append(MetricPublic(
             name=metric.name,
             samples=metric_sample_publics,
+            sequencing_run_id=metric_run_id_str,
+            workflow_run_id=metric.workflow_run_id,
             values=[
                 MetricValuePublic(
                     key=v.key,
                     value=_convert_value_to_type(
-                        v.value_string, v.value_numeric, v.value_type
+                        v.value_string,
+                        v.value_numeric,
+                        v.value_type,
                     )
                 )
                 for v in values
             ],
         ))
 
-    # Get file records via FileEntity junction table
-    file_entities = session.exec(
-        select(FileEntity).where(
-            FileEntity.entity_type == FileEntityType.QCRECORD,
-            FileEntity.entity_id == str(record.id)
+    # Get file records via FileQCRecord junction table
+    file_qcrecords = session.exec(
+        select(FileQCRecord).where(
+            FileQCRecord.qcrecord_id == record.id
         )
     ).all()
 
     output_files = []
-    for file_entity in file_entities:
-        file_record = session.get(File, file_entity.file_id)
+    for fqr in file_qcrecords:
+        file_record = session.get(File, fqr.file_id)
         if not file_record:
             continue
 
@@ -541,12 +699,22 @@ def _qcrecord_to_public(session: Session, record: QCRecord) -> QCRecordPublic:
             filename=file_record.filename,
             size=file_record.size,
             created_on=file_record.created_on,
-            hashes=[HashPublic(algorithm=h.algorithm, value=h.value) for h in hashes],
-            tags=[TagPublic(key=t.key, value=t.value) for t in tags],
+            hashes=[
+                HashPublic(
+                    algorithm=h.algorithm, value=h.value
+                )
+                for h in hashes
+            ],
+            tags=[
+                TagPublic(key=t.key, value=t.value)
+                for t in tags
+            ],
             samples=[
                 FileSamplePublic(
                     sample_name=(
-                        session.get(Sample, s.sample_id).sample_id
+                        session.get(
+                            Sample, s.sample_id
+                        ).sample_id
                         if session.get(Sample, s.sample_id)
                         else str(s.sample_id)
                     ),
@@ -561,6 +729,8 @@ def _qcrecord_to_public(session: Session, record: QCRecord) -> QCRecordPublic:
         created_on=record.created_on,
         created_by=record.created_by,
         project_id=record.project_id,
+        sequencing_run_id=record_run_id_str,
+        workflow_run_id=record.workflow_run_id,
         metadata=metadata,
         metrics=metrics,
         output_files=output_files,

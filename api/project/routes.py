@@ -2,10 +2,10 @@
 Routes/endpoints for the Project API
 """
 
-from typing import Literal
-from fastapi import APIRouter, Query, status, Depends
-from core.deps import SessionDep, OpenSearchDep, get_s3_client
-from api.auth.deps import CurrentUser
+from typing import Literal, List as TypingList
+from fastapi import APIRouter, HTTPException, Query, UploadFile, status
+from core.deps import SessionDep, OpenSearchDep, S3ClientDep
+from api.auth.deps import CurrentUser, CurrentSuperuser
 from api.jobs.models import BatchJobPublic
 from api.project.deps import ProjectDep
 from api.project.models import (
@@ -14,8 +14,17 @@ from api.project.models import (
     ProjectPublic,
     ProjectsPublic,
 )
-from api.samples.models import SampleCreate, SamplePublic, SamplesPublic, Attribute
+from api.samples.models import (
+    SampleCreate,
+    SamplePublic,
+    SamplesPublic,
+    SamplesWithFilesPublic,
+    Attribute,
+    BulkSampleCreateRequest,
+    BulkSampleCreateResponse,
+)
 from api.project import services
+from api.samples import services as sample_services
 from api.actions.models import ActionSubmitRequest
 
 router = APIRouter(prefix="/projects")
@@ -27,9 +36,9 @@ router = APIRouter(prefix="/projects")
 
 @router.post(
     "",
-    response_model=ProjectPublic,
     tags=["Project Endpoints"],
     status_code=status.HTTP_201_CREATED,
+    response_model=ProjectPublic,
 )
 def create_project(
     session: SessionDep, opensearch_client: OpenSearchDep, project_in: ProjectCreate
@@ -44,9 +53,9 @@ def create_project(
 
 @router.get(
     "",
-    response_model=ProjectsPublic,
     status_code=status.HTTP_200_OK,
     tags=["Project Endpoints"],
+    response_model=ProjectsPublic,
 )
 def get_projects(
     session: SessionDep,
@@ -75,9 +84,9 @@ def get_projects(
 
 @router.get(
     "/search",
-    response_model=ProjectsPublic,
     status_code=status.HTTP_200_OK,
     tags=["Project Endpoints"],
+    response_model=ProjectsPublic,
 )
 def search_projects(
     session: SessionDep,
@@ -110,6 +119,7 @@ def search_projects(
     "/search",
     status_code=status.HTTP_201_CREATED,
     tags=["Project Endpoints"],
+    response_model=ProjectsPublic,
 )
 def reindex_projects(
     session: SessionDep,
@@ -126,7 +136,11 @@ def reindex_projects(
 ###############################################################################
 
 
-@router.get("/{project_id}", response_model=ProjectPublic, tags=["Project Endpoints"])
+@router.get(
+    "/{project_id}",
+    response_model=ProjectPublic,
+    tags=["Project Endpoints"]
+)
 def get_project_by_project_id(session: SessionDep, project: ProjectDep) -> ProjectPublic:
     """
     Returns a single project by its project_id.
@@ -137,20 +151,52 @@ def get_project_by_project_id(session: SessionDep, project: ProjectDep) -> Proje
 
 @router.put(
     "/{project_id}",
-    response_model=ProjectPublic,
     status_code=status.HTTP_200_OK,
     tags=["Project Endpoints"],
+    response_model=ProjectPublic,
 )
 def update_project(
+    session: SessionDep,
+    opensearch_client: OpenSearchDep,
+    project: ProjectDep,
+    update_request: ProjectUpdate
+) -> ProjectPublic:
+    """
+    Full replacement update of a project.
+
+    Attributes provided here **replace** all existing attributes.
+    To merge/upsert attributes without removing unmentioned ones,
+    use ``PATCH /{project_id}`` instead.
+    """
+    return services.update_project(
+        session=session,
+        opensearch_client=opensearch_client,
+        project_id=project.project_id,
+        update_request=update_request,
+    )
+
+
+@router.patch(
+    "/{project_id}",
+    status_code=status.HTTP_200_OK,
+    tags=["Project Endpoints"],
+    response_model=ProjectPublic,
+)
+def patch_project(
     session: SessionDep,
     opensearch_client: OpenSearchDep,
     project: ProjectDep,
     update_request: ProjectUpdate,
 ) -> ProjectPublic:
     """
-    Update information about a specific project.
+    Partially update a project using merge/upsert semantics.
+
+    Unlike PUT, this does **not** remove attributes that are absent
+    from the request.  Each supplied attribute is upserted: existing
+    keys are updated, new keys are inserted, and unmentioned keys
+    are left untouched.  An empty attributes list is a no-op.
     """
-    return services.update_project(
+    return services.patch_project(
         session=session,
         opensearch_client=opensearch_client,
         project_id=project.project_id,
@@ -164,57 +210,185 @@ def update_project(
 
 @router.post(
     "/{project_id}/samples",
-    response_model=SamplePublic,
     tags=["Project Endpoints"],
     status_code=status.HTTP_201_CREATED,
+    response_model=SamplePublic,
 )
 def add_sample_to_project(
     session: SessionDep,
     opensearch_client: OpenSearchDep,
     project: ProjectDep,
     sample_in: SampleCreate,
+    current_user: CurrentUser,
 ) -> SamplePublic:
     """
     Create a new sample with optional attributes.
+
+    If ``run_id`` is provided in the request body, the sample is also
+    associated with the specified sequencing run in the same transaction.
     """
-    return services.add_sample_to_project(
+    sample = services.add_sample_to_project(
         session=session,
         opensearch_client=opensearch_client,
         project=project,
         sample_in=sample_in,
+        created_by=current_user.username,
+    )
+    return SamplePublic(
+        sample_id=sample.sample_id,
+        project_id=sample.project_id,
+        attributes=[
+            Attribute(key=a.key, value=a.value)
+            for a in (sample.attributes or [])
+        ],
+        run_id=sample_in.run_id,
+    )
+
+
+@router.post(
+    "/{project_id}/samples/upload",
+    tags=["Project Endpoints"],
+    status_code=status.HTTP_201_CREATED,
+    response_model=BulkSampleCreateResponse,
+)
+async def upload_samples_file(
+    session: SessionDep,
+    opensearch_client: OpenSearchDep,
+    project: ProjectDep,
+    current_user: CurrentUser,
+    file: UploadFile,
+) -> BulkSampleCreateResponse:
+    """
+    Upload a CSV/TSV file to create or update samples in bulk.
+
+    The file must contain a column named ``SampleName`` (or ``Sample_Name``,
+    case-insensitive).  All other columns become sample attributes, preserving
+    the original column header as the attribute key.
+
+    Parsing and column normalisation are handled by the
+    ``api.samples.parsing`` module; the resulting ``SampleCreate`` list is
+    fed directly into the existing ``bulk_create_samples()`` service.
+    """
+    from api.samples.parsing import parse_sample_file
+
+    # Validate content type / extension
+    filename = file.filename or ""
+    content = await file.read()
+
+    try:
+        samples_in = parse_sample_file(file_content=content, filename=filename)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        )
+
+    return sample_services.bulk_create_samples(
+        session=session,
+        opensearch_client=opensearch_client,
+        project=project,
+        samples_in=samples_in,
+        created_by=current_user.username,
+    )
+
+
+@router.post(
+    "/{project_id}/samples/bulk",
+    tags=["Project Endpoints"],
+    status_code=status.HTTP_201_CREATED,
+    response_model=BulkSampleCreateResponse,
+)
+def bulk_create_samples(
+    session: SessionDep,
+    opensearch_client: OpenSearchDep,
+    project: ProjectDep,
+    current_user: CurrentUser,
+    body: BulkSampleCreateRequest,
+) -> BulkSampleCreateResponse:
+    """
+    Create multiple samples in a single atomic transaction.
+
+    Each sample in the list may optionally include a ``run_barcode``
+    to associate the sample with a sequencing run at creation time.
+    All samples succeed or fail together.
+    """
+    return sample_services.bulk_create_samples(
+        session=session,
+        opensearch_client=opensearch_client,
+        project=project,
+        samples_in=body.samples,
+        created_by=current_user.username,
     )
 
 
 @router.get(
-    "/{project_id}/samples", response_model=SamplesPublic, tags=["Project Endpoints"]
+    "/{project_id}/samples",
+    tags=["Project Endpoints"],
+    response_model=SamplesWithFilesPublic | SamplesPublic,
 )
 def get_project_samples(
     session: SessionDep,
     project: ProjectDep,
-    page: int = Query(1, description="Page number (1-indexed)"),
-    per_page: int = Query(20, description="Number of items per page"),
+    skip: int = Query(0, ge=0, description="Number of records to skip"),
+    limit: int = Query(
+        100, ge=1, le=10000, description="Maximum number of records to return"
+    ),
     sort_by: str = Query("sample_id", description="Field to sort by"),
     sort_order: Literal["asc", "desc"] = Query(
         "asc", description="Sort order (asc or desc)"
     ),
-) -> SamplesPublic:
+    include: TypingList[str] | None = Query(
+        None, description="Include related data: files"
+    ),
+) -> SamplesWithFilesPublic | SamplesPublic:
     """
-    Returns a paginated list of samples.
+    Returns a list of samples for a project.
+
+    Pagination is offset-based: ``skip`` is the number of records to skip
+    and ``limit`` caps the page size. Pass ``?include=files`` to eagerly
+    load file metadata for each sample.
     """
     return services.get_project_samples(
         session=session,
         project=project,
-        page=page,
-        per_page=per_page,
+        skip=skip,
+        limit=limit,
         sort_by=sort_by,
         sort_order=sort_order,
+        include=include,
+    )
+
+
+@router.delete(
+    "/{project_id}/samples/{sample_id}",
+    tags=["Project Endpoints"],
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def delete_sample_from_project(
+    session: SessionDep,
+    project: ProjectDep,
+    sample_id: str,
+    current_user: CurrentSuperuser,
+) -> None:
+    """
+    Hard-delete a sample and all its child rows (superuser only).
+
+    Deletes: SampleAttribute, FileSample, SampleSequencingRun rows.
+    Associated File records are NOT deleted (they may belong to other entities).
+
+    **This action is irreversible.**
+    """
+    sample_services.delete_sample(
+        session=session,
+        project_id=project.project_id,
+        sample_id=sample_id,
     )
 
 
 @router.put(
     "/{project_id}/samples/{sample_id}",
-    response_model=SamplePublic,
     tags=["Project Endpoints"],
+    response_model=SamplePublic,
 )
 def update_sample_in_project(
     session: SessionDep,
@@ -240,16 +414,16 @@ def update_sample_in_project(
 
 @router.post(
     "/{project_id}/actions/submit",
-    # response_model=BatchJobPublic,  # COMMENTED OUT FOR TESTING
     tags=["Project Endpoints"],
     status_code=status.HTTP_201_CREATED,
+    response_model=BatchJobPublic,
 )
 def submit_pipeline_job(
     project: ProjectDep,
     request: ActionSubmitRequest,
     current_user: CurrentUser,
     session: SessionDep,
-    s3_client=Depends(get_s3_client),
+    s3_client: S3ClientDep,
 ) -> BatchJobPublic:
     """
     Submit a pipeline job to AWS Batch for a project.
@@ -297,12 +471,13 @@ def submit_pipeline_job(
     "/{project_id}/ingest",
     tags=["Project Endpoints"],
     status_code=status.HTTP_201_CREATED,
+    response_model=BatchJobPublic,
 )
 def ingest_vendor_data(
     session: SessionDep,
     project: ProjectDep,
     user: CurrentUser,
-    s3_client=Depends(get_s3_client),
+    s3_client: S3ClientDep,
     files_uri: str = Query(
         ..., description="Source Bucket/Prefix of the data to be ingested"
     ),
@@ -317,5 +492,11 @@ def ingest_vendor_data(
         BatchJobPublic: The created batch job information
     """
     batch_job = services.ingest_vendor_data(
-        session, project, user.username, files_uri, manifest_uri, s3_client=s3_client)
+        session,
+        project,
+        user.username,
+        files_uri,
+        manifest_uri,
+        s3_client=s3_client
+    )
     return BatchJobPublic.model_validate(batch_job)

@@ -2,10 +2,11 @@
 Services for the Project API
 """
 
-from datetime import datetime
+from datetime import datetime, timezone as tz
 from typing import Literal
 import boto3
 from fastapi import HTTPException, status
+from api.utils import check_duplicate_attribute_keys
 from pydantic import PositiveInt
 from pytz import timezone
 from sqlmodel import Session, func, select
@@ -29,15 +30,21 @@ from api.project.models import (
     ProjectsPublic,
 )
 from api.search.models import SearchDocument
-from api.search.services import add_object_to_index, delete_index
+from api.search.services import (
+    add_object_to_index, add_objects_to_index, reset_index
+)
 from api.samples.models import (
     Sample,
     SampleAttribute,
     SampleCreate,
     SamplePublic,
     SamplesPublic,
+    SamplesWithFilesPublic,
+    SampleWithFilesPublic,
+    SampleFilePublic,
     Attribute,
 )
+from api.runs.models import SequencingRun, SequencingRunPublic, SampleSequencingRun
 
 
 def generate_project_id(*, session: Session) -> str:
@@ -81,15 +88,9 @@ def create_project(
 
     # Handle attribute mapping
     if project_in.attributes:
-        # Prevent duplicate keys
-        seen = set()
-        keys = [attr.key for attr in project_in.attributes]
-        dups = [k for k in keys if k in seen or seen.add(k)]
-        if dups:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Duplicate keys ({', '.join(dups)}) are not allowed in project attributes.",
-            )
+        check_duplicate_attribute_keys(
+            project_in.attributes, "project attributes"
+        )
 
         # Parse and create project attributes
         # linking to new project
@@ -120,6 +121,7 @@ def create_project(
         data_folder_uri=f"{data_bucket}/{project.project_id}/",
         results_folder_uri=f"{results_bucket}/{project.project_id}/",
         attributes=project.attributes,
+        sequencing_runs=None  # No sequencing runs at time of project creation
     )
 
 
@@ -164,6 +166,7 @@ def get_projects(
             data_folder_uri=f"{data_bucket}/{project.project_id}/",
             results_folder_uri=f"{results_bucket}/{project.project_id}/",
             attributes=project.attributes,
+            sequencing_runs=None  # Sequencing runs are not included for performance reasons
         )
         for project in projects
     ]
@@ -194,6 +197,32 @@ def get_project_by_project_id(session: Session, project_id: str) -> ProjectPubli
             detail=f"Project {project_id} not found.",
         )
 
+    # Query sequencing runs associated with this project through samples
+    sequencing_runs_query = (
+        select(SequencingRun)
+        .join(SampleSequencingRun, SampleSequencingRun.sequencing_run_id == SequencingRun.id)
+        .join(Sample, Sample.id == SampleSequencingRun.sample_id)
+        .where(Sample.project_id == project.project_id)
+        .distinct()
+    )
+    sequencing_runs = session.exec(sequencing_runs_query).all()
+
+    # Convert to public model
+    sequencing_runs_public = [
+        SequencingRunPublic(
+            run_id=run.run_id,
+            run_date=run.run_date,
+            machine_id=run.machine_id,
+            run_number=run.run_number,
+            flowcell_id=run.flowcell_id,
+            experiment_name=run.experiment_name,
+            run_folder_uri=run.run_folder_uri,
+            status=run.status,
+            run_time=run.run_time
+        )
+        for run in sequencing_runs
+    ]
+
     data_bucket = get_setting_value(session, "DATA_BUCKET_URI")
     results_bucket = get_setting_value(session, "RESULTS_BUCKET_URI")
 
@@ -203,6 +232,7 @@ def get_project_by_project_id(session: Session, project_id: str) -> ProjectPubli
         data_folder_uri=f"{data_bucket}/{project.project_id}/",
         results_folder_uri=f"{results_bucket}/{project.project_id}/",
         attributes=project.attributes,
+        sequencing_runs=sequencing_runs_public,
     )
 
 
@@ -233,15 +263,9 @@ def update_project(
 
     # Handle attributes if provided
     if update_request.attributes is not None:
-        # Prevent duplicate keys
-        seen = set()
-        keys = [attr.key for attr in update_request.attributes]
-        dups = [k for k in keys if k in seen or seen.add(k)]
-        if dups:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Duplicate keys ({', '.join(dups)}) are not allowed in project attributes.",
-            )
+        check_duplicate_attribute_keys(
+            update_request.attributes, "project attributes"
+        )
 
         # Delete all existing attributes for this project
         existing_attributes = session.exec(
@@ -281,6 +305,99 @@ def update_project(
         data_folder_uri=f"{data_bucket}/{project.project_id}/",
         results_folder_uri=f"{results_bucket}/{project.project_id}/",
         attributes=project.attributes,
+        sequencing_runs=None  # Sequencing runs are not included in list view for performance reasons
+    )
+
+
+def patch_project(
+    *,
+    session: Session,
+    opensearch_client: OpenSearch,
+    project_id: str,
+    update_request: ProjectUpdate,
+) -> ProjectPublic:
+    """
+    Partially update a project using merge/upsert semantics.
+
+    Unlike ``update_project`` (PUT), this does **not** remove attributes
+    that are absent from the request.  Each supplied attribute is upserted:
+    existing keys have their value updated, new keys are inserted, and
+    unmentioned keys are left untouched.  An empty attributes list is a
+    no-op.
+    """
+    # Fetch the project
+    project = session.exec(
+        select(Project).where(Project.project_id == project_id)
+    ).first()
+
+    if not project:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Project {project_id} not found.",
+        )
+
+    # Update name if provided
+    if update_request.name is not None:
+        project.name = update_request.name
+
+    # Merge/upsert attributes (does NOT remove unmentioned attributes)
+    if (
+        update_request.attributes is not None
+        and len(update_request.attributes) > 0
+    ):
+        check_duplicate_attribute_keys(
+            update_request.attributes, "project attributes"
+        )
+
+        # Load all existing attributes and build case-insensitive lookup map
+        existing_attrs = session.exec(
+            select(ProjectAttribute).where(
+                ProjectAttribute.project_id == project.id
+            )
+        ).all()
+        attr_map = {a.key.lower(): a for a in existing_attrs}
+
+        for attr in update_request.attributes:
+            existing_attr = attr_map.get(attr.key.lower())
+
+            if existing_attr:
+                existing_attr.value = attr.value
+                # Adopt the incoming key casing so the DB stays consistent
+                if existing_attr.key != attr.key:
+                    existing_attr.key = attr.key
+            else:
+                session.add(
+                    ProjectAttribute(
+                        project_id=project.id,
+                        key=attr.key,
+                        value=attr.value,
+                    )
+                )
+
+    session.commit()
+    session.refresh(project)
+
+    # Update project in opensearch
+    if opensearch_client:
+        search_doc = SearchDocument(
+            id=project.project_id, body=project
+        )
+        add_object_to_index(
+            opensearch_client, search_doc, index="projects"
+        )
+
+    data_bucket = get_setting_value(session, "DATA_BUCKET_URI")
+    results_bucket = get_setting_value(session, "RESULTS_BUCKET_URI")
+
+    return ProjectPublic(
+        project_id=project.project_id,
+        name=project.name,
+        data_folder_uri=f"{data_bucket}/{project.project_id}/",
+        results_folder_uri=(
+            f"{results_bucket}/{project.project_id}/"
+        ),
+        attributes=project.attributes,
+        sequencing_runs=None,
     )
 
 
@@ -337,13 +454,19 @@ def reindex_projects(
     """
     Index all projects in database with OpenSearch
     """
-    delete_index(client, "projects")
     projects = session.exec(
         select(Project).order_by(Project.project_id)
     ).all()
+
+    # Prepare all documents
+    search_docs = []
     for project in projects:
         search_doc = SearchDocument(id=project.project_id, body=project)
-        add_object_to_index(client, search_doc, index="projects")
+        search_docs.append(search_doc)
+
+    reset_index(client, "projects")
+    # Bulk index all documents in one call
+    add_objects_to_index(client, search_docs, "projects")
 
 
 def submit_pipeline_job(
@@ -536,35 +659,53 @@ def add_sample_to_project(
     opensearch_client: OpenSearch,
     project: Project,
     sample_in: SampleCreate,
+    created_by: str | None = None,
 ) -> Sample:
     """
     Create a new sample with optional attributes in a project.
+
+    If ``sample_in.run_id`` is provided the sample is also associated
+    with the corresponding sequencing run in the **same** transaction.
 
     Args:
         session: Database session
         opensearch_client: OpenSearch client for indexing
         project: The project object (already validated)
-        sample_in: Sample creation data
+        sample_in: Sample creation data (may include run_id)
+        created_by: Username recorded on any SampleSequencingRun row
 
     Returns:
         Sample instance
     """
+    from api.runs.services import get_run
+
+    # Resolve run up-front so we can fail fast before creating the sample
+    run = None
+    if sample_in.run_id:
+        try:
+            run = get_run(session=session, run_id=sample_in.run_id)
+        except (ValueError, Exception):
+            run = None
+        if run is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Run with run_id '{sample_in.run_id}' not found.",
+            )
+
     # Create initial sample
-    sample = Sample(sample_id=sample_in.sample_id, project_id=project.project_id)
+    sample = Sample(
+        sample_id=sample_in.sample_id,
+        project_id=project.project_id,
+        created_at=datetime.now(tz.utc),
+    )
     session.add(sample)
     session.flush()
 
     # Handle attribute mapping
     if sample_in.attributes:
-        # Prevent duplicate keys
-        seen = set()
-        keys = [attr.key for attr in sample_in.attributes]
-        dups = [k for k in keys if k in seen or seen.add(k)]
-        if dups:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Duplicate keys ({', '.join(dups)}) are not allowed in sample attributes.",
-            )
+        check_duplicate_attribute_keys(
+            sample_in.attributes, "sample attributes"
+        )
 
         # Create sample attributes
         sample_attributes = [
@@ -575,13 +716,35 @@ def add_sample_to_project(
         # Update database with attribute links
         session.add_all(sample_attributes)
 
+    # Associate with sequencing run if requested
+    if run is not None:
+        assoc = SampleSequencingRun(
+            sample_id=sample.id,
+            sequencing_run_id=run.id,
+            created_by=created_by or "api",
+        )
+        session.add(assoc)
+
+    # Create associated files if provided
+    if sample_in.files:
+        from api.samples.services import _create_sample_files
+        _create_sample_files(
+            session=session,
+            sample=sample,
+            project_uuid=project.id,
+            file_inputs=sample_in.files,
+        )
+
     session.commit()
     session.refresh(sample)
 
-    # Add sample to opensearch
+    # Add sample to opensearch (best-effort; DB is source of truth)
     if opensearch_client:
         search_doc = SearchDocument(id=str(sample.id), body=sample)
-        add_object_to_index(opensearch_client, search_doc, index="samples")
+        try:
+            add_object_to_index(opensearch_client, search_doc, index="samples")
+        except Exception:
+            pass  # best-effort indexing; can be resynced via /reindex
 
     return sample
 
@@ -590,38 +753,48 @@ def get_project_samples(
     *,
     session: Session,
     project: Project,
-    page: PositiveInt,
-    per_page: PositiveInt,
+    skip: int = 0,
+    limit: int = 100,
     sort_by: str,
     sort_order: Literal["asc", "desc"],
-) -> SamplesPublic:
+    include: list[str] | None = None,
+) -> SamplesPublic | SamplesWithFilesPublic:
     """
     Get a paginated list of samples for a specific project.
 
     Args:
         session: Database session
         project: The project object (already validated)
-        page: Page number (1-based)
-        per_page: Number of items per page
+        skip: Number of records to skip (offset).
+        limit: Maximum number of records to return.
         sort_by: Column name to sort by
         sort_order: Sort direction ('asc' or 'desc')
+        include: Optional list of related data to include (e.g. ``["files"]``)
 
     Returns:
-        SamplesPublic: Paginated list of samples for the project
+        SamplesPublic or SamplesWithFilesPublic depending on *include*
     """
+    from sqlalchemy.orm import selectinload
+
+    from api.files.models import FileSample, File
+
+    include_files = include is not None and "files" in include
+
     # Get the total count of samples for the project
     total_count = session.exec(
         select(func.count()).select_from(Sample).where(Sample.project_id == project.project_id)
     ).one()
 
-    # Compute total pages
-    total_pages = (total_count + per_page - 1) // per_page  # Ceiling division
-
-    # Calculate offset for pagination
-    offset = (page - 1) * per_page
-
     # Build the select statement
     statement = select(Sample).where(Sample.project_id == project.project_id)
+
+    # Eagerly load file associations when requested
+    if include_files:
+        statement = statement.options(
+            selectinload(Sample.file_samples)  # type: ignore[attr-defined]
+            .selectinload(FileSample.file)  # type: ignore[attr-defined]
+            .selectinload(File.tags)  # type: ignore[attr-defined]
+        )
 
     # Add sorting
     if hasattr(Sample, sort_by):
@@ -631,20 +804,10 @@ def get_project_samples(
         statement = statement.order_by(sort_column)
 
     # Add pagination
-    statement = statement.offset(offset).limit(per_page)
+    statement = statement.offset(skip).limit(limit)
 
     # Execute the query
     samples = session.exec(statement).all()
-
-    # Map to public samples
-    public_samples = [
-        SamplePublic(
-            sample_id=sample.sample_id,
-            project_id=sample.project_id,
-            attributes=sample.attributes,
-        )
-        for sample in samples
-    ]
 
     # Collect all unique attribute keys across all samples for data_cols
     data_cols = None
@@ -656,15 +819,51 @@ def get_project_samples(
                     all_keys.add(attr.key)
         data_cols = sorted(list(all_keys)) if all_keys else None
 
+    # Build response with or without files
+    if include_files:
+        public_samples = []
+        for sample in samples:
+            files = []
+            for fs in sample.file_samples or []:
+                file = fs.file
+                tags_dict = {t.key: t.value for t in (file.tags or [])}
+                files.append(SampleFilePublic(uri=file.uri, tags=tags_dict or None))
+            public_samples.append(
+                SampleWithFilesPublic(
+                    sample_id=sample.sample_id,
+                    project_id=sample.project_id,
+                    attributes=sample.attributes,
+                    files=files if files else None,
+                )
+            )
+        return SamplesWithFilesPublic(
+            data=public_samples,
+            data_cols=data_cols,
+            total_items=total_count,
+            skip=skip,
+            limit=limit,
+            has_next=(skip + limit) < total_count,
+            has_prev=skip > 0,
+        )
+
+    # Default: no files
+    public_samples_plain = [
+        SamplePublic(
+            sample_id=sample.sample_id,
+            project_id=sample.project_id,
+            attributes=sample.attributes,
+        )
+        for sample in samples
+    ]
+
     return SamplesPublic(
-        data=public_samples,
+        data=public_samples_plain,
         data_cols=data_cols,
         total_items=total_count,
-        total_pages=total_pages,
-        current_page=page,
-        per_page=per_page,
-        has_next=page < total_pages,
-        has_prev=page > 1,
+        skip=skip,
+        limit=limit,
+        has_next=(skip + limit) < total_count,
+        has_prev=skip > 0,
     )
 
 
@@ -700,17 +899,21 @@ def update_sample_in_project(
             detail=f"Sample {sample_id} in project {project.project_id} not found.",
         )
 
-    # Check if the attribute exists
-    sample_attribute = session.exec(
-        select(SampleAttribute).where(
-            SampleAttribute.sample_id == sample.id,
-            SampleAttribute.key == attribute.key
-        )
-    ).first()
+    # Load all attributes for this sample and build a case-insensitive
+    # lookup map (avoids func.lower() in SQL which suppresses index use
+    # and mirrors the approach in bulk_create_samples).
+    existing_attrs = session.exec(
+        select(SampleAttribute).where(SampleAttribute.sample_id == sample.id)
+    ).all()
+    attr_map = {a.key.lower(): a for a in existing_attrs}
+    sample_attribute = attr_map.get(attribute.key.lower())
 
     if sample_attribute:
         # Update existing attribute
         sample_attribute.value = attribute.value
+        # Adopt the incoming key casing so the DB stays consistent
+        if sample_attribute.key != attribute.key:
+            sample_attribute.key = attribute.key
     else:
         # Create new attribute
         new_attribute = SampleAttribute(
@@ -720,6 +923,7 @@ def update_sample_in_project(
         )
         session.add(new_attribute)
 
+    sample.updated_at = datetime.now(tz.utc)
     session.commit()
     session.refresh(sample)
 
@@ -732,17 +936,11 @@ def update_sample_in_project(
     )
 
 
-def ingest_vendor_data(
-    session: Session,
-    project: Project,
-    user: str,
-    files_uri: str,
-    manifest_uri: str,
-    s3_client=None
-):
-    """
-    Invoke the vendor ingestion process.
-    """
+def _read_vendor_config_yaml(session: Session, s3_client=None) -> VendorIngestionConfig:
+    '''
+    Read the Vendor Ingestion configuration YAML file from S3
+    and parse it into a VendorIngestionConfig object.
+    '''
     vendor_ingest_config_uri = get_setting(session, key='VENDOR_INGESTION_CONFIG')
     if not vendor_ingest_config_uri:
         raise HTTPException(
@@ -773,20 +971,42 @@ def ingest_vendor_data(
             detail=f"Failed to read vendor ingestion configuration from S3: {str(e)}"
         ) from e
     config_data = VendorIngestionConfig(**config)
+    return config_data
+
+
+def ingest_vendor_data(
+    session: Session,
+    project: Project,
+    user: str,
+    vendor_bucket: str,
+    manifest_uri: str,
+    s3_client=None
+):
+    """
+    Invoke the vendor ingestion process.
+    """
+    # Read vendor ingestion configuration from S3
+    config_data = _read_vendor_config_yaml(session, s3_client)
+
+    if vendor_bucket.startswith("s3://"):
+        vendor_bucket = vendor_bucket.replace("s3://", "")
 
     # Prepare template context with all variables needed for interpolation
+    # This should be built dynamically from the inputs section of the config file and
+    # available session variables.  We should not be hard-coding anything here.
     template_context = {
-        "files_uri": files_uri,
-        "projectid": project.project_id,
-        "manifest_uri": manifest_uri,
-        "user": user
+        'vendor_bucket': vendor_bucket,
+        'projectid': project.project_id,
+        'manifest_uri': manifest_uri,
+        'user': user
     }
     command = interpolate(config_data.aws_batch.command, template_context)
+    job_name = interpolate(config_data.aws_batch.job_name, template_context)
 
     # Submit job to AWS Batch
     return submit_batch_job(
         session=session,
-        job_name=f"vendor-ingestion-{project.project_id}",
+        job_name=job_name,
         container_overrides={
             "command": command.split(),
         },

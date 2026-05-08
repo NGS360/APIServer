@@ -1,6 +1,8 @@
 """
 Models for the Manifest API
 """
+from typing import Optional
+
 from pydantic import BaseModel, Field
 
 
@@ -28,4 +30,12 @@ class ManifestValidationResponse(BaseModel):
     warning: dict[str, list[str]] = Field(
         default_factory=dict,
         description="Validation warnings grouped by category"
+    )
+    post_results: Optional[dict] = Field(
+        default=None,
+        description="Results from posting samples to API after successful validation"
+    )
+    post_error: Optional[str] = Field(
+        default=None,
+        description="Error message if posting samples failed"
     )

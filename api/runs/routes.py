@@ -15,11 +15,14 @@ GET    /api/v1/runs/[id]/metrics       Retrieve demux metrics from Stat.json
 """
 
 from typing import Literal
-from fastapi import APIRouter, Query, status, UploadFile, File, Depends
+from fastapi import HTTPException, APIRouter, Query, status, UploadFile, File, Depends
 from core.deps import SessionDep, OpenSearchDep, get_s3_client
 from api.auth.deps import CurrentUser
 from api.runs.models import (
     IlluminaMetricsResponseModel,
+    RunSampleCleanupResponse,
+    SampleSequencingRunCreate,
+    SampleSequencingRunPublic,
     SequencingRun,
     SequencingRunCreate,
     SequencingRunPublic,
@@ -27,7 +30,7 @@ from api.runs.models import (
     SequencingRunUpdateRequest,
     IlluminaSampleSheetResponseModel,
     DemuxWorkflowConfig,
-    DemuxWorkflowSubmitBody
+    DemuxWorkflowSubmitBody,
 )
 from api.jobs.models import BatchJobPublic
 from api.runs import services
@@ -59,6 +62,7 @@ def add_run(
         opensearch_client=opensearch_client,
     )
     return SequencingRunPublic(
+        run_id=run.run_id,
         run_date=run.run_date,
         machine_id=run.machine_id,
         run_number=run.run_number,
@@ -66,8 +70,7 @@ def add_run(
         experiment_name=run.experiment_name,
         run_folder_uri=run.run_folder_uri,
         status=run.status,
-        run_time=run.run_time,
-        barcode=run.barcode,
+        run_time=run.run_time
     )
 
 
@@ -81,7 +84,7 @@ def get_runs(
     session: SessionDep,
     page: int = Query(1, description="Page number (1-indexed)"),
     per_page: int = Query(20, description="Number of items per page"),
-    sort_by: str = Query("barcode", description="Field to sort by"),
+    sort_by: str = Query("run_id", description="Field to sort by"),
     sort_order: Literal["asc", "desc"] = Query(
         "asc", description="Sort order (asc or desc)"
     ),
@@ -114,8 +117,8 @@ def search_runs(
     query: str = Query(description="Search query string"),
     page: int = Query(1, description="Page number (1-indexed)"),
     per_page: int = Query(20, description="Number of items per page"),
-    sort_by: Literal["barcode", "experiment_name"] | None = Query(
-        "barcode", description="Field to sort by"
+    sort_by: Literal["run_id", "experiment_name"] | None = Query(
+        "run_id", description="Field to sort by"
     ),
     sort_order: Literal["asc", "desc"] | None = Query(
         "asc", description="Sort order (asc or desc)"
@@ -184,7 +187,7 @@ def submit_demultiplex_workflow_job(
     Args:
         session: Database session
         workflow_body: The demultiplex workflow execution request containing
-            workflow_id, run_barcode, and inputs
+            workflow_id, run_id, and inputs
         s3_client: S3 client for accessing workflow configs
     Returns:
         BatchJobPublic: The created batch job with AWS job information.
@@ -199,44 +202,53 @@ def get_demultiplex_workflow_config(
     workflow_id: str,
     session: SessionDep,
     s3_client=Depends(get_s3_client),
-    run_barcode: str = Query(None, description="Run barcode to prepopulate s3_run_folder_path"),
+    run_id: str = Query(None, description="Run ID to prepopulate s3_run_folder_path"),
 ) -> DemuxWorkflowConfig:
     """
     Retrieve a specific demultiplex workflow configuration.
 
     Args:
         workflow_id: The workflow identifier (filename without extension)
-        run_barcode: Optional run barcode to prepopulate s3_run_folder_path from run's run_folder_uri
+        run_id: Optional run ID to prepopulate s3_run_folder_path from run's run_folder_uri
 
     Returns:
-        Complete workflow configuration with prepopulated defaults if run_barcode is provided
+        Complete workflow configuration with prepopulated defaults if run_id is provided
     """
     return services.get_demux_workflow_config(
-        session=session, workflow_id=workflow_id, s3_client=s3_client, run_barcode=run_barcode
+        session=session, workflow_id=workflow_id, s3_client=s3_client, run_id=run_id
     )
 
 
+###############################################################################
+# Runs Endpoints /api/v1/runs/{run_id}
+###############################################################################
+
+
 @router.get(
-    "/{run_barcode}",
+    "/{run_id}",
     response_model=SequencingRunPublic,
     status_code=status.HTTP_200_OK,
     tags=["Run Endpoints"],
+    responses={404: {"description": "Run not found"}}
 )
-def get_run(session: SessionDep, run_barcode: str) -> SequencingRunPublic:
+def get_run(session: SessionDep, run_id: str) -> SequencingRunPublic:
     """
     Retrieve a sequencing run.
     """
-    return services.get_run(session=session, run_barcode=run_barcode)
+    run = services.get_run(session=session, run_id=run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail=f"Run with ID {run_id} not found")
+    return SequencingRunPublic.model_validate(run)
 
 
 @router.put(
-    "/{run_barcode}",
+    "/{run_id}",
     response_model=SequencingRunPublic,
     tags=["Run Endpoints"],
 )
 def update_run(
     session: SessionDep,
-    run_barcode: str,
+    run_id: str,
     update_request: SequencingRunUpdateRequest,
 ) -> SequencingRunPublic:
     """
@@ -245,32 +257,37 @@ def update_run(
     """
     return services.update_run(
         session=session,
-        run_barcode=run_barcode,
+        run_id=run_id,
         run_status=update_request.run_status
     )
 
 
+###############################################################################
+# Runs Endpoints /api/v1/runs/{run_id}/samplesheet
+###############################################################################
+
+
 @router.get(
-    "/{run_barcode}/samplesheet",
+    "/{run_id}/samplesheet",
     response_model=IlluminaSampleSheetResponseModel,
     status_code=status.HTTP_200_OK,
     tags=["Run Endpoints"],
 )
-def get_run_samplesheet(session: SessionDep, run_barcode: str) -> IlluminaSampleSheetResponseModel:
+def get_run_samplesheet(session: SessionDep, run_id: str) -> IlluminaSampleSheetResponseModel:
     """
     Retrieve the sample sheet for a specific run.
     """
-    return services.get_run_samplesheet(session=session, run_barcode=run_barcode)
+    return services.get_run_samplesheet(session=session, run_id=run_id)
 
 
 @router.post(
-    "/{run_barcode}/samplesheet",
+    "/{run_id}/samplesheet",
     response_model=IlluminaSampleSheetResponseModel,
     status_code=status.HTTP_201_CREATED,
     tags=["Run Endpoints"],)
 def post_run_samplesheet(
     session: SessionDep,
-    run_barcode: str,
+    run_id: str,
     file: UploadFile = File(..., description="File to upload"),
 ) -> IlluminaSampleSheetResponseModel:
     """
@@ -278,19 +295,112 @@ def post_run_samplesheet(
     """
     return services.upload_samplesheet(
         session=session,
-        run_barcode=run_barcode,
+        run_id=run_id,
         file=file,
     )
 
 
 @router.get(
-    "/{run_barcode}/metrics",
+    "/{run_id}/metrics",
     response_model=IlluminaMetricsResponseModel,
     status_code=status.HTTP_200_OK,
     tags=["Run Endpoints"],
 )
-def get_run_metrics(session: SessionDep, run_barcode: str) -> IlluminaMetricsResponseModel:
+def get_run_metrics(session: SessionDep, run_id: str) -> IlluminaMetricsResponseModel:
     """
     Retrieve demultiplexing metrics for a specific run.
     """
-    return services.get_run_metrics(session=session, run_barcode=run_barcode)
+    return services.get_run_metrics(session=session, run_id=run_id)
+
+
+###############################################################################
+# Sample ↔ Run Association Endpoints
+###############################################################################
+
+
+@router.post(
+    "/{run_id}/samples",
+    response_model=SampleSequencingRunPublic,
+    status_code=status.HTTP_201_CREATED,
+    tags=["Run Endpoints"],
+)
+def associate_sample_with_run(
+    session: SessionDep,
+    user: CurrentUser,
+    run_id: str,
+    body: SampleSequencingRunCreate,
+) -> SampleSequencingRunPublic:
+    """Associate a sample with a sequencing run."""
+    assoc = services.associate_sample_with_run(
+        session=session,
+        run_id=run_id,
+        sample_id=str(body.sample_id),
+        created_by=user.username,
+    )
+    return SampleSequencingRunPublic(
+        id=assoc.id,
+        sample_id=assoc.sample_id,
+        sequencing_run_id=assoc.sequencing_run_id,
+        created_at=assoc.created_at,
+        created_by=assoc.created_by,
+    )
+
+
+@router.get(
+    "/{run_id}/samples",
+    response_model=list[SampleSequencingRunPublic],
+    tags=["Run Endpoints"],
+)
+def get_samples_for_run(
+    session: SessionDep,
+    run_id: str,
+) -> list[SampleSequencingRunPublic]:
+    """List sample associations for a sequencing run."""
+    return services.get_samples_for_run(
+        session=session, run_id=run_id
+    )
+
+
+@router.delete(
+    "/{run_id}/samples",
+    response_model=RunSampleCleanupResponse,
+    status_code=status.HTTP_200_OK,
+    tags=["Run Endpoints"],
+)
+def clear_samples_for_run(
+    session: SessionDep,
+    opensearch_client: OpenSearchDep,
+    user: CurrentUser,
+    run_id: str,
+) -> RunSampleCleanupResponse:
+    """
+    Remove all sample associations, run-linked files, and orphaned samples for a run.
+
+    Used before re-demultiplexing to clean up database records from a previous
+    (possibly incorrect) demux. Deletes File records associated with the run,
+    removes all SampleSequencingRun associations, and deletes orphaned Sample
+    records that have no other associations.
+    """
+    return services.clear_samples_for_run(
+        session=session,
+        run_id=run_id,
+        opensearch_client=opensearch_client,
+    )
+
+
+@router.delete(
+    "/{run_id}/samples/{sample_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    tags=["Run Endpoints"],
+)
+def remove_sample_from_run(
+    session: SessionDep,
+    run_id: str,
+    sample_id: str,
+) -> None:
+    """Remove a single sample association from a run."""
+    services.remove_sample_from_run(
+        session=session,
+        run_id=run_id,
+        sample_id=sample_id,
+    )

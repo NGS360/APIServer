@@ -495,6 +495,12 @@ def find_or_create_oauth_user(
     return user
 
 
+def get_user_oauth_providers(session: Session, user: User) -> list[str]:
+    """Get list of linked OAuth providers for the user"""
+    oauth_providers = select(OAuthProvider.provider_name).where(OAuthProvider.user_id == user.id)
+    return list(session.exec(oauth_providers).all())
+
+
 def link_oauth_account(
     session: Session,
     user_id: uuid.UUID,

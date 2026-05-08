@@ -10,17 +10,27 @@ from core.config import get_settings
 # Import all models here so that they are registered with SQLModel metadata
 from api.auth.models import (
     User, RefreshToken, PasswordResetToken, EmailVerificationToken,
-    OAuthProvider, OAuthProviderName
+    OAuthProvider, OAuthProviderName, APIKey
 )
-from api.files.models import File, FileSample, FileEntity, FileHash, FileTag
+from api.files.models import (
+    File, FileSample, FileHash, FileTag,
+    FileProject, FileSequencingRun, FileQCRecord, FilePipeline,
+)
 from api.samples.models import Sample, SampleAttribute
 from api.settings.models import Setting
 from api.project.models import Project
-from api.runs.models import SequencingRun
+from api.runs.models import SequencingRun, SampleSequencingRun
 from api.vendors.models import Vendor
-from api.workflow.models import Workflow, WorkflowAttribute
+from api.workflow.models import (
+    Workflow, WorkflowAttribute, WorkflowVersion, WorkflowVersionAlias,
+    WorkflowDeployment, WorkflowVersionAttribute,
+)
+from api.pipeline.models import Pipeline, PipelineAttribute, PipelineWorkflow
+from api.platforms.models import Platform
 from api.jobs.models import BatchJob
-from api.qcmetrics.models import QCRecord, QCRecordMetadata, QCMetric, QCMetricValue, QCMetricSample
+from api.qcmetrics.models import (
+    QCRecord, QCRecordMetadata, QCMetric, QCMetricValue, QCMetricSample,
+)
 
 # Import Base from your SQLModel setup
 #from core.db import Base

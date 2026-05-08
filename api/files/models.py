@@ -3,14 +3,16 @@ Unified File Models - Supporting both file uploads and external file references.
 
 This module provides a unified file metadata system that supports:
 - Both file uploads and external file references
-- Many-to-many relationships with any entity type via FileEntity
+- Typed junction tables for entity associations with real FK constraints
 - Flexible sample associations with roles via FileSample
 - Multi-algorithm hash storage via FileHash
 - Flexible key-value tags via FileTag
+
+Entity associations use typed junction tables (FileProject, FileSequencingRun,
+FileQCRecord, FilePipeline) with real FK constraints and cascade deletes.
 """
 
 from datetime import datetime, timezone
-from enum import Enum
 import hashlib
 import mimetypes
 import re
@@ -25,21 +27,7 @@ if TYPE_CHECKING:
 
 
 # ============================================================================
-# Entity Type Constants
-# ============================================================================
-
-class FileEntityType(str, Enum):
-    """
-    Entity types that can have files associated.
-    """
-    PROJECT = "PROJECT"
-    RUN = "RUN"
-    SAMPLE = "SAMPLE"
-    QCRECORD = "QCRECORD"
-
-
-# ============================================================================
-# Database Tables
+# Database Tables — Junction Tables (File ↔ Entity)
 # ============================================================================
 
 
@@ -116,36 +104,90 @@ class FileSample(SQLModel, table=True):
     )
 
 
-class FileEntity(SQLModel, table=True):
+class FileProject(SQLModel, table=True):
     """
-    Many-to-many junction table linking files to entities.
+    Associates a file with a project.
 
-    Examples:
-    - Sample sheet: entity_type=RUN, entity_id=barcode, role=samplesheet
-    - Pipeline output: entity_type=QCRECORD, entity_id=uuid, role=output
-    - Project manifest (standalone): entity_type=PROJECT, entity_id=P-12345, role=manifest
-
-    Important: Files attached to Samples or QCRecords should NOT also be linked
-    to their parent Project via FileEntity. The project relationship can be
-    traversed through the Sample→Project or QCRecord→Project relationships.
-    Project-level FileEntity associations are only for standalone files
-    (manifests, etc.) that have no other entity association.
+    A project describes a physical location (e.g., s3://<bucket>/<project_id>/).
+    Common roles: manifest, samplesheet, documentation.
     """
-    __tablename__ = "fileentity"
+    __tablename__ = "fileproject"
+    __table_args__ = (
+        UniqueConstraint("file_id", "project_id", name="uq_fileproject"),
+    )
 
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     file_id: uuid.UUID = Field(foreign_key="file.id", nullable=False)
-    entity_type: FileEntityType = Field(nullable=False)
-    entity_id: str = Field(max_length=100, nullable=False)  # Entity identifier
-    # TBD: This should be an Enum or at least constrained to known roles per entity type
-    role: str | None = Field(default=None, max_length=50)  # e.g., samplesheet, manifest, output
+    project_id: uuid.UUID = Field(foreign_key="project.id", nullable=False)
+    role: str | None = Field(default=None, max_length=50)
 
-    # Relationship back to parent
-    file: "File" = Relationship(back_populates="entities")
+    # Relationship back to parent file
+    file: "File" = Relationship(back_populates="projects")
 
+
+class FileSequencingRun(SQLModel, table=True):
+    """
+    Associates a file with a sequencing run.
+
+    Common roles: samplesheet, stats, interop, runinfo.
+    """
+    __tablename__ = "filesequencingrun"
     __table_args__ = (
-        UniqueConstraint("file_id", "entity_type", "entity_id", name="uq_fileentity_file_entity"),
+        UniqueConstraint("file_id", "sequencing_run_id", name="uq_filesequencingrun"),
     )
+
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    file_id: uuid.UUID = Field(foreign_key="file.id", nullable=False)
+    sequencing_run_id: uuid.UUID = Field(foreign_key="sequencingrun.id", nullable=False)
+    role: str | None = Field(default=None, max_length=50)
+
+    # Relationship back to parent file
+    file: "File" = Relationship(back_populates="sequencing_runs")
+
+
+class FileQCRecord(SQLModel, table=True):
+    """
+    Associates a file with a QC record (pipeline output files).
+
+    Common roles: output, log, report.
+    """
+    __tablename__ = "fileqcrecord"
+    __table_args__ = (
+        UniqueConstraint("file_id", "qcrecord_id", name="uq_fileqcrecord"),
+    )
+
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    file_id: uuid.UUID = Field(foreign_key="file.id", nullable=False)
+    qcrecord_id: uuid.UUID = Field(foreign_key="qcrecord.id", nullable=False)
+    role: str | None = Field(default=None, max_length=50)
+
+    # Relationship back to parent file
+    file: "File" = Relationship(back_populates="qcrecords")
+
+
+class FilePipeline(SQLModel, table=True):
+    """
+    Associates a file with a pipeline.
+
+    Common roles: definition, documentation, config.
+    """
+    __tablename__ = "filepipeline"
+    __table_args__ = (
+        UniqueConstraint("file_id", "pipeline_id", name="uq_filepipeline"),
+    )
+
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    file_id: uuid.UUID = Field(foreign_key="file.id", nullable=False)
+    pipeline_id: uuid.UUID = Field(foreign_key="pipeline.id", nullable=False)
+    role: str | None = Field(default=None, max_length=50)
+
+    # Relationship back to parent file
+    file: "File" = Relationship(back_populates="pipelines")
+
+
+# ============================================================================
+# Core File Table
+# ============================================================================
 
 
 class File(SQLModel, table=True):
@@ -180,11 +222,7 @@ class File(SQLModel, table=True):
         UniqueConstraint("uri", "created_on", name="uq_file_uri_created_on"),
     )
 
-    # Relationships to child tables
-    entities: List["FileEntity"] = Relationship(
-        back_populates="file",
-        sa_relationship_kwargs={"cascade": "all, delete-orphan"}
-    )
+    # Relationships to child tables — hash/tag/sample
     hashes: List["FileHash"] = Relationship(
         back_populates="file",
         sa_relationship_kwargs={"cascade": "all, delete-orphan"}
@@ -194,6 +232,24 @@ class File(SQLModel, table=True):
         sa_relationship_kwargs={"cascade": "all, delete-orphan"}
     )
     samples: List["FileSample"] = Relationship(
+        back_populates="file",
+        sa_relationship_kwargs={"cascade": "all, delete-orphan"}
+    )
+
+    # Relationships to typed entity junction tables
+    projects: List["FileProject"] = Relationship(
+        back_populates="file",
+        sa_relationship_kwargs={"cascade": "all, delete-orphan"}
+    )
+    sequencing_runs: List["FileSequencingRun"] = Relationship(
+        back_populates="file",
+        sa_relationship_kwargs={"cascade": "all, delete-orphan"}
+    )
+    qcrecords: List["FileQCRecord"] = Relationship(
+        back_populates="file",
+        sa_relationship_kwargs={"cascade": "all, delete-orphan"}
+    )
+    pipelines: List["FilePipeline"] = Relationship(
         back_populates="file",
         sa_relationship_kwargs={"cascade": "all, delete-orphan"}
     )
@@ -208,7 +264,7 @@ class File(SQLModel, table=True):
     @staticmethod
     def generate_uri(
         base_path: str,
-        entity_type: FileEntityType,
+        entity_type: str,
         entity_id: str,
         filename: str,
         relative_path: str | None = None,
@@ -308,13 +364,6 @@ class File(SQLModel, table=True):
 # ============================================================================
 
 
-class EntityInput(SQLModel):
-    """Entity association input for file creation."""
-    entity_type: FileEntityType
-    entity_id: str
-    role: str | None = None
-
-
 class SampleInput(SQLModel):
     """Sample association input for file creation."""
     sample_name: str
@@ -327,6 +376,9 @@ class FileCreate(SQLModel):
 
     For uploads, file_content is provided separately.
     For external references, just the metadata is needed.
+
+    Entity associations use scalar UUID fields — a file typically belongs to
+    one entity of each type (one project, one run, one QCRecord, etc.).
     """
     uri: str  # Required - serves as unique identifier
     original_filename: str | None = None  # For uploads only
@@ -335,13 +387,35 @@ class FileCreate(SQLModel):
     source: str | None = None  # Origin of file record
     created_by: str | None = None
     storage_backend: str | None = None
-    project_id: str | None = None  # Required when samples are provided
-    entities: List[EntityInput] | None = None
+    project_id: str | None = None  # String business key, resolved to UUID at service layer
+
+    # Typed entity associations (replaces polymorphic EntityInput)
+    sequencing_run_id: uuid.UUID | None = None
+    qcrecord_id: uuid.UUID | None = None
+    pipeline_id: uuid.UUID | None = None
+
+    # Existing
     samples: List[SampleInput] | None = None
     hashes: dict[str, str] | None = None  # {"md5": "abc...", "sha256": "def..."}
     tags: dict[str, str] | None = None  # {"type": "alignment", "format": "bam"}
 
     model_config = ConfigDict(extra="forbid")
+
+    @model_validator(mode="after")
+    def validate_at_least_one_entity(self):
+        """Ensure at least one entity association is provided (prevent orphan files)."""
+        entities = [
+            self.project_id,
+            self.sequencing_run_id,
+            self.qcrecord_id,
+            self.pipeline_id,
+        ]
+        if not any(e is not None for e in entities):
+            raise ValueError(
+                "At least one entity association is required "
+                "(project_id, sequencing_run_id, qcrecord_id, or pipeline_id)"
+            )
+        return self
 
     @model_validator(mode="after")
     def validate_project_id_with_samples(self):
@@ -356,12 +430,20 @@ class FileUploadCreate(SQLModel):
 
     This is a simplified version of FileCreate for form-based uploads
     where files are associated with a single entity.
+
+    Uses typed entity ID fields instead of polymorphic entity_type/entity_id.
+    Exactly one entity ID should be provided per upload.
     """
     filename: str  # Display filename for the upload
     original_filename: str | None = None
     description: str | None = None
-    entity_type: FileEntityType
-    entity_id: str
+
+    # Typed entity associations — exactly one should be populated per upload
+    project_id: str | None = None  # String business key
+    sequencing_run_id: uuid.UUID | None = None
+    qcrecord_id: uuid.UUID | None = None
+    pipeline_id: uuid.UUID | None = None
+
     role: str | None = None  # e.g., samplesheet
     is_public: bool = False
     created_by: str | None = None
@@ -369,6 +451,53 @@ class FileUploadCreate(SQLModel):
     overwrite: bool = False
 
     model_config = ConfigDict(extra="forbid")
+
+    @model_validator(mode="after")
+    def validate_exactly_one_entity(self):
+        """Ensure at least one entity association is provided."""
+        entities = [
+            self.project_id,
+            self.sequencing_run_id,
+            self.qcrecord_id,
+            self.pipeline_id,
+        ]
+        provided = [e for e in entities if e is not None]
+        if len(provided) == 0:
+            raise ValueError(
+                "At least one entity association is required "
+                "(project_id, sequencing_run_id, qcrecord_id, or pipeline_id)"
+            )
+        if len(provided) > 1:
+            raise ValueError(
+                "Only one entity association should be provided per upload"
+            )
+        return self
+
+    @property
+    def entity_type_for_uri(self) -> str:
+        """Return the entity type string for URI generation."""
+        if self.project_id is not None:
+            return "project"
+        if self.sequencing_run_id is not None:
+            return "run"
+        if self.qcrecord_id is not None:
+            return "qcrecord"
+        if self.pipeline_id is not None:
+            return "pipeline"
+        return "unknown"
+
+    @property
+    def entity_id_for_uri(self) -> str:
+        """Return the entity ID string for URI generation."""
+        if self.project_id is not None:
+            return self.project_id
+        if self.sequencing_run_id is not None:
+            return str(self.sequencing_run_id)
+        if self.qcrecord_id is not None:
+            return str(self.qcrecord_id)
+        if self.pipeline_id is not None:
+            return str(self.pipeline_id)
+        return "unknown"
 
 
 class HashPublic(SQLModel):
@@ -389,10 +518,15 @@ class FileSamplePublic(SQLModel):
     role: str | None
 
 
-class EntityPublic(SQLModel):
-    """Public representation of an entity association."""
-    entity_type: FileEntityType
-    entity_id: str
+class FileAssociationPublic(SQLModel):
+    """
+    Typed entity association in file responses.
+
+    Unifies all typed junction tables into a single response format.
+    The underlying storage uses proper FK-backed junction tables.
+    """
+    entity_type: str  # PROJECT, SEQUENCING_RUN, QCRECORD, PIPELINE
+    entity_id: uuid.UUID
     role: str | None
 
 
@@ -407,7 +541,7 @@ class FilePublic(SQLModel):
     created_by: str | None
     source: str | None
     storage_backend: str | None
-    entities: List[EntityPublic]
+    associations: List[FileAssociationPublic]
     samples: List[FileSamplePublic]
     hashes: List[HashPublic]
     tags: List[TagPublic]
@@ -427,6 +561,23 @@ class FileSummary(SQLModel):
     hashes: List[HashPublic] = []
     tags: List[TagPublic] = []
     samples: List[FileSamplePublic] = []
+
+
+class FileUpdate(SQLModel):
+    """
+    Request model for updating a file record.
+
+    All fields are optional — only provided fields are updated.
+    Primary use case: correcting a URI (e.g., wrong bucket name).
+    """
+    uri: str | None = None
+    original_filename: str | None = None
+    size: int | None = None
+    source: str | None = None
+    created_by: str | None = None
+    storage_backend: str | None = None
+
+    model_config = ConfigDict(extra="forbid")
 
 
 class FilesPublic(SQLModel):
@@ -468,6 +619,25 @@ class FileBrowserData(SQLModel):
 
 def file_to_public(file: File) -> FilePublic:
     """Convert a File model instance to FilePublic response."""
+    # Build unified associations list from all typed junction tables
+    associations = []
+    for fp in file.projects:
+        associations.append(FileAssociationPublic(
+            entity_type="PROJECT", entity_id=fp.project_id, role=fp.role
+        ))
+    for fsr in file.sequencing_runs:
+        associations.append(FileAssociationPublic(
+            entity_type="SEQUENCING_RUN", entity_id=fsr.sequencing_run_id, role=fsr.role
+        ))
+    for fqr in file.qcrecords:
+        associations.append(FileAssociationPublic(
+            entity_type="QCRECORD", entity_id=fqr.qcrecord_id, role=fqr.role
+        ))
+    for fpl in file.pipelines:
+        associations.append(FileAssociationPublic(
+            entity_type="PIPELINE", entity_id=fpl.pipeline_id, role=fpl.role
+        ))
+
     return FilePublic(
         id=file.id,
         uri=file.uri,
@@ -478,13 +648,7 @@ def file_to_public(file: File) -> FilePublic:
         created_by=file.created_by,
         source=file.source,
         storage_backend=file.storage_backend,
-        entities=[
-            EntityPublic(
-                entity_type=e.entity_type,
-                entity_id=e.entity_id,
-                role=e.role
-            ) for e in file.entities
-        ],
+        associations=associations,
         samples=[
             FileSamplePublic(sample_name=s.sample.sample_id, role=s.role)
             for s in file.samples

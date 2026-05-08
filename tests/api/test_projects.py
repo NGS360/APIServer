@@ -67,6 +67,172 @@ def test_get_projects_with_data(client: TestClient, session: Session):
     assert attribute_dict["Priority"] == "High"
 
 
+def test_get_project_with_sequencing_runs(client: TestClient, session: Session):
+    """Test that GET /api/projects/<project_id> includes associated sequencing runs"""
+    from datetime import date
+    from api.project.models import Project
+    from api.project.services import generate_project_id
+    from api.samples.models import Sample
+    from api.runs.models import SequencingRun, SampleSequencingRun, RunStatus
+
+    # Create a project
+    project = Project(name="Test Project with Runs")
+    project.project_id = generate_project_id(session=session)
+    session.add(project)
+    session.flush()
+
+    # Create samples for the project
+    sample1 = Sample(sample_id="SAMPLE-001", project_id=project.project_id)
+    sample2 = Sample(sample_id="SAMPLE-002", project_id=project.project_id)
+    session.add(sample1)
+    session.add(sample2)
+    session.flush()
+
+    # Create sequencing runs
+    run1 = SequencingRun(
+        run_id="240115_M12345_100_FC001",
+        run_date=date(2024, 1, 15),
+        machine_id="M12345",
+        run_number="100",
+        flowcell_id="FC001",
+        experiment_name="Experiment-001",
+        run_folder_uri="s3://runs/run1/",
+        status=RunStatus.READY
+    )
+    run2 = SequencingRun(
+        run_id="240220_M67890_200_FC002",
+        run_date=date(2024, 2, 20),
+        machine_id="M67890",
+        run_number="200",
+        flowcell_id="FC002",
+        experiment_name="Experiment-002",
+        run_folder_uri="s3://runs/run2/",
+        status=RunStatus.UPLOADING
+    )
+    session.add(run1)
+    session.add(run2)
+    session.flush()
+
+    # Associate samples with sequencing runs
+    # sample1 is on both runs, sample2 is only on run2
+    assoc1 = SampleSequencingRun(
+        sample_id=sample1.id,
+        sequencing_run_id=run1.id,
+        created_by="testuser"
+    )
+    assoc2 = SampleSequencingRun(
+        sample_id=sample1.id,
+        sequencing_run_id=run2.id,
+        created_by="testuser"
+    )
+    assoc3 = SampleSequencingRun(
+        sample_id=sample2.id,
+        sequencing_run_id=run2.id,
+        created_by="testuser"
+    )
+    session.add(assoc1)
+    session.add(assoc2)
+    session.add(assoc3)
+    session.commit()
+
+    # Get the project
+    response = client.get(f"/api/v1/projects/{project.project_id}")
+    assert response.status_code == 200
+    response_json = response.json()
+
+    # Verify basic project details
+    assert response_json["name"] == "Test Project with Runs"
+    assert response_json["project_id"] == project.project_id
+
+    # Verify sequencing_runs field exists
+    assert "sequencing_runs" in response_json
+    assert response_json["sequencing_runs"] is not None
+
+    # Should have 2 distinct sequencing runs
+    sequencing_runs = response_json["sequencing_runs"]
+    assert len(sequencing_runs) == 2
+
+    # Sort by run_number for predictable ordering
+    sequencing_runs.sort(key=lambda r: int(r["run_number"]))
+
+    # Verify first run details
+    assert sequencing_runs[0]["machine_id"] == "M12345"
+    assert sequencing_runs[0]["run_number"] == "100"
+    assert sequencing_runs[0]["flowcell_id"] == "FC001"
+    assert sequencing_runs[0]["experiment_name"] == "Experiment-001"
+    assert sequencing_runs[0]["status"] == "Ready"
+    assert sequencing_runs[0]["run_id"] == "240115_M12345_100_FC001"
+
+    # Verify second run details
+    assert sequencing_runs[1]["machine_id"] == "M67890"
+    assert sequencing_runs[1]["run_number"] == "200"
+    assert sequencing_runs[1]["flowcell_id"] == "FC002"
+    assert sequencing_runs[1]["experiment_name"] == "Experiment-002"
+    assert sequencing_runs[1]["status"] == "Uploading"
+    assert sequencing_runs[1]["run_id"] == "240220_M67890_200_FC002"
+
+
+def test_get_project_without_sequencing_runs(client: TestClient, session: Session):
+    """
+    Test that GET /api/projects/<project_id> returns empty list
+    when no sequencing runs associated with project
+    """
+    from api.project.models import Project
+    from api.project.services import generate_project_id
+
+    # Create a project with no samples or runs
+    project = Project(name="Project Without Runs")
+    project.project_id = generate_project_id(session=session)
+    session.add(project)
+    session.commit()
+
+    # Get the project
+    response = client.get(f"/api/v1/projects/{project.project_id}")
+    assert response.status_code == 200
+    response_json = response.json()
+
+    # Verify project details
+    assert response_json["name"] == "Project Without Runs"
+    assert response_json["project_id"] == project.project_id
+
+    # Verify sequencing_runs field exists and is empty
+    assert "sequencing_runs" in response_json
+    assert response_json["sequencing_runs"] is not None
+    assert len(response_json["sequencing_runs"]) == 0
+
+
+def test_get_project_with_samples_but_no_runs(client: TestClient, session: Session):
+    """Test project with samples but no associated sequencing runs"""
+    from api.project.models import Project
+    from api.project.services import generate_project_id
+    from api.samples.models import Sample
+
+    # Create a project with samples but no runs
+    project = Project(name="Project With Samples No Runs")
+    project.project_id = generate_project_id(session=session)
+    session.add(project)
+    session.flush()
+
+    # Create samples but don't associate them with any runs
+    sample1 = Sample(sample_id="SAMPLE-A", project_id=project.project_id)
+    sample2 = Sample(sample_id="SAMPLE-B", project_id=project.project_id)
+    session.add(sample1)
+    session.add(sample2)
+    session.commit()
+
+    # Get the project
+    response = client.get(f"/api/v1/projects/{project.project_id}")
+    assert response.status_code == 200
+    response_json = response.json()
+
+    # Verify project details
+    assert response_json["name"] == "Project With Samples No Runs"
+
+    # Should have empty sequencing runs list
+    assert "sequencing_runs" in response_json
+    assert response_json["sequencing_runs"] == []
+
+
 def test_create_project(client: TestClient):
     """Test that we can add a project"""
     data = {
@@ -106,6 +272,22 @@ def test_create_project_fails_with_duplicate_attribute(client: TestClient):
     response = client.post("/api/v1/projects", json=data)
     # Check the response code
     assert response.status_code == 400
+
+
+def test_create_project_fails_with_case_insensitive_duplicate_attribute(
+    client: TestClient,
+):
+    """Test that creating a project with attribute keys differing only in case returns 400."""
+    data = {
+        "name": "Test Project",
+        "attributes": [
+            {"key": "Priority", "value": "High"},
+            {"key": "priority", "value": "Low"},
+        ],
+    }
+    response = client.post("/api/v1/projects", json=data)
+    assert response.status_code == 400
+    assert "duplicate" in response.json()["detail"].lower()
 
 
 def test_generate_project_id(session: Session):
@@ -271,6 +453,29 @@ def test_update_project_with_duplicate_attributes(client: TestClient, session: S
     assert "duplicate" in response.json()["detail"].lower()
 
 
+def test_update_project_with_case_insensitive_duplicate_attributes(
+    client: TestClient, session: Session
+):
+    """Test that PUT update with attribute keys differing only in case returns 400."""
+    new_project = Project(name="Test Project")
+    new_project.project_id = generate_project_id(session=session)
+    new_project.attributes = []
+    session.add(new_project)
+    session.commit()
+
+    update_data = {
+        "attributes": [
+            {"key": "Priority", "value": "High"},
+            {"key": "priority", "value": "Low"},
+        ]
+    }
+    response = client.put(
+        f"/api/v1/projects/{new_project.project_id}", json=update_data
+    )
+    assert response.status_code == 400
+    assert "duplicate" in response.json()["detail"].lower()
+
+
 def test_update_project_with_empty_data(client: TestClient, session: Session):
     """Test that updating with empty data doesn't change the project"""
     # Create a project
@@ -351,6 +556,230 @@ def test_update_project_removes_all_attributes(client: TestClient, session: Sess
 
 
 ###############################################################################
+# PATCH Project Tests (merge/upsert semantics)
+###############################################################################
+
+
+def test_patch_project_merge_preserves_existing(
+    client: TestClient, session: Session
+):
+    """Test that PATCH with a new attribute preserves all existing attributes"""
+    new_project = Project(name="Test Project")
+    new_project.project_id = generate_project_id(session=session)
+    new_project.attributes = [
+        ProjectAttribute(key="project_type", value="RNA-Seq"),
+        ProjectAttribute(key="pi", value="Dr. Smith"),
+    ]
+    session.add(new_project)
+    session.commit()
+
+    # Add a single new attribute (simulates NGS-BMS worker)
+    update_data = {
+        "attributes": [
+            {"key": "xpress_project_id", "value": "-1"},
+        ]
+    }
+    response = client.patch(
+        f"/api/v1/projects/{new_project.project_id}",
+        json=update_data,
+    )
+
+    assert response.status_code == 200
+    response_json = response.json()
+
+    # All three attributes should be present
+    assert len(response_json["attributes"]) == 3
+    attr_dict = {
+        a["key"]: a["value"] for a in response_json["attributes"]
+    }
+    assert attr_dict["project_type"] == "RNA-Seq"
+    assert attr_dict["pi"] == "Dr. Smith"
+    assert attr_dict["xpress_project_id"] == "-1"
+
+
+def test_patch_project_upsert_existing_key(
+    client: TestClient, session: Session
+):
+    """Test that PATCH with an existing key updates only that value"""
+    new_project = Project(name="Test Project")
+    new_project.project_id = generate_project_id(session=session)
+    new_project.attributes = [
+        ProjectAttribute(key="project_type", value="RNA-Seq"),
+        ProjectAttribute(key="xpress_project_id", value="-1"),
+        ProjectAttribute(key="pi", value="Dr. Smith"),
+    ]
+    session.add(new_project)
+    session.commit()
+
+    update_data = {
+        "attributes": [
+            {"key": "xpress_project_id", "value": "12345"},
+        ]
+    }
+    response = client.patch(
+        f"/api/v1/projects/{new_project.project_id}",
+        json=update_data,
+    )
+
+    assert response.status_code == 200
+    response_json = response.json()
+
+    assert len(response_json["attributes"]) == 3
+    attr_dict = {
+        a["key"]: a["value"] for a in response_json["attributes"]
+    }
+    assert attr_dict["project_type"] == "RNA-Seq"
+    assert attr_dict["pi"] == "Dr. Smith"
+    assert attr_dict["xpress_project_id"] == "12345"
+
+
+def test_patch_project_empty_attributes_is_noop(
+    client: TestClient, session: Session
+):
+    """Test that PATCH with empty attributes list is a no-op"""
+    new_project = Project(name="Test Project")
+    new_project.project_id = generate_project_id(session=session)
+    new_project.attributes = [
+        ProjectAttribute(key="Department", value="R&D"),
+        ProjectAttribute(key="Priority", value="High"),
+    ]
+    session.add(new_project)
+    session.commit()
+
+    update_data = {"attributes": []}
+    response = client.patch(
+        f"/api/v1/projects/{new_project.project_id}",
+        json=update_data,
+    )
+
+    assert response.status_code == 200
+    response_json = response.json()
+
+    assert len(response_json["attributes"]) == 2
+    attr_dict = {
+        a["key"]: a["value"] for a in response_json["attributes"]
+    }
+    assert attr_dict["Department"] == "R&D"
+    assert attr_dict["Priority"] == "High"
+
+
+def test_patch_project_name_only(
+    client: TestClient, session: Session
+):
+    """Test that PATCH can update name without touching attributes"""
+    new_project = Project(name="Original Name")
+    new_project.project_id = generate_project_id(session=session)
+    new_project.attributes = [
+        ProjectAttribute(key="Department", value="R&D"),
+    ]
+    session.add(new_project)
+    session.commit()
+
+    update_data = {"name": "Updated Name"}
+    response = client.patch(
+        f"/api/v1/projects/{new_project.project_id}",
+        json=update_data,
+    )
+
+    assert response.status_code == 200
+    response_json = response.json()
+    assert response_json["name"] == "Updated Name"
+    assert len(response_json["attributes"]) == 1
+    assert response_json["attributes"][0]["key"] == "Department"
+    assert response_json["attributes"][0]["value"] == "R&D"
+
+
+def test_patch_project_not_found(client: TestClient):
+    """Test that PATCH on a non-existent project returns 404"""
+    update_data = {"name": "New Name"}
+    response = client.patch(
+        "/api/v1/projects/nonexistent-project-id",
+        json=update_data,
+    )
+    assert response.status_code == 404
+    assert "not found" in response.json()["detail"].lower()
+
+
+def test_patch_project_duplicate_attribute_keys(
+    client: TestClient, session: Session
+):
+    """Test that PATCH with duplicate attribute keys fails"""
+    new_project = Project(name="Test Project")
+    new_project.project_id = generate_project_id(session=session)
+    new_project.attributes = []
+    session.add(new_project)
+    session.commit()
+
+    update_data = {
+        "attributes": [
+            {"key": "Priority", "value": "High"},
+            {"key": "Priority", "value": "Low"},
+        ]
+    }
+    response = client.patch(
+        f"/api/v1/projects/{new_project.project_id}",
+        json=update_data,
+    )
+
+    assert response.status_code == 400
+    assert "duplicate" in response.json()["detail"].lower()
+
+
+def test_patch_project_case_insensitive_duplicate_attribute_keys(
+    client: TestClient, session: Session
+):
+    """Test that PATCH with attribute keys differing only in case returns 400."""
+    new_project = Project(name="Test Project")
+    new_project.project_id = generate_project_id(session=session)
+    new_project.attributes = []
+    session.add(new_project)
+    session.commit()
+
+    update_data = {
+        "attributes": [
+            {"key": "Priority", "value": "High"},
+            {"key": "priority", "value": "Low"},
+        ]
+    }
+    response = client.patch(
+        f"/api/v1/projects/{new_project.project_id}",
+        json=update_data,
+    )
+    assert response.status_code == 400
+    assert "duplicate" in response.json()["detail"].lower()
+
+
+def test_patch_project_upserts_attribute_case_insensitively(
+    client: TestClient, session: Session
+):
+    """Test that PATCH matches existing attributes case-insensitively
+    and updates the value without creating a duplicate."""
+    new_project = Project(name="Test Project")
+    new_project.project_id = generate_project_id(session=session)
+    new_project.attributes = [
+        ProjectAttribute(key="Department", value="R&D"),
+    ]
+    session.add(new_project)
+    session.commit()
+
+    # Patch with different casing — should update existing, not create duplicate
+    update_data = {
+        "attributes": [
+            {"key": "department", "value": "Engineering"},
+        ]
+    }
+    response = client.patch(
+        f"/api/v1/projects/{new_project.project_id}",
+        json=update_data,
+    )
+    assert response.status_code == 200
+    attrs = response.json()["attributes"]
+    assert len(attrs) == 1
+    assert attrs[0]["key"] == "department"
+    assert attrs[0]["value"] == "Engineering"
+
+
+###############################################################################
 # Pipeline Job Submission Tests
 ###############################################################################
 
@@ -418,7 +847,6 @@ def test_submit_create_project_job(
 
     # Verify response structure
     assert "id" in response_json
-    assert response_json["aws_job_id"] == "aws-batch-job-123"
     assert response_json["status"] == "SUBMITTED"
     assert response_json["user"] == "testuser"
 
@@ -502,7 +930,6 @@ def test_submit_export_results_job(
 
     assert response.status_code == 201
     response_json = response.json()
-    assert response_json["aws_job_id"] == "aws-batch-job-456"
     assert response_json["status"] == "SUBMITTED"
 
     # Verify AWS Batch was called
@@ -635,7 +1062,6 @@ def test_submit_create_project_with_auto_release_ignored(
     # Should succeed and ignore auto_release
     assert response.status_code == 201
     response_json = response.json()
-    assert response_json["aws_job_id"] == "aws-batch-job-789"
     assert response_json["status"] == "SUBMITTED"
 
 
@@ -1028,4 +1454,4 @@ def test_ingest_vendor_data(
     # Check results
     assert response.status_code == 201
     response_json = response.json()
-    assert response_json["aws_job_id"] == "aws-batch-job-123"
+    assert response_json["id"] == "aws-batch-job-123"

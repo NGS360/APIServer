@@ -2,10 +2,13 @@
 Services for the unified Files API.
 
 This module provides functions for:
-- Creating files with entity associations, hashes, tags, and samples
+- Creating files with typed entity associations, hashes, tags, and samples
 - Looking up files by UUID or URI (with version support)
 - Managing file uploads to S3 or local storage
 - Browsing S3 file systems
+
+Entity associations use typed junction tables (FileProject, FileSequencingRun,
+FileQCRecord, FilePipeline) with real FK constraints.
 """
 
 from datetime import datetime, timezone
@@ -19,16 +22,19 @@ from sqlmodel import Session, select, col
 
 from api.files.models import (
     File,
-    FileEntity,
     FileHash,
     FileTag,
     FileSample,
+    FileProject,
+    FileSequencingRun,
+    FileQCRecord,
+    FilePipeline,
     FileCreate,
+    FileUpdate,
     FileUploadCreate,
     FileBrowserData,
     FileBrowserFile,
     FileBrowserFolder,
-    FileEntityType,
 )
 from api.samples.services import resolve_or_create_sample
 
@@ -78,16 +84,35 @@ def create_file(
     session.add(file_record)
     session.flush()  # Get the file ID
 
-    # Create entity associations
-    if file_create.entities:
-        for entity_input in file_create.entities:
-            entity = FileEntity(
-                file_id=file_record.id,
-                entity_type=entity_input.entity_type.upper(),
-                entity_id=entity_input.entity_id,
-                role=entity_input.role,
-            )
-            session.add(entity)
+    # Create typed entity associations
+    if file_create.project_id:
+        project = _resolve_project(session, file_create.project_id)
+        session.add(FileProject(
+            file_id=file_record.id,
+            project_id=project.id,
+        ))
+
+    if file_create.sequencing_run_id:
+        _validate_exists_by_uuid(session, "SequencingRun", file_create.sequencing_run_id)
+        session.add(FileSequencingRun(
+            file_id=file_record.id,
+            sequencing_run_id=file_create.sequencing_run_id,
+        ))
+
+    if file_create.qcrecord_id:
+        _validate_exists_by_uuid(session, "QCRecord", file_create.qcrecord_id)
+        session.add(FileQCRecord(
+            file_id=file_record.id,
+            qcrecord_id=file_create.qcrecord_id,
+            role="output",
+        ))
+
+    if file_create.pipeline_id:
+        _validate_exists_by_uuid(session, "Pipeline", file_create.pipeline_id)
+        session.add(FilePipeline(
+            file_id=file_record.id,
+            pipeline_id=file_create.pipeline_id,
+        ))
 
     # Create hash records
     if file_create.hashes:
@@ -160,11 +185,7 @@ def create_file_upload(
         )
 
     # Validate entity exists
-    _validate_entity_exists(
-        session,
-        file_upload.entity_type,
-        file_upload.entity_id
-    )
+    _validate_upload_entity_exists(session, file_upload)
 
     # Get storage configuration
     from core.config import get_settings
@@ -172,11 +193,11 @@ def create_file_upload(
     storage_backend = settings.STORAGE_BACKEND
     base_uri = settings.STORAGE_ROOT_PATH
 
-    # Generate URI
+    # Generate URI using typed entity info
     uri = File.generate_uri(
         base_uri,
-        file_upload.entity_type,
-        file_upload.entity_id,
+        file_upload.entity_type_for_uri,
+        file_upload.entity_id_for_uri,
         file_upload.filename,
         relative_path=relative_path,
     )
@@ -220,14 +241,8 @@ def create_file_upload(
     session.add(file_record)
     session.flush()
 
-    # Create entity association
-    entity = FileEntity(
-        file_id=file_record.id,
-        entity_type=file_upload.entity_type.upper(),
-        entity_id=file_upload.entity_id,
-        role=file_upload.role,
-    )
-    session.add(entity)
+    # Create typed entity association
+    _create_upload_entity_association(session, file_record.id, file_upload)
 
     # Add hash if content was provided
     if checksum:
@@ -273,6 +288,88 @@ def create_file_upload(
     session.refresh(file_record)
 
     return file_record
+
+
+# ============================================================================
+# File Update / Delete Functions
+# ============================================================================
+
+
+def update_file(
+    session: Session,
+    file_id: uuid_module.UUID,
+    file_update: FileUpdate,
+) -> File:
+    """
+    Update scalar fields on a file record.
+
+    Only fields explicitly set (not None) in file_update are applied.
+    All associations (entity junctions, hashes, tags, samples) remain intact.
+
+    Primary use case: correcting a URI (e.g., wrong S3 bucket).
+
+    Args:
+        session: Database session
+        file_id: UUID of the file to update
+        file_update: FileUpdate model with fields to change
+
+    Returns:
+        Updated File object with relationships loaded
+
+    Raises:
+        HTTPException: If file not found
+    """
+    file_record = session.get(File, file_id)
+    if not file_record:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"File not found: {file_id}",
+        )
+
+    update_data = file_update.model_dump(exclude_unset=True)
+    if not update_data:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No fields to update",
+        )
+
+    for field, value in update_data.items():
+        setattr(file_record, field, value)
+
+    session.add(file_record)
+    session.commit()
+    session.refresh(file_record)
+
+    return file_record
+
+
+def delete_file(
+    session: Session,
+    file_id: uuid_module.UUID,
+) -> None:
+    """
+    Hard-delete a file record and all child rows.
+
+    Child rows (FileHash, FileTag, FileSample, FileProject,
+    FileSequencingRun, FileQCRecord, FileWorkflowRun, FilePipeline)
+    are cascade-deleted automatically by SQLAlchemy.
+
+    Args:
+        session: Database session
+        file_id: UUID of the file to delete
+
+    Raises:
+        HTTPException: If file not found
+    """
+    file_record = session.get(File, file_id)
+    if not file_record:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"File not found: {file_id}",
+        )
+
+    session.delete(file_record)
+    session.commit()
 
 
 # ============================================================================
@@ -372,24 +469,82 @@ def list_files_by_entity(
     """
     List all files associated with an entity.
 
+    Routes to the correct typed junction table based on entity_type.
+
     Args:
         session: Database session
-        entity_type: Type of entity (PROJECT, RUN, SAMPLE, QCRECORD)
-        entity_id: ID of the entity
+        entity_type: Type of entity (PROJECT, SEQUENCING_RUN, QCRECORD, etc.)
+        entity_id: ID of the entity (string — resolved internally)
         include_archived: Whether to include archived files
         latest_only: If True, return only the latest version of each URI
 
     Returns:
         List of File objects
     """
-    query = (
-        select(File)
-        .join(FileEntity)
-        .where(
-            FileEntity.entity_type == entity_type.upper(),
-            FileEntity.entity_id == entity_id
+    normalized = entity_type.upper()
+
+    if normalized == "PROJECT":
+        # Resolve project business key to UUID
+        from api.project.models import Project
+        project = session.exec(
+            select(Project).where(Project.project_id == entity_id)
+        ).first()
+        if not project:
+            return []
+        query = (
+            select(File)
+            .join(FileProject)
+            .where(FileProject.project_id == project.id)
         )
-    )
+
+    elif normalized in ("RUN", "SEQUENCING_RUN"):
+        # Resolve barcode to SequencingRun UUID
+        from api.runs.services import get_run
+        run = get_run(session, entity_id)
+        if not run:
+            return []
+        query = (
+            select(File)
+            .join(FileSequencingRun)
+            .where(FileSequencingRun.sequencing_run_id == run.id)
+        )
+
+    elif normalized == "QCRECORD":
+        try:
+            record_uuid = uuid_module.UUID(entity_id)
+        except ValueError:
+            return []
+        query = (
+            select(File)
+            .join(FileQCRecord)
+            .where(FileQCRecord.qcrecord_id == record_uuid)
+        )
+
+    elif normalized == "PIPELINE":
+        try:
+            pl_uuid = uuid_module.UUID(entity_id)
+        except ValueError:
+            return []
+        query = (
+            select(File)
+            .join(FilePipeline)
+            .where(FilePipeline.pipeline_id == pl_uuid)
+        )
+
+    elif normalized == "SAMPLE":
+        # Sample files use FileSample
+        try:
+            sample_uuid = uuid_module.UUID(entity_id)
+        except ValueError:
+            return []
+        query = (
+            select(File)
+            .join(FileSample)
+            .where(FileSample.sample_id == sample_uuid)
+        )
+
+    else:
+        return []
 
     if not include_archived:
         # Subquery to find files with archived=true tag
@@ -418,67 +573,142 @@ def list_files_by_entity(
 
 
 # ============================================================================
-# Entity Validation
+# Entity Validation Helpers
 # ============================================================================
 
 
-def _validate_entity_exists(
-    session: Session,
-    entity_type: FileEntityType,
-    entity_id: str
-) -> None:
+def _resolve_project(session: Session, project_id_str: str):
     """
-    Validate that the parent entity exists.
+    Resolve a project string business key to the Project model instance.
 
     Args:
         session: Database session
-        entity_type: Type of entity
-        entity_id: ID of entity
+        project_id_str: The project_id string (business key)
+
+    Returns:
+        Project model instance
+
+    Raises:
+        HTTPException: If project not found
+    """
+    from api.project.models import Project
+    project = session.exec(
+        select(Project).where(Project.project_id == project_id_str)
+    ).first()
+    if not project:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Project not found: {project_id_str}"
+        )
+    return project
+
+
+def _validate_exists_by_uuid(
+    session: Session,
+    entity_name: str,
+    entity_id: uuid_module.UUID,
+) -> None:
+    """
+    Validate that an entity exists by UUID.
+
+    Args:
+        session: Database session
+        entity_name: Name of entity type for error messages
+        entity_id: UUID of the entity
 
     Raises:
         HTTPException: If entity not found
     """
-    if entity_type == FileEntityType.PROJECT:
-        from api.project.models import Project
-        project = session.exec(
-            select(Project).where(Project.project_id == entity_id)
-        ).first()
-        if not project:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Project not found: {entity_id}"
-            )
+    model_map = {
+        "SequencingRun": ("api.runs.models", "SequencingRun"),
+        "QCRecord": ("api.qcmetrics.models", "QCRecord"),
+        "Pipeline": ("api.pipeline.models", "Pipeline"),
+    }
 
-    elif entity_type == FileEntityType.RUN:
-        from api.runs.services import get_run
-        run = get_run(session, entity_id)
-        if not run:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Run not found: {entity_id}"
-            )
+    if entity_name not in model_map:
+        raise ValueError(f"Unknown entity type: {entity_name}")
 
-    elif entity_type == FileEntityType.SAMPLE:
-        from api.samples.models import Sample
-        sample = session.exec(
-            select(Sample).where(Sample.id == entity_id)
-        ).first()
-        if not sample:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Sample not found: {entity_id}"
-            )
+    module_path, class_name = model_map[entity_name]
+    import importlib
+    module = importlib.import_module(module_path)
+    model_class = getattr(module, class_name)
 
-    elif entity_type == FileEntityType.QCRECORD:
-        from api.qcmetrics.models import QCRecord
-        qcrecord = session.exec(
-            select(QCRecord).where(QCRecord.id == entity_id)
-        ).first()
-        if not qcrecord:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"QCRecord not found: {entity_id}"
-            )
+    record = session.get(model_class, entity_id)
+    if not record:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"{entity_name} not found: {entity_id}"
+        )
+
+
+def _validate_upload_entity_exists(
+    session: Session,
+    file_upload: FileUploadCreate,
+) -> None:
+    """
+    Validate that the entity referenced in a file upload exists.
+
+    Args:
+        session: Database session
+        file_upload: FileUploadCreate with one entity field set
+
+    Raises:
+        HTTPException: If entity not found
+    """
+    if file_upload.project_id is not None:
+        _resolve_project(session, file_upload.project_id)
+
+    elif file_upload.sequencing_run_id is not None:
+        _validate_exists_by_uuid(session, "SequencingRun", file_upload.sequencing_run_id)
+
+    elif file_upload.qcrecord_id is not None:
+        _validate_exists_by_uuid(session, "QCRecord", file_upload.qcrecord_id)
+
+    elif file_upload.pipeline_id is not None:
+        _validate_exists_by_uuid(session, "Pipeline", file_upload.pipeline_id)
+
+
+def _create_upload_entity_association(
+    session: Session,
+    file_id: uuid_module.UUID,
+    file_upload: FileUploadCreate,
+) -> None:
+    """
+    Create the typed junction table row for a file upload.
+
+    Args:
+        session: Database session
+        file_id: UUID of the created file
+        file_upload: FileUploadCreate with one entity field set
+    """
+    if file_upload.project_id is not None:
+        project = _resolve_project(session, file_upload.project_id)
+        session.add(FileProject(
+            file_id=file_id,
+            project_id=project.id,
+            role=file_upload.role,
+        ))
+
+    elif file_upload.sequencing_run_id is not None:
+        session.add(FileSequencingRun(
+            file_id=file_id,
+            sequencing_run_id=file_upload.sequencing_run_id,
+            role=file_upload.role,
+        ))
+
+    elif file_upload.qcrecord_id is not None:
+        session.add(FileQCRecord(
+            file_id=file_id,
+            qcrecord_id=file_upload.qcrecord_id,
+            role=file_upload.role,
+        ))
+
+    elif file_upload.pipeline_id is not None:
+        session.add(FilePipeline(
+            file_id=file_id,
+            pipeline_id=file_upload.pipeline_id,
+            role=file_upload.role,
+        ))
 
 
 # ============================================================================
@@ -761,6 +991,83 @@ def download_file(s3_path: str, s3_client=None) -> tuple[bytes, str, str]:
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Unexpected error downloading from S3: {str(exc)}",
         ) from exc
+
+
+def generate_presigned_url(
+    s3_path: str,
+    s3_client=None,
+    expiration: int = 3600,
+) -> str:
+    """
+    Generate a presigned URL for downloading a file from S3.
+
+    Args:
+        s3_path: The S3 URI of the file (e.g., s3://bucket/path/file.txt)
+        s3_client: Optional boto3 S3 client
+        expiration: URL expiration time in seconds (default: 1 hour)
+
+    Returns:
+        Presigned URL string
+
+    Raises:
+        HTTPException: If S3 path is invalid or credentials unavailable
+    """
+    if not BOTO3_AVAILABLE:
+        raise HTTPException(
+            status_code=status.HTTP_501_NOT_IMPLEMENTED,
+            detail="S3 support not available. Install boto3.",
+        )
+
+    try:
+        bucket, key = _parse_s3_path(s3_path)
+
+        if not key:
+            raise ValueError(
+                "S3 path must include a file key, not just a bucket"
+            )
+
+        if s3_client is None:
+            s3_client = boto3.client("s3")
+
+        presigned_url = s3_client.generate_presigned_url(
+            "get_object",
+            Params={"Bucket": bucket, "Key": key},
+            ExpiresIn=expiration,
+        )
+        return presigned_url
+
+    except NoCredentialsError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="AWS credentials not found.",
+        ) from exc
+    except ClientError as exc:
+        error_code = exc.response["Error"]["Code"]
+        if error_code == "NoSuchKey":
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"File not found: {s3_path}",
+            ) from exc
+        elif error_code == "NoSuchBucket":
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="S3 bucket not found",
+            ) from exc
+        elif error_code == "AccessDenied":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Access denied: {s3_path}",
+            ) from exc
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"S3 error: {exc.response['Error']['Message']}",
+            ) from exc
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        ) from e
 
 
 def list_s3_files(uri: str, s3_client=None) -> FileBrowserData:

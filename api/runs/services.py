@@ -18,19 +18,31 @@ from core.utils import interpolate
 from sample_sheet import SampleSheet as IlluminaSampleSheet
 
 from core.utils import define_search_body
+from core.logger import logger
 
 from api.runs.models import (
     DemuxWorkflowConfig,
     DemuxWorkflowSubmitBody,
     IlluminaMetricsResponseModel,
     IlluminaSampleSheetResponseModel,
+    RunSampleCleanupResponse,
     RunStatus,
+    SampleSequencingRun,
+    SampleSequencingRunPublic,
     SequencingRun,
     SequencingRunCreate,
     SequencingRunPublic,
     SequencingRunsPublic,
 )
-from api.search.services import add_object_to_index, delete_index
+from api.samples.models import Sample, SampleAttribute
+from api.files.models import File, FileSequencingRun, FileSample
+from api.qcmetrics.models import QCMetricSample
+from api.search.services import (
+    add_object_to_index,
+    add_objects_to_index,
+    delete_document_from_index,
+    reset_index
+)
 from api.search.models import (
     SearchDocument,
 )
@@ -47,6 +59,19 @@ def add_run(
     """Add a new sequencing run to the database and index it in OpenSearch."""
     # Create the SequencingRun instance
     run = SequencingRun(**sequencingrun_in.model_dump())
+    existing_run = get_run(session=session, run_id=run.run_id)
+    if existing_run:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Run with ID '{run.run_id}' already exists.",
+        )
+
+    # Remove leading zeros for consistent formatting
+    # or leave as is if it cannot be converted (e.g. ONT runs)
+    try:
+        run.run_number = str(int(run.run_number))
+    except ValueError:
+        pass
 
     # Add to the database
     session.add(run)
@@ -55,7 +80,7 @@ def add_run(
 
     # Index in OpenSearch if client is provided
     if opensearch_client:
-        search_doc = SearchDocument(id=run.barcode, body=run)
+        search_doc = SearchDocument(id=run.run_id, body=run)
         add_object_to_index(opensearch_client, search_doc, "illumina_runs")
 
     return run
@@ -63,26 +88,20 @@ def add_run(
 
 def get_run(
     session: Session,
-    run_barcode: str,
-) -> SequencingRunPublic:
+    run_id: str,
+) -> SequencingRun | None:
     """
     Retrieve a sequencing run from the database.
     """
-    (run_date, run_time, machine_id, run_number, flowcell_id) = (
-        SequencingRun.parse_barcode(run_barcode)
-    )
-    run = session.exec(
-        select(SequencingRun).where(
-            SequencingRun.run_date == run_date,
-            SequencingRun.machine_id == machine_id,
-            SequencingRun.run_number == run_number,
-            SequencingRun.flowcell_id == flowcell_id,
-        )
-    ).one_or_none()
-
-    if run is None:
+    try:
+        run = session.exec(
+            select(SequencingRun).where(
+                SequencingRun.run_id == run_id,
+            )
+        ).one_or_none()
+    except Exception as e:
+        logger.error(f"Error retrieving run {run_id}: {e}")
         return None
-
     return run
 
 
@@ -106,30 +125,30 @@ def get_runs(
 
     # Determine sort field and direction
     # Handle computed fields that can't be sorted directly
-    if sort_by == "barcode":
-        # For barcode sorting, use run_date as primary sort field since barcode starts with date
-        sort_field = SequencingRun.run_date
+    if sort_by == "run_id":
+        runs = session.exec(select(SequencingRun)).all()
+        runs.sort(key=lambda r: r.run_id, reverse=(sort_order == "desc"))
     else:
-        # Get the actual database column, fallback to id if field doesn't exist
-        sort_field = getattr(SequencingRun, sort_by, SequencingRun.id)
+        # Get the actual database column, fallback to run_id if field doesn't exist
+        sort_field = getattr(SequencingRun, sort_by, SequencingRun.run_id)
         # Ensure we got a column, not a property
         if not hasattr(sort_field, 'asc'):
-            sort_field = SequencingRun.id
+            sort_field = SequencingRun.run_id
 
-    sort_direction = sort_field.asc() if sort_order == "asc" else sort_field.desc()
+        sort_direction = sort_field.asc() if sort_order == "asc" else sort_field.desc()
 
-    # Get run selection
-    runs = session.exec(
-        select(SequencingRun)
-        .order_by(sort_direction)
-        .limit(per_page)
-        .offset((page - 1) * per_page)
-    ).all()
+        # Get run selection
+        runs = session.exec(
+            select(SequencingRun)
+            .order_by(sort_direction)
+            .limit(per_page)
+            .offset((page - 1) * per_page)
+        ).all()
 
     # Map to public run
     public_runs = [
         SequencingRunPublic(
-            id=run.id,
+            run_id=run.run_id,
             run_date=run.run_date,
             machine_id=run.machine_id,
             run_number=run.run_number,
@@ -137,8 +156,7 @@ def get_runs(
             experiment_name=run.experiment_name,
             run_folder_uri=run.run_folder_uri,
             status=run.status,
-            run_time=run.run_time,
-            barcode=run.barcode,
+            run_time=run.run_time
         )
         for run in runs
     ]
@@ -160,14 +178,16 @@ def search_runs(
     query: str,
     page: int,
     per_page: int,
-    sort_by: str | None = "barcode",
+    sort_by: str | None = "run_id",
     sort_order: Literal["asc", "desc"] | None = "asc",
 ) -> SequencingRunsPublic:
     """
     Search for runs
     """
     # Construct the search query
-    search_body = define_search_body(query, page, per_page, sort_by, sort_order)
+    search_body = define_search_body(
+        query, page, per_page, sort_by, sort_order
+    )
 
     try:
 
@@ -182,7 +202,7 @@ def search_runs(
         results = []
         for hit in response["hits"]["hits"]:
             source = hit["_source"]
-            run = get_run(session=session, run_barcode=source.get("barcode"))
+            run = get_run(session=session, run_id=source.get("run_id"))
             if run:
                 results.append(SequencingRunPublic.model_validate(run))
 
@@ -197,7 +217,10 @@ def search_runs(
         )
 
     except Exception as e:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e)) from e
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(e)
+        ) from e
 
 
 def reindex_runs(
@@ -207,16 +230,25 @@ def reindex_runs(
     """
     Index all runs in database with OpenSearch
     """
-    delete_index(client, "illumina_runs")
     runs = session.exec(
         select(SequencingRun)
     ).all()
+
+    # Sort the runs by run_id to ensure consistent indexing order
+    runs.sort(key=lambda r: r.run_id)
+
+    # Prepare all documents
+    search_docs = []
     for run in runs:
-        search_doc = SearchDocument(id=run.barcode, body=run)
-        add_object_to_index(client, search_doc, "illumina_runs")
+        search_doc = SearchDocument(id=run.run_id, body=run)
+        search_docs.append(search_doc)
+
+    reset_index(client, "illumina_runs")
+    # Bulk index all documents in one call
+    add_objects_to_index(client, search_docs, "illumina_runs")
 
 
-def get_run_samplesheet(session: Session, run_barcode: str):
+def get_run_samplesheet(session: Session, run_id: str):
     """
     Retrieve the samplesheet for a given sequencing run.
     :return: A dictionary representing the samplesheet in JSON format.
@@ -229,11 +261,11 @@ def get_run_samplesheet(session: Session, run_barcode: str):
         'DataCols': [],
         'Data': []
     }
-    run = get_run(session=session, run_barcode=run_barcode)
+    run = get_run(session=session, run_id=run_id)
     if run is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Run with barcode {run_barcode} not found"
+            detail=f"Run with ID {run_id} not found"
         )
 
     # Convert run data to strings for the response model, excluding the database ID
@@ -290,16 +322,16 @@ def get_run_samplesheet(session: Session, run_barcode: str):
     return IlluminaSampleSheetResponseModel(**sample_sheet_json)
 
 
-def get_run_metrics(session: Session, run_barcode: str) -> dict:
+def get_run_metrics(session: Session, run_id: str) -> dict:
     """
     Retrieve demultiplexing metrics for a specific run.
     :return: A dictionary containing the demultiplexing metrics.
     """
-    run = get_run(session=session, run_barcode=run_barcode)
+    run = get_run(session=session, run_id=run_id)
     if run is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Run with barcode {run_barcode} not found"
+            detail=f"Run with ID {run_id} not found"
         )
 
     # Check if the metrics file exists in S3
@@ -311,7 +343,7 @@ def get_run_metrics(session: Session, run_barcode: str) -> dict:
                 metrics = json.load(f)
 
         except FileNotFoundError:
-            # Samplesheet not found, signal with 204 response
+            # Metrics file not found, signal with 204 response
             return Response(
                 status_code=status.HTTP_204_NO_CONTENT,
             )
@@ -338,24 +370,25 @@ def get_run_metrics(session: Session, run_barcode: str) -> dict:
     return IlluminaMetricsResponseModel(**metrics)
 
 
-def update_run(session: Session, run_barcode: str, run_status: RunStatus) -> SequencingRunPublic:
+def update_run(
+    session: Session, run_id: str, run_status: RunStatus
+) -> SequencingRunPublic:
     """
     Update the status of a specific run.
     """
-    run = get_run(session=session, run_barcode=run_barcode)
+    run = get_run(session=session, run_id=run_id)
     if run is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Run with barcode {run_barcode} not found"
+            detail=f"Run with ID {run_id} not found"
         )
 
     run.status = run_status
-    session.add(run)
     session.commit()
     session.refresh(run)
 
     return SequencingRunPublic(
-        id=run.id,
+        run_id=run.run_id,
         run_date=run.run_date,
         machine_id=run.machine_id,
         run_number=run.run_number,
@@ -363,22 +396,21 @@ def update_run(session: Session, run_barcode: str, run_status: RunStatus) -> Seq
         experiment_name=run.experiment_name,
         run_folder_uri=run.run_folder_uri,
         status=run.status,
-        run_time=run.run_time,
-        barcode=run.barcode,
+        run_time=run.run_time
     )
 
 
 def upload_samplesheet(
-    session: Session, run_barcode: str, file: UploadFile
+    session: Session, run_id: str, file: UploadFile
 ) -> IlluminaSampleSheetResponseModel:
     """
     Upload a new samplesheet for a specific run.
     """
-    run = get_run(session=session, run_barcode=run_barcode)
+    run = get_run(session=session, run_id=run_id)
     if run is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Run with barcode {run_barcode} not found"
+            detail=f"Run with ID {run_id} not found"
         )
 
     if not run.run_folder_uri:
@@ -528,7 +560,7 @@ def list_demux_workflow_configs(session: Session, s3_client=None) -> list[str]:
 
 
 def get_demux_workflow_config(
-    session: Session, workflow_id: str, s3_client=None, run_barcode: str = None
+    session: Session, workflow_id: str, s3_client=None, run_id: str = None
 ) -> DemuxWorkflowConfig:
     """
     Retrieve a specific tool configuration from S3.
@@ -537,10 +569,10 @@ def get_demux_workflow_config(
         session: Database session
         workflow_id: The workflow identifier (filename without extension)
         s3_client: Optional boto3 S3 client
-        run_barcode: Optional run barcode to prepopulate s3_run_folder_path from run's run_folder_uri
+        run_id: Optional run ID to prepopulate s3_run_folder_path from run's run_folder_uri
 
     Returns:
-        DemuxWorkflowConfig object with prepopulated defaults if run_barcode is provided
+        DemuxWorkflowConfig object with prepopulated defaults if run_id is provided
     """
     bucket, prefix = _get_demux_workflow_configs_s3_location(session)
 
@@ -577,9 +609,9 @@ def get_demux_workflow_config(
         # Validate and return as DemuxWorkflowConfig model
         config = DemuxWorkflowConfig(**config_data)
 
-        # If run_barcode is provided, prepopulate s3_run_folder_path from the run's run_folder_uri
-        if run_barcode:
-            run = get_run(session=session, run_barcode=run_barcode)
+        # If run_id is provided, prepopulate s3_run_folder_path from the run's run_folder_uri
+        if run_id:
+            run = get_run(session=session, run_id=run_id)
             if run and run.run_folder_uri:
                 # Find inputs that contain 's3_run_folder_path' in their name and set the default
                 for input_item in config.inputs:
@@ -638,7 +670,7 @@ def submit_demux_job(
     Args:
         session: Database session
         workflow_body: The demultiplex workflow execution request containing workflow_id,
-                   run_barcode, and inputs
+                   run_id, and inputs
         s3_client: Optional boto3 S3 client
     Returns:
         BatchJobPublic: The created batch job with AWS job information.
@@ -686,3 +718,293 @@ def submit_demux_job(
     )
 
     return BatchJobPublic.model_validate(batch_job)
+
+
+###############################################################################
+# Sample ↔ SequencingRun associations
+###############################################################################
+
+
+def associate_sample_with_run(
+    session: Session,
+    run_id: str,
+    sample_id: str,
+    created_by: str,
+) -> SampleSequencingRun:
+    """Create a Sample ↔ SequencingRun association."""
+    from uuid import UUID
+
+    run = get_run(session=session, run_id=run_id)
+    if run is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Run with ID '{run_id}' not found.",
+        )
+
+    sample = session.exec(
+        select(Sample).where(Sample.id == UUID(sample_id))
+    ).first()
+    if not sample:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Sample with id '{sample_id}' not found.",
+        )
+
+    # Check for duplicate
+    existing = session.exec(
+        select(SampleSequencingRun).where(
+            SampleSequencingRun.sample_id == sample.id,
+            SampleSequencingRun.sequencing_run_id == run.id,
+        )
+    ).first()
+    if existing:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"Sample '{sample_id}' is already associated "
+                f"with run '{run_id}'."
+            ),
+        )
+
+    assoc = SampleSequencingRun(
+        sample_id=sample.id,
+        sequencing_run_id=run.id,
+        created_by=created_by,
+    )
+    session.add(assoc)
+    session.commit()
+    session.refresh(assoc)
+    return assoc
+
+
+def get_samples_for_run(
+    session: Session,
+    run_id: str,
+) -> list[SampleSequencingRunPublic]:
+    """List all sample associations for a run."""
+    run = get_run(session=session, run_id=run_id)
+    if run is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Run with ID '{run_id}' not found.",
+        )
+
+    associations = session.exec(
+        select(SampleSequencingRun).where(
+            SampleSequencingRun.sequencing_run_id == run.id,
+        )
+    ).all()
+
+    return [
+        SampleSequencingRunPublic(
+            id=a.id,
+            sample_id=a.sample_id,
+            sequencing_run_id=a.sequencing_run_id,
+            created_at=a.created_at,
+            created_by=a.created_by,
+        )
+        for a in associations
+    ]
+
+
+def remove_sample_from_run(
+    session: Session,
+    run_id: str,
+    sample_id: str,
+) -> None:
+    """Remove a Sample ↔ SequencingRun association."""
+    from uuid import UUID
+
+    run = get_run(session=session, run_id=run_id)
+    if run is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Run with ID '{run_id}' not found.",
+        )
+
+    assoc = session.exec(
+        select(SampleSequencingRun).where(
+            SampleSequencingRun.sample_id == UUID(sample_id),
+            SampleSequencingRun.sequencing_run_id == run.id,
+        )
+    ).first()
+    if not assoc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=(
+                f"Association between sample '{sample_id}' and "
+                f"run '{run_id}' not found."
+            ),
+        )
+    session.delete(assoc)
+    session.commit()
+
+
+def clear_samples_for_run(
+    session: Session,
+    run_id: str,
+    opensearch_client: OpenSearch = None,
+) -> RunSampleCleanupResponse:
+    """
+    Remove all sample associations, run-linked files, run-scoped QCRecords,
+    and orphaned samples for a run.
+
+    Used before re-demultiplexing to clean up database records from a previous
+    (possibly incorrect) demux. The batch job deletes the S3 objects; this function
+    cleans up the corresponding database records.
+
+    Steps:
+        1. Delete File records associated with this run (via FileSequencingRun
+           junction table). SQLAlchemy cascades handle FileHash, FileTag,
+           FileSample, and other junction table child rows.
+        2. Delete run-scoped QCRecords (qcrecord.sequencing_run_id == run.id).
+           Cascade deletes handle metadata, metrics, metric values, samples,
+           and FileQCRecord junction rows.
+        3. Remove all SampleSequencingRun associations for this run.
+        4. For each affected Sample, check if it is now orphaned (no other run
+           associations, no remaining file associations, no QC metric associations).
+           If orphaned, delete the Sample and its SampleAttribute rows.
+
+    Args:
+        session: Database session
+        run_id: The run ID identifying the sequencing run
+        opensearch_client: Optional OpenSearch client for index cleanup
+
+    Returns:
+        RunSampleCleanupResponse with counts of what was removed/preserved
+    """
+    run = get_run(session=session, run_id=run_id)
+    if run is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Run with ID '{run_id}' not found.",
+        )
+
+    # ── Step 1: Delete File records associated with this run ──────────
+    file_run_assocs = session.exec(
+        select(FileSequencingRun).where(
+            FileSequencingRun.sequencing_run_id == run.id,
+        )
+    ).all()
+
+    files_deleted = 0
+    for fsr in file_run_assocs:
+        file_record = session.get(File, fsr.file_id)
+        if file_record:
+            session.delete(file_record)  # cascades to hashes, tags, samples, junction rows
+            files_deleted += 1
+
+    # ── Step 2: Delete run-scoped QCRecords ───────────────────────────
+    from api.qcmetrics.models import QCRecord
+    from api.files.models import FileQCRecord
+
+    run_qcrecords = session.exec(
+        select(QCRecord).where(
+            QCRecord.sequencing_run_id == run.id,
+        )
+    ).all()
+
+    qcrecords_deleted = 0
+    for qcr in run_qcrecords:
+        # Delete associated output files (via FileQCRecord)
+        fqrs = session.exec(
+            select(FileQCRecord).where(
+                FileQCRecord.qcrecord_id == qcr.id,
+            )
+        ).all()
+        for fqr in fqrs:
+            file_record = session.get(File, fqr.file_id)
+            if file_record:
+                session.delete(file_record)
+
+        # Delete QCRecord (cascades to metadata, metrics, etc.)
+        session.delete(qcr)
+        qcrecords_deleted += 1
+
+    # ── Step 3: Remove SampleSequencingRun associations ───────────────
+    associations = session.exec(
+        select(SampleSequencingRun).where(
+            SampleSequencingRun.sequencing_run_id == run.id,
+        )
+    ).all()
+
+    affected_sample_ids = {a.sample_id for a in associations}
+    associations_removed = len(associations)
+
+    for assoc in associations:
+        session.delete(assoc)
+
+    # Flush so that cascaded FileSample deletes (from step 1) and
+    # SampleSequencingRun deletes are visible for orphan checks
+    session.flush()
+
+    # ── Step 4: Delete orphaned samples ───────────────────────────────
+    samples_deleted = 0
+    samples_preserved = 0
+
+    for sample_id in affected_sample_ids:
+        # Check for other run associations
+        other_run_assoc = session.exec(
+            select(SampleSequencingRun).where(
+                SampleSequencingRun.sample_id == sample_id,
+            )
+        ).first()
+        if other_run_assoc:
+            samples_preserved += 1
+            continue
+
+        # Check for remaining file associations
+        remaining_file_assoc = session.exec(
+            select(FileSample).where(
+                FileSample.sample_id == sample_id,
+            )
+        ).first()
+        if remaining_file_assoc:
+            samples_preserved += 1
+            continue
+
+        # Check for QC metric associations
+        qc_assoc = session.exec(
+            select(QCMetricSample).where(
+                QCMetricSample.sample_id == sample_id,
+            )
+        ).first()
+        if qc_assoc:
+            samples_preserved += 1
+            continue
+
+        # Sample is fully orphaned — delete it
+        # First delete SampleAttribute rows
+        attrs = session.exec(
+            select(SampleAttribute).where(
+                SampleAttribute.sample_id == sample_id,
+            )
+        ).all()
+        for attr in attrs:
+            session.delete(attr)
+
+        sample = session.get(Sample, sample_id)
+        if sample:
+            session.delete(sample)
+
+            # Remove from OpenSearch index
+            if opensearch_client:
+                try:
+                    delete_document_from_index(
+                        opensearch_client, str(sample_id), "samples"
+                    )
+                except Exception:
+                    pass  # Best-effort index cleanup
+
+            samples_deleted += 1
+
+    session.commit()
+
+    return RunSampleCleanupResponse(
+        run_id=run_id,
+        associations_removed=associations_removed,
+        files_deleted=files_deleted,
+        samples_deleted=samples_deleted,
+        samples_preserved=samples_preserved,
+        qcrecords_deleted=qcrecords_deleted,
+    )

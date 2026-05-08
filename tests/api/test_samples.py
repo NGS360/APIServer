@@ -1,8 +1,9 @@
-from sqlmodel import Session
+from sqlmodel import Session, select
 from fastapi.testclient import TestClient
 
 from api.project.models import Project
 from api.samples.models import Sample, SampleAttribute
+from api.files.models import File, FileSample, FileTag
 from api.project.services import generate_project_id
 
 
@@ -23,12 +24,11 @@ def test_get_samples_for_a_project_with_no_samples(
     response = client.get(f"/api/v1/projects/{new_project.project_id}/samples")
     assert response.status_code == 200
     assert response.json() == {
-        "current_page": 1,
         "data": [],
         "data_cols": None,
-        "per_page": 20,
         "total_items": 0,
-        "total_pages": 0,
+        "skip": 0,
+        "limit": 100,
         "has_next": False,
         "has_prev": False,
     }
@@ -98,6 +98,10 @@ def test_get_samples_for_a_project_with_samples(client: TestClient, session: Ses
     assert response_data["data_cols"] is not None
     assert "Tissue" in response_data["data_cols"]
     assert "Condition" in response_data["data_cols"]
+
+    # Without ?include=files, samples should NOT contain a 'files' key
+    for sample in response_data["data"]:
+        assert "files" not in sample
 
     # Check that attributes are present in the response for each sample
     for sample in response_data["data"]:
@@ -182,6 +186,31 @@ def test_fail_to_add__sample_with_duplicate_attributes(
         f"/api/v1/projects/{new_project.project_id}/samples", json=sample_data
     )
     assert response.status_code == 400
+
+
+def test_fail_to_add_sample_with_case_insensitive_duplicate_attributes(
+    client: TestClient, session: Session
+):
+    """Test that adding a sample with attribute keys differing only in case returns 400."""
+    new_project = Project(name="Test Project")
+    new_project.project_id = generate_project_id(session=session)
+    new_project.attributes = []
+    session.add(new_project)
+    session.commit()
+
+    sample_data = {
+        "sample_id": "Sample_1",
+        "attributes": [
+            {"key": "Tissue", "value": "Liver"},
+            {"key": "tissue", "value": "Heart"},
+        ],
+    }
+
+    response = client.post(
+        f"/api/v1/projects/{new_project.project_id}/samples", json=sample_data
+    )
+    assert response.status_code == 400
+    assert "duplicate" in response.json()["detail"].lower()
 
 
 def test_fail_to_add_sample_to_project(client: TestClient, session: Session):
@@ -319,3 +348,260 @@ def test_update_sample_attribute(client: TestClient, session: Session):
         attr["key"] == "Condition" and attr["value"] == "Diseased"
         for attr in response.json()["attributes"]
     )
+
+
+# ---------------------------------------------------------------------------
+# ?include=files tests
+# ---------------------------------------------------------------------------
+
+
+def _seed_project(session: Session) -> Project:
+    """Create a project and return it."""
+    project = Project(name="Include-Files Project")
+    project.project_id = generate_project_id(session=session)
+    project.attributes = []
+    session.add(project)
+    session.flush()
+    return project
+
+
+def _seed_sample(session: Session, project: Project, name: str) -> Sample:
+    """Create a sample in *project* and return it."""
+    sample = Sample(sample_id=name, project_id=project.project_id)
+    session.add(sample)
+    session.flush()
+    return sample
+
+
+def _attach_file(
+    session: Session,
+    sample: Sample,
+    uri: str,
+    tags: dict | None = None,
+    role: str | None = None,
+) -> File:
+    """Create a File, link it to *sample* via FileSample, optionally add tags."""
+    file = File(uri=uri)
+    session.add(file)
+    session.flush()
+
+    fs = FileSample(file_id=file.id, sample_id=sample.id, role=role)
+    session.add(fs)
+
+    if tags:
+        for key, value in tags.items():
+            session.add(FileTag(file_id=file.id, key=key, value=value))
+
+    session.flush()
+    return file
+
+
+def test_get_samples_include_files_with_tagged_files(
+    client: TestClient, session: Session
+):
+    """With ?include=files, samples that have files should return them with
+    flat-dict tags."""
+    project = _seed_project(session)
+    sample = _seed_sample(session, project, "SampleWithFastqs")
+
+    _attach_file(
+        session, sample,
+        uri="s3://bucket/P-1234/SampleWithFastqs_1.fastq.gz",
+        tags={"mate": "R1"},
+    )
+    _attach_file(
+        session, sample,
+        uri="s3://bucket/P-1234/SampleWithFastqs_2.fastq.gz",
+        tags={"mate": "R2"},
+    )
+    session.commit()
+
+    response = client.get(
+        f"/api/v1/projects/{project.project_id}/samples",
+        params={"include": "files"},
+    )
+    assert response.status_code == 200
+
+    data = response.json()
+    assert data["total_items"] == 1
+
+    sample_item = data["data"][0]
+    assert sample_item["sample_id"] == "SampleWithFastqs"
+    assert sample_item["files"] is not None
+    assert len(sample_item["files"]) == 2
+
+    # Tags should be a flat dict, NOT a list of {key, value}
+    uris = {f["uri"] for f in sample_item["files"]}
+    assert "s3://bucket/P-1234/SampleWithFastqs_1.fastq.gz" in uris
+    assert "s3://bucket/P-1234/SampleWithFastqs_2.fastq.gz" in uris
+
+    for file_obj in sample_item["files"]:
+        assert isinstance(file_obj["tags"], dict)
+        assert "mate" in file_obj["tags"]
+        assert file_obj["tags"]["mate"] in ("R1", "R2")
+
+
+def test_get_samples_include_files_sample_with_no_files(
+    client: TestClient, session: Session
+):
+    """A sample with no associated files should return ``files: null``."""
+    project = _seed_project(session)
+    _seed_sample(session, project, "LonelySample")
+    session.commit()
+
+    response = client.get(
+        f"/api/v1/projects/{project.project_id}/samples",
+        params={"include": "files"},
+    )
+    assert response.status_code == 200
+
+    sample_item = response.json()["data"][0]
+    assert sample_item["files"] is None
+
+
+def test_get_samples_include_files_with_untagged_files(
+    client: TestClient, session: Session
+):
+    """A file with no tags should still appear; tags should be null."""
+    project = _seed_project(session)
+    sample = _seed_sample(session, project, "SampleNoTags")
+    _attach_file(session, sample, uri="s3://bucket/P-1234/SampleNoTags.bam")
+    session.commit()
+
+    response = client.get(
+        f"/api/v1/projects/{project.project_id}/samples",
+        params={"include": "files"},
+    )
+    assert response.status_code == 200
+
+    sample_item = response.json()["data"][0]
+    assert sample_item["files"] is not None
+    assert len(sample_item["files"]) == 1
+    assert sample_item["files"][0]["uri"] == "s3://bucket/P-1234/SampleNoTags.bam"
+    # No tags → null (empty dict converted to None in model)
+    assert sample_item["files"][0]["tags"] is None
+
+
+def test_get_samples_include_files_pagination_works(
+    client: TestClient, session: Session
+):
+    """Pagination should still work correctly when include=files."""
+    project = _seed_project(session)
+    for i in range(5):
+        s = _seed_sample(session, project, f"PaginatedSample_{i:02d}")
+        _attach_file(
+            session, s,
+            uri=f"s3://bucket/P-1234/PaginatedSample_{i:02d}.bam",
+            tags={"index": str(i)},
+        )
+    session.commit()
+
+    # First page: skip=0, limit=2
+    response = client.get(
+        f"/api/v1/projects/{project.project_id}/samples",
+        params={"include": "files", "limit": 2, "skip": 0},
+    )
+    assert response.status_code == 200
+
+    data = response.json()
+    assert data["total_items"] == 5
+    assert data["limit"] == 2
+    assert data["skip"] == 0
+    assert data["has_next"] is True
+    assert len(data["data"]) == 2
+
+    # Every sample on the page should have files
+    for sample_item in data["data"]:
+        assert sample_item["files"] is not None
+        assert len(sample_item["files"]) == 1
+
+    # Last page: skip=4, limit=2 → 1 sample
+    response = client.get(
+        f"/api/v1/projects/{project.project_id}/samples",
+        params={"include": "files", "limit": 2, "skip": 4},
+    )
+    assert response.status_code == 200
+
+    data = response.json()
+    assert len(data["data"]) == 1
+    assert data["has_next"] is False
+    assert data["has_prev"] is True
+
+
+# ---------------------------------------------------------------------------
+# Timestamp tests (created_at / updated_at)
+# ---------------------------------------------------------------------------
+
+
+def test_sample_created_at_set_on_creation(client: TestClient, session: Session):
+    """Verify created_at is populated when a sample is created."""
+    new_project = Project(name="Test Project")
+    new_project.project_id = generate_project_id(session=session)
+    new_project.attributes = []
+    session.add(new_project)
+    session.commit()
+
+    sample_data = {"sample_id": "TS_1", "attributes": [{"key": "k", "value": "v"}]}
+    response = client.post(
+        f"/api/v1/projects/{new_project.project_id}/samples", json=sample_data
+    )
+    assert response.status_code == 201
+
+    # Verify in DB
+    sample = session.exec(select(Sample).where(Sample.sample_id == "TS_1")).first()
+    assert sample.created_at is not None
+    assert sample.updated_at is None
+
+
+def test_sample_updated_at_set_on_update(client: TestClient, session: Session):
+    """Verify updated_at is populated when a sample attribute is modified."""
+    new_project = Project(name="Test Project")
+    new_project.project_id = generate_project_id(session=session)
+    new_project.attributes = []
+    session.add(new_project)
+    session.commit()
+
+    sample_data = {"sample_id": "TS_2", "attributes": [{"key": "k", "value": "v"}]}
+    client.post(
+        f"/api/v1/projects/{new_project.project_id}/samples", json=sample_data
+    )
+
+    # Update attribute
+    update_data = {"key": "k", "value": "v2"}
+    response = client.put(
+        f"/api/v1/projects/{new_project.project_id}/samples/TS_2",
+        json=update_data,
+    )
+    assert response.status_code == 200
+
+    # Verify in DB
+    session.expire_all()
+    sample = session.exec(select(Sample).where(Sample.sample_id == "TS_2")).first()
+    assert sample.updated_at is not None
+
+
+def test_get_samples_include_files_mixed_samples(
+    client: TestClient, session: Session
+):
+    """A project with a mix of samples (with and without files) returns the
+    correct shape for each."""
+    project = _seed_project(session)
+
+    # Sample with files
+    s1 = _seed_sample(session, project, "SampleWithFiles")
+    _attach_file(session, s1, uri="s3://bucket/file1.fastq.gz", tags={"mate": "R1"})
+
+    # Sample without files
+    _seed_sample(session, project, "SampleWithNoFiles")
+    session.commit()
+
+    response = client.get(
+        f"/api/v1/projects/{project.project_id}/samples",
+        params={"include": "files"},
+    )
+    assert response.status_code == 200
+
+    items = {s["sample_id"]: s for s in response.json()["data"]}
+    assert items["SampleWithFiles"]["files"] is not None
+    assert len(items["SampleWithFiles"]["files"]) == 1
+    assert items["SampleWithNoFiles"]["files"] is None

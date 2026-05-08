@@ -2,7 +2,6 @@
 Models for the Jobs API
 """
 from typing import Any, Optional
-import uuid
 from datetime import datetime, timezone
 from enum import Enum
 from sqlmodel import SQLModel, Field
@@ -24,12 +23,11 @@ class BatchJob(SQLModel, table=True):
     """
     This class/table represents a batch job
     """
-    id: uuid.UUID | None = Field(default_factory=uuid.uuid4, primary_key=True)
+    id: str = Field(max_length=255, primary_key=True)
     name: str = Field(max_length=255)
     command: str = Field(max_length=1000)
     user: str = Field(max_length=100)
     submitted_on: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    aws_job_id: str | None = Field(default=None, max_length=255)
     log_stream_name: str | None = Field(default=None, max_length=255)
     status: JobStatus = Field(default=JobStatus.SUBMITTED)
     viewed: bool = Field(default=False)
@@ -37,34 +35,20 @@ class BatchJob(SQLModel, table=True):
     model_config = ConfigDict(from_attributes=True)
 
 
-class BatchJobCreate(SQLModel):
-    """Schema for creating a new batch job"""
-    name: str
-    command: str
-    user: str
-    aws_job_id: Optional[str] = None
-    log_stream_name: Optional[str] = None
-    status: Optional[JobStatus] = JobStatus.SUBMITTED
-
-
 class BatchJobUpdate(SQLModel):
     """Schema for updating a batch job"""
-    name: Optional[str] = None
-    command: Optional[str] = None
-    aws_job_id: Optional[str] = None
     log_stream_name: Optional[str] = None
-    status: Optional[JobStatus] = JobStatus.SUBMITTED
+    status: Optional[JobStatus] = None
     viewed: Optional[bool] = None
 
 
 class BatchJobPublic(SQLModel):
     """Schema for returning a batch job"""
-    id: uuid.UUID
+    id: str
     name: str
     command: str
     user: str
     submitted_on: datetime
-    aws_job_id: str | None
     log_stream_name: str | None
     status: JobStatus
     viewed: bool
@@ -113,3 +97,11 @@ class BatchJobConfigInput(BaseModel):
 class VendorIngestionConfig(SQLModel):
     inputs: list[BatchJobConfigInput]
     aws_batch: AwsBatchConfig
+
+
+class LogResponse(BaseModel):
+    """Response model for paginated log retrieval."""
+    events: list[str]
+    next_token: Optional[str] = None
+    has_more: bool = False
+    total_events: int = 0
