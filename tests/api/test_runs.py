@@ -245,6 +245,49 @@ def test_get_runs_ont(client: TestClient, session: Session):
     assert data["data"][0]["run_time"] == "1230"
 
 
+def test_get_runs_sorted(client: TestClient, session: Session):
+    # Test that we can get a list of illumina and ont runs and that they are sorted correctly.
+    illumina_runs = [
+        '251024_VH01530_60_222F3TMNX',
+        '251024_VH01313_57_AAG5C2YM5',
+        '251024_VH01104_68_AACWMYTHV',
+        '251024_VH00860_150_AACYKCJHV',
+        '251024_M04788_0141_000000000-M26H5'
+    ]
+    ont_runs = [
+        '20251024_1345_X1_FAX88672_bb51b62d',
+        '20251024_1304_MN41452_FBA26253_63eb7009',
+        '20251024_1241_X1_FBB20681_74ac5e0e'
+    ]
+    for run in illumina_runs:
+        date, machine_id, run_number, flowcell_id = run.split('_')
+
+        sequencing_run = SequencingRun(
+            id=uuid4(),
+            run_id=run,
+            run_date=datetime.date(int(date[:2]), int(date[2:4]), int(date[4:6])),
+            machine_id=machine_id,
+            run_number=run_number,
+            flowcell_id=flowcell_id
+        )
+        session.add(sequencing_run)
+
+    for run in ont_runs:
+        date, run_time, machine_id, flowcell_id, run_number = run.split('_')
+
+        sequencing_run = SequencingRun(
+            id=uuid4(),
+            run_id=run,
+            run_date=datetime.date(int(date[:2]), int(date[2:4]), int(date[4:6])),
+            machine_id=machine_id,
+            run_number=run_number,
+            flowcell_id=flowcell_id,
+            run_time=run_time
+        )
+        session.add(sequencing_run)
+    session.commit()
+    
+
 ###############################################################################
 # Test GET /api/v1/runs/{run_id}
 ###############################################################################
