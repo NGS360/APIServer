@@ -96,7 +96,7 @@ This will return
 
 indicating what version of what workflow an alias points to.
 
-### Deploying a workflow to a Platform/Execution Engine
+### Deploying a versioned workflow to a Platform/Execution Engine
 
 Now that a workflow version exists, it can be deployed to a platform (or execution engine, e.g. engine) such as AWS HealthOmics, SevenBridges, Arvados, etc for execution.  To do this, a call to POST /api/v1/workflows/{workflow_id}/versions/{version_id}/deployments with the request body of
 ```
@@ -118,7 +118,45 @@ This call will return
 }```
 where external_id is the identifier of the version of the workflow on the external platform. (TBD: This is done behind the scenes by NGS360)  
 
+E.G. For AWS HealthOmics, the first time this is call, NGS360 should see no versions of the workflow has not been deployed to Omics, hence it creates the first version:
+```
+TBD: We need to figure out how to map these fields for Omics from the fields we have in NGS360.
+aws omics create-workflow \
+		--name <workflow_name> \
+		--description 'TDB: Where is this coming from' \
+		--engine CWL \
+		--main CWL/wf_rna-disambiguate.packed.omics.cwl \
+		--definition-zip fileb://$NAME.zip \
+		--tags version=$VERSION,git_branch=$BRANCH,git_hash=$(git rev-parse --short HEAD),owner=NGS360
+```
+
+Then subsequent calls to deploy a version of the workflow will create a new version in Omics:
+```
+aws omics create-workflow-version \
+		--workflow-id <WORKFLOW_ID> \
+		--version-name $BRANCH-$(git rev-parse --short HEAD) \
+		--main CWL/wf_dna-disambiguate.packed.omics.cwl \
+		--definition-zip fileb://$NAME.zip \
+		--tags version=$VERSION,git_branch=$BRANCH,git_hash=$(git rev-parse --short HEAD),owner=NGS360
+```
+
+Regardless, this call will return a UUID identifiying the specific version of a workflow deployed to a specific platform.  This id is used in the next step, executing a workflow
+
 ### Execute a workflow
+
+To execute a workflow, a call needs to be made to GA4GH POST /ga4gh/wes/v1/runs with the request body:
+workflow_params: <Workflow input parameters>
+workflow_type: <CWL/Nextflow/WDL>
+workflow_type_version: <For CWL, this is v1.0, or v1.2>
+workflow_url: <workflow_version_id/workflow_alias>
+workflow_attachment: <not used>
+tags: {ProjectId, TaskName}
+workflow_engine: <Engine>
+workflow_engine_version: <not used>
+workflow_engine_parameters: <spot instances or on-demand, retry mechanism, priority/queue>
+
+Q: Given the NGS360 workflow_id, how will lambda know which version of the workflow to execute?
+A: 
 
 
 ## Architecture
