@@ -19,7 +19,29 @@ The system provides:
 
 ### Registering a workflow
 
+To register a workflow, a user must make a call to POST /api/v1/workflows with the request BODY:
+```
+{
+  "name": "string",
+  "attributes": [
+    {
+      "key": "string",
+      "value": "string"
+    }
+  ]
+}
+```
+
+The name field, ideally, should come from the label field of a CWL workflow.
+Attributes can be anything the user would like to associated with the workflow, such as workflow owner/maintiner, expected assay for the workflow, etc.
+
+This call will return a UUID representing the workflow in NGS360.
+
+TBD: We can augment this call to require a workflow defintion to automatically create an initial version.
+
 ### Register a workflow version
+
+
 
 ### Register a workflow alias
 
