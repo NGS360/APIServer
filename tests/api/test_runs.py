@@ -251,34 +251,41 @@ def test_get_runs_sorted(client: TestClient, session: Session):
         '251024_VH01530_60_222F3TMNX',
         '251024_VH01313_57_AAG5C2YM5',
         '251024_VH01104_68_AACWMYTHV',
+        '251028_VH01122_43_AAGHL2MM5',
+        '251028_VH00860_151_AAGH77FM5',
         '251024_VH00860_150_AACYKCJHV',
-        '251024_M04788_0141_000000000-M26H5'
+        '251024_M04788_0141_000000000-M26H5',
+        '251022_VH01208_67_2222MNGNX',
+        '251021_VH01313_56_AAG5C22M5'
     ]
     ont_runs = [
         '20251024_1345_X1_FAX88672_bb51b62d',
+        '20251028_1751_P2S-00838-B_PBE85662_f19bd7df',
+        '20251024_1241_X1_FBB20681_74ac5e0e',
         '20251024_1304_MN41452_FBA26253_63eb7009',
-        '20251024_1241_X1_FBB20681_74ac5e0e'
+        '20251028_1751_P2S-00838-A_PBE82182_00809eee'
     ]
+    # Add illumina runs to the database
     for run in illumina_runs:
-        date, machine_id, run_number, flowcell_id = run.split('_')
-
+        run_date, machine_id, run_number, flowcell_id = run.split('_')
+        dt_obj = datetime.datetime.strptime(run_date, "%y%m%d")
         sequencing_run = SequencingRun(
             id=uuid4(),
             run_id=run,
-            run_date=datetime.date(int(date[:2]), int(date[2:4]), int(date[4:6])),
+            run_date=dt_obj.date(),
             machine_id=machine_id,
             run_number=run_number,
             flowcell_id=flowcell_id
         )
         session.add(sequencing_run)
-
+    # Add ONT runs to the database
     for run in ont_runs:
-        date, run_time, machine_id, flowcell_id, run_number = run.split('_')
-
+        run_date, run_time, machine_id, flowcell_id, run_number = run.split('_')
+        dt_obj = datetime.datetime.strptime(run_date, "%Y%m%d")
         sequencing_run = SequencingRun(
             id=uuid4(),
             run_id=run,
-            run_date=datetime.date(int(date[:2]), int(date[2:4]), int(date[4:6])),
+            run_date=dt_obj.date(),
             machine_id=machine_id,
             run_number=run_number,
             flowcell_id=flowcell_id,
@@ -286,7 +293,37 @@ def test_get_runs_sorted(client: TestClient, session: Session):
         )
         session.add(sequencing_run)
     session.commit()
-    
+
+    # Test get runs in DESCENDING order by run_date
+    response = client.get("/api/v1/runs?per_page=20")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["total_items"] == len(illumina_runs) + len(ont_runs)
+
+    # Check the order of the runs:
+    descending_order = [
+        '20251028_1751_P2S-00838-B_PBE85662_f19bd7df',
+        '20251028_1751_P2S-00838-A_PBE82182_00809eee',
+
+        '251028_VH01122_43_AAGHL2MM5',
+        '251028_VH00860_151_AAGH77FM5',
+
+        '20251024_1345_X1_FAX88672_bb51b62d',
+        '20251024_1304_MN41452_FBA26253_63eb7009',
+        '20251024_1241_X1_FBB20681_74ac5e0e',
+
+        '251024_VH01530_60_222F3TMNX',
+        '251024_VH01313_57_AAG5C2YM5',
+        '251024_VH01104_68_AACWMYTHV',
+        '251024_VH00860_150_AACYKCJHV',
+        '251024_M04788_0141_000000000-M26H5',
+        '251022_VH01208_67_2222MNGNX',
+        '251021_VH01313_56_AAG5C22M5'
+    ]
+    # Assert the runs are returned in the correct order
+    actual_order = [data["data"][i]["run_id"] for i in range(len(data["data"]))]
+    assert actual_order == descending_order
+
 
 ###############################################################################
 # Test GET /api/v1/runs/{run_id}
