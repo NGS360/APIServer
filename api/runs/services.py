@@ -5,7 +5,7 @@ import json
 import yaml
 import boto3
 
-from typing import List, Literal
+from typing import Literal
 from sqlmodel import select, Session, func
 from pydantic import PositiveInt
 from opensearchpy import OpenSearch
