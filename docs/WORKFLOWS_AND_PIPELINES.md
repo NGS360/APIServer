@@ -15,6 +15,17 @@ The system provides:
 - **Provenance**: All entities track `created_at` and `created_by` for audit trails
 - **Pagination**: List endpoints support pagination with configurable sorting
 
+## Use Cases
+
+### Registering a workflow
+
+### Register a workflow version
+
+### Register a workflow alias
+
+### Execute a workflow
+
+
 ## Architecture
 
 ### Entity Relationship Diagram
