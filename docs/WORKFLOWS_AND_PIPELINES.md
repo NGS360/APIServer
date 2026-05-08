@@ -115,10 +115,12 @@ This call will return
   "external_id": "string",
   "created_at": "date/time",
   "created_by": "string"
-}```
+}
+```
 where external_id is the identifier of the version of the workflow on the external platform. (TBD: This is done behind the scenes by NGS360)  
 
 E.G. For AWS HealthOmics, the first time this is call, NGS360 should see no versions of the workflow has not been deployed to Omics, hence it creates the first version:
+
 ```
 TBD: We need to figure out how to map these fields for Omics from the fields we have in NGS360.
 aws omics create-workflow \
@@ -145,19 +147,17 @@ Regardless, this call will return a UUID identifiying the specific version of a 
 ### Execute a workflow
 
 To execute a workflow, a call needs to be made to GA4GH POST /ga4gh/wes/v1/runs with the request body:
+```
 workflow_params: <Workflow input parameters>
 workflow_type: <CWL/Nextflow/WDL>
 workflow_type_version: <For CWL, this is v1.0, or v1.2>
-workflow_url: <workflow_version_id/workflow_alias>
+workflow_url: <workflow_id>:<version/alias>
 workflow_attachment: <not used>
 tags: {ProjectId, TaskName}
 workflow_engine: <Engine>
 workflow_engine_version: <not used>
 workflow_engine_parameters: <spot instances or on-demand, retry mechanism, priority/queue>
-
-Q: Given the NGS360 workflow_id, how will lambda know which version of the workflow to execute?
-A: 
-
+```
 
 ## Architecture
 
