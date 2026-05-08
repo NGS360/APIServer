@@ -68,6 +68,34 @@ The first time a version of a workflow is created, the version will be version 0
 
 ### Register a workflow alias
 
+An alias is a user-friendly name to point to a specific version of a workflow.  To assign an alias to a specific version of a workflow, make a call to /api/v1/workflows/{workflow_id}/aliases/{alias}
+
+where workflow_id is the non-versioned id when you register a workflow.  The alias parameters is the user-defined alias.  (TBD: This mechanism does not allow for spaces or slashes or other special characters that may interfere to a url.  I wonder if this field would be better specified in the request body instead)
+
+As part of the PUT call, the request body should be
+```
+{
+  "workflow_version_id": "3fa85f64-5717-4562-b3fc-2c963f66afa6"
+}
+```
+
+where workflow_version_id is the id returned from the call to POST /api/v1/workflows/{workflow_id}/versions
+
+This will return 
+```
+{
+  "id": "uuid",
+  "workflow_id": "uuid",
+  "alias": "string",
+  "workflow_version_id": "uuid",
+  "version": 0,
+  "created_at": "date/time",
+  "created_by": "string"
+}
+```
+
+indicating what version of what workflow an alias points to.
+
 ### Execute a workflow
 
 
