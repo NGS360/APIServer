@@ -2,15 +2,18 @@
 Models for the Platforms API
 
 Platform — a registered workflow execution engine (e.g., Arvados, SevenBridges).
-Single-column table: name is the PK.
+UUID primary key with a unique constraint on name.
 """
+
+import uuid
 
 from sqlmodel import SQLModel, Field
 
 
 class Platform(SQLModel, table=True):
     """Workflow execution platform (e.g., Arvados, SevenBridges)."""
-    name: str = Field(primary_key=True)
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    name: str = Field(unique=True)
 
 
 class PlatformCreate(SQLModel):
@@ -18,4 +21,5 @@ class PlatformCreate(SQLModel):
 
 
 class PlatformPublic(SQLModel):
+    id: uuid.UUID
     name: str

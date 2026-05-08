@@ -14,7 +14,6 @@ def _create_workflow(session: Session, name: str = "Align Reads") -> str:
     """Insert a workflow directly and return its id as str."""
     wf = Workflow(
         name=name,
-        definition_uri=f"s3://bucket/{name.lower().replace(' ', '-')}.wdl",
         created_by="testuser",
     )
     session.add(wf)
@@ -59,6 +58,22 @@ def test_create_pipeline_with_version_and_attributes(client: TestClient):
     assert len(data["attributes"]) == 2
     attr_keys = {a["key"] for a in data["attributes"]}
     assert attr_keys == {"organism", "assay"}
+
+
+def test_create_pipeline_rejects_case_insensitive_duplicate_attributes(
+    client: TestClient,
+):
+    """Test that creating a pipeline with attribute keys differing only in case returns 400."""
+    body = {
+        "name": "Dup Attr Pipeline",
+        "attributes": [
+            {"key": "Organism", "value": "human"},
+            {"key": "organism", "value": "mouse"},
+        ],
+    }
+    resp = client.post("/api/v1/pipelines", json=body)
+    assert resp.status_code == 400
+    assert "duplicate" in resp.json()["detail"].lower()
 
 
 def test_create_pipeline_with_workflow_ids(client: TestClient, session: Session):

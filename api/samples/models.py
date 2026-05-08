@@ -3,6 +3,7 @@ Models for the Sample API
 """
 
 import uuid
+from datetime import datetime
 from typing import List, TYPE_CHECKING
 from sqlmodel import SQLModel, Field, Relationship, UniqueConstraint
 from pydantic import ConfigDict, field_validator
@@ -33,6 +34,8 @@ class Sample(SQLModel, table=True):
     id: uuid.UUID | None = Field(default_factory=uuid.uuid4, primary_key=True)
     sample_id: str
     project_id: str = Field(foreign_key="project.project_id")
+    created_at: datetime | None = Field(default=None)
+    updated_at: datetime | None = Field(default=None)
     attributes: List[SampleAttribute] | None = Relationship(back_populates="sample")
     project: "Project" = Relationship(back_populates="samples")
     file_samples: List["FileSample"] | None = Relationship(back_populates="sample")
@@ -42,10 +45,23 @@ class Sample(SQLModel, table=True):
     __table_args__ = (UniqueConstraint("sample_id", "project_id"),)
 
 
+class SampleFileInput(SQLModel):
+    """File to create and associate with a sample during sample creation."""
+    uri: str
+    tags: dict[str, str] | None = None
+    hashes: dict[str, str] | None = None     # {"md5": "abc...", "sha256": "def..."}
+    role: str | None = None                   # FileSample.role (tumor/normal/etc.)
+    source: str | None = None
+    original_filename: str | None = None
+    size: int | None = None
+    storage_backend: str | None = None
+
+
 class SampleCreate(SQLModel):
     sample_id: str
     attributes: List[Attribute] | None = None
-    run_barcode: str | None = None
+    run_id: str | None = None
+    files: List[SampleFileInput] | None = None
     model_config = ConfigDict(extra="forbid")
 
 
@@ -53,16 +69,15 @@ class SamplePublic(SQLModel):
     sample_id: str
     project_id: str
     attributes: List[Attribute] | None
-    run_barcode: str | None = None
+    run_id: str | None = None
 
 
 class SamplesPublic(SQLModel):
     data: List[SamplePublic]
     data_cols: list[str] | None = None
     total_items: int
-    total_pages: int
-    current_page: int
-    per_page: int
+    skip: int
+    limit: int
     has_next: bool
     has_prev: bool
 
@@ -88,9 +103,8 @@ class SamplesWithFilesPublic(SQLModel):
     data: List[SampleWithFilesPublic]
     data_cols: list[str] | None = None
     total_items: int
-    total_pages: int
-    current_page: int
-    per_page: int
+    skip: int
+    limit: int
     has_next: bool
     has_prev: bool
 
@@ -118,7 +132,10 @@ class BulkSampleItemResponse(SQLModel):
     sample_uuid: uuid.UUID
     project_id: str
     created: bool
-    run_barcode: str | None = None
+    updated: bool = False
+    run_id: str | None = None
+    files_created: int = 0
+    files_skipped: int = 0
 
 
 class BulkSampleCreateResponse(SQLModel):
@@ -126,6 +143,9 @@ class BulkSampleCreateResponse(SQLModel):
     project_id: str
     samples_created: int
     samples_existing: int
+    samples_updated: int = 0
     associations_created: int
     associations_existing: int
+    files_created: int = 0
+    files_skipped: int = 0
     items: List[BulkSampleItemResponse]

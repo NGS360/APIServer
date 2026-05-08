@@ -7,8 +7,8 @@ This module provides functions for:
 - Managing file uploads to S3 or local storage
 - Browsing S3 file systems
 
-Phase 2 replaced polymorphic FileEntity with typed junction tables:
-  FileProject, FileSequencingRun, FileQCRecord, FileWorkflowRun, FilePipeline
+Entity associations use typed junction tables (FileProject, FileSequencingRun,
+FileQCRecord, FilePipeline) with real FK constraints.
 """
 
 from datetime import datetime, timezone
@@ -28,9 +28,9 @@ from api.files.models import (
     FileProject,
     FileSequencingRun,
     FileQCRecord,
-    FileWorkflowRun,
     FilePipeline,
     FileCreate,
+    FileUpdate,
     FileUploadCreate,
     FileBrowserData,
     FileBrowserFile,
@@ -105,13 +105,6 @@ def create_file(
             file_id=file_record.id,
             qcrecord_id=file_create.qcrecord_id,
             role="output",
-        ))
-
-    if file_create.workflow_run_id:
-        _validate_exists_by_uuid(session, "WorkflowRun", file_create.workflow_run_id)
-        session.add(FileWorkflowRun(
-            file_id=file_record.id,
-            workflow_run_id=file_create.workflow_run_id,
         ))
 
     if file_create.pipeline_id:
@@ -298,6 +291,88 @@ def create_file_upload(
 
 
 # ============================================================================
+# File Update / Delete Functions
+# ============================================================================
+
+
+def update_file(
+    session: Session,
+    file_id: uuid_module.UUID,
+    file_update: FileUpdate,
+) -> File:
+    """
+    Update scalar fields on a file record.
+
+    Only fields explicitly set (not None) in file_update are applied.
+    All associations (entity junctions, hashes, tags, samples) remain intact.
+
+    Primary use case: correcting a URI (e.g., wrong S3 bucket).
+
+    Args:
+        session: Database session
+        file_id: UUID of the file to update
+        file_update: FileUpdate model with fields to change
+
+    Returns:
+        Updated File object with relationships loaded
+
+    Raises:
+        HTTPException: If file not found
+    """
+    file_record = session.get(File, file_id)
+    if not file_record:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"File not found: {file_id}",
+        )
+
+    update_data = file_update.model_dump(exclude_unset=True)
+    if not update_data:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No fields to update",
+        )
+
+    for field, value in update_data.items():
+        setattr(file_record, field, value)
+
+    session.add(file_record)
+    session.commit()
+    session.refresh(file_record)
+
+    return file_record
+
+
+def delete_file(
+    session: Session,
+    file_id: uuid_module.UUID,
+) -> None:
+    """
+    Hard-delete a file record and all child rows.
+
+    Child rows (FileHash, FileTag, FileSample, FileProject,
+    FileSequencingRun, FileQCRecord, FileWorkflowRun, FilePipeline)
+    are cascade-deleted automatically by SQLAlchemy.
+
+    Args:
+        session: Database session
+        file_id: UUID of the file to delete
+
+    Raises:
+        HTTPException: If file not found
+    """
+    file_record = session.get(File, file_id)
+    if not file_record:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"File not found: {file_id}",
+        )
+
+    session.delete(file_record)
+    session.commit()
+
+
+# ============================================================================
 # File Retrieval Functions
 # ============================================================================
 
@@ -445,17 +520,6 @@ def list_files_by_entity(
             .where(FileQCRecord.qcrecord_id == record_uuid)
         )
 
-    elif normalized == "WORKFLOW_RUN":
-        try:
-            wr_uuid = uuid_module.UUID(entity_id)
-        except ValueError:
-            return []
-        query = (
-            select(File)
-            .join(FileWorkflowRun)
-            .where(FileWorkflowRun.workflow_run_id == wr_uuid)
-        )
-
     elif normalized == "PIPELINE":
         try:
             pl_uuid = uuid_module.UUID(entity_id)
@@ -558,7 +622,6 @@ def _validate_exists_by_uuid(
     model_map = {
         "SequencingRun": ("api.runs.models", "SequencingRun"),
         "QCRecord": ("api.qcmetrics.models", "QCRecord"),
-        "WorkflowRun": ("api.workflow.models", "WorkflowRun"),
         "Pipeline": ("api.pipeline.models", "Pipeline"),
     }
 
@@ -601,9 +664,6 @@ def _validate_upload_entity_exists(
     elif file_upload.qcrecord_id is not None:
         _validate_exists_by_uuid(session, "QCRecord", file_upload.qcrecord_id)
 
-    elif file_upload.workflow_run_id is not None:
-        _validate_exists_by_uuid(session, "WorkflowRun", file_upload.workflow_run_id)
-
     elif file_upload.pipeline_id is not None:
         _validate_exists_by_uuid(session, "Pipeline", file_upload.pipeline_id)
 
@@ -640,13 +700,6 @@ def _create_upload_entity_association(
         session.add(FileQCRecord(
             file_id=file_id,
             qcrecord_id=file_upload.qcrecord_id,
-            role=file_upload.role,
-        ))
-
-    elif file_upload.workflow_run_id is not None:
-        session.add(FileWorkflowRun(
-            file_id=file_id,
-            workflow_run_id=file_upload.workflow_run_id,
             role=file_upload.role,
         ))
 
@@ -938,6 +991,83 @@ def download_file(s3_path: str, s3_client=None) -> tuple[bytes, str, str]:
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Unexpected error downloading from S3: {str(exc)}",
         ) from exc
+
+
+def generate_presigned_url(
+    s3_path: str,
+    s3_client=None,
+    expiration: int = 3600,
+) -> str:
+    """
+    Generate a presigned URL for downloading a file from S3.
+
+    Args:
+        s3_path: The S3 URI of the file (e.g., s3://bucket/path/file.txt)
+        s3_client: Optional boto3 S3 client
+        expiration: URL expiration time in seconds (default: 1 hour)
+
+    Returns:
+        Presigned URL string
+
+    Raises:
+        HTTPException: If S3 path is invalid or credentials unavailable
+    """
+    if not BOTO3_AVAILABLE:
+        raise HTTPException(
+            status_code=status.HTTP_501_NOT_IMPLEMENTED,
+            detail="S3 support not available. Install boto3.",
+        )
+
+    try:
+        bucket, key = _parse_s3_path(s3_path)
+
+        if not key:
+            raise ValueError(
+                "S3 path must include a file key, not just a bucket"
+            )
+
+        if s3_client is None:
+            s3_client = boto3.client("s3")
+
+        presigned_url = s3_client.generate_presigned_url(
+            "get_object",
+            Params={"Bucket": bucket, "Key": key},
+            ExpiresIn=expiration,
+        )
+        return presigned_url
+
+    except NoCredentialsError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="AWS credentials not found.",
+        ) from exc
+    except ClientError as exc:
+        error_code = exc.response["Error"]["Code"]
+        if error_code == "NoSuchKey":
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"File not found: {s3_path}",
+            ) from exc
+        elif error_code == "NoSuchBucket":
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="S3 bucket not found",
+            ) from exc
+        elif error_code == "AccessDenied":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Access denied: {s3_path}",
+            ) from exc
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"S3 error: {exc.response['Error']['Message']}",
+            ) from exc
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        ) from e
 
 
 def list_s3_files(uri: str, s3_client=None) -> FileBrowserData:

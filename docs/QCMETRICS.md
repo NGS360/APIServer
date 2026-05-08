@@ -11,7 +11,7 @@ The QCMetrics system provides:
 - **Dual scoping**: QCRecords scoped to a project (e.g., alignment QC) or a sequencing run (e.g., demux stats)
 - **Entity association**: Scope metrics to sequencing runs and workflow executions via direct FKs
 - **Barcode-friendly API**: Accept human-readable run barcodes in requests, resolve to UUIDs internally
-- **Provenance tracking**: Optional `workflow_run_id` FK linking a QCRecord to the execution that produced it
+- **Provenance tracking**: Optional `workflow_run_id` (plain UUID, soft reference to external workflow execution DB)
 - **Output file tracking**: Integration with the unified [File model](./FILE_MODEL.md)
 - **Versioning**: Multiple QC records per scope (project or run) with history preservation
 - **Duplicate detection**: Automatic detection of equivalent records per scope
@@ -25,14 +25,12 @@ The QCMetrics system provides:
 erDiagram
     Project ||--o{ QCRecord : "has (project-scoped)"
     SequencingRun ||--o{ QCRecord : "has (run-scoped)"
-    WorkflowRun ||--o{ QCRecord : "produces (provenance)"
     QCRecord ||--o{ QCRecordMetadata : has_metadata
     QCRecord ||--o{ QCMetric : has_metrics
     QCRecord ||--o{ FileQCRecord : has_files
     QCMetric ||--o{ QCMetricValue : has_values
     QCMetric ||--o{ QCMetricSample : associated_samples
     SequencingRun ||--o{ QCMetric : "scoped_to (direct FK)"
-    WorkflowRun ||--o{ QCMetric : "scoped_to (direct FK)"
 
     QCRecord {
         uuid id PK
@@ -40,7 +38,7 @@ erDiagram
         string created_by
         string project_id FK "nullable"
         uuid sequencing_run_id FK "nullable"
-        uuid workflow_run_id FK "nullable"
+        uuid workflow_run_id "nullable — soft ref"
     }
 
     QCRecordMetadata {
@@ -55,7 +53,7 @@ erDiagram
         uuid qcrecord_id FK
         string name
         uuid sequencing_run_id FK "nullable"
-        uuid workflow_run_id FK "nullable"
+        uuid workflow_run_id "nullable — soft ref"
     }
 
     QCMetricValue {
@@ -88,14 +86,14 @@ Main QC record entity — one per pipeline execution per scope (project or seque
 | created_by | VARCHAR(100) | NOT NULL | User who created the record |
 | project_id | VARCHAR(50) | NULL, FK → project.project_id, INDEX | Project scope (mutually exclusive with sequencing_run_id) |
 | sequencing_run_id | UUID | NULL, FK → sequencingrun.id, INDEX | Run scope (mutually exclusive with project_id) |
-| workflow_run_id | UUID | NULL, FK → workflowrun.id, INDEX | Optional provenance link |
+| workflow_run_id | UUID | NULL, INDEX | Soft reference to external workflow execution DB (no FK constraint) |
 
 **CHECK constraint** `ck_qcrecord_scope`: Exactly one of `project_id` or `sequencing_run_id` must be non-NULL.
 
 **Notes**:
 - `project_id` is a FK with `RESTRICT` on delete — the project must exist, and deleting a project is blocked while QCRecords reference it.
 - `sequencing_run_id` is a FK to `sequencingrun.id` for run-scoped records (e.g., demux stats). The API accepts a human-readable barcode string (`sequencing_run_barcode`), resolved to UUID at the service layer.
-- `workflow_run_id` is an optional provenance FK — which WorkflowRun produced this data.
+- `workflow_run_id` is a plain UUID (soft reference to an external workflow execution database — no FK constraint). Any valid UUID is accepted.
 
 ### qcrecordmetadata
 
@@ -120,7 +118,7 @@ A named group of metrics with optional entity scoping via direct FKs.
 | qcrecord_id | UUID | FK → qcrecord.id, ON DELETE CASCADE, INDEX | Parent QC record |
 | name | VARCHAR(255) | NOT NULL, INDEX | Metric group name |
 | sequencing_run_id | UUID | NULL, FK → sequencingrun.id, INDEX | What run this metric is about |
-| workflow_run_id | UUID | NULL, FK → workflowrun.id, INDEX | What execution this metric is about |
+| workflow_run_id | UUID | NULL, INDEX | Soft reference to external workflow execution DB (no FK constraint) |
 
 **Note**: Multiple QCMetric rows with the same name are allowed within a QCRecord, differentiated by their sample or entity associations. Entity scoping uses direct nullable FKs (no junction tables).
 
@@ -183,7 +181,7 @@ Samples are resolved by `sample_name` in the request — the service layer looks
 - **Single sample**: One entry (e.g., Sample1 alignment rate)
 - **Sample pair**: Two entries with roles (e.g., tumor=Sample1, normal=Sample2)
 
-> **Note**: The earlier junction tables `qcmetricsequencingrun` and `qcmetricworkflowrun` have been replaced by direct FK columns on `qcmetric`. This simplifies queries and eliminates extra JOINs.
+> **Note**: `sequencing_run_id` is a direct FK on `qcmetric` for efficient joins. `workflow_run_id` is a plain UUID column (soft reference to an external workflow execution DB — no FK constraint).
 
 ## API Endpoints
 
@@ -245,13 +243,13 @@ The `created_by` field is automatically set from the authenticated user's userna
 **Fields**:
 - `project_id` (conditional): Project ID — mutually exclusive with `sequencing_run_barcode`
 - `sequencing_run_barcode` (conditional): Run barcode — mutually exclusive with `project_id`
-- `workflow_run_id` (optional): UUID of the WorkflowRun that produced this QC data (provenance)
+- `workflow_run_id` (optional): UUID referencing a workflow execution in an external DB (soft reference, no FK validation)
 - `metadata` (optional): Key-value pairs for pipeline metadata
 - `metrics` (optional): List of metric groups, each with:
   - `name` (required): Metric group name
   - `samples` (optional): Sample associations with optional roles
   - `sequencing_run_barcode` (optional): Barcode of SequencingRun this metric is about (auto-propagated from record level)
-  - `workflow_run_id` (optional): UUID of WorkflowRun this metric is about
+  - `workflow_run_id` (optional): UUID referencing a workflow execution in an external DB
   - `values` (required): Metric key-value pairs (string, int, or float)
 - `output_files` (optional): Files produced by the pipeline
 
@@ -336,7 +334,7 @@ The `created_by` field is automatically set from the authenticated user's userna
 Query parameters:
 - `project_id`: Filter by project ID (project-scoped records)
 - `sequencing_run_barcode`: Filter by run barcode (run-scoped records)
-- `workflow_run_id`: Filter by provenance (which WorkflowRun produced the data)
+- `workflow_run_id`: Filter by provenance (which workflow execution produced the data)
 - `sequencing_run_id`: Filter by sequencing run UUID (record or metric level)
 - `latest`: If true (default), return only newest QCRecord per scope (project or run)
 - `page`, `per_page`: Pagination
@@ -536,9 +534,9 @@ with their associated files, metadata, and metrics. The response includes a
 
 Defined in [`api/qcmetrics/models.py`](../api/qcmetrics/models.py):
 
-- [`QCRecord`](../api/qcmetrics/models.py:142) — Main QC record (project_id or sequencing_run_id + workflow_run_id)
+- [`QCRecord`](../api/qcmetrics/models.py:142) — Main QC record (project_id or sequencing_run_id + optional workflow_run_id soft reference)
 - [`QCRecordMetadata`](../api/qcmetrics/models.py:25) — Pipeline metadata
-- [`QCMetric`](../api/qcmetrics/models.py:97) — Metric group (with direct sequencing_run_id and workflow_run_id FKs)
+- [`QCMetric`](../api/qcmetrics/models.py:97) — Metric group (direct sequencing_run_id FK + workflow_run_id soft reference)
 - [`QCMetricValue`](../api/qcmetrics/models.py:45) — Individual metric values
 - [`QCMetricSample`](../api/qcmetrics/models.py:73) — Sample associations
 
@@ -547,7 +545,7 @@ Defined in [`api/qcmetrics/models.py`](../api/qcmetrics/models.py):
 Business logic in [`api/qcmetrics/services.py`](../api/qcmetrics/services.py):
 
 - Barcode → UUID resolution for sequencing runs
-- Create QC record with scope validation, duplicate detection, and FK validation
+- Create QC record with scope validation and duplicate detection
 - Auto-propagation of `sequencing_run_barcode` from record to metrics
 - Search with filtering by `project_id`, `sequencing_run_barcode`, `workflow_run_id`, `sequencing_run_id`, metadata
 - Type preservation for numeric values
