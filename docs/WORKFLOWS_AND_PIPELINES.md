@@ -41,7 +41,30 @@ TBD: We can augment this call to require a workflow defintion to automatically c
 
 ### Register a workflow version
 
+Once a workflow is registered, a version can be created.  A call to POST /api/v1/workflows/{workflow_id}/versions with the request BODY:
+```
+{
+  "definition_uri": "string"
+}
+```
 
+The definition_uri should be a s3 path to the packed CWL file.
+
+This call will return 
+```
+{
+  "id": "string",
+  "workflow_id": "string"
+  "version": 0,
+  "definition_uri": "string",
+  "created_at": "date/time",
+  "created_by": "string",
+  "deployments": [
+  ]
+}
+```
+
+The first time a version of a workflow is created, the version will be version 0 (TBD: Should this be version 1?).  On subsequent calls with the same workflow_id, the version will be auto-incremented.
 
 ### Register a workflow alias
 
