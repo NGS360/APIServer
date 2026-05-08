@@ -112,7 +112,7 @@ def get_runs(
     per_page: PositiveInt,
     sort_by: str,
     sort_order: Literal["asc", "desc"],
-) -> List[SequencingRun]:
+) -> SequencingRunsPublic:
     """
     Returns all sequencing runs from the database along
     with pagination information.
