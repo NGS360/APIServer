@@ -1,4 +1,4 @@
-from sqlmodel import Session
+from sqlmodel import Session, select
 from fastapi.testclient import TestClient
 
 from api.project.models import Project
@@ -526,6 +526,58 @@ def test_get_samples_include_files_pagination_works(
     assert len(data["data"]) == 1
     assert data["has_next"] is False
     assert data["has_prev"] is True
+
+
+# ---------------------------------------------------------------------------
+# Timestamp tests (created_at / updated_at)
+# ---------------------------------------------------------------------------
+
+
+def test_sample_created_at_set_on_creation(client: TestClient, session: Session):
+    """Verify created_at is populated when a sample is created."""
+    new_project = Project(name="Test Project")
+    new_project.project_id = generate_project_id(session=session)
+    new_project.attributes = []
+    session.add(new_project)
+    session.commit()
+
+    sample_data = {"sample_id": "TS_1", "attributes": [{"key": "k", "value": "v"}]}
+    response = client.post(
+        f"/api/v1/projects/{new_project.project_id}/samples", json=sample_data
+    )
+    assert response.status_code == 201
+
+    # Verify in DB
+    sample = session.exec(select(Sample).where(Sample.sample_id == "TS_1")).first()
+    assert sample.created_at is not None
+    assert sample.updated_at is None
+
+
+def test_sample_updated_at_set_on_update(client: TestClient, session: Session):
+    """Verify updated_at is populated when a sample attribute is modified."""
+    new_project = Project(name="Test Project")
+    new_project.project_id = generate_project_id(session=session)
+    new_project.attributes = []
+    session.add(new_project)
+    session.commit()
+
+    sample_data = {"sample_id": "TS_2", "attributes": [{"key": "k", "value": "v"}]}
+    client.post(
+        f"/api/v1/projects/{new_project.project_id}/samples", json=sample_data
+    )
+
+    # Update attribute
+    update_data = {"key": "k", "value": "v2"}
+    response = client.put(
+        f"/api/v1/projects/{new_project.project_id}/samples/TS_2",
+        json=update_data,
+    )
+    assert response.status_code == 200
+
+    # Verify in DB
+    session.expire_all()
+    sample = session.exec(select(Sample).where(Sample.sample_id == "TS_2")).first()
+    assert sample.updated_at is not None
 
 
 def test_get_samples_include_files_mixed_samples(

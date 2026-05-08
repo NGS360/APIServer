@@ -14,7 +14,6 @@ def _create_workflow(session: Session, name: str = "Align Reads") -> str:
     """Insert a workflow directly and return its id as str."""
     wf = Workflow(
         name=name,
-        definition_uri=f"s3://bucket/{name.lower().replace(' ', '-')}.wdl",
         created_by="testuser",
     )
     session.add(wf)
