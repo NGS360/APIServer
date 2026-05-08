@@ -96,6 +96,28 @@ This will return
 
 indicating what version of what workflow an alias points to.
 
+### Deploying a workflow to a Platform/Execution Engine
+
+Now that a workflow version exists, it can be deployed to a platform (or execution engine, e.g. engine) such as AWS HealthOmics, SevenBridges, Arvados, etc for execution.  To do this, a call to POST /api/v1/workflows/{workflow_id}/versions/{version_id}/deployments with the request body of
+```
+{
+  "engine": "string",
+}
+```
+where engine is ??? (TBD: Is there any controlled vocabulary for this?  Should this be a Platform?),
+
+This call will return
+```
+{
+  "id": "uuid",
+  "workflow_version_id": "uuid",
+  "engine": "string",
+  "external_id": "string",
+  "created_at": "date/time",
+  "created_by": "string"
+}```
+where external_id is the identifier of the version of the workflow on the external platform. (TBD: This is done behind the scenes by NGS360)  
+
 ### Execute a workflow
 
 
