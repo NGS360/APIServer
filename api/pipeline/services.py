@@ -6,6 +6,7 @@ CRUD operations for Pipeline, PipelineAttribute, and PipelineWorkflow entities.
 from uuid import UUID
 
 from fastapi import HTTPException, status
+from api.utils import check_duplicate_attribute_keys
 from sqlmodel import Session, select, func
 
 from api.workflow.models import Attribute, Workflow
@@ -41,17 +42,9 @@ def create_pipeline(
 
     # Handle attributes
     if pipeline_in.attributes:
-        seen: set[str] = set()
-        keys = [attr.key for attr in pipeline_in.attributes]
-        dups = [k for k in keys if k in seen or seen.add(k)]
-        if dups:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=(
-                    f"Duplicate keys ({', '.join(dups)}) are not allowed "
-                    f"in pipeline attributes."
-                ),
-            )
+        check_duplicate_attribute_keys(
+            pipeline_in.attributes, "pipeline attributes"
+        )
 
         attrs = [
             PipelineAttribute(
@@ -248,7 +241,7 @@ def pipeline_to_public(session: Session, pipeline: Pipeline) -> PipelinePublic:
             select(Workflow).where(Workflow.id.in_(wf_ids))
         ).all()
         workflows = [
-            WorkflowSummary(id=wf.id, name=wf.name, version=wf.version)
+            WorkflowSummary(id=wf.id, name=wf.name)
             for wf in wf_rows
         ]
 

@@ -150,7 +150,7 @@ python-dotenv==1.2.2
     #   uvicorn
 python-jose==3.5.0
     # via ngs360-server (pyproject.toml)
-python-multipart==0.0.26
+python-multipart==0.0.27
     # via
     #   ngs360-server (pyproject.toml)
     #   fastapi
@@ -192,7 +192,7 @@ sqlalchemy==2.0.49
     # via
     #   alembic
     #   sqlmodel
-sqlmodel==0.0.37
+sqlmodel==0.0.38
     # via ngs360-server (pyproject.toml)
 starlette==1.0.0
     # via fastapi
@@ -214,6 +214,7 @@ typing-extensions==4.15.0
     #   pydantic-extra-types
     #   rich-toolkit
     #   sqlalchemy
+    #   sqlmodel
     #   typing-inspection
 typing-inspection==0.4.2
     # via

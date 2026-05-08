@@ -8,7 +8,7 @@ The API server uses a single, unified `File` model that supports:
 
 - **File uploads**: Direct uploads to storage backends (S3, local, Azure, GCS)
 - **External file references**: Metadata records for files stored externally (e.g., pipeline outputs)
-- **Typed entity associations**: Files are linked to specific entity types via dedicated junction tables (FileProject, FileSequencingRun, FileQCRecord, FileWorkflowRun, FilePipeline)
+- **Typed entity associations**: Files are linked to specific entity types via dedicated junction tables (FileProject, FileSequencingRun, FileQCRecord, FilePipeline)
 - **Flexible sample associations with roles**: Support for tumor/normal, case/control, and other paired analysis patterns
 - **Multi-algorithm hash storage**: MD5, SHA-256, S3 ETags, etc.
 - **Flexible key-value tags**: Extensible metadata without schema changes
@@ -22,7 +22,6 @@ erDiagram
     Project ||--o{ FileProject : has_files
     QCRecord ||--o{ FileQCRecord : has_files
     SequencingRun ||--o{ FileSequencingRun : has_files
-    WorkflowRun ||--o{ FileWorkflowRun : has_files
     Pipeline ||--o{ FilePipeline : has_files
 
     Sample ||--o{ FileSample : associated_files
@@ -30,7 +29,6 @@ erDiagram
     File ||--o{ FileProject : belongs_to
     File ||--o{ FileSequencingRun : belongs_to
     File ||--o{ FileQCRecord : belongs_to
-    File ||--o{ FileWorkflowRun : belongs_to
     File ||--o{ FilePipeline : belongs_to
     File ||--o{ FileTag : has_tags
     File ||--o{ FileSample : associated_samples
@@ -54,13 +52,6 @@ erDiagram
         uuid id PK
         uuid file_id FK
         uuid qcrecord_id FK
-        string role
-    }
-
-    FileWorkflowRun {
-        uuid id PK
-        uuid file_id FK
-        uuid workflow_run_id FK
         string role
     }
 
@@ -176,17 +167,6 @@ This replaces the previous polymorphic `fileentity` table which used `entity_typ
 | role | VARCHAR(50) | | Optional role (e.g., output, report) |
 
 **Unique constraint**: `(file_id, qcrecord_id)`
-
-#### fileworkflowrun
-
-| Column | Type | Constraints | Description |
-|--------|------|-------------|-------------|
-| id | UUID | PK | Primary key |
-| file_id | UUID | FK → file.id, NOT NULL, ON DELETE CASCADE | File reference |
-| workflow_run_id | UUID | FK → workflowrun.id, NOT NULL, ON DELETE CASCADE | WorkflowRun reference |
-| role | VARCHAR(50) | | Optional role (e.g., input, output, log) |
-
-**Unique constraint**: `(file_id, workflow_run_id)`
 
 #### filepipeline
 
@@ -333,7 +313,7 @@ Create a new file record (upload or reference).
 - `original_filename` is optional - only needed for uploads where the filename was renamed
 - Filename can be derived from `uri.split('/')[-1]`
 - `project_id` is **required** when `samples` are provided (used to resolve sample names to `sample.id` UUIDs). The validator raises an error if samples are provided without a `project_id`.
-- Entity associations use typed fields: `project_id`, `sequencing_run_id`, `qcrecord_id`, `workflow_run_id`, `pipeline_id`
+- Entity associations use typed fields: `project_id`, `sequencing_run_id`, `qcrecord_id`, `pipeline_id`
 
 ### Upload a file
 
@@ -347,7 +327,6 @@ Upload a file directly. Exactly one entity field must be provided:
 | project_id | string | Associate with a project |
 | sequencing_run_id | string | Associate with a sequencing run |
 | qcrecord_id | string | Associate with a QC record |
-| workflow_run_id | string | Associate with a workflow run |
 | pipeline_id | string | Associate with a pipeline |
 | relative_path | string | Optional subdirectory path |
 
@@ -367,7 +346,7 @@ Get file metadata by URI (URL-encoded).
 
 **GET /api/files?entity_type=PROJECT&entity_id={id}**
 
-List all files associated with a specific entity. Valid entity types: `PROJECT`, `RUN`, `SAMPLE`, `QCRECORD`, `WORKFLOW_RUN`, `PIPELINE`.
+List all files associated with a specific entity. Valid entity types: `PROJECT`, `RUN`, `SAMPLE`, `QCRECORD`, `PIPELINE`.
 
 ### Response format
 
@@ -424,8 +403,7 @@ The unified file model is defined in [`api/files/models.py`](../api/files/models
 - [`FileProject`](../api/files/models.py:108) - Project junction table
 - [`FileSequencingRun`](../api/files/models.py:129) - SequencingRun junction table
 - [`FileQCRecord`](../api/files/models.py:149) - QCRecord junction table
-- [`FileWorkflowRun`](../api/files/models.py:169) - WorkflowRun junction table
-- [`FilePipeline`](../api/files/models.py:189) - Pipeline junction table
+- [`FilePipeline`](../api/files/models.py:168) - Pipeline junction table
 - [`FileHash`](../api/files/models.py:35) - Hash values
 - [`FileTag`](../api/files/models.py:56) - Key-value tags
 - [`FileSample`](../api/files/models.py:82) - Sample associations (FK → `sample.id`)
@@ -443,7 +421,6 @@ Each typed junction table has:
 | FileProject | project_id | project |
 | FileSequencingRun | sequencing_run_id | sequencingrun |
 | FileQCRecord | qcrecord_id | qcrecord |
-| FileWorkflowRun | workflow_run_id | workflowrun |
 | FilePipeline | pipeline_id | pipeline |
 
 ### Helper Functions
@@ -455,7 +432,7 @@ Each typed junction table has:
 ## Cascade Deletes
 
 All child tables cascade delete when the parent file is deleted:
-- `file` → `fileproject`, `filesequencingrun`, `fileqcrecord`, `fileworkflowrun`, `filepipeline`, `filehash`, `filetag`, `filesample`
+- `file` → `fileproject`, `filesequencingrun`, `fileqcrecord`, `filepipeline`, `filehash`, `filetag`, `filesample`
 
 Entity-side cascades also apply — deleting a project removes its `fileproject` rows, deleting a sequencing run removes its `filesequencingrun` rows, etc.
 

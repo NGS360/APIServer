@@ -144,7 +144,6 @@ class TestFileCreateSchema:
         assert file_create.samples is None
         assert file_create.sequencing_run_id is None
         assert file_create.qcrecord_id is None
-        assert file_create.workflow_run_id is None
         assert file_create.pipeline_id is None
 
     def test_file_create_requires_entity(self):

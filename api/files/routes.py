@@ -23,10 +23,12 @@ from api.files.models import (
     FilePublic,
     FilesPublic,
     FileCreate,
+    FileUpdate,
     FileBrowserData,
     file_to_public,
 )
 from api.files import services
+from api.auth.deps import CurrentSuperuser
 from core.deps import get_s3_client, SessionDep
 
 router = APIRouter(prefix="/files", tags=["File Endpoints"])
@@ -54,7 +56,6 @@ def create_file(
     - **project_id**: Project business key (string)
     - **sequencing_run_id**: SequencingRun UUID
     - **qcrecord_id**: QCRecord UUID
-    - **workflow_run_id**: WorkflowRun UUID
     - **pipeline_id**: Pipeline UUID
     - **samples**: Sample associations with optional roles (tumor/normal)
     - **hashes**: Hash values by algorithm (md5, sha256, etc.)
@@ -79,7 +80,6 @@ def upload_file(
     project_id: Optional[str] = Form(None, description="Project business key"),
     sequencing_run_id: Optional[uuid.UUID] = Form(None, description="SequencingRun UUID"),
     qcrecord_id: Optional[uuid.UUID] = Form(None, description="QCRecord UUID"),
-    workflow_run_id: Optional[uuid.UUID] = Form(None, description="WorkflowRun UUID"),
     pipeline_id: Optional[uuid.UUID] = Form(None, description="Pipeline UUID"),
     relative_path: Optional[str] = Form(None),
     overwrite: bool = Form(False),
@@ -97,7 +97,6 @@ def upload_file(
     - **project_id**: Project business key (exactly one entity ID required)
     - **sequencing_run_id**: SequencingRun UUID
     - **qcrecord_id**: QCRecord UUID
-    - **workflow_run_id**: WorkflowRun UUID
     - **pipeline_id**: Pipeline UUID
     - **relative_path**: Optional subdirectory path within entity folder
     - **overwrite**: If True, creates a new version if file exists
@@ -120,7 +119,6 @@ def upload_file(
         project_id=project_id,
         sequencing_run_id=sequencing_run_id,
         qcrecord_id=qcrecord_id,
-        workflow_run_id=workflow_run_id,
         pipeline_id=pipeline_id,
         is_public=is_public,
         created_by=created_by,
@@ -254,6 +252,55 @@ def download_file(
         s3_path=path, s3_client=s3_client
     )
     return RedirectResponse(url=presigned_url, status_code=307)
+
+
+@router.patch(
+    "/{file_id}",
+    response_model=FilePublic,
+    summary="Update a file record (superuser only)",
+)
+def update_file(
+    file_id: uuid.UUID,
+    session: SessionDep,
+    file_update: FileUpdate,
+    current_user: CurrentSuperuser,
+) -> FilePublic:
+    """
+    Update scalar fields on a file record.
+
+    Only fields included in the request body are updated; all others
+    (including entity associations, hashes, tags, and samples) remain
+    unchanged.
+
+    **Primary use case:** correcting a URI (e.g., wrong S3 bucket).
+
+    Requires superuser privileges.
+    """
+    file_record = services.update_file(session, file_id, file_update)
+    return file_to_public(file_record)
+
+
+@router.delete(
+    "/{file_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Delete a file record (superuser only)",
+)
+def delete_file(
+    file_id: uuid.UUID,
+    session: SessionDep,
+    current_user: CurrentSuperuser,
+) -> None:
+    """
+    Hard-delete a file record and all associated child rows.
+
+    Cascade-deletes: FileHash, FileTag, FileSample, FileProject,
+    FileSequencingRun, FileQCRecord, FileWorkflowRun, FilePipeline.
+
+    **This action is irreversible.**
+
+    Requires superuser privileges.
+    """
+    services.delete_file(session, file_id)
 
 
 @router.get(

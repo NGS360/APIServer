@@ -14,7 +14,7 @@ from api.auth.models import (
 )
 from api.files.models import (
     File, FileSample, FileHash, FileTag,
-    FileProject, FileSequencingRun, FileQCRecord, FileWorkflowRun, FilePipeline,
+    FileProject, FileSequencingRun, FileQCRecord, FilePipeline,
 )
 from api.samples.models import Sample, SampleAttribute
 from api.settings.models import Setting
@@ -22,8 +22,8 @@ from api.project.models import Project
 from api.runs.models import SequencingRun, SampleSequencingRun
 from api.vendors.models import Vendor
 from api.workflow.models import (
-    Workflow, WorkflowAttribute, WorkflowRegistration,
-    WorkflowRun, WorkflowRunAttribute,
+    Workflow, WorkflowAttribute, WorkflowVersion, WorkflowVersionAlias,
+    WorkflowDeployment, WorkflowVersionAttribute,
 )
 from api.pipeline.models import Pipeline, PipelineAttribute, PipelineWorkflow
 from api.platforms.models import Platform
