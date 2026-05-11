@@ -62,7 +62,11 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 
         # Add input value if available (helps debugging)
         if "input" in error:
-            formatted_error["received"] = error.get("input")
+            input_val = error.get("input")
+            # Ensure the value is JSON-serializable (e.g., convert bytes to string)
+            if isinstance(input_val, bytes):
+                input_val = input_val.decode("utf-8", errors="replace")
+            formatted_error["received"] = input_val
 
         formatted_errors.append(formatted_error)
 
