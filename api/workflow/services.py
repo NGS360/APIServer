@@ -8,6 +8,7 @@ from uuid import UUID
 
 from fastapi import HTTPException, status
 from sqlmodel import Session, select
+from sqlalchemy import func
 
 from api.platforms.models import Platform
 from api.workflow.models import (
@@ -215,21 +216,21 @@ def create_workflow_version(
     version_in: WorkflowVersionCreate,
     created_by: str,
 ) -> WorkflowVersion:
-    """Create a new version for a workflow.
-
-    The version number is auto-incremented (max existing + 1).
-    """
-    from sqlalchemy import func
-
+    """Create a new version for a workflow."""
     workflow = get_workflow_by_id(session, workflow_id)
 
-    # Auto-increment: find max version for this workflow
-    max_version = session.exec(
-        select(func.max(WorkflowVersion.version)).where(
-            WorkflowVersion.workflow_id == workflow.id
-        )
-    ).one()
-    next_version = (max_version or 0) + 1
+    # Build the query
+    stmt = (
+        select(func.coalesce(func.max(WorkflowVersion.version), 1))
+        .where(WorkflowVersion.workflow_id == workflow.id)
+    )
+    # Apply FOR UPDATE only on databases that support it
+    dialect = session.bind.dialect.name
+    if dialect in ("postgresql", "mysql"):
+        stmt = stmt.with_for_update()
+
+    max_version = session.exec(stmt).one()
+    next_version = max_version + 1
 
     version = WorkflowVersion(
         workflow_id=workflow.id,
