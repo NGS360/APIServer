@@ -8,6 +8,7 @@ from uuid import UUID
 
 from fastapi import HTTPException, status
 from sqlmodel import Session, select
+from sqlalchemy import func
 
 from api.platforms.models import Platform
 from api.workflow.models import (
@@ -22,6 +23,7 @@ from api.workflow.models import (
     WorkflowDeploymentPublic,
     WorkflowVersion,
     WorkflowVersionAlias,
+    WorkflowVersionAttribute,
     WorkflowVersionCreate,
     WorkflowVersionPublic,
     WorkflowVersionSummary,
@@ -215,21 +217,21 @@ def create_workflow_version(
     version_in: WorkflowVersionCreate,
     created_by: str,
 ) -> WorkflowVersion:
-    """Create a new version for a workflow.
-
-    The version number is auto-incremented (max existing + 1).
-    """
-    from sqlalchemy import func
-
+    """Create a new version for a workflow."""
     workflow = get_workflow_by_id(session, workflow_id)
 
-    # Auto-increment: find max version for this workflow
-    max_version = session.exec(
-        select(func.max(WorkflowVersion.version)).where(
-            WorkflowVersion.workflow_id == workflow.id
-        )
-    ).one()
-    next_version = (max_version or 0) + 1
+    # Build the query
+    stmt = (
+        select(func.coalesce(func.max(WorkflowVersion.version), 0))
+        .where(WorkflowVersion.workflow_id == workflow.id)
+    )
+    # Apply FOR UPDATE only on databases that support it
+    dialect = session.bind.dialect.name
+    if dialect in ("postgresql", "mysql"):
+        stmt = stmt.with_for_update()
+
+    max_version = session.exec(stmt).one()
+    next_version = max_version + 1
 
     version = WorkflowVersion(
         workflow_id=workflow.id,
@@ -237,8 +239,34 @@ def create_workflow_version(
         definition_uri=version_in.definition_uri,
         created_by=created_by,
     )
-
     session.add(version)
+    session.flush()
+
+    # Handle attribute mapping
+    if version_in.attributes:
+        # Prevent duplicate keys
+        seen: set[str] = set()
+        keys = [attr.key for attr in version_in.attributes]
+        dups = [k for k in keys if k in seen or seen.add(k)]
+        if dups:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    f"Duplicate keys ({', '.join(dups)}) "
+                    "are not allowed in workflow version attributes."
+                ),
+            )
+
+        version_attributes = [
+            WorkflowVersionAttribute(
+                workflow_version_id=version.id,
+                key=attr.key,
+                value=attr.value,
+            )
+            for attr in version_in.attributes
+        ]
+        session.add_all(version_attributes)
+
     session.commit()
     session.refresh(version)
     return version
@@ -295,6 +323,13 @@ def workflow_version_to_public(
             for r in version.deployments
         ]
 
+    attributes = None
+    if version.attributes:
+        attributes = [
+            Attribute(key=a.key, value=a.value)
+            for a in version.attributes
+        ]
+
     return WorkflowVersionPublic(
         id=version.id,
         workflow_id=version.workflow_id,
@@ -303,6 +338,7 @@ def workflow_version_to_public(
         created_at=version.created_at,
         created_by=version.created_by,
         deployments=deployments,
+        attributes=attributes,
     )
 
 

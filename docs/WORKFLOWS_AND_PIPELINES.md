@@ -338,7 +338,11 @@ POST /workflows/{workflow_id}/versions
 
 ```json
 {
-  "definition_uri": "s3://workflows/variant-calling-v2.1.cwl"
+  "definition_uri": "s3://workflows/variant-calling-v2.1.cwl",
+  "attributes": [
+    {"key": "git_hash", "value": "abcd1234"},
+    {"key": "semantic_version", "value": "v1.2.3"}
+  ]
 }
 ```
 
