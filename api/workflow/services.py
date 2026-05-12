@@ -240,7 +240,7 @@ def create_workflow_version(
         created_by=created_by,
     )
     session.add(version)
-    session.flush() # ensure version row exists in DB
+    session.flush()
 
     # Handle attribute mapping
     if version_in.attributes:
