@@ -23,6 +23,7 @@ from api.workflow.models import (
     WorkflowDeploymentPublic,
     WorkflowVersion,
     WorkflowVersionAlias,
+    WorkflowVersionAttribute,
     WorkflowVersionCreate,
     WorkflowVersionPublic,
     WorkflowVersionSummary,
@@ -221,7 +222,7 @@ def create_workflow_version(
 
     # Build the query
     stmt = (
-        select(func.coalesce(func.max(WorkflowVersion.version), 1))
+        select(func.coalesce(func.max(WorkflowVersion.version), 0))
         .where(WorkflowVersion.workflow_id == workflow.id)
     )
     # Apply FOR UPDATE only on databases that support it
@@ -238,8 +239,34 @@ def create_workflow_version(
         definition_uri=version_in.definition_uri,
         created_by=created_by,
     )
-
     session.add(version)
+    session.flush() # ensure version row exists in DB
+
+    # Handle attribute mapping
+    if version_in.attributes:
+        # Prevent duplicate keys
+        seen: set[str] = set()
+        keys = [attr.key for attr in version_in.attributes]
+        dups = [k for k in keys if k in seen or seen.add(k)]
+        if dups:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    f"Duplicate keys ({', '.join(dups)}) "
+                    "are not allowed in workflow version attributes."
+                ),
+            )
+
+        version_attributes = [
+            WorkflowVersionAttribute(
+                workflow_version_id=version.id,
+                key=attr.key,
+                value=attr.value,
+            )
+            for attr in version_in.attributes
+        ]
+        session.add_all(version_attributes)
+
     session.commit()
     session.refresh(version)
     return version
@@ -296,6 +323,13 @@ def workflow_version_to_public(
             for r in version.deployments
         ]
 
+    attributes = None
+    if version.attributes:
+        attributes = [
+            Attribute(key=a.key, value=a.value)
+            for a in version.attributes
+        ]
+
     return WorkflowVersionPublic(
         id=version.id,
         workflow_id=version.workflow_id,
@@ -304,6 +338,7 @@ def workflow_version_to_public(
         created_at=version.created_at,
         created_by=version.created_by,
         deployments=deployments,
+        attributes=attributes,
     )
 
 

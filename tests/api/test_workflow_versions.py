@@ -27,11 +27,15 @@ def _create_workflow(session: Session) -> str:
 # ---------------------------------------------------------------------------
 
 def test_create_version(client: TestClient, session: Session):
-    """Create a new version for a workflow — version is auto-incremented."""
+    """Create a new/initial version for a workflow """
     wf_id = _create_workflow(session)
 
     body = {
         "definition_uri": "s3://bucket/align-v1.0.wdl",
+        "attributes": [
+            {"key": "attributefield1", "value": "value1"},
+            {"key": "attributefield2", "value": "value2"},
+        ],
     }
     resp = client.post(
         f"/api/v1/workflows/{wf_id}/versions", json=body,
@@ -45,6 +49,12 @@ def test_create_version(client: TestClient, session: Session):
     assert data["created_by"] == "testuser"
     assert "id" in data
     assert "created_at" in data
+    assert "attributes" in data
+    assert len(data["attributes"]) == 2
+    assert data["attributes"][0]["key"] == "attributefield1"
+    assert data["attributes"][0]["value"] == "value1"
+    assert data["attributes"][1]["key"] == "attributefield2"
+    assert data["attributes"][1]["value"] == "value2"
 
 
 def test_create_version_workflow_not_found(client: TestClient):
