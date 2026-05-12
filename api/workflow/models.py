@@ -166,6 +166,7 @@ class WorkflowPublic(SQLModel):
 
 class WorkflowVersionCreate(SQLModel):
     definition_uri: str
+    attributes: List[Attribute] | None = None
 
 
 class WorkflowVersionPublic(SQLModel):
@@ -176,6 +177,7 @@ class WorkflowVersionPublic(SQLModel):
     created_at: datetime
     created_by: str
     deployments: List["WorkflowDeploymentPublic"] | None = None
+    attributes: List[Attribute] | None = None
 
 
 # ---------------------------------------------------------------------------
