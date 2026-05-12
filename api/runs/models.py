@@ -43,7 +43,12 @@ class SequencingRun(SQLModel, table=True):
     # Searchable is a field used for Elasticsearch
     # This field is iterated on to identify what fields are searchable
     # or inserted into the ElasticSearch index.
-    __searchable__ = ["run_id", "flowcell_id", "experiment_name", "run_folder_uri"]
+    __searchable__ = [
+        "run_id",
+        "flowcell_id",  # We discovered flowcell may not be in the run id
+        "experiment_name",
+        "run_folder_uri",
+    ]
 
     id: uuid.UUID | None = Field(default_factory=uuid.uuid4, primary_key=True)
 
