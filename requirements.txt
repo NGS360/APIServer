@@ -127,7 +127,7 @@ pydantic==2.12.5
     #   pydantic-extra-types
     #   pydantic-settings
     #   sqlmodel
-pydantic-core==2.46.4
+pydantic-core==2.41.5
     # via pydantic
 pydantic-extra-types==2.11.0
     # via fastapi
@@ -166,7 +166,7 @@ rich==14.3.3
     # via
     #   rich-toolkit
     #   typer
-rich-toolkit==0.17.0
+rich-toolkit==0.19.8
     # via
     #   fastapi-cli
     #   fastapi-cloud-cli
