@@ -186,7 +186,7 @@ class WorkflowVersionPublic(SQLModel):
 
 class WorkflowVersionAliasSet(SQLModel):
     """Body for PUT /workflows/{id}/aliases/{alias}."""
-    workflow_version_id: uuid.UUID
+    version_num: int
 
 
 class WorkflowVersionAliasPublic(SQLModel):

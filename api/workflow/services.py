@@ -285,21 +285,23 @@ def get_workflow_versions(
     return versions
 
 
-def get_workflow_version_by_id(
-    session: Session, version_id: str,
+def get_workflow_version_by_num(
+    session: Session, workflow_id: str, version_num: int,
 ) -> WorkflowVersion:
-    """Get a single workflow version by its UUID."""
-    ver_uuid = _parse_uuid(version_id, "version_id")
+    """Get a workflow version by its (workflow_id, version) composite key."""
+    workflow = get_workflow_by_id(session, workflow_id)
     version = session.exec(
-        select(WorkflowVersion)
-        .where(WorkflowVersion.id == ver_uuid)
+        select(WorkflowVersion).where(
+            WorkflowVersion.workflow_id == workflow.id,
+            WorkflowVersion.version == version_num,
+        )
     ).first()
     if not version:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=(
-                f"Workflow version with id "
-                f"'{version_id}' not found."
+                f"Version {version_num} not found "
+                f"for workflow '{workflow_id}'."
             ),
         )
     return version
@@ -354,29 +356,15 @@ def set_workflow_version_alias(
     created_by: str,
 ) -> WorkflowVersionAlias:
     """Set or move an alias to a specific workflow version."""
-    workflow = get_workflow_by_id(session, workflow_id)
-
     # Verify the target version exists and belongs to this workflow
-    version = session.exec(
-        select(WorkflowVersion).where(
-            WorkflowVersion.id == alias_in.workflow_version_id,
-            WorkflowVersion.workflow_id == workflow.id,
-        )
-    ).first()
-    if not version:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=(
-                f"Workflow version "
-                f"'{alias_in.workflow_version_id}' not found "
-                f"for workflow '{workflow_id}'."
-            ),
-        )
+    version = get_workflow_version_by_num(
+        session, workflow_id, alias_in.version_num,
+    )
 
     # Upsert — replace existing alias or create new one
     existing = session.exec(
         select(WorkflowVersionAlias).where(
-            WorkflowVersionAlias.workflow_id == workflow.id,
+            WorkflowVersionAlias.workflow_id == version.workflow_id,
             WorkflowVersionAlias.alias == alias,
         )
     ).first()
@@ -390,7 +378,7 @@ def set_workflow_version_alias(
         return existing
 
     alias_record = WorkflowVersionAlias(
-        workflow_id=workflow.id,
+        workflow_id=version.workflow_id,
         alias=alias,
         workflow_version_id=version.id,
         created_by=created_by,
@@ -464,35 +452,18 @@ def alias_to_public(
 def create_workflow_deployment(
     session: Session,
     workflow_id: str,
-    version_id: str,
+    version_num: int,
     deployment_in: WorkflowDeploymentCreate,
     created_by: str,
 ) -> WorkflowDeployment:
     """Deploy a workflow version on a specific platform."""
-    # Verify workflow exists
-    workflow = get_workflow_by_id(session, workflow_id)
-
     # Verify version exists and belongs to this workflow
-    ver_uuid = _parse_uuid(version_id, "version_id")
-    version = session.exec(
-        select(WorkflowVersion).where(
-            WorkflowVersion.id == ver_uuid,
-            WorkflowVersion.workflow_id == workflow.id,
-        )
-    ).first()
-    if not version:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=(
-                f"Version '{version_id}' not found "
-                f"for workflow '{workflow_id}'."
-            ),
-        )
+    version = get_workflow_version_by_num(session, workflow_id, version_num)
 
     # Verify engine is a registered platform
     _validate_engine(session, deployment_in.engine)
 
-    # Check for duplicate (version_id, engine)
+    # Check for duplicate (version, engine)
     existing = session.exec(
         select(WorkflowDeployment).where(
             WorkflowDeployment.workflow_version_id == version.id,
@@ -503,7 +474,7 @@ def create_workflow_deployment(
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=(
-                f"Version '{version_id}' is already deployed "
+                f"Version {version_num} is already deployed "
                 f"on engine '{deployment_in.engine}'."
             ),
         )
@@ -524,26 +495,11 @@ def create_workflow_deployment(
 def get_workflow_deployments(
     session: Session,
     workflow_id: str,
-    version_id: str,
+    version_num: int,
     engine: str | None = None,
 ) -> list[WorkflowDeployment]:
     """List platform deployments for a workflow version."""
-    workflow = get_workflow_by_id(session, workflow_id)
-    ver_uuid = _parse_uuid(version_id, "version_id")
-    version = session.exec(
-        select(WorkflowVersion).where(
-            WorkflowVersion.id == ver_uuid,
-            WorkflowVersion.workflow_id == workflow.id,
-        )
-    ).first()
-    if not version:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=(
-                f"Version '{version_id}' not found "
-                f"for workflow '{workflow_id}'."
-            ),
-        )
+    version = get_workflow_version_by_num(session, workflow_id, version_num)
     stmt = select(WorkflowDeployment).where(
         WorkflowDeployment.workflow_version_id == version.id,
     )
@@ -606,26 +562,11 @@ def get_workflow_deployments_for_workflow(
 def delete_workflow_deployment(
     session: Session,
     workflow_id: str,
-    version_id: str,
+    version_num: int,
     deployment_id: str,
 ) -> None:
     """Remove a workflow platform deployment."""
-    workflow = get_workflow_by_id(session, workflow_id)
-    ver_uuid = _parse_uuid(version_id, "version_id")
-    version = session.exec(
-        select(WorkflowVersion).where(
-            WorkflowVersion.id == ver_uuid,
-            WorkflowVersion.workflow_id == workflow.id,
-        )
-    ).first()
-    if not version:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=(
-                f"Version '{version_id}' not found "
-                f"for workflow '{workflow_id}'."
-            ),
-        )
+    version = get_workflow_version_by_num(session, workflow_id, version_num)
     dep_uuid = _parse_uuid(deployment_id, "deployment_id")
     deployment = session.exec(
         select(WorkflowDeployment).where(
@@ -638,7 +579,7 @@ def delete_workflow_deployment(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=(
                 f"Deployment '{deployment_id}' not found "
-                f"for version '{version_id}'."
+                f"for version {version_num}."
             ),
         )
     session.delete(deployment)

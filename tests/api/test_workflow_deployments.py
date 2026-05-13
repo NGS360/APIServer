@@ -13,8 +13,8 @@ from api.workflow.models import Workflow, WorkflowVersion
 
 def _create_workflow_and_version(
     session: Session,
-) -> tuple[str, str]:
-    """Insert a workflow + version; return (wf_id, version_id)."""
+) -> tuple[str, str, int]:
+    """Insert a workflow + version; return (wf_id, version_uuid, version_num)."""
     wf = Workflow(
         name="WDL Alignment",
         created_by="testuser",
@@ -31,7 +31,7 @@ def _create_workflow_and_version(
     session.commit()
     session.refresh(wf)
     session.refresh(ver)
-    return str(wf.id), str(ver.id)
+    return str(wf.id), str(ver.id), ver.version
 
 
 def _seed_platforms(session: Session) -> None:
@@ -42,7 +42,7 @@ def _seed_platforms(session: Session) -> None:
 
 
 # ---------------------------------------------------------------------------
-# POST /workflows/{id}/versions/{vid}/deployments
+# POST /workflows/{id}/versions/{version_num}/deployments
 # ---------------------------------------------------------------------------
 
 def test_create_deployment(
@@ -50,14 +50,14 @@ def test_create_deployment(
 ):
     """Deploy a workflow version on a platform engine."""
     _seed_platforms(session)
-    wf_id, ver_id = _create_workflow_and_version(session)
+    wf_id, ver_id, ver_num = _create_workflow_and_version(session)
 
     body = {
         "engine": "Arvados",
         "external_id": "arvados-wf-abc123",
     }
     resp = client.post(
-        f"/api/v1/workflows/{wf_id}/versions/{ver_id}"
+        f"/api/v1/workflows/{wf_id}/versions/{ver_num}"
         f"/deployments",
         json=body,
     )
@@ -77,14 +77,14 @@ def test_create_deployment_minimal(
 ):
     """Only engine and external_id are required."""
     _seed_platforms(session)
-    wf_id, ver_id = _create_workflow_and_version(session)
+    wf_id, ver_id, ver_num = _create_workflow_and_version(session)
 
     body = {
         "engine": "SevenBridges",
         "external_id": "sb-app-xyz",
     }
     resp = client.post(
-        f"/api/v1/workflows/{wf_id}/versions/{ver_id}"
+        f"/api/v1/workflows/{wf_id}/versions/{ver_num}"
         f"/deployments",
         json=body,
     )
@@ -95,13 +95,13 @@ def test_create_deployment_minimal(
 def test_create_deployment_duplicate_engine_conflict(
     client: TestClient, session: Session,
 ):
-    """Duplicate (version_id, engine) pair returns 409."""
+    """Duplicate (version_num, engine) pair returns 409."""
     _seed_platforms(session)
-    wf_id, ver_id = _create_workflow_and_version(session)
+    wf_id, ver_id, ver_num = _create_workflow_and_version(session)
 
     body = {"engine": "Arvados", "external_id": "arv-1"}
     resp1 = client.post(
-        f"/api/v1/workflows/{wf_id}/versions/{ver_id}"
+        f"/api/v1/workflows/{wf_id}/versions/{ver_num}"
         f"/deployments",
         json=body,
     )
@@ -109,7 +109,7 @@ def test_create_deployment_duplicate_engine_conflict(
 
     body2 = {"engine": "Arvados", "external_id": "arv-2"}
     resp2 = client.post(
-        f"/api/v1/workflows/{wf_id}/versions/{ver_id}"
+        f"/api/v1/workflows/{wf_id}/versions/{ver_num}"
         f"/deployments",
         json=body2,
     )
@@ -126,10 +126,9 @@ def test_create_deployment_version_not_found(
     session.commit()
     session.refresh(wf)
 
-    fake_ver = "00000000-0000-0000-0000-000000000000"
     body = {"engine": "Arvados", "external_id": "x"}
     resp = client.post(
-        f"/api/v1/workflows/{wf.id}/versions/{fake_ver}"
+        f"/api/v1/workflows/{wf.id}/versions/99"
         f"/deployments",
         json=body,
     )
@@ -140,11 +139,11 @@ def test_create_deployment_invalid_engine(
     client: TestClient, session: Session,
 ):
     """Deployment with an unregistered engine returns 400."""
-    wf_id, ver_id = _create_workflow_and_version(session)
+    wf_id, ver_id, ver_num = _create_workflow_and_version(session)
 
     body = {"engine": "UnknownPlatform", "external_id": "x"}
     resp = client.post(
-        f"/api/v1/workflows/{wf_id}/versions/{ver_id}"
+        f"/api/v1/workflows/{wf_id}/versions/{ver_num}"
         f"/deployments",
         json=body,
     )
@@ -153,16 +152,16 @@ def test_create_deployment_invalid_engine(
 
 
 # ---------------------------------------------------------------------------
-# GET /workflows/{id}/versions/{vid}/deployments
+# GET /workflows/{id}/versions/{version_num}/deployments
 # ---------------------------------------------------------------------------
 
 def test_get_deployments_empty(
     client: TestClient, session: Session,
 ):
     """List deployments for a version with none."""
-    wf_id, ver_id = _create_workflow_and_version(session)
+    wf_id, ver_id, ver_num = _create_workflow_and_version(session)
     resp = client.get(
-        f"/api/v1/workflows/{wf_id}/versions/{ver_id}"
+        f"/api/v1/workflows/{wf_id}/versions/{ver_num}"
         f"/deployments",
     )
     assert resp.status_code == 200
@@ -174,15 +173,15 @@ def test_get_deployments_multiple(
 ):
     """List deployments after adding two engines."""
     _seed_platforms(session)
-    wf_id, ver_id = _create_workflow_and_version(session)
+    wf_id, ver_id, ver_num = _create_workflow_and_version(session)
 
     client.post(
-        f"/api/v1/workflows/{wf_id}/versions/{ver_id}"
+        f"/api/v1/workflows/{wf_id}/versions/{ver_num}"
         f"/deployments",
         json={"engine": "Arvados", "external_id": "arv-1"},
     )
     client.post(
-        f"/api/v1/workflows/{wf_id}/versions/{ver_id}"
+        f"/api/v1/workflows/{wf_id}/versions/{ver_num}"
         f"/deployments",
         json={
             "engine": "SevenBridges",
@@ -191,7 +190,7 @@ def test_get_deployments_multiple(
     )
 
     resp = client.get(
-        f"/api/v1/workflows/{wf_id}/versions/{ver_id}"
+        f"/api/v1/workflows/{wf_id}/versions/{ver_num}"
         f"/deployments",
     )
     assert resp.status_code == 200
@@ -210,24 +209,24 @@ def test_delete_deployment(
 ):
     """Delete a deployment returns 204 and it's gone."""
     _seed_platforms(session)
-    wf_id, ver_id = _create_workflow_and_version(session)
+    wf_id, ver_id, ver_num = _create_workflow_and_version(session)
 
     create_resp = client.post(
-        f"/api/v1/workflows/{wf_id}/versions/{ver_id}"
+        f"/api/v1/workflows/{wf_id}/versions/{ver_num}"
         f"/deployments",
         json={"engine": "Arvados", "external_id": "arv-1"},
     )
     dep_id = create_resp.json()["id"]
 
     del_resp = client.delete(
-        f"/api/v1/workflows/{wf_id}/versions/{ver_id}"
+        f"/api/v1/workflows/{wf_id}/versions/{ver_num}"
         f"/deployments/{dep_id}",
     )
     assert del_resp.status_code == 204
 
     # Verify it's gone
     list_resp = client.get(
-        f"/api/v1/workflows/{wf_id}/versions/{ver_id}"
+        f"/api/v1/workflows/{wf_id}/versions/{ver_num}"
         f"/deployments",
     )
     assert list_resp.json() == []
@@ -237,18 +236,18 @@ def test_delete_deployment_not_found(
     client: TestClient, session: Session,
 ):
     """Deleting a non-existent deployment returns 404."""
-    wf_id, ver_id = _create_workflow_and_version(session)
+    wf_id, ver_id, ver_num = _create_workflow_and_version(session)
     fake_dep = "00000000-0000-0000-0000-000000000000"
 
     resp = client.delete(
-        f"/api/v1/workflows/{wf_id}/versions/{ver_id}"
+        f"/api/v1/workflows/{wf_id}/versions/{ver_num}"
         f"/deployments/{fake_dep}",
     )
     assert resp.status_code == 404
 
 
 # ---------------------------------------------------------------------------
-# GET .../versions/{vid}/deployments?engine=
+# GET .../versions/{version_num}/deployments?engine=
 # ---------------------------------------------------------------------------
 
 def test_get_deployments_filter_by_engine(
@@ -256,15 +255,15 @@ def test_get_deployments_filter_by_engine(
 ):
     """Filter version-level deployments by engine."""
     _seed_platforms(session)
-    wf_id, ver_id = _create_workflow_and_version(session)
+    wf_id, ver_id, ver_num = _create_workflow_and_version(session)
 
     client.post(
-        f"/api/v1/workflows/{wf_id}/versions/{ver_id}"
+        f"/api/v1/workflows/{wf_id}/versions/{ver_num}"
         f"/deployments",
         json={"engine": "Arvados", "external_id": "arv-1"},
     )
     client.post(
-        f"/api/v1/workflows/{wf_id}/versions/{ver_id}"
+        f"/api/v1/workflows/{wf_id}/versions/{ver_num}"
         f"/deployments",
         json={
             "engine": "SevenBridges",
@@ -273,7 +272,7 @@ def test_get_deployments_filter_by_engine(
     )
 
     resp = client.get(
-        f"/api/v1/workflows/{wf_id}/versions/{ver_id}"
+        f"/api/v1/workflows/{wf_id}/versions/{ver_num}"
         f"/deployments?engine=Arvados",
     )
     assert resp.status_code == 200
@@ -287,16 +286,16 @@ def test_get_deployments_filter_engine_no_match(
 ):
     """Engine filter returns empty list when no match."""
     _seed_platforms(session)
-    wf_id, ver_id = _create_workflow_and_version(session)
+    wf_id, ver_id, ver_num = _create_workflow_and_version(session)
 
     client.post(
-        f"/api/v1/workflows/{wf_id}/versions/{ver_id}"
+        f"/api/v1/workflows/{wf_id}/versions/{ver_num}"
         f"/deployments",
         json={"engine": "Arvados", "external_id": "arv-1"},
     )
 
     resp = client.get(
-        f"/api/v1/workflows/{wf_id}/versions/{ver_id}"
+        f"/api/v1/workflows/{wf_id}/versions/{ver_num}"
         f"/deployments?engine=SevenBridges",
     )
     assert resp.status_code == 200
@@ -312,16 +311,16 @@ def test_version_public_includes_deployments(
 ):
     """GET version includes nested deployment data."""
     _seed_platforms(session)
-    wf_id, ver_id = _create_workflow_and_version(session)
+    wf_id, ver_id, ver_num = _create_workflow_and_version(session)
 
     client.post(
-        f"/api/v1/workflows/{wf_id}/versions/{ver_id}"
+        f"/api/v1/workflows/{wf_id}/versions/{ver_num}"
         f"/deployments",
         json={"engine": "Arvados", "external_id": "arv-1"},
     )
 
     resp = client.get(
-        f"/api/v1/workflows/{wf_id}/versions/{ver_id}",
+        f"/api/v1/workflows/{wf_id}/versions/{ver_num}",
     )
     assert resp.status_code == 200
     data = resp.json()
@@ -335,11 +334,11 @@ def test_version_public_includes_deployments(
 
 def _create_two_versions_with_deps(
     client: TestClient, session: Session,
-) -> tuple[str, str, str]:
+) -> tuple[str, int, int]:
     """Seed workflow with 2 versions, each deployed on Arvados.
 
     Also deploys v1 on SevenBridges.
-    Returns (wf_id, v1_id, v2_id).
+    Returns (wf_id, v1_num, v2_num).
     """
     _seed_platforms(session)
     wf = Workflow(name="Multi-Ver WF", created_by="testuser")
@@ -358,16 +357,16 @@ def _create_two_versions_with_deps(
     session.refresh(wf)
     session.refresh(v1)
     session.refresh(v2)
-    wf_id, v1_id, v2_id = str(wf.id), str(v1.id), str(v2.id)
+    wf_id = str(wf.id)
 
     # v1: Arvados + SevenBridges
     client.post(
-        f"/api/v1/workflows/{wf_id}/versions/{v1_id}"
+        f"/api/v1/workflows/{wf_id}/versions/1"
         f"/deployments",
         json={"engine": "Arvados", "external_id": "arv-v1"},
     )
     client.post(
-        f"/api/v1/workflows/{wf_id}/versions/{v1_id}"
+        f"/api/v1/workflows/{wf_id}/versions/1"
         f"/deployments",
         json={
             "engine": "SevenBridges",
@@ -376,11 +375,11 @@ def _create_two_versions_with_deps(
     )
     # v2: Arvados only
     client.post(
-        f"/api/v1/workflows/{wf_id}/versions/{v2_id}"
+        f"/api/v1/workflows/{wf_id}/versions/2"
         f"/deployments",
         json={"engine": "Arvados", "external_id": "arv-v2"},
     )
-    return wf_id, v1_id, v2_id
+    return wf_id, 1, 2
 
 
 def test_workflow_deployments_no_filter(
@@ -419,13 +418,13 @@ def test_workflow_deployments_filter_alias(
     client: TestClient, session: Session,
 ):
     """Alias filter resolves to a version and returns its deps."""
-    wf_id, v1_id, _ = _create_two_versions_with_deps(
+    wf_id, v1_num, _ = _create_two_versions_with_deps(
         client, session,
     )
     # Set production → v1
     client.put(
         f"/api/v1/workflows/{wf_id}/aliases/production",
-        json={"workflow_version_id": v1_id},
+        json={"version_num": v1_num},
     )
 
     resp = client.get(
@@ -443,12 +442,12 @@ def test_workflow_deployments_filter_alias_and_engine(
     client: TestClient, session: Session,
 ):
     """Alias + engine yields at most one deployment."""
-    wf_id, v1_id, _ = _create_two_versions_with_deps(
+    wf_id, v1_num, _ = _create_two_versions_with_deps(
         client, session,
     )
     client.put(
         f"/api/v1/workflows/{wf_id}/aliases/production",
-        json={"workflow_version_id": v1_id},
+        json={"version_num": v1_num},
     )
 
     resp = client.get(
