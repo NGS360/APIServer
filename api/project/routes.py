@@ -117,9 +117,8 @@ def search_projects(
 
 @router.post(
     "/search",
-    status_code=status.HTTP_201_CREATED,
+    status_code=status.HTTP_200_OK,
     tags=["Project Endpoints"],
-    response_model=ProjectsPublic,
 )
 def reindex_projects(
     session: SessionDep,
@@ -129,7 +128,7 @@ def reindex_projects(
     Reindex projects in database with OpenSearch
     """
     services.reindex_projects(session, client)
-    return 'OK'
+    return {"message": "OK"}
 
 ###############################################################################
 # Project Endpoints /api/v1/projects/{project_id}

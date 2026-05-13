@@ -140,7 +140,7 @@ def search_runs(
 
 @router.post(
     "/search",
-    status_code=status.HTTP_201_CREATED,
+    status_code=status.HTTP_200_OK,
     tags=["Run Endpoints"],
 )
 def reindex_runs(
@@ -151,7 +151,7 @@ def reindex_runs(
     Reindex runs in database with OpenSearch
     """
     services.reindex_runs(session, client)
-    return 'OK'
+    return {"message": "OK"}
 
 ###############################################################################
 # Runs Endpoints /api/v1/runs/demultiplex

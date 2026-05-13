@@ -48,6 +48,8 @@ class SequencingRun(SQLModel, table=True):
         "flowcell_id",  # We discovered flowcell may not be in the run id
         "experiment_name",
         "run_folder_uri",
+        "run_date",
+        "run_time"
     ]
 
     id: uuid.UUID | None = Field(default_factory=uuid.uuid4, primary_key=True)
