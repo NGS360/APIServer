@@ -132,13 +132,13 @@ def test_get_versions_multiple(
 
 
 # ---------------------------------------------------------------------------
-# GET /workflows/{id}/versions/{version_id}
+# GET /workflows/{id}/versions/{version_num}
 # ---------------------------------------------------------------------------
 
-def test_get_version_by_id(
+def test_get_version_by_num(
     client: TestClient, session: Session,
 ):
-    """Fetch a single version by its ID."""
+    """Fetch a single version by its version number."""
     wf_id = _create_workflow(session)
 
     create_resp = client.post(
@@ -147,15 +147,28 @@ def test_get_version_by_id(
             "definition_uri": "s3://bucket/v1.wdl",
         },
     )
+    assert create_resp.status_code == 201
     version_id = create_resp.json()["id"]
 
     resp = client.get(
-        f"/api/v1/workflows/{wf_id}/versions/{version_id}",
+        f"/api/v1/workflows/{wf_id}/versions/1",
     )
     assert resp.status_code == 200
     data = resp.json()
     assert data["id"] == version_id
     assert data["version"] == 1
+
+
+def test_get_version_by_num_not_found(
+    client: TestClient, session: Session,
+):
+    """Fetch a non-existent version number returns 404."""
+    wf_id = _create_workflow(session)
+
+    resp = client.get(
+        f"/api/v1/workflows/{wf_id}/versions/99",
+    )
+    assert resp.status_code == 404
 
 
 # ---------------------------------------------------------------------------

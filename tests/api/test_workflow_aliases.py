@@ -13,8 +13,8 @@ from api.workflow.models import Workflow, WorkflowVersion
 def _create_workflow_and_version(
     session: Session,
     version: int = 1,
-) -> tuple[str, str]:
-    """Insert a workflow + version; return (wf_id, version_id)."""
+) -> tuple[str, str, int]:
+    """Insert a workflow + version; return (wf_id, version_uuid, version_num)."""
     wf = Workflow(name="Alias Test WF", created_by="testuser")
     session.add(wf)
     session.flush()
@@ -28,7 +28,7 @@ def _create_workflow_and_version(
     session.commit()
     session.refresh(wf)
     session.refresh(ver)
-    return str(wf.id), str(ver.id)
+    return str(wf.id), str(ver.id), ver.version
 
 
 # ---------------------------------------------------------------------------
@@ -37,9 +37,9 @@ def _create_workflow_and_version(
 
 def test_set_alias(client: TestClient, session: Session):
     """Set the production alias."""
-    wf_id, ver_id = _create_workflow_and_version(session)
+    wf_id, ver_id, ver_num = _create_workflow_and_version(session)
 
-    body = {"workflow_version_id": ver_id}
+    body = {"version_num": ver_num}
     resp = client.put(
         f"/api/v1/workflows/{wf_id}/aliases/production",
         json=body,
@@ -58,11 +58,11 @@ def test_set_alias_development(
     client: TestClient, session: Session,
 ):
     """Set the development alias."""
-    wf_id, ver_id = _create_workflow_and_version(session)
+    wf_id, ver_id, ver_num = _create_workflow_and_version(session)
 
     resp = client.put(
         f"/api/v1/workflows/{wf_id}/aliases/development",
-        json={"workflow_version_id": ver_id},
+        json={"version_num": ver_num},
     )
     assert resp.status_code == 200
     assert resp.json()["alias"] == "development"
@@ -72,11 +72,11 @@ def test_set_alias_custom_value(
     client: TestClient, session: Session,
 ):
     """Any free-text alias value is accepted."""
-    wf_id, ver_id = _create_workflow_and_version(session)
+    wf_id, ver_id, ver_num = _create_workflow_and_version(session)
 
     resp = client.put(
         f"/api/v1/workflows/{wf_id}/aliases/staging",
-        json={"workflow_version_id": ver_id},
+        json={"version_num": ver_num},
     )
     assert resp.status_code == 200
     assert resp.json()["alias"] == "staging"
@@ -104,13 +104,11 @@ def test_move_alias_to_different_version(
     session.refresh(v2)
 
     wf_id = str(wf.id)
-    v1_id = str(v1.id)
-    v2_id = str(v2.id)
 
     # Set to v1
     resp1 = client.put(
         f"/api/v1/workflows/{wf_id}/aliases/production",
-        json={"workflow_version_id": v1_id},
+        json={"version_num": 1},
     )
     assert resp1.status_code == 200
     assert resp1.json()["version"] == 1
@@ -118,7 +116,7 @@ def test_move_alias_to_different_version(
     # Move to v2
     resp2 = client.put(
         f"/api/v1/workflows/{wf_id}/aliases/production",
-        json={"workflow_version_id": v2_id},
+        json={"version_num": 2},
     )
     assert resp2.status_code == 200
     assert resp2.json()["version"] == 2
@@ -133,10 +131,9 @@ def test_set_alias_version_not_found(
     session.commit()
     session.refresh(wf)
 
-    fake_ver = "00000000-0000-0000-0000-000000000000"
     resp = client.put(
         f"/api/v1/workflows/{wf.id}/aliases/production",
-        json={"workflow_version_id": fake_ver},
+        json={"version_num": 99},
     )
     assert resp.status_code == 404
 
@@ -165,15 +162,15 @@ def test_get_aliases_multiple(
     client: TestClient, session: Session,
 ):
     """List aliases after setting both production and development."""
-    wf_id, ver_id = _create_workflow_and_version(session)
+    wf_id, ver_id, ver_num = _create_workflow_and_version(session)
 
     client.put(
         f"/api/v1/workflows/{wf_id}/aliases/production",
-        json={"workflow_version_id": ver_id},
+        json={"version_num": ver_num},
     )
     client.put(
         f"/api/v1/workflows/{wf_id}/aliases/development",
-        json={"workflow_version_id": ver_id},
+        json={"version_num": ver_num},
     )
 
     resp = client.get(
@@ -192,11 +189,11 @@ def test_get_aliases_multiple(
 
 def test_delete_alias(client: TestClient, session: Session):
     """Delete an alias returns 204."""
-    wf_id, ver_id = _create_workflow_and_version(session)
+    wf_id, ver_id, ver_num = _create_workflow_and_version(session)
 
     client.put(
         f"/api/v1/workflows/{wf_id}/aliases/production",
-        json={"workflow_version_id": ver_id},
+        json={"version_num": ver_num},
     )
 
     del_resp = client.delete(
@@ -234,15 +231,15 @@ def test_get_aliases_filter_by_alias(
     client: TestClient, session: Session,
 ):
     """Filter aliases by alias name returns only that alias."""
-    wf_id, ver_id = _create_workflow_and_version(session)
+    wf_id, ver_id, ver_num = _create_workflow_and_version(session)
 
     client.put(
         f"/api/v1/workflows/{wf_id}/aliases/production",
-        json={"workflow_version_id": ver_id},
+        json={"version_num": ver_num},
     )
     client.put(
         f"/api/v1/workflows/{wf_id}/aliases/development",
-        json={"workflow_version_id": ver_id},
+        json={"version_num": ver_num},
     )
 
     resp = client.get(
@@ -259,11 +256,11 @@ def test_get_aliases_filter_no_match(
     client: TestClient, session: Session,
 ):
     """Filter by alias that isn't set returns empty list."""
-    wf_id, ver_id = _create_workflow_and_version(session)
+    wf_id, ver_id, ver_num = _create_workflow_and_version(session)
 
     client.put(
         f"/api/v1/workflows/{wf_id}/aliases/production",
-        json={"workflow_version_id": ver_id},
+        json={"version_num": ver_num},
     )
 
     resp = client.get(
@@ -282,11 +279,11 @@ def test_workflow_public_includes_aliases(
     client: TestClient, session: Session,
 ):
     """GET /workflows/{id} includes nested alias data."""
-    wf_id, ver_id = _create_workflow_and_version(session)
+    wf_id, ver_id, ver_num = _create_workflow_and_version(session)
 
     client.put(
         f"/api/v1/workflows/{wf_id}/aliases/production",
-        json={"workflow_version_id": ver_id},
+        json={"version_num": ver_num},
     )
 
     resp = client.get(f"/api/v1/workflows/{wf_id}")

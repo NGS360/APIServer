@@ -143,20 +143,18 @@ def get_workflow_versions(
 
 
 @router.get(
-    "/{workflow_id}/versions/{version_id}",
+    "/{workflow_id}/versions/{version_num}",
     response_model=WorkflowVersionPublic,
     tags=["Workflow Endpoints"],
 )
-def get_workflow_version_by_id(
+def get_workflow_version(
     session: SessionDep,
     workflow_id: str,
-    version_id: str,
+    version_num: int,
 ) -> WorkflowVersionPublic:
     """Get a specific workflow version."""
-    # Verify workflow exists first
-    services.get_workflow_by_id(session, workflow_id)
-    version = services.get_workflow_version_by_id(
-        session=session, version_id=version_id,
+    version = services.get_workflow_version_by_num(
+        session=session, workflow_id=workflow_id, version_num=version_num,
     )
     return services.workflow_version_to_public(version)
 
@@ -284,7 +282,7 @@ def get_workflow_deployments_for_workflow(
 # ---------------------------------------------------------------------------
 
 @router.post(
-    "/{workflow_id}/versions/{version_id}/deployments",
+    "/{workflow_id}/versions/{version_num}/deployments",
     response_model=WorkflowDeploymentPublic,
     tags=["Workflow Endpoints"],
     status_code=status.HTTP_201_CREATED,
@@ -293,14 +291,14 @@ def create_workflow_deployment(
     session: SessionDep,
     user: CurrentUser,
     workflow_id: str,
-    version_id: str,
+    version_num: int,
     deployment_in: WorkflowDeploymentCreate,
 ) -> WorkflowDeploymentPublic:
     """Deploy a workflow version on a specific platform."""
     dep = services.create_workflow_deployment(
         session=session,
         workflow_id=workflow_id,
-        version_id=version_id,
+        version_num=version_num,
         deployment_in=deployment_in,
         created_by=user.username,
     )
@@ -315,14 +313,14 @@ def create_workflow_deployment(
 
 
 @router.get(
-    "/{workflow_id}/versions/{version_id}/deployments",
+    "/{workflow_id}/versions/{version_num}/deployments",
     response_model=List[WorkflowDeploymentPublic],
     tags=["Workflow Endpoints"],
 )
 def get_workflow_deployments(
     session: SessionDep,
     workflow_id: str,
-    version_id: str,
+    version_num: int,
     engine: str | None = Query(
         None,
         description="Filter by engine/platform name",
@@ -332,7 +330,7 @@ def get_workflow_deployments(
     deps = services.get_workflow_deployments(
         session=session,
         workflow_id=workflow_id,
-        version_id=version_id,
+        version_num=version_num,
         engine=engine,
     )
     return [
@@ -349,7 +347,7 @@ def get_workflow_deployments(
 
 
 @router.delete(
-    "/{workflow_id}/versions/{version_id}"
+    "/{workflow_id}/versions/{version_num}"
     "/deployments/{deployment_id}",
     status_code=status.HTTP_204_NO_CONTENT,
     tags=["Workflow Endpoints"],
@@ -357,13 +355,13 @@ def get_workflow_deployments(
 def delete_workflow_deployment(
     session: SessionDep,
     workflow_id: str,
-    version_id: str,
+    version_num: int,
     deployment_id: str,
 ) -> None:
     """Remove a platform deployment."""
     services.delete_workflow_deployment(
         session=session,
         workflow_id=workflow_id,
-        version_id=version_id,
+        version_num=version_num,
         deployment_id=deployment_id,
     )
