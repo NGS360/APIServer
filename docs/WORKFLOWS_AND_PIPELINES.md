@@ -371,13 +371,13 @@ GET /workflows/{workflow_id}/versions
 
 Returns all versions of a workflow, ordered by creation date (newest first).
 
-#### Get Version by ID
+#### Get Version by Number
 
 ```
-GET /workflows/{workflow_id}/versions/{version_id}
+GET /workflows/{workflow_id}/versions/{version_num}
 ```
 
-Returns a single version with its deployments.
+Returns a single version with its deployments. The `{version_num}` is the integer version number (e.g. `1`, `2`, `3`).
 
 ### WorkflowVersionAlias Endpoints
 
@@ -387,15 +387,17 @@ Returns a single version with its deployments.
 PUT /workflows/{workflow_id}/aliases/{alias}
 ```
 
-Where `{alias}` is `production` or `development`.
+Where `{alias}` is any free-text alias name (e.g. `production`, `development`, `staging`).
 
 **Request Body:**
 
 ```json
 {
-  "workflow_version_id": "v1v2v3v4-..."
+  "version_num": 2
 }
 ```
+
+The `version_num` is the integer version number of the target workflow version within this workflow.
 
 **Response** (`200 OK`):
 
@@ -405,17 +407,17 @@ Where `{alias}` is `production` or `development`.
   "workflow_id": "a1b2c3d4-...",
   "alias": "production",
   "workflow_version_id": "v1v2v3v4-...",
-  "version": "2.1.0",
+  "version": 2,
   "created_at": "2026-03-01T12:10:00Z",
   "created_by": "jdoe"
 }
 ```
 
-Moving an alias (e.g., changing production from v2.0 to v2.1) is an upsert — same endpoint, new version ID.
+Moving an alias (e.g., changing production from version 1 to version 2) is an upsert — same endpoint, new version number.
 
 **Errors:**
 - `404 Not Found` — Workflow or version not found.
-- `422 Unprocessable Content` — Invalid alias value.
+- `422 Unprocessable Content` — Invalid request body.
 
 #### List Aliases
 
@@ -490,8 +492,10 @@ List deployments across all versions of a workflow. Optional query parameters al
 Deployments can also be created and managed under a specific version.
 
 ```
-POST /workflows/{workflow_id}/versions/{version_id}/deployments
+POST /workflows/{workflow_id}/versions/{version_num}/deployments
 ```
+
+The `{version_num}` is the integer version number (e.g. `1`, `2`, `3`).
 
 **Request Body:**
 
@@ -519,16 +523,17 @@ POST /workflows/{workflow_id}/versions/{version_id}/deployments
 
 **Errors:**
 - `400 Bad Request` — Engine is not a registered platform.
+- `404 Not Found` — Version number does not exist for this workflow.
 - `409 Conflict` — A deployment for the same engine already exists for this version.
 
 #### List Deployments (Version-Level)
 
 ```
-GET /workflows/{workflow_id}/versions/{version_id}/deployments
-GET /workflows/{workflow_id}/versions/{version_id}/deployments?engine=Arvados
+GET /workflows/{workflow_id}/versions/{version_num}/deployments
+GET /workflows/{workflow_id}/versions/{version_num}/deployments?engine=Arvados
 ```
 
-Returns platform deployments for a version. Optional query parameter:
+Returns platform deployments for a version. The `{version_num}` is the integer version number. Optional query parameter:
 
 | Param | Type | Required | Description |
 |-------|------|----------|-------------|
@@ -537,7 +542,7 @@ Returns platform deployments for a version. Optional query parameter:
 #### Delete Deployment
 
 ```
-DELETE /workflows/{workflow_id}/versions/{version_id}/deployments/{deployment_id}
+DELETE /workflows/{workflow_id}/versions/{version_num}/deployments/{deployment_id}
 ```
 
 **Response:** `204 No Content`
