@@ -181,6 +181,17 @@ def workflow_to_public(workflow: Workflow) -> WorkflowPublic:
                 version=v.version,
                 definition_uri=v.definition_uri,
                 created_at=v.created_at,
+                deployments=[
+                    WorkflowDeploymentPublic(
+                        id=d.id,
+                        workflow_version_id=d.workflow_version_id,
+                        engine=d.engine,
+                        external_id=d.external_id,
+                        created_at=d.created_at,
+                        created_by=d.created_by,
+                    )
+                    for d in (v.deployments or [])
+                ] or None,
             )
             for v in workflow.versions
         ]

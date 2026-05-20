@@ -141,6 +141,7 @@ class WorkflowVersionSummary(SQLModel):
     version: int
     definition_uri: str
     created_at: datetime
+    deployments: List["WorkflowDeploymentPublic"] | None = None
 
 
 class WorkflowAliasSummary(SQLModel):
