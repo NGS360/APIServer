@@ -617,7 +617,7 @@ def test_get_samples_file_versions_latest_deduplicates(
 ):
     """With file_versions=latest (default), only the newest version of each
     URI should be returned per sample."""
-    from datetime import datetime, timezone, timedelta
+    from datetime import datetime, timezone
 
     project = _seed_project(session)
     sample = _seed_sample(session, project, "SampleDedupLatest")
