@@ -749,6 +749,42 @@ def add_sample_to_project(
     return sample
 
 
+def _deduplicate_files_by_uri(
+    file_samples: list,
+) -> list:
+    """
+    Given a list of FileSample associations, group by File.uri and keep only
+    the file with the latest ``created_on`` per URI.
+
+    Args:
+        file_samples: List of FileSample ORM objects (with .file eagerly loaded)
+
+    Returns:
+        List of SampleFilePublic instances (one per unique URI, latest version)
+    """
+    uri_to_best: dict[str, tuple] = {}  # uri -> (created_on, FileSample)
+
+    for fs in file_samples:
+        file = fs.file
+        uri = file.uri
+        created = file.created_on
+
+        if uri not in uri_to_best or created > uri_to_best[uri][0]:
+            uri_to_best[uri] = (created, fs)
+
+    result = []
+    for _uri, (_created, fs) in uri_to_best.items():
+        file = fs.file
+        tags_dict = {t.key: t.value for t in (file.tags or [])}
+        result.append(SampleFilePublic(
+            uri=file.uri,
+            tags=tags_dict or None,
+            created_on=file.created_on,
+        ))
+
+    return result
+
+
 def get_project_samples(
     *,
     session: Session,
@@ -758,6 +794,7 @@ def get_project_samples(
     sort_by: str,
     sort_order: Literal["asc", "desc"],
     include: list[str] | None = None,
+    file_versions: str = "latest",
 ) -> SamplesPublic | SamplesWithFilesPublic:
     """
     Get a paginated list of samples for a specific project.
@@ -770,6 +807,8 @@ def get_project_samples(
         sort_by: Column name to sort by
         sort_order: Sort direction ('asc' or 'desc')
         include: Optional list of related data to include (e.g. ``["files"]``)
+        file_versions: ``"latest"`` (default) returns only the newest file per
+            URI; ``"all"`` returns every version.
 
     Returns:
         SamplesPublic or SamplesWithFilesPublic depending on *include*
@@ -823,11 +862,20 @@ def get_project_samples(
     if include_files:
         public_samples = []
         for sample in samples:
-            files = []
-            for fs in sample.file_samples or []:
-                file = fs.file
-                tags_dict = {t.key: t.value for t in (file.tags or [])}
-                files.append(SampleFilePublic(uri=file.uri, tags=tags_dict or None))
+            if file_versions == "latest":
+                # Deduplicate: keep only the newest version per URI
+                files = _deduplicate_files_by_uri(sample.file_samples or [])
+            else:
+                # Return all versions
+                files = []
+                for fs in sample.file_samples or []:
+                    file = fs.file
+                    tags_dict = {t.key: t.value for t in (file.tags or [])}
+                    files.append(SampleFilePublic(
+                        uri=file.uri,
+                        tags=tags_dict or None,
+                        created_on=file.created_on,
+                    ))
             public_samples.append(
                 SampleWithFilesPublic(
                     sample_id=sample.sample_id,

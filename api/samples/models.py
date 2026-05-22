@@ -91,6 +91,7 @@ class SampleFilePublic(SQLModel):
     """Compact file representation for sample responses."""
     uri: str
     tags: dict[str, str] | None = None  # Flattened from List[FileTag]
+    created_on: datetime  # File version timestamp
 
 
 class SampleWithFilesPublic(SamplePublic):

@@ -339,6 +339,14 @@ def get_project_samples(
     include: TypingList[str] | None = Query(
         None, description="Include related data: files"
     ),
+    file_versions: Literal["latest", "all"] = Query(
+        "latest",
+        description=(
+            "When include=files, controls file version behaviour. "
+            "'latest' (default) returns only the newest version per URI; "
+            "'all' returns every version."
+        ),
+    ),
 ) -> SamplesWithFilesPublic | SamplesPublic:
     """
     Returns a list of samples for a project.
@@ -346,6 +354,9 @@ def get_project_samples(
     Pagination is offset-based: ``skip`` is the number of records to skip
     and ``limit`` caps the page size. Pass ``?include=files`` to eagerly
     load file metadata for each sample.
+
+    By default only the latest version of each file (by URI) is returned.
+    Pass ``?file_versions=all`` to include all versions.
     """
     return services.get_project_samples(
         session=session,
@@ -355,6 +366,7 @@ def get_project_samples(
         sort_by=sort_by,
         sort_order=sort_order,
         include=include,
+        file_versions=file_versions,
     )
 
 

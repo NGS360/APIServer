@@ -605,3 +605,184 @@ def test_get_samples_include_files_mixed_samples(
     assert items["SampleWithFiles"]["files"] is not None
     assert len(items["SampleWithFiles"]["files"]) == 1
     assert items["SampleWithNoFiles"]["files"] is None
+
+
+# ---------------------------------------------------------------------------
+# file_versions deduplication tests
+# ---------------------------------------------------------------------------
+
+
+def test_get_samples_file_versions_latest_deduplicates(
+    client: TestClient, session: Session
+):
+    """With file_versions=latest (default), only the newest version of each
+    URI should be returned per sample."""
+    from datetime import datetime, timezone
+
+    project = _seed_project(session)
+    sample = _seed_sample(session, project, "SampleDedupLatest")
+
+    uri = "s3://bucket/P-1234/SampleDedupLatest_R1.fastq.gz"
+
+    # Create older version
+    older_file = File(
+        uri=uri,
+        created_on=datetime(2024, 1, 1, tzinfo=timezone.utc),
+    )
+    session.add(older_file)
+    session.flush()
+    session.add(FileSample(file_id=older_file.id, sample_id=sample.id))
+    session.add(FileTag(file_id=older_file.id, key="mate", value="R1"))
+    session.add(FileTag(file_id=older_file.id, key="version", value="old"))
+
+    # Create newer version (same URI, later timestamp)
+    newer_file = File(
+        uri=uri,
+        created_on=datetime(2024, 6, 15, tzinfo=timezone.utc),
+    )
+    session.add(newer_file)
+    session.flush()
+    session.add(FileSample(file_id=newer_file.id, sample_id=sample.id))
+    session.add(FileTag(file_id=newer_file.id, key="mate", value="R1"))
+    session.add(FileTag(file_id=newer_file.id, key="version", value="new"))
+
+    session.commit()
+
+    # Default (file_versions=latest) — should return only 1 file
+    response = client.get(
+        f"/api/v1/projects/{project.project_id}/samples",
+        params={"include": "files"},
+    )
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert len(data) == 1
+
+    files = data[0]["files"]
+    assert files is not None
+    assert len(files) == 1
+    assert files[0]["uri"] == uri
+    # Should be the newer version's tags
+    assert files[0]["tags"]["version"] == "new"
+    # Should include created_on from the newer version
+    assert "created_on" in files[0]
+    assert files[0]["created_on"] == "2024-06-15T00:00:00Z"
+
+
+def test_get_samples_file_versions_all_returns_all(
+    client: TestClient, session: Session
+):
+    """With file_versions=all, all versions of each URI should be returned."""
+    from datetime import datetime, timezone
+
+    project = _seed_project(session)
+    sample = _seed_sample(session, project, "SampleDedupAll")
+
+    uri = "s3://bucket/P-1234/SampleDedupAll_R1.fastq.gz"
+
+    # Create older version
+    older_file = File(
+        uri=uri,
+        created_on=datetime(2024, 1, 1, tzinfo=timezone.utc),
+    )
+    session.add(older_file)
+    session.flush()
+    session.add(FileSample(file_id=older_file.id, sample_id=sample.id))
+    session.add(FileTag(file_id=older_file.id, key="mate", value="R1"))
+
+    # Create newer version
+    newer_file = File(
+        uri=uri,
+        created_on=datetime(2024, 6, 15, tzinfo=timezone.utc),
+    )
+    session.add(newer_file)
+    session.flush()
+    session.add(FileSample(file_id=newer_file.id, sample_id=sample.id))
+    session.add(FileTag(file_id=newer_file.id, key="mate", value="R1"))
+
+    session.commit()
+
+    # file_versions=all — should return both versions
+    response = client.get(
+        f"/api/v1/projects/{project.project_id}/samples",
+        params={"include": "files", "file_versions": "all"},
+    )
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert len(data) == 1
+
+    files = data[0]["files"]
+    assert files is not None
+    assert len(files) == 2
+    # Both should have the same URI
+    assert all(f["uri"] == uri for f in files)
+
+
+def test_get_samples_file_versions_latest_distinct_uris_preserved(
+    client: TestClient, session: Session
+):
+    """Deduplication only collapses same-URI files; distinct URIs are kept."""
+    from datetime import datetime, timezone
+
+    project = _seed_project(session)
+    sample = _seed_sample(session, project, "SampleDistinctURIs")
+
+    uri_r1 = "s3://bucket/P-1234/SampleDistinctURIs_R1.fastq.gz"
+    uri_r2 = "s3://bucket/P-1234/SampleDistinctURIs_R2.fastq.gz"
+
+    # R1 file (two versions)
+    f1_old = File(uri=uri_r1, created_on=datetime(2024, 1, 1, tzinfo=timezone.utc))
+    session.add(f1_old)
+    session.flush()
+    session.add(FileSample(file_id=f1_old.id, sample_id=sample.id))
+    session.add(FileTag(file_id=f1_old.id, key="mate", value="R1"))
+
+    f1_new = File(uri=uri_r1, created_on=datetime(2024, 6, 1, tzinfo=timezone.utc))
+    session.add(f1_new)
+    session.flush()
+    session.add(FileSample(file_id=f1_new.id, sample_id=sample.id))
+    session.add(FileTag(file_id=f1_new.id, key="mate", value="R1"))
+
+    # R2 file (single version)
+    f2 = File(uri=uri_r2, created_on=datetime(2024, 3, 1, tzinfo=timezone.utc))
+    session.add(f2)
+    session.flush()
+    session.add(FileSample(file_id=f2.id, sample_id=sample.id))
+    session.add(FileTag(file_id=f2.id, key="mate", value="R2"))
+
+    session.commit()
+
+    # Default (latest) — should return 2 files (one per URI)
+    response = client.get(
+        f"/api/v1/projects/{project.project_id}/samples",
+        params={"include": "files"},
+    )
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert len(data) == 1
+
+    files = data[0]["files"]
+    assert files is not None
+    assert len(files) == 2
+
+    uris = {f["uri"] for f in files}
+    assert uri_r1 in uris
+    assert uri_r2 in uris
+
+
+def test_get_samples_file_versions_without_include_files_ignored(
+    client: TestClient, session: Session
+):
+    """file_versions param has no effect when include=files is not specified."""
+    project = _seed_project(session)
+    _seed_sample(session, project, "SampleNoInclude")
+    session.commit()
+
+    response = client.get(
+        f"/api/v1/projects/{project.project_id}/samples",
+        params={"file_versions": "all"},
+    )
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert len(data) == 1
+    # Should not have a 'files' key in the response
+    assert "files" not in data[0]
