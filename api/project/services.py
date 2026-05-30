@@ -74,14 +74,19 @@ def generate_project_id(*, session: Session) -> str:
 
 
 def create_project(
-    *, session: Session, project_in: ProjectCreate, opensearch_client: OpenSearch = None
+    session: Session,
+    project_in: ProjectCreate,
+    current_user: str,
+    opensearch_client: OpenSearch = None
 ) -> ProjectPublic:
     """
     Create a new project with optional attributes.
     """
     # Create initial project
     project = Project(
-        project_id=generate_project_id(session=session), name=project_in.name
+        project_id=generate_project_id(session=session),
+        name=project_in.name,
+        created_by=current_user
     )
     session.add(project)
     session.flush()

@@ -2,6 +2,7 @@
 Models for the Project API
 """
 
+from datetime import datetime, timezone
 import uuid
 from sqlmodel import SQLModel, Field, Relationship, UniqueConstraint
 from typing import List, TYPE_CHECKING
@@ -35,6 +36,14 @@ class Project(SQLModel, table=True):
     id: uuid.UUID | None = Field(default_factory=uuid.uuid4, primary_key=True)
     project_id: str = Field(unique=True)
     name: str | None = Field(max_length=2048)
+
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    created_by: str
+    last_modified: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+        sa_column_kwargs={"onupdate": lambda: datetime.now(timezone.utc)}
+    )
+
     attributes: List[ProjectAttribute] | None = Relationship(back_populates="projects")
     samples: List["Sample"] = Relationship(back_populates="project")
     qcrecords: List["QCRecord"] = Relationship(back_populates="project")
