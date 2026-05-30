@@ -12,6 +12,14 @@ from api.project.models import Project, ProjectAttribute
 from api.project.services import generate_project_id
 
 
+def _create_project(session: Session):
+    new_project = Project(name="Test Project", created_by="testuser")
+    new_project.project_id = generate_project_id(session=session)
+    new_project.attributes = []
+    session.add(new_project)
+    session.commit()
+
+
 def test_get_projects_with_no_data(client: TestClient, session: Session):
     """Test that we can get projects when there is no data"""
     # Test No projects, this also ensure we are using the test db
@@ -31,7 +39,7 @@ def test_get_projects_with_no_data(client: TestClient, session: Session):
 def test_get_projects_with_data(client: TestClient, session: Session):
     """Test that we can get projects"""
     # Add a project
-    new_project = Project(name="AI Research")
+    new_project = Project(name="AI Research", created_by="testuser")
     new_project.project_id = generate_project_id(session=session)
 
     # Initialize the attributes list if None
@@ -76,7 +84,7 @@ def test_get_project_with_sequencing_runs(client: TestClient, session: Session):
     from api.runs.models import SequencingRun, SampleSequencingRun, RunStatus
 
     # Create a project
-    project = Project(name="Test Project with Runs")
+    project = Project(name="Test Project with Runs", created_by="testuser")
     project.project_id = generate_project_id(session=session)
     session.add(project)
     session.flush()
@@ -181,7 +189,7 @@ def test_get_project_without_sequencing_runs(client: TestClient, session: Sessio
     from api.project.services import generate_project_id
 
     # Create a project with no samples or runs
-    project = Project(name="Project Without Runs")
+    project = Project(name="Project Without Runs", created_by="testuser")
     project.project_id = generate_project_id(session=session)
     session.add(project)
     session.commit()
@@ -208,7 +216,7 @@ def test_get_project_with_samples_but_no_runs(client: TestClient, session: Sessi
     from api.samples.models import Sample
 
     # Create a project with samples but no runs
-    project = Project(name="Project With Samples No Runs")
+    project = Project(name="Project With Samples No Runs", created_by="testuser")
     project.project_id = generate_project_id(session=session)
     session.add(project)
     session.flush()
@@ -303,7 +311,7 @@ def test_generate_project_id(session: Session):
     # Check that the project id ends with a 0001
     assert project_id.endswith("0001")
     # Add the project to the db
-    project = Project(project_id=project_id, name="a project")
+    project = Project(project_id=project_id, name="a project", created_by="testuser")
     session.add(project)
     session.flush()
 
@@ -320,7 +328,7 @@ def test_get_project(client: TestClient, session: Session):
     assert response.status_code == 404
 
     # Add project to db
-    new_project = Project(name="Test Project")
+    new_project = Project(name="Test Project", created_by="testuser")
     new_project.project_id = generate_project_id(session=session)
     new_project.attributes = []
     session.add(new_project)
@@ -343,7 +351,7 @@ def test_get_project(client: TestClient, session: Session):
 def test_update_project_name(client: TestClient, session: Session):
     """Test that we can update a project's name"""
     # Create a project
-    new_project = Project(name="Original Project Name")
+    new_project = Project(name="Original Project Name", created_by="testuser")
     new_project.project_id = generate_project_id(session=session)
     new_project.attributes = []
     session.add(new_project)
@@ -362,7 +370,7 @@ def test_update_project_name(client: TestClient, session: Session):
 def test_update_project_attributes(client: TestClient, session: Session):
     """Test that updating attributes replaces all existing attributes"""
     # Create a project with initial attributes
-    new_project = Project(name="Test Project")
+    new_project = Project(name="Test Project", created_by="testuser")
     new_project.project_id = generate_project_id(session=session)
     new_project.attributes = [
         ProjectAttribute(key="Department", value="R&D"),
@@ -395,7 +403,7 @@ def test_update_project_attributes(client: TestClient, session: Session):
 def test_update_project_name_and_attributes(client: TestClient, session: Session):
     """Test that we can update both name and attributes together"""
     # Create a project
-    new_project = Project(name="Original Name")
+    new_project = Project(name="Original Name", created_by="testuser")
     new_project.project_id = generate_project_id(session=session)
     new_project.attributes = [
         ProjectAttribute(key="Department", value="R&D"),
@@ -434,7 +442,7 @@ def test_update_project_not_found(client: TestClient):
 def test_update_project_with_duplicate_attributes(client: TestClient, session: Session):
     """Test that updating with duplicate attribute keys fails"""
     # Create a project
-    new_project = Project(name="Test Project")
+    new_project = Project(name="Test Project", created_by="testuser")
     new_project.project_id = generate_project_id(session=session)
     new_project.attributes = []
     session.add(new_project)
@@ -457,7 +465,7 @@ def test_update_project_with_case_insensitive_duplicate_attributes(
     client: TestClient, session: Session
 ):
     """Test that PUT update with attribute keys differing only in case returns 400."""
-    new_project = Project(name="Test Project")
+    new_project = Project(name="Test Project", created_by="testuser")
     new_project.project_id = generate_project_id(session=session)
     new_project.attributes = []
     session.add(new_project)
@@ -479,7 +487,7 @@ def test_update_project_with_case_insensitive_duplicate_attributes(
 def test_update_project_with_empty_data(client: TestClient, session: Session):
     """Test that updating with empty data doesn't change the project"""
     # Create a project
-    new_project = Project(name="Original Name")
+    new_project = Project(name="Original Name", created_by="testuser")
     new_project.project_id = generate_project_id(session=session)
     new_project.attributes = [
         ProjectAttribute(key="Department", value="R&D"),
@@ -502,7 +510,7 @@ def test_update_project_with_empty_data(client: TestClient, session: Session):
 def test_update_project_replaces_all_attributes(client: TestClient, session: Session):
     """Test that updating attributes replaces all existing attributes"""
     # Create a project with three attributes
-    new_project = Project(name="Test Project")
+    new_project = Project(name="Test Project", created_by="testuser")
     new_project.project_id = generate_project_id(session=session)
     new_project.attributes = [
         ProjectAttribute(key="Department", value="R&D"),
@@ -535,7 +543,7 @@ def test_update_project_replaces_all_attributes(client: TestClient, session: Ses
 def test_update_project_removes_all_attributes(client: TestClient, session: Session):
     """Test that updating with empty attributes list removes all attributes"""
     # Create a project with attributes
-    new_project = Project(name="Test Project")
+    new_project = Project(name="Test Project", created_by="testuser")
     new_project.project_id = generate_project_id(session=session)
     new_project.attributes = [
         ProjectAttribute(key="Department", value="R&D"),
@@ -564,7 +572,7 @@ def test_patch_project_merge_preserves_existing(
     client: TestClient, session: Session
 ):
     """Test that PATCH with a new attribute preserves all existing attributes"""
-    new_project = Project(name="Test Project")
+    new_project = Project(name="Test Project", created_by="testuser")
     new_project.project_id = generate_project_id(session=session)
     new_project.attributes = [
         ProjectAttribute(key="project_type", value="RNA-Seq"),
@@ -601,7 +609,7 @@ def test_patch_project_upsert_existing_key(
     client: TestClient, session: Session
 ):
     """Test that PATCH with an existing key updates only that value"""
-    new_project = Project(name="Test Project")
+    new_project = Project(name="Test Project", created_by="testuser")
     new_project.project_id = generate_project_id(session=session)
     new_project.attributes = [
         ProjectAttribute(key="project_type", value="RNA-Seq"),
@@ -637,7 +645,7 @@ def test_patch_project_empty_attributes_is_noop(
     client: TestClient, session: Session
 ):
     """Test that PATCH with empty attributes list is a no-op"""
-    new_project = Project(name="Test Project")
+    new_project = Project(name="Test Project", created_by="testuser")
     new_project.project_id = generate_project_id(session=session)
     new_project.attributes = [
         ProjectAttribute(key="Department", value="R&D"),
@@ -667,7 +675,7 @@ def test_patch_project_name_only(
     client: TestClient, session: Session
 ):
     """Test that PATCH can update name without touching attributes"""
-    new_project = Project(name="Original Name")
+    new_project = Project(name="Original Name", created_by="testuser")
     new_project.project_id = generate_project_id(session=session)
     new_project.attributes = [
         ProjectAttribute(key="Department", value="R&D"),
@@ -704,7 +712,7 @@ def test_patch_project_duplicate_attribute_keys(
     client: TestClient, session: Session
 ):
     """Test that PATCH with duplicate attribute keys fails"""
-    new_project = Project(name="Test Project")
+    new_project = Project(name="Test Project", created_by="testuser")
     new_project.project_id = generate_project_id(session=session)
     new_project.attributes = []
     session.add(new_project)
@@ -729,7 +737,7 @@ def test_patch_project_case_insensitive_duplicate_attribute_keys(
     client: TestClient, session: Session
 ):
     """Test that PATCH with attribute keys differing only in case returns 400."""
-    new_project = Project(name="Test Project")
+    new_project = Project(name="Test Project", created_by="testuser")
     new_project.project_id = generate_project_id(session=session)
     new_project.attributes = []
     session.add(new_project)
@@ -754,7 +762,7 @@ def test_patch_project_upserts_attribute_case_insensitively(
 ):
     """Test that PATCH matches existing attributes case-insensitively
     and updates the value without creating a duplicate."""
-    new_project = Project(name="Test Project")
+    new_project = Project(name="Test Project", created_by="testuser")
     new_project.project_id = generate_project_id(session=session)
     new_project.attributes = [
         ProjectAttribute(key="Department", value="R&D"),

@@ -524,7 +524,8 @@ def test_project_fixture(session):
 
     project = Project(
         project_id="P-19900109-0001",
-        name="Test Project"
+        name="Test Project",
+        created_by="testuser"
     )
     session.add(project)
     session.commit()

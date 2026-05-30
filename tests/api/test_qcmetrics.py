@@ -34,7 +34,7 @@ def _ensure_project(session: Session, project_id: str) -> None:
         select(Project).where(Project.project_id == project_id)
     ).first()
     if not existing:
-        session.add(Project(project_id=project_id, name=f"Test {project_id}"))
+        session.add(Project(project_id=project_id, name=f"Test {project_id}", created_by="testuser"))
         session.commit()
 
 
