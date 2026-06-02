@@ -27,8 +27,9 @@ def test_get_samples_for_a_project_with_no_samples(
         "data": [],
         "data_cols": None,
         "total_items": 0,
-        "skip": 0,
-        "limit": 100,
+        "total_pages": 0,
+        "current_page": 1,
+        "per_page": 100,
         "has_next": False,
         "has_prev": False,
     }
@@ -505,8 +506,9 @@ def test_get_samples_include_files_pagination_works(
 
     data = response.json()
     assert data["total_items"] == 5
-    assert data["limit"] == 2
-    assert data["skip"] == 0
+    assert data["per_page"] == 2
+    assert data["current_page"] == 1
+    assert data["total_pages"] == 3
     assert data["has_next"] is True
     assert len(data["data"]) == 2
 
