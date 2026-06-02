@@ -542,15 +542,35 @@ def search_samples_opensearch(
             (total_items + per_page - 1) // per_page if total_items else 0
         )
 
+        # Batch database lookup: collect all sample UUIDs first
+        sample_uuids = [hit["_id"] for hit in response["hits"]["hits"]]
+        
+        if not sample_uuids:
+            return SamplesPublicSearchResponse(
+                data=[],
+                data_cols=None,
+                total_items=total_items,
+                total_pages=total_pages,
+                current_page=page,
+                per_page=per_page,
+                has_next=page < total_pages,
+                has_prev=page > 1,
+            )
+        
+        # Single query to fetch all samples
+        samples = session.exec(
+            select(Sample)
+            .options(selectinload(Sample.attributes))
+            .where(Sample.id.in_(sample_uuids))
+        ).all()
+        
+        # Create lookup map for O(1) access
+        sample_map = {str(sample.id): sample for sample in samples}
+        
+        # Preserve OpenSearch ranking order
         results = []
-        for hit in response["hits"]["hits"]:
-            # The _id is the sample UUID; look up full record from DB
-            sample_uuid = hit["_id"]
-            sample = session.exec(
-                select(Sample)
-                .options(selectinload(Sample.attributes))
-                .where(Sample.id == sample_uuid)
-            ).first()
+        for sample_uuid in sample_uuids:
+            sample = sample_map.get(sample_uuid)
             if sample:
                 results.append(
                     SamplePublic(

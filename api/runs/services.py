@@ -198,7 +198,6 @@ def search_runs(
         ]
 
     try:
-
         response = client.search(index="illumina_runs", body=search_body)
 
         # Total Items and Pages needs to be calculated from OpenSearch response
@@ -206,11 +205,33 @@ def search_runs(
         total_items = response["hits"]["total"]["value"]
         total_pages = (total_items + per_page - 1) // per_page  # Ceiling division
 
-        # Unpack search results into ProjectPublic model
+        # Batch database lookup: collect all run_ids first
+        run_ids = [hit["_source"].get("run_id") for hit in response["hits"]["hits"]]
+        
+        if not run_ids:
+            return SequencingRunsPublic(
+                data=[],
+                total_items=total_items,
+                total_pages=total_pages,
+                current_page=page,
+                per_page=per_page,
+                has_next=page < total_pages,
+                has_prev=page > 1,
+            )
+        
+        # Single query to fetch all runs
+        runs = session.exec(
+            select(SequencingRun)
+            .where(SequencingRun.run_id.in_(run_ids))
+        ).all()
+        
+        # Create lookup map for O(1) access
+        run_map = {run.run_id: run for run in runs}
+        
+        # Preserve OpenSearch ranking order
         results = []
-        for hit in response["hits"]["hits"]:
-            source = hit["_source"]
-            run = get_run(session=session, run_id=source.get("run_id"))
+        for run_id in run_ids:
+            run = run_map.get(run_id)
             if run:
                 results.append(SequencingRunPublic.model_validate(run))
 
