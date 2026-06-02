@@ -230,7 +230,6 @@ def reindex_samples(
     session: Session, client: OpenSearch, batch_size: int = 5000
 ):
     """
-<<<<<<< HEAD
     Index all samples in database with OpenSearch.
 
     Processes samples in batches to bound memory usage for large datasets.
@@ -442,7 +441,7 @@ def _build_sample_query(
 # ---------------------------------------------------------------------------
 
 
-def search_samples_v1(
+def search_samples(
     session: Session,
     filters: dict,
     tags: dict | None = None,
@@ -450,7 +449,7 @@ def search_samples_v1(
     per_page: int = 20,
 ) -> SamplesPublic:
     """
-    Search samples using structured filters, returning v1 response format.
+    Search samples using structured filters.
 
     Args:
         session: Database session

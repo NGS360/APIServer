@@ -47,7 +47,7 @@ def search_samples_get(
         k: v for k, v in request.query_params.items()
         if k not in excluded
     }
-    return services.search_samples_v1(
+    return services.search_samples(
         session=session,
         filters=query_params,
         page=page,
@@ -95,7 +95,7 @@ def search_samples_post(
     filters = {k: v for k, v in body.filter_on.items() if k != "tags"}
     tags = body.filter_on.get("tags")
 
-    return services.search_samples_v1(
+    return services.search_samples(
         session=session,
         filters=filters,
         tags=tags,
