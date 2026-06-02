@@ -17,6 +17,7 @@ from api.samples.models import (
     SampleFileInput,
     SamplePublic,
     SamplesPublic,
+    SamplesPublicSearchResponse,
     SampleAttribute,
     BulkSampleCreateResponse,
     BulkSampleItemResponse,
@@ -447,7 +448,7 @@ def search_samples(
     tags: dict | None = None,
     page: int = 1,
     per_page: int = 20,
-) -> SamplesPublic:
+) -> SamplesPublicSearchResponse:
     """
     Search samples using structured filters.
 
@@ -460,7 +461,7 @@ def search_samples(
         per_page: Number of items per page
 
     Returns:
-        SamplesPublic with paginated results and data_cols
+        SamplesPublicSearchResponse with paginated results and data_cols
     """
     # Build query for total count (without pagination)
     # We need separate copies because _build_sample_query mutates filters
@@ -500,7 +501,7 @@ def search_samples(
                     all_keys.add(attr.key)
         data_cols = sorted(list(all_keys)) if all_keys else None
 
-    return SamplesPublic(
+    return SamplesPublicSearchResponse(
         data=public_samples,
         data_cols=data_cols,
         total_items=total_count,
@@ -525,7 +526,7 @@ def search_samples_opensearch(
     per_page: int = 5,
     sort_by: str | None = "sample_id",
     sort_order: Literal["asc", "desc"] | None = "asc",
-) -> SamplesPublic:
+) -> SamplesPublicSearchResponse:
     """
     Search samples using OpenSearch free-text query.
     Used by the unified /api/v1/search endpoint.
@@ -559,7 +560,7 @@ def search_samples_opensearch(
                     )
                 )
 
-        return SamplesPublic(
+        return SamplesPublicSearchResponse(
             data=results,
             data_cols=None,
             total_items=total_items,

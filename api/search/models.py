@@ -5,7 +5,7 @@ from typing import List, Any, Union
 from pydantic import BaseModel
 from api.project.models import ProjectPublic, ProjectsPublic
 from api.runs.models import SequencingRunPublic, SequencingRunsPublic
-from api.samples.models import SamplesPublic
+from api.samples.models import SamplesPublicSearchResponse
 
 
 class SearchDocument(BaseModel):
@@ -51,4 +51,4 @@ SearchResponseOriginal = Union[
 class SearchResponse(BaseModel):
     projects: ProjectsPublic
     runs: SequencingRunsPublic
-    samples: SamplesPublic
+    samples: SamplesPublicSearchResponse

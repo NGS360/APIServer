@@ -73,11 +73,24 @@ class SamplePublic(SQLModel):
 
 
 class SamplesPublic(SQLModel):
+    """Paginated list of samples using offset-based pagination (skip/limit)."""
     data: List[SamplePublic]
     data_cols: list[str] | None = None
     total_items: int
     skip: int
     limit: int
+    has_next: bool
+    has_prev: bool
+
+
+class SamplesPublicSearchResponse(SQLModel):
+    """Paginated list of samples using page-based pagination for search endpoints."""
+    data: List[SamplePublic]
+    data_cols: list[str] | None = None
+    total_items: int
+    total_pages: int
+    current_page: int
+    per_page: int
     has_next: bool
     has_prev: bool
 

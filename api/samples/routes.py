@@ -4,7 +4,7 @@ Routes/endpoints for the Samples API
 
 from fastapi import APIRouter, Request, Query, status
 from core.deps import SessionDep, OpenSearchDep
-from api.samples.models import SamplesPublic, SampleSearchRequest
+from api.samples.models import SamplesPublicSearchResponse, SampleSearchRequest
 import api.samples.services as services
 
 router = APIRouter(prefix="/samples", tags=["Sample Endpoints"])
@@ -17,7 +17,7 @@ router = APIRouter(prefix="/samples", tags=["Sample Endpoints"])
 
 @router.get(
     "/search",
-    response_model=SamplesPublic,
+    response_model=SamplesPublicSearchResponse,
     status_code=status.HTTP_200_OK,
     tags=["Sample Endpoints"],
 )
@@ -26,7 +26,7 @@ def search_samples_get(
     session: SessionDep,
     page: int = Query(1, description="Page number (1-indexed)"),
     per_page: int = Query(20, description="Number of items per page"),
-) -> SamplesPublic:
+) -> SamplesPublicSearchResponse:
     """
     Search samples using query string parameters.
 
@@ -57,14 +57,14 @@ def search_samples_get(
 
 @router.post(
     "/search",
-    response_model=SamplesPublic,
+    response_model=SamplesPublicSearchResponse,
     status_code=status.HTTP_200_OK,
     tags=["Sample Endpoints"],
 )
 def search_samples_post(
     session: SessionDep,
     body: SampleSearchRequest,
-) -> SamplesPublic:
+) -> SamplesPublicSearchResponse:
     """
     Search samples using JSON body with filter_on, page, per_page.
 
