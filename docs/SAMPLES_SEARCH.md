@@ -346,12 +346,39 @@ POST /api/v1/samples/search
 GET /api/v1/search?query=Sample_001
 ```
 
----
-
 ## Related Endpoints
 
+### Sample Listing (Non-Search)
+
+For listing all samples in a project, use the standard project-samples endpoint:
+
+**`GET /api/v1/projects/{project_id}/samples`**
+
+This endpoint uses **offset-based pagination** (different from search endpoints):
+
+```json
+{
+  "data": [...],
+  "data_cols": [...],
+  "total_items": 100,
+  "skip": 0,
+  "limit": 100,
+  "has_next": false,
+  "has_prev": false
+}
+```
+
+**Query Parameters:**
+- `skip` - Number of items to skip (default: 0)
+- `limit` - Maximum items to return (default: 100)
+- `include_files` - Include file associations (optional)
+- `file_versions` - Return `all` file versions or `latest` only (optional)
+
+**Note:** The listing endpoint uses `skip`/`limit` (offset-based), while search endpoints use `page`/`per_page` (page-based). This distinction is intentional and aligns with the different use cases.
+
+### Other Related Endpoints
+
 - `POST /api/v1/samples/reindex` - Rebuild the OpenSearch index for samples (admin only)
-- `GET /api/v1/projects/{project_id}/samples` - List all samples in a project
 - `POST /api/v1/projects/{project_id}/samples` - Create a new sample
 
 ---
