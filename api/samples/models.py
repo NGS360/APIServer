@@ -76,9 +76,8 @@ class SamplesPublic(SQLModel):
     data: List[SamplePublic]
     data_cols: list[str] | None = None
     total_items: int
-    total_pages: int
-    current_page: int
-    per_page: int
+    skip: int
+    limit: int
     has_next: bool
     has_prev: bool
 
@@ -105,9 +104,8 @@ class SamplesWithFilesPublic(SQLModel):
     data: List[SampleWithFilesPublic]
     data_cols: list[str] | None = None
     total_items: int
-    total_pages: int
-    current_page: int
-    per_page: int
+    skip: int
+    limit: int
     has_next: bool
     has_prev: bool
 

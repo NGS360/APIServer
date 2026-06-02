@@ -884,20 +884,14 @@ def get_project_samples(
                     files=files if files else None,
                 )
             )
-        # Convert offset-based pagination (skip/limit) to page-based
-        per_page = limit
-        current_page = (skip // limit) + 1 if limit > 0 else 1
-        total_pages = (total_count + per_page - 1) // per_page if total_count else 0
-
         return SamplesWithFilesPublic(
             data=public_samples,
             data_cols=data_cols,
             total_items=total_count,
-            total_pages=total_pages,
-            current_page=current_page,
-            per_page=per_page,
-            has_next=current_page < total_pages,
-            has_prev=current_page > 1,
+            skip=skip,
+            limit=limit,
+            has_next=(skip + limit) < total_count,
+            has_prev=skip > 0,
         )
 
     # Default: no files
@@ -910,20 +904,14 @@ def get_project_samples(
         for sample in samples
     ]
 
-    # Convert offset-based pagination (skip/limit) to page-based
-    per_page = limit
-    current_page = (skip // limit) + 1 if limit > 0 else 1
-    total_pages = (total_count + per_page - 1) // per_page if total_count else 0
-
     return SamplesPublic(
         data=public_samples_plain,
         data_cols=data_cols,
         total_items=total_count,
-        total_pages=total_pages,
-        current_page=current_page,
-        per_page=per_page,
-        has_next=current_page < total_pages,
-        has_prev=current_page > 1,
+        skip=skip,
+        limit=limit,
+        has_next=(skip + limit) < total_count,
+        has_prev=skip > 0,
     )
 
 
