@@ -314,6 +314,9 @@ def update_project(
             )
             session.add(new_attr)
 
+    # Explicitly bump last_modified (onupdate only fires when the project row itself changes)
+    project.last_modified = datetime.now(tz.utc)
+
     session.commit()
     session.refresh(project)
 
@@ -402,6 +405,9 @@ def patch_project(
                         value=attr.value,
                     )
                 )
+
+    # Explicitly bump last_modified (onupdate only fires when the project row itself changes)
+    project.last_modified = datetime.now(tz.utc)
 
     session.commit()
     session.refresh(project)
