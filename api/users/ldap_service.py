@@ -137,6 +137,6 @@ def _get_entry_attr(entry, attr_name: str) -> str | None:
             # ldap3 returns "[]" for empty attributes
             if str_value and str_value != "[]":
                 return str_value
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug(f"Failed to read LDAP attribute '{attr_name}': {e}", exc_info=True)
     return None
