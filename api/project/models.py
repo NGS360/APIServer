@@ -5,14 +5,12 @@ Models for the Project API
 from datetime import datetime, timezone
 import uuid
 from sqlmodel import SQLModel, Field, Relationship, UniqueConstraint
-from typing import List, TYPE_CHECKING
+from typing import List
 from pydantic import ConfigDict
 
-if TYPE_CHECKING:
-    from api.samples.models import Sample
-    from api.qcmetrics.models import QCRecord
-
 from api.runs.models import SequencingRunPublic
+from api.samples.models import Sample
+from api.qcmetrics.models import QCRecord
 
 
 class Attribute(SQLModel):
