@@ -436,7 +436,7 @@ def search_projects(
 
         # Batch database lookup: collect all project_ids first
         project_ids = [hit["_source"].get("project_id") for hit in response["hits"]["hits"]]
-        
+
         if not project_ids:
             return ProjectsPublic(
                 data=[],
@@ -447,21 +447,21 @@ def search_projects(
                 has_next=page < total_pages,
                 has_prev=page > 1,
             )
-        
+
         # Single query to fetch all projects with their attributes
         projects = session.exec(
             select(Project)
             .options(selectinload(Project.attributes))
             .where(Project.project_id.in_(project_ids))
         ).all()
-        
+
         # Fetch settings once (not per-project)
         data_bucket = get_setting_value(session, "DATA_BUCKET_URI")
         results_bucket = get_setting_value(session, "RESULTS_BUCKET_URI")
-        
+
         # Create lookup map for O(1) access
         project_map = {project.project_id: project for project in projects}
-        
+
         # Preserve OpenSearch ranking order
         results = []
         for project_id in project_ids:
