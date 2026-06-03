@@ -327,6 +327,27 @@ def test_create_project_fails_with_case_insensitive_duplicate_attribute(
     assert "duplicate" in response.json()["detail"].lower()
 
 
+def test_create_project_strips_whitespace_from_attribute(client: TestClient):
+    """
+    Test that creating a project with attribute keys containing leading/trailing whitespace
+    strips the whitespace before saving.
+    """
+    data = {
+        "name": "Test Project",
+        "attributes": [
+            {"key": " Priority ", "value": "High"},
+            {"key": "Genome", "value": " hg38 "},
+        ],
+    }
+    response = client.post("/api/v1/projects", json=data)
+    assert response.status_code == 201
+    response_json = response.json()
+    # Validate that whitespace is stripped
+    for attr in response_json["attributes"]:
+        assert attr["key"] == attr["key"].strip()
+        assert attr["value"] == attr["value"].strip()
+
+
 def test_generate_project_id(session: Session):
     """Test that we can generate a project id"""
     # Generate a project id

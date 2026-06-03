@@ -100,7 +100,7 @@ def create_project(
         # Parse and create project attributes
         # linking to new project
         project_attributes = [
-            ProjectAttribute(project_id=project.id, key=attr.key, value=attr.value)
+            ProjectAttribute(project_id=project.id, key=attr.key.strip(), value=attr.value.strip())
             for attr in project_in.attributes
         ]
 
