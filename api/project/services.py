@@ -183,6 +183,18 @@ def get_projects(
     )
 
 
+def get_project_attributes(session: Session) -> list[str]:
+    """
+    Returns a sorted list of all unique project attributes across all projects.
+    """
+    # select distinct `key` from projectattribute order by `key` asc
+    return session.exec(
+        select(ProjectAttribute.key)
+        .distinct()
+        .order_by(ProjectAttribute.key.asc())
+    ).all()
+
+
 def get_project_by_project_id(session: Session, project_id: str) -> ProjectPublic:
     """
     Returns a single project by its project_id.

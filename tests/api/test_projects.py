@@ -67,6 +67,35 @@ def test_get_projects_with_data(client: TestClient, session: Session):
     assert attribute_dict["Priority"] == "High"
 
 
+def test_get_projects_attributes(client: TestClient, session: Session):
+    """Test that we get a full list of all attributes across all projects"""
+    # Add two projects with different attributes
+    project1 = Project(name="Project One")
+    project1.project_id = generate_project_id(session=session)
+    project1.attributes = [
+        ProjectAttribute(key="Department", value="R&D"),
+        ProjectAttribute(key="Priority", value="High"),
+    ]
+    session.add(project1)
+
+    project2 = Project(name="Project Two")
+    project2.project_id = generate_project_id(session=session)
+    project2.attributes = [
+        ProjectAttribute(key="Department", value="Engineering"),
+        ProjectAttribute(key="Status", value="Active"),
+    ]
+    session.add(project2)
+    session.commit()
+
+    # Get project attributes
+    response = client.get("/api/v1/projects/attributes")
+    assert response.status_code == 200
+    response_json = response.json()
+
+    expected_attributes = ["Department", "Priority", "Status"]
+    assert response_json == expected_attributes
+
+
 def test_get_project_with_sequencing_runs(client: TestClient, session: Session):
     """Test that GET /api/projects/<project_id> includes associated sequencing runs"""
     from datetime import date
