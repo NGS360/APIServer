@@ -219,14 +219,6 @@ def get_samples(
     )
 
 
-def get_sample_by_sample_id(session: Session, sample_id: str) -> Sample:
-    """
-    Returns a single sample by its sample_id.
-    Note: This is different from its internal "id".
-    """
-    return None
-
-
 def reindex_samples(
     session: Session, client: OpenSearch, batch_size: int = 5000
 ):
