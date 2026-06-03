@@ -485,7 +485,7 @@ def search_samples(
             if sample.attributes:
                 for attr in sample.attributes:
                     all_keys.add(attr.key)
-        data_cols = sorted(list(all_keys)) if all_keys else None
+        data_cols = sorted(all_keys) if all_keys else None
 
     return SamplesPublicSearchResponse(
         data=public_samples,
