@@ -206,7 +206,7 @@ def get_samples(
             if sample.attributes:
                 for attr in sample.attributes:
                     all_keys.add(attr.key)
-        data_cols = sorted(list(all_keys)) if all_keys else None
+        data_cols = sorted(all_keys) if all_keys else None
 
     return SamplesPublic(
         data=public_samples,
@@ -530,7 +530,7 @@ def search_samples_opensearch(
 
         # Batch database lookup: collect all sample UUIDs first
         sample_uuids = [hit["_id"] for hit in response["hits"]["hits"]]
-        
+
         if not sample_uuids:
             return SamplesPublicSearchResponse(
                 data=[],
@@ -542,17 +542,17 @@ def search_samples_opensearch(
                 has_next=page < total_pages,
                 has_prev=page > 1,
             )
-        
+
         # Single query to fetch all samples
         samples = session.exec(
             select(Sample)
             .options(selectinload(Sample.attributes))
             .where(Sample.id.in_(sample_uuids))
         ).all()
-        
+
         # Create lookup map for O(1) access
         sample_map = {str(sample.id): sample for sample in samples}
-        
+
         # Preserve OpenSearch ranking order
         results = []
         for sample_uuid in sample_uuids:
