@@ -97,7 +97,7 @@ mako==1.3.10
     # via
     #   ngs360-server (pyproject.toml)
     #   alembic
-markdown-it-py==4.0.0
+markdown-it-py==4.2.0
     # via rich
 markupsafe==3.0.3
     # via
