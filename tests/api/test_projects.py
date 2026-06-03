@@ -78,7 +78,7 @@ def test_get_projects_with_data(client: TestClient, session: Session):
 def test_get_projects_attributes(client: TestClient, session: Session):
     """Test that we get a full list of all attributes across all projects"""
     # Add two projects with different attributes
-    project1 = Project(name="Project One")
+    project1 = Project(name="Project One", created_by='testuser')
     project1.project_id = generate_project_id(session=session)
     project1.attributes = [
         ProjectAttribute(key="Department", value="R&D"),
@@ -86,7 +86,7 @@ def test_get_projects_attributes(client: TestClient, session: Session):
     ]
     session.add(project1)
 
-    project2 = Project(name="Project Two")
+    project2 = Project(name="Project Two", created_by='testuser')
     project2.project_id = generate_project_id(session=session)
     project2.attributes = [
         ProjectAttribute(key="Department", value="Engineering"),
