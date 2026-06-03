@@ -207,7 +207,7 @@ def search_runs(
 
         # Batch database lookup: collect all run_ids first
         run_ids = [hit["_source"].get("run_id") for hit in response["hits"]["hits"]]
-        
+
         if not run_ids:
             return SequencingRunsPublic(
                 data=[],
@@ -218,16 +218,16 @@ def search_runs(
                 has_next=page < total_pages,
                 has_prev=page > 1,
             )
-        
+
         # Single query to fetch all runs
         runs = session.exec(
             select(SequencingRun)
             .where(SequencingRun.run_id.in_(run_ids))
         ).all()
-        
+
         # Create lookup map for O(1) access
         run_map = {run.run_id: run for run in runs}
-        
+
         # Preserve OpenSearch ranking order
         results = []
         for run_id in run_ids:
