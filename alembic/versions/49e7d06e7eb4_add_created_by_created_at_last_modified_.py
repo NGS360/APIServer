@@ -19,6 +19,39 @@ branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
 
+def back_fill():
+    from sqlmodel import select
+
+    from api.project.models import Project, ProjectAttribute
+    from core.db import get_session
+
+    session = next(get_session())
+
+    # Get all projects ordered by project_id
+    statement = select(Project).order_by(Project.project_id)
+    projects = session.exec(statement).all()
+
+    # For each project, get the created_by value from the projectattribute table and update the project table
+    for project in projects:
+        # Query projectattribute using the project's UUID (project.id),
+        # not the string project_id
+        attr_statement = select(ProjectAttribute.value).where(
+            ProjectAttribute.project_id == project.id,
+            ProjectAttribute.key.in_(["createby", "createdby"])
+        )
+        created_by_value = session.exec(attr_statement).first()
+
+        if created_by_value:
+            project.created_by = created_by_value
+        else:
+            # Fallback for projects without a matching attribute
+            project.created_by = "unknown"
+
+        session.add(project)
+
+    session.commit()
+
+
 def upgrade() -> None:
     """Upgrade schema."""
     # Phase 1: Add columns as NULLABLE
@@ -27,8 +60,11 @@ def upgrade() -> None:
     op.add_column('project', sa.Column('last_modified', sa.DateTime(), nullable=False))
 
     # Phase 2: Backfill existing rows
-    # Use raw SQL to populate created_by from projectattribute table
-    # where key = 'createby|createdby' (adjust key name to match your actual data)
+    back_fill()
+
+    # Phase 3: Alter columns to be NOT NULL
+    op.alter_column('project', 'created_by', nullable=False, existing_type=sqlmodel.sql.sqltypes.AutoString())
+
 
 def downgrade() -> None:
     """Downgrade schema."""
