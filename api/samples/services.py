@@ -1,4 +1,3 @@
-import logging
 import uuid
 from datetime import datetime, timezone
 from typing import List, Literal
@@ -6,7 +5,11 @@ from typing import List, Literal
 from fastapi import HTTPException, status
 from api.utils import check_duplicate_attribute_keys
 from sqlmodel import Session, select, func
+from sqlalchemy.orm import selectinload
 from opensearchpy import OpenSearch
+
+from core.utils import define_search_body
+from core.logger import logger
 
 from api.samples.models import (
     Sample,
@@ -14,6 +17,7 @@ from api.samples.models import (
     SampleFileInput,
     SamplePublic,
     SamplesPublic,
+    SamplesPublicSearchResponse,
     SampleAttribute,
     BulkSampleCreateResponse,
     BulkSampleItemResponse,
@@ -27,8 +31,6 @@ from api.search.services import (
     add_objects_to_index,
     reset_index,
 )
-
-logger = logging.getLogger(__name__)
 
 
 def resolve_or_create_sample(
@@ -204,7 +206,7 @@ def get_samples(
             if sample.attributes:
                 for attr in sample.attributes:
                     all_keys.add(attr.key)
-        data_cols = sorted(list(all_keys)) if all_keys else None
+        data_cols = sorted(all_keys) if all_keys else None
 
     return SamplesPublic(
         data=public_samples,
@@ -215,14 +217,6 @@ def get_samples(
         has_next=(skip + limit) < total_count,
         has_prev=skip > 0,
     )
-
-
-def get_sample_by_sample_id(session: Session, sample_id: str) -> Sample:
-    """
-    Returns a single sample by its sample_id.
-    Note: This is different from its internal "id".
-    """
-    return None
 
 
 def reindex_samples(
@@ -343,6 +337,251 @@ def delete_sample(
         sample_id, sample.id, project_id,
     )
 
+
+# ---------------------------------------------------------------------------
+# Shared sample query builder (used by v1 endpoints)
+# ---------------------------------------------------------------------------
+
+
+# Top-level fields that map to Sample columns
+FIELD_MAP = {
+    "projectid": "project_id",
+    "samplename": "sample_id",
+}
+
+
+def _apply_attribute_filter(statement, attr_key: str, attr_value: str):
+    """Apply a single attribute filter as an EXISTS subquery (case-insensitive key)."""
+    attr_subquery = select(SampleAttribute.sample_id).where(
+        func.upper(SampleAttribute.key) == attr_key.upper(),
+        SampleAttribute.value == attr_value,
+    )
+    return statement.where(Sample.id.in_(attr_subquery))
+
+
+def _apply_column_filter(statement, column, value):
+    """Apply a filter on a Sample column, supporting list (IN) or scalar (==)."""
+    if isinstance(value, list):
+        return statement.where(column.in_(value))
+    return statement.where(column == value)
+
+
+def _apply_date_filter(statement, value: str):
+    """Apply a date prefix filter on Sample.created_at (e.g. '2026-01-21')."""
+    if not isinstance(value, str) or Sample.created_at is None:
+        return statement
+    try:
+        date = datetime.strptime(value, "%Y-%m-%d").date()
+        return statement.where(func.date(Sample.created_at) == date)
+    except ValueError:
+        return statement  # Invalid date format — skip
+
+
+def _build_sample_query(
+    filters: dict,
+    tags: dict | None = None,
+):
+    """
+    Build a SQLAlchemy select statement from sample filter parameters.
+
+    Args:
+        filters: dict of top-level or attribute filters.
+            - Keys in FIELD_MAP are mapped to Sample columns.
+            - 'created_on' is handled as date prefix match.
+            - 'tags' key (if present) is extracted and handled separately.
+            - Other keys are treated as SampleAttribute key searches.
+        tags: Explicit tags dict (from POST body's filter_on.tags).
+
+    Returns:
+        A select statement for Sample objects with attributes eager-loaded.
+    """
+    statement = select(Sample).options(selectinload(Sample.attributes))
+
+    # Extract tags from filters if present
+    if tags is None:
+        tags = filters.pop("tags", None)
+    else:
+        filters.pop("tags", None)
+
+    # Apply top-level column filters, date filter, or attribute filters
+    for key, value in filters.items():
+        column_name = FIELD_MAP.get(key)
+        if column_name:
+            statement = _apply_column_filter(
+                statement, getattr(Sample, column_name), value
+            )
+        elif key == "created_on":
+            statement = _apply_date_filter(statement, value)
+        else:
+            statement = _apply_attribute_filter(statement, key, value)
+
+    # Apply tag filters (same semantics as attribute filters)
+    if tags and isinstance(tags, dict):
+        for tag_key, tag_value in tags.items():
+            statement = _apply_attribute_filter(statement, tag_key, tag_value)
+
+    return statement
+
+
+# ---------------------------------------------------------------------------
+# V1 structured sample search (SQL-backed)
+# ---------------------------------------------------------------------------
+
+
+def search_samples(
+    session: Session,
+    filters: dict,
+    tags: dict | None = None,
+    page: int = 1,
+    per_page: int = 20,
+) -> SamplesPublicSearchResponse:
+    """
+    Search samples using structured filters.
+
+    Args:
+        session: Database session
+        filters: dict of filter parameters (projectid, samplename,
+                 created_on, attribute keys, tags)
+        tags: Optional explicit tags dict
+        page: Page number (1-indexed)
+        per_page: Number of items per page
+
+    Returns:
+        SamplesPublicSearchResponse with paginated results and data_cols
+    """
+    # Build query for total count (without pagination)
+    # We need separate copies because _build_sample_query mutates filters
+    count_filters = dict(filters)
+    count_tags = dict(tags) if tags else None
+    count_stmt = _build_sample_query(count_filters, count_tags)
+    all_results = session.exec(count_stmt).all()
+    total_count = len(all_results)
+
+    total_pages = (total_count + per_page - 1) // per_page if total_count else 0
+
+    # Build query with pagination
+    page_filters = dict(filters)
+    page_tags = dict(tags) if tags else None
+    statement = _build_sample_query(page_filters, page_tags)
+    offset = (page - 1) * per_page
+    statement = statement.offset(offset).limit(per_page)
+    samples = session.exec(statement).all()
+
+    # Map to SamplePublic
+    public_samples = [
+        SamplePublic(
+            sample_id=sample.sample_id,
+            project_id=sample.project_id,
+            attributes=sample.attributes,
+        )
+        for sample in samples
+    ]
+
+    # Collect all unique attribute keys across matched samples for data_cols
+    data_cols = None
+    if samples:
+        all_keys = set()
+        for sample in samples:
+            if sample.attributes:
+                for attr in sample.attributes:
+                    all_keys.add(attr.key)
+        data_cols = sorted(all_keys) if all_keys else None
+
+    return SamplesPublicSearchResponse(
+        data=public_samples,
+        data_cols=data_cols,
+        total_items=total_count,
+        total_pages=total_pages,
+        current_page=page,
+        per_page=per_page,
+        has_next=page < total_pages,
+        has_prev=page > 1,
+    )
+
+
+# ---------------------------------------------------------------------------
+# OpenSearch free-text sample search (for unified /api/v1/search)
+# ---------------------------------------------------------------------------
+
+
+def search_samples_opensearch(
+    session: Session,
+    client: OpenSearch,
+    query: str,
+    page: int = 1,
+    per_page: int = 5,
+    sort_by: str | None = "sample_id",
+    sort_order: Literal["asc", "desc"] | None = "asc",
+) -> SamplesPublicSearchResponse:
+    """
+    Search samples using OpenSearch free-text query.
+    Used by the unified /api/v1/search endpoint.
+    """
+    search_body = define_search_body(
+        query, page, per_page, sort_by, sort_order
+    )
+
+    try:
+        response = client.search(index="samples", body=search_body)
+        total_items = response["hits"]["total"]["value"]
+        total_pages = (
+            (total_items + per_page - 1) // per_page if total_items else 0
+        )
+
+        # Batch database lookup: collect all sample UUIDs first
+        sample_uuids = [hit["_id"] for hit in response["hits"]["hits"]]
+
+        if not sample_uuids:
+            return SamplesPublicSearchResponse(
+                data=[],
+                data_cols=None,
+                total_items=total_items,
+                total_pages=total_pages,
+                current_page=page,
+                per_page=per_page,
+                has_next=page < total_pages,
+                has_prev=page > 1,
+            )
+
+        # Single query to fetch all samples
+        samples = session.exec(
+            select(Sample)
+            .options(selectinload(Sample.attributes))
+            .where(Sample.id.in_(sample_uuids))
+        ).all()
+
+        # Create lookup map for O(1) access
+        sample_map = {str(sample.id): sample for sample in samples}
+
+        # Preserve OpenSearch ranking order
+        results = []
+        for sample_uuid in sample_uuids:
+            sample = sample_map.get(sample_uuid)
+            if sample:
+                results.append(
+                    SamplePublic(
+                        sample_id=sample.sample_id,
+                        project_id=sample.project_id,
+                        attributes=sample.attributes,
+                    )
+                )
+
+        return SamplesPublicSearchResponse(
+            data=results,
+            data_cols=None,
+            total_items=total_items,
+            total_pages=total_pages,
+            current_page=page,
+            per_page=per_page,
+            has_next=page < total_pages,
+            has_prev=page > 1,
+        )
+    except Exception as e:
+        logger.error("OpenSearch sample search failed: %s", e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(e),
+        ) from e
 
 # ---------------------------------------------------------------------------
 # Sample file creation helper (hash-aware dedup)

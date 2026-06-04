@@ -198,15 +198,15 @@ def test_search(client: TestClient, opensearch_client: OpenSearch):
     Test unified search endpoint for search bar that
     returns a response model for each index in OpenSearch.
 
-    For example, if projects and runs both exist, then the return
+    For example, if projects, runs, and samples all exist, then the return
     structure should be
 
     SearchResponse:
         projects: ProjectsPublic
         runs: SequencingRunsPublic
+        samples: SamplesPublic
 
-    where ProjectsPublic is returned by the get projects endpoint and
-    SequencingRunsPublic is returned by the get runs endpoint.
+    where each is the paginated public model for that entity type.
 
     Each new index should append another prop to this SearchResponse.
     """
@@ -223,15 +223,17 @@ def test_search(client: TestClient, opensearch_client: OpenSearch):
     assert response.status_code == 200
     response_json = response.json()
 
-    # Has projects and runs indicies (even if no data is returned)
+    # Has projects, runs, and samples indices (even if no data is returned)
     assert "projects" in response_json
     assert "runs" in response_json
+    assert "samples" in response_json
 
     # Data is returned (update runs when populated)
     assert response_json["projects"]["data"]
     assert response_json["runs"]["data"] == []
     projects = response_json["projects"]
     runs = response_json["runs"]
+    samples = response_json["samples"]
 
     # Project structure
     assert projects["data"][0]["name"] == "Test project 1"
@@ -251,3 +253,12 @@ def test_search(client: TestClient, opensearch_client: OpenSearch):
     assert runs["per_page"] == 5
     assert runs["has_next"] is False
     assert runs["has_prev"] is False
+
+    # Sample structure (no samples created, so empty)
+    assert len(samples["data"]) == 0
+    assert samples["total_items"] == 0
+    assert samples["total_pages"] == 0
+    assert samples["current_page"] == 1
+    assert samples["per_page"] == 5
+    assert samples["has_next"] is False
+    assert samples["has_prev"] is False
