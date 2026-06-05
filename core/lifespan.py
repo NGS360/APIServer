@@ -85,7 +85,17 @@ async def lifespan(app: FastAPI):
         "OPENSEARCH_USE_SSL",
         "OPENSEARCH_VERIFY_CERTS",
         "OAUTH_CORP_CLIENT_ID",
-        "OAUTH_CORP_CLIENT_SECRET"
+        "OAUTH_CORP_CLIENT_SECRET",
+        "LDAP_ENABLED",
+        "LDAP_SERVER",
+        "LDAP_PORT",
+        "LDAP_USE_SSL",
+        "LDAP_BIND_DN",
+        "LDAP_BIND_PASSWORD",
+        "LDAP_BASE_DN",
+        "LDAP_USER_SEARCH_FILTER",
+        "LDAP_USER_ATTRIBUTES",
+        "LDAP_TIMEOUT"
     ]
     for key in computed_fields:
         value = getattr(settings, key)
