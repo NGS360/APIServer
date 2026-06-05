@@ -556,7 +556,7 @@ def search_samples_opensearch(
         # Preserve OpenSearch ranking order
         results = []
         for sample_uuid in sample_uuids:
-            sample = sample_map.get(sample_uuid)
+            sample = sample_map.get(str(sample_uuid))
             if sample:
                 results.append(
                     SamplePublic(
