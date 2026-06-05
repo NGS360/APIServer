@@ -529,7 +529,7 @@ def search_samples_opensearch(
         )
 
         # Batch database lookup: collect all sample UUIDs first
-        sample_uuids = [hit["_id"] for hit in response["hits"]["hits"]]
+        sample_uuids = [uuid.UUID(hit["_id"]) for hit in response["hits"]["hits"]]
 
         if not sample_uuids:
             return SamplesPublicSearchResponse(
