@@ -20,50 +20,68 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def back_fill():
-    from sqlmodel import select
-
+    """Backfill created_by, created_at, and last_modified from projectattribute entries."""
+    from datetime import datetime, timezone
+    from email.utils import parsedate_to_datetime
+    from sqlmodel import Session, select
     from api.project.models import Project, ProjectAttribute
-    from core.db import get_session
 
-    session = next(get_session())
+    EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
 
-    # Get all projects ordered by project_id
-    statement = select(Project).order_by(Project.project_id)
-    projects = session.exec(statement).all()
+    # Use alembic's connection to avoid lock contention with DDL
+    bind = op.get_bind()
+    with Session(bind=bind) as session:
+        # Get all projects ordered by project_id
+        projects = session.exec(select(Project).order_by(Project.project_id)).all()
 
-    # For each project, get the created_by value from the projectattribute table and update the project table
-    for project in projects:
-        # Query projectattribute using the project's UUID (project.id),
-        # not the string project_id
-        attr_statement = select(ProjectAttribute.value).where(
-            ProjectAttribute.project_id == project.id,
-            ProjectAttribute.key.in_(["createby", "createdby"])
-        )
-        created_by_value = session.exec(attr_statement).first()
+        # For each project, get the created_by and createdate values from the projectattribute table
+        for project in projects:
+            # Query projectattribute using the project's UUID (project.id),
+            # not the string project_id
+            created_by_stmt = select(ProjectAttribute.value).where(
+                ProjectAttribute.project_id == project.id,
+                ProjectAttribute.key.in_(["createby", "createdby"])
+            )
+            created_by_value = session.exec(created_by_stmt).first()
 
-        if created_by_value:
-            project.created_by = created_by_value
-        else:
+            createdate_stmt = select(ProjectAttribute.value).where(
+                ProjectAttribute.project_id == project.id,
+                ProjectAttribute.key == "createdate"
+            )
+            createdate_value = session.exec(createdate_stmt).first()
+
             # Fallback for projects without a matching attribute
-            project.created_by = "unknown"
+            project.created_by = created_by_value or "unknown"
 
-        session.add(project)
+            # Parse RFC 2822 date format (e.g. 'Wed, 10 Nov 2021 00:00:00 GMT')
+            if createdate_value:
+                try:
+                    project.created_at = parsedate_to_datetime(createdate_value)
+                except (ValueError, TypeError):
+                    project.created_at = EPOCH
+            else:
+                project.created_at = EPOCH
 
-    session.commit()
+            project.last_modified = project.created_at
+            session.add(project)
+
+        session.commit()
 
 
 def upgrade() -> None:
     """Upgrade schema."""
     # Phase 1: Add columns as NULLABLE
-    op.add_column('project', sa.Column('created_at', sa.DateTime(), nullable=False))
+    op.add_column('project', sa.Column('created_at', sa.DateTime(), nullable=True))
     op.add_column('project', sa.Column('created_by', sqlmodel.sql.sqltypes.AutoString(), nullable=True))
-    op.add_column('project', sa.Column('last_modified', sa.DateTime(), nullable=False))
+    op.add_column('project', sa.Column('last_modified', sa.DateTime(), nullable=True))
 
     # Phase 2: Backfill existing rows
     back_fill()
 
     # Phase 3: Alter columns to be NOT NULL
+    op.alter_column('project', 'created_at', nullable=False, existing_type=sa.DateTime())
     op.alter_column('project', 'created_by', nullable=False, existing_type=sqlmodel.sql.sqltypes.AutoString())
+    op.alter_column('project', 'last_modified', nullable=False, existing_type=sa.DateTime())
 
 
 def downgrade() -> None:

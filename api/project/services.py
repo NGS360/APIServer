@@ -123,6 +123,9 @@ def create_project(
     return ProjectPublic(
         project_id=project.project_id,
         name=project.name,
+        created_at=project.created_at,
+        created_by=project.created_by,
+        last_modified=project.last_modified,
         data_folder_uri=f"{data_bucket}/{project.project_id}/",
         results_folder_uri=f"{results_bucket}/{project.project_id}/",
         attributes=project.attributes,
@@ -168,6 +171,9 @@ def get_projects(
         ProjectPublic(
             project_id=project.project_id,
             name=project.name,
+            created_at=project.created_at,
+            created_by=project.created_by,
+            last_modified=project.last_modified,
             data_folder_uri=f"{data_bucket}/{project.project_id}/",
             results_folder_uri=f"{results_bucket}/{project.project_id}/",
             attributes=project.attributes,
@@ -246,6 +252,9 @@ def get_project_by_project_id(session: Session, project_id: str) -> ProjectPubli
     return ProjectPublic(
         project_id=project.project_id,
         name=project.name,
+        created_at=project.created_at,
+        created_by=project.created_by,
+        last_modified=project.last_modified,
         data_folder_uri=f"{data_bucket}/{project.project_id}/",
         results_folder_uri=f"{results_bucket}/{project.project_id}/",
         attributes=project.attributes,
@@ -305,6 +314,9 @@ def update_project(
             )
             session.add(new_attr)
 
+    # Explicitly bump last_modified (onupdate only fires when the project row itself changes)
+    project.last_modified = datetime.now(tz.utc)
+
     session.commit()
     session.refresh(project)
 
@@ -319,6 +331,9 @@ def update_project(
     return ProjectPublic(
         project_id=project.project_id,
         name=project.name,
+        created_at=project.created_at,
+        created_by=project.created_by,
+        last_modified=project.last_modified,
         data_folder_uri=f"{data_bucket}/{project.project_id}/",
         results_folder_uri=f"{results_bucket}/{project.project_id}/",
         attributes=project.attributes,
@@ -391,6 +406,9 @@ def patch_project(
                     )
                 )
 
+    # Explicitly bump last_modified (onupdate only fires when the project row itself changes)
+    project.last_modified = datetime.now(tz.utc)
+
     session.commit()
     session.refresh(project)
 
@@ -409,6 +427,9 @@ def patch_project(
     return ProjectPublic(
         project_id=project.project_id,
         name=project.name,
+        created_at=project.created_at,
+        created_by=project.created_by,
+        last_modified=project.last_modified,
         data_folder_uri=f"{data_bucket}/{project.project_id}/",
         results_folder_uri=(
             f"{results_bucket}/{project.project_id}/"
