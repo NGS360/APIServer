@@ -529,7 +529,10 @@ def search_samples_opensearch(
         )
 
         # Batch database lookup: collect all sample UUIDs first
-        sample_uuids = [hit["_id"] for hit in response["hits"]["hits"]]
+        # Convert OpenSearch _id strings to UUID for the Sample.id column
+        sample_uuids = [
+            uuid.UUID(hit["_id"]) for hit in response["hits"]["hits"]
+        ]
 
         if not sample_uuids:
             return SamplesPublicSearchResponse(
@@ -551,7 +554,7 @@ def search_samples_opensearch(
         ).all()
 
         # Create lookup map for O(1) access
-        sample_map = {str(sample.id): sample for sample in samples}
+        sample_map = {sample.id: sample for sample in samples}
 
         # Preserve OpenSearch ranking order
         results = []
