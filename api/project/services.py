@@ -497,6 +497,9 @@ def search_projects(
                     ProjectPublic(
                         project_id=project.project_id,
                         name=project.name,
+                        created_at=project.created_at,
+                        created_by=project.created_by,
+                        last_modified=project.last_modified,
                         data_folder_uri=f"{data_bucket}/{project.project_id}/",
                         results_folder_uri=f"{results_bucket}/{project.project_id}/",
                         attributes=project.attributes,
