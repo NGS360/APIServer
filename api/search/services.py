@@ -134,6 +134,7 @@ def search(
     """
     from api.project.services import search_projects
     from api.runs.services import search_runs
+    from api.samples.services import search_samples_opensearch
 
     args = {
         "session": session,
@@ -143,4 +144,8 @@ def search(
         "per_page": n_results,
     }
 
-    return SearchResponse(projects=search_projects(**args), runs=search_runs(**args))
+    return SearchResponse(
+        projects=search_projects(**args),
+        runs=search_runs(**args),
+        samples=search_samples_opensearch(**args),
+    )

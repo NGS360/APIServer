@@ -10,6 +10,7 @@ from api.utils import check_duplicate_attribute_keys
 from pydantic import PositiveInt
 from pytz import timezone
 from sqlmodel import Session, func, select
+from sqlalchemy.orm import selectinload
 from opensearchpy import OpenSearch
 import yaml
 
@@ -455,19 +456,53 @@ def search_projects(
     search_body = define_search_body(query, page, per_page, sort_by, sort_order)
 
     try:
-
         response = client.search(index="projects", body=search_body)
         total_items = response["hits"]["total"]["value"]
         total_pages = (total_items + per_page - 1) // per_page  # Ceiling division
 
-        # Unpack search results into ProjectPublic model
-        results = []
-        for hit in response["hits"]["hits"]:
-            source = hit["_source"]
-            project = get_project_by_project_id(
-                session=session, project_id=source.get("project_id")
+        # Batch database lookup: collect all project_ids first
+        project_ids = [hit["_source"].get("project_id") for hit in response["hits"]["hits"]]
+
+        if not project_ids:
+            return ProjectsPublic(
+                data=[],
+                total_items=total_items,
+                total_pages=total_pages,
+                current_page=page,
+                per_page=per_page,
+                has_next=page < total_pages,
+                has_prev=page > 1,
             )
-            results.append(ProjectPublic.model_validate(project))
+
+        # Single query to fetch all projects with their attributes
+        projects = session.exec(
+            select(Project)
+            .options(selectinload(Project.attributes))
+            .where(Project.project_id.in_(project_ids))
+        ).all()
+
+        # Fetch settings once (not per-project)
+        data_bucket = get_setting_value(session, "DATA_BUCKET_URI")
+        results_bucket = get_setting_value(session, "RESULTS_BUCKET_URI")
+
+        # Create lookup map for O(1) access
+        project_map = {project.project_id: project for project in projects}
+
+        # Preserve OpenSearch ranking order
+        results = []
+        for project_id in project_ids:
+            project = project_map.get(project_id)
+            if project:
+                results.append(
+                    ProjectPublic(
+                        project_id=project.project_id,
+                        name=project.name,
+                        data_folder_uri=f"{data_bucket}/{project.project_id}/",
+                        results_folder_uri=f"{results_bucket}/{project.project_id}/",
+                        attributes=project.attributes,
+                        sequencing_runs=None,  # Not included for performance (matches get_projects)
+                    )
+                )
 
         return ProjectsPublic(
             data=results,
@@ -514,6 +549,7 @@ def submit_pipeline_job(
     platform: "ActionPlatform",
     project_type: str,
     username: str,
+    email: str | None = None,
     reference: str | None = None,
     auto_release: bool | None = None,
     s3_client=None
@@ -532,6 +568,7 @@ def submit_pipeline_job(
         platform: Platform name (arvados or sevenbridges)
         project_type: Pipeline type (e.g., RNA-Seq)
         username: Username of the user submitting the job
+        email: Email of the user submitting the job (available as template variable)
         reference: Export reference label (required for export action)
         auto_release: Auto-release flag (only valid for export action)
         s3_client: Optional boto3 S3 client
@@ -618,6 +655,7 @@ def submit_pipeline_job(
     # Prepare template context with all variables needed for interpolation
     template_context = {
         "username": username,
+        "email": email,
         "projectid": project.project_id,
         "project_type": project_type,
         "platform": platform.value,
