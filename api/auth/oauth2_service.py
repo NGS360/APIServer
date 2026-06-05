@@ -18,7 +18,7 @@ from api.auth.models import (
     User, OAuthProvider, OAuthProviderName,
     OAuthProviderInfo, AvailableProvidersResponse
 )
-from core.config import get_settings
+from core.app_settings import app_settings
 from core.security import generate_secure_token
 
 logger = logging.getLogger(__name__)
@@ -74,23 +74,28 @@ class OAuth2ProviderConfig:
     @classmethod
     def _get_dynamic_provider_config(cls, provider: str) -> dict:
         """Get configuration for dynamically configured corporate provider"""
-        settings = get_settings()
+        corp_name = app_settings.get("OAUTH_CORP_NAME")
 
-        if settings.OAUTH_CORP_NAME and provider.lower() == settings.OAUTH_CORP_NAME.lower():
-            if not all([
-                settings.OAUTH_CORP_AUTHORIZE_URL,
-                settings.OAUTH_CORP_TOKEN_URL,
-                settings.OAUTH_CORP_USERINFO_URL,
-            ]):
-                raise ValueError(f"Corporate OAuth provider '{provider}' is not fully configured")
+        if corp_name and provider.lower() == corp_name.lower():
+            auth_url = app_settings.get("OAUTH_CORP_AUTHORIZE_URL")
+            token_url = app_settings.get("OAUTH_CORP_TOKEN_URL")
+            userinfo_url = app_settings.get("OAUTH_CORP_USERINFO_URL")
 
-            scopes_str = settings.OAUTH_CORP_SCOPES or "openid,email,profile"
-            scopes = [scope.strip() for scope in scopes_str.split(",")]
+            if not all([auth_url, token_url, userinfo_url]):
+                raise ValueError(
+                    f"Corporate OAuth provider '{provider}' "
+                    f"is not fully configured"
+                )
+
+            scopes_str = app_settings.get(
+                "OAUTH_CORP_SCOPES", "openid,email,profile"
+            )
+            scopes = [s.strip() for s in scopes_str.split(",")]
 
             return {
-                "authorize_url": settings.OAUTH_CORP_AUTHORIZE_URL,
-                "token_url": settings.OAUTH_CORP_TOKEN_URL,
-                "userinfo_url": settings.OAUTH_CORP_USERINFO_URL,
+                "authorize_url": auth_url,
+                "token_url": token_url,
+                "userinfo_url": userinfo_url,
                 "scopes": scopes,
                 "scope_separator": " ",
                 "field_mapping": {
@@ -106,20 +111,28 @@ class OAuth2ProviderConfig:
 
     @classmethod
     def get_client_credentials(cls, provider: str) -> tuple[Optional[str], Optional[str]]:
-        """Get client ID and secret from environment variables"""
+        """Get client ID and secret from DB settings or env vars"""
         cls.load_config()
 
-        # Check configured providers
+        # Check configured providers (env var names from YAML)
         if provider in cls._providers:
             config = cls._providers[provider]
-            client_id = os.getenv(config['client_id_env'])
-            client_secret = os.getenv(config['client_secret_env'])
+            # Try app_settings first, fall back to env for YAML-declared vars
+            client_id = app_settings.get(
+                config['client_id_env'].replace("OAUTH_", "OAUTH_")
+            ) or os.getenv(config['client_id_env'])
+            client_secret = app_settings.get(
+                config['client_secret_env'].replace("OAUTH_", "OAUTH_")
+            ) or os.getenv(config['client_secret_env'])
             return client_id, client_secret
 
         # Check dynamic provider
-        settings = get_settings()
-        if settings.OAUTH_CORP_NAME and provider == settings.OAUTH_CORP_NAME.lower():
-            return settings.OAUTH_CORP_CLIENT_ID, settings.OAUTH_CORP_CLIENT_SECRET
+        corp_name = app_settings.get("OAUTH_CORP_NAME")
+        if corp_name and provider == corp_name.lower():
+            return (
+                app_settings.get("OAUTH_CORP_CLIENT_ID"),
+                app_settings.get("OAUTH_CORP_CLIENT_SECRET"),
+            )
 
         return None, None
 
@@ -141,12 +154,16 @@ class OAuth2ProviderConfig:
                 }
 
         # Add dynamic provider if configured
-        settings = get_settings()
-        if settings.OAUTH_CORP_NAME and settings.OAUTH_CORP_CLIENT_ID:
-            corp_name = settings.OAUTH_CORP_NAME.lower()
-            available[corp_name] = {
-                'display_name': settings.OAUTH_CORP_DISPLAY_NAME,
-                'logo_url': f'/img/{corp_name}.svg',
+        corp_name = app_settings.get("OAUTH_CORP_NAME")
+        corp_client_id = app_settings.get("OAUTH_CORP_CLIENT_ID")
+        if corp_name and corp_client_id:
+            corp_slug = corp_name.lower()
+            display_name = app_settings.get(
+                "OAUTH_CORP_DISPLAY_NAME", corp_name
+            )
+            available[corp_slug] = {
+                'display_name': display_name,
+                'logo_url': f'/img/{corp_slug}.svg',
                 'enabled': True,
             }
 
@@ -193,18 +210,18 @@ def get_authorization_url(
         ValueError: If provider is not supported
         HTTPException: If provider credentials not configured
     """
-    settings = get_settings()
     config = OAuth2ProviderConfig.get_provider_config(provider)
+    corp_name = app_settings.get("OAUTH_CORP_NAME")
     # Get client ID based on provider
     match provider:
         case "google":
-            client_id = settings.OAUTH_GOOGLE_CLIENT_ID
+            client_id = app_settings.get("OAUTH_GOOGLE_CLIENT_ID")
         case "github":
-            client_id = settings.OAUTH_GITHUB_CLIENT_ID
+            client_id = app_settings.get("OAUTH_GITHUB_CLIENT_ID")
         case "microsoft":
-            client_id = settings.OAUTH_MICROSOFT_CLIENT_ID
-        case _ if settings.OAUTH_CORP_NAME and provider == settings.OAUTH_CORP_NAME.lower():
-            client_id = settings.OAUTH_CORP_CLIENT_ID
+            client_id = app_settings.get("OAUTH_MICROSOFT_CLIENT_ID")
+        case _ if corp_name and provider == corp_name.lower():
+            client_id = app_settings.get("OAUTH_CORP_CLIENT_ID")
         case _:
             client_id = None
 
@@ -255,23 +272,23 @@ async def exchange_code_for_token(
     Raises:
         HTTPException: If token exchange fails
     """
-    settings = get_settings()
     config = OAuth2ProviderConfig.get_provider_config(provider)
+    corp_name = app_settings.get("OAUTH_CORP_NAME")
 
     # Get client credentials
     match provider:
         case "google":
-            client_id = settings.OAUTH_GOOGLE_CLIENT_ID
-            client_secret = settings.OAUTH_GOOGLE_CLIENT_SECRET
+            client_id = app_settings.get("OAUTH_GOOGLE_CLIENT_ID")
+            client_secret = app_settings.get("OAUTH_GOOGLE_CLIENT_SECRET")
         case "github":
-            client_id = settings.OAUTH_GITHUB_CLIENT_ID
-            client_secret = settings.OAUTH_GITHUB_CLIENT_SECRET
+            client_id = app_settings.get("OAUTH_GITHUB_CLIENT_ID")
+            client_secret = app_settings.get("OAUTH_GITHUB_CLIENT_SECRET")
         case "microsoft":
-            client_id = settings.OAUTH_MICROSOFT_CLIENT_ID
-            client_secret = settings.OAUTH_MICROSOFT_CLIENT_SECRET
-        case _ if settings.OAUTH_CORP_NAME and provider == settings.OAUTH_CORP_NAME.lower():
-            client_id = settings.OAUTH_CORP_CLIENT_ID
-            client_secret = settings.OAUTH_CORP_CLIENT_SECRET
+            client_id = app_settings.get("OAUTH_MICROSOFT_CLIENT_ID")
+            client_secret = app_settings.get("OAUTH_MICROSOFT_CLIENT_SECRET")
+        case _ if corp_name and provider == corp_name.lower():
+            client_id = app_settings.get("OAUTH_CORP_CLIENT_ID")
+            client_secret = app_settings.get("OAUTH_CORP_CLIENT_SECRET")
         case _:
             client_id = None
             client_secret = None

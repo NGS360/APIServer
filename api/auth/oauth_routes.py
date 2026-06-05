@@ -8,6 +8,7 @@ from fastapi.responses import RedirectResponse
 from core.deps import SessionDep
 from core.security import create_access_token, create_refresh_token
 from core.config import get_settings
+from core.app_settings import app_settings
 from api.auth.models import TokenResponse, OAuthLinkRequest, AvailableProvidersResponse
 from api.auth.deps import CurrentUser
 import api.auth.oauth2_service as oauth2_service
@@ -168,7 +169,9 @@ async def oauth_callback(
             access_token=jwt_access_token,
             refresh_token=jwt_refresh_token.token,
             token_type="bearer",
-            expires_in=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60
+            expires_in=app_settings.get_int(
+                "ACCESS_TOKEN_EXPIRE_MINUTES", default=30
+            ) * 60
         )
 
     except HTTPException:

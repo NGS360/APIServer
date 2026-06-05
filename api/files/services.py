@@ -188,10 +188,9 @@ def create_file_upload(
     _validate_upload_entity_exists(session, file_upload)
 
     # Get storage configuration
-    from core.config import get_settings
-    settings = get_settings()
-    storage_backend = settings.STORAGE_BACKEND
-    base_uri = settings.STORAGE_ROOT_PATH
+    from core.app_settings import app_settings
+    storage_backend = app_settings.get("STORAGE_BACKEND", "s3")
+    base_uri = app_settings.get("STORAGE_ROOT_PATH", "s3://my-storage-bucket")
 
     # Generate URI using typed entity info
     uri = File.generate_uri(

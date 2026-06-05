@@ -10,7 +10,7 @@ import bcrypt
 from jose import jwt
 from sqlmodel import Session
 
-from core.config import get_settings
+from core.app_settings import app_settings
 from api.auth.models import RefreshToken
 
 # Bcrypt configuration
@@ -52,7 +52,9 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
         return False
 
 
-def create_access_token(data: dict[str, Any], expires_delta: timedelta | None = None) -> str:
+def create_access_token(
+    data: dict[str, Any], expires_delta: timedelta | None = None
+) -> str:
     """
     Create a JWT access token
 
@@ -63,14 +65,15 @@ def create_access_token(data: dict[str, Any], expires_delta: timedelta | None = 
     Returns:
         Encoded JWT token string
     """
-    settings = get_settings()
     to_encode = data.copy()
 
     if expires_delta:
         expire = datetime.now(timezone.utc) + expires_delta
     else:
         expire = datetime.now(timezone.utc) + timedelta(
-            minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES
+            minutes=app_settings.get_int(
+                "ACCESS_TOKEN_EXPIRE_MINUTES", default=30
+            )
         )
 
     to_encode.update({
@@ -81,8 +84,9 @@ def create_access_token(data: dict[str, Any], expires_delta: timedelta | None = 
 
     encoded_jwt = jwt.encode(
         to_encode,
-        settings.JWT_SECRET_KEY,
-        algorithm=settings.JWT_ALGORITHM
+        app_settings.get("JWT_SECRET_KEY",
+                         "change-this-secret-key-in-production"),
+        algorithm=app_settings.get("JWT_ALGORITHM", "HS256")
     )
     return encoded_jwt
 
@@ -103,14 +107,12 @@ def create_refresh_token(
     Returns:
         RefreshToken object
     """
-    settings = get_settings()
-
     # Generate secure random token
     token_string = secrets.token_urlsafe(32)
 
     # Calculate expiration
     expires_at = datetime.now(timezone.utc) + timedelta(
-        days=settings.REFRESH_TOKEN_EXPIRE_DAYS
+        days=app_settings.get_int("REFRESH_TOKEN_EXPIRE_DAYS", default=30)
     )
 
     # Create token record
@@ -141,12 +143,11 @@ def decode_token(token: str) -> dict[str, Any]:
     Raises:
         JWTError: If token is invalid or expired
     """
-    settings = get_settings()
-
     payload = jwt.decode(
         token,
-        settings.JWT_SECRET_KEY,
-        algorithms=[settings.JWT_ALGORITHM]
+        app_settings.get("JWT_SECRET_KEY",
+                         "change-this-secret-key-in-production"),
+        algorithms=[app_settings.get("JWT_ALGORITHM", "HS256")]
     )
     return payload
 
@@ -201,23 +202,37 @@ def validate_password_strength(password: str) -> tuple[bool, str | None]:
     Returns:
         Tuple of (is_valid, error_message)
     """
-    settings = get_settings()
+    min_length = app_settings.get_int("PASSWORD_MIN_LENGTH", default=8)
 
-    if len(password) < settings.PASSWORD_MIN_LENGTH:
-        return False, f"Password must be at least {settings.PASSWORD_MIN_LENGTH} characters"
+    if len(password) < min_length:
+        return False, (
+            f"Password must be at least {min_length} characters"
+        )
 
-    if settings.PASSWORD_REQUIRE_UPPERCASE and not any(c.isupper() for c in password):
-        return False, "Password must contain at least one uppercase letter"
+    if app_settings.get_bool("PASSWORD_REQUIRE_UPPERCASE", default=True):
+        if not any(c.isupper() for c in password):
+            return (
+                False,
+                "Password must contain at least one uppercase letter"
+            )
 
-    if settings.PASSWORD_REQUIRE_LOWERCASE and not any(c.islower() for c in password):
-        return False, "Password must contain at least one lowercase letter"
+    if app_settings.get_bool("PASSWORD_REQUIRE_LOWERCASE", default=True):
+        if not any(c.islower() for c in password):
+            return (
+                False,
+                "Password must contain at least one lowercase letter"
+            )
 
-    if settings.PASSWORD_REQUIRE_DIGIT and not any(c.isdigit() for c in password):
-        return False, "Password must contain at least one digit"
+    if app_settings.get_bool("PASSWORD_REQUIRE_DIGIT", default=True):
+        if not any(c.isdigit() for c in password):
+            return False, "Password must contain at least one digit"
 
-    if settings.PASSWORD_REQUIRE_SPECIAL:
+    if app_settings.get_bool("PASSWORD_REQUIRE_SPECIAL", default=False):
         special_chars = "!@#$%^&*()_+-=[]{}|;:,.<>?"
         if not any(c in special_chars for c in password):
-            return False, "Password must contain at least one special character"
+            return (
+                False,
+                "Password must contain at least one special character"
+            )
 
     return True, None
