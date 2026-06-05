@@ -399,6 +399,78 @@ class Settings(BaseSettings):
         """Get Corporate OAuth scopes (comma-separated)"""
         return self._get_config_value("OAUTH_CORP_SCOPES", default="openid,email,profile")
 
+    # LDAP Configuration
+    @computed_field
+    @property
+    def LDAP_ENABLED(self) -> bool:
+        """Check if LDAP is enabled for user search"""
+        value = self._get_config_value("LDAP_ENABLED", default="false")
+        return value.lower() in ("true", "1", "yes")
+
+    @computed_field
+    @property
+    def LDAP_SERVER(self) -> str | None:
+        """LDAP server URL (e.g., ldap://ldap.example.com or ldaps://ldap.example.com)"""
+        return self._get_config_value("LDAP_SERVER")
+
+    @computed_field
+    @property
+    def LDAP_PORT(self) -> int:
+        """LDAP server port (389 for LDAP, 636 for LDAPS)"""
+        value = self._get_config_value("LDAP_PORT", default="389")
+        return int(value)
+
+    @computed_field
+    @property
+    def LDAP_USE_SSL(self) -> bool:
+        """Whether to use SSL/TLS for LDAP connection"""
+        value = self._get_config_value("LDAP_USE_SSL", default="false")
+        return value.lower() in ("true", "1", "yes")
+
+    @computed_field
+    @property
+    def LDAP_BIND_DN(self) -> str | None:
+        """Distinguished Name for LDAP bind (service account)"""
+        return self._get_config_value("LDAP_BIND_DN")
+
+    @computed_field
+    @property
+    def LDAP_BIND_PASSWORD(self) -> str | None:
+        """Password for LDAP bind"""
+        return self._get_config_value("LDAP_BIND_PASSWORD")
+
+    @computed_field
+    @property
+    def LDAP_BASE_DN(self) -> str | None:
+        """Base DN for user search (e.g., ou=People,dc=example,dc=com)"""
+        return self._get_config_value("LDAP_BASE_DN")
+
+    @computed_field
+    @property
+    def LDAP_USER_SEARCH_FILTER(self) -> str:
+        """LDAP search filter template. Use {query} as placeholder.
+        Default searches cn, mail, and uid."""
+        return self._get_config_value(
+            "LDAP_USER_SEARCH_FILTER",
+            default="(|(cn=*{query}*)(mail=*{query}*)(uid=*{query}*))"
+        )
+
+    @computed_field
+    @property
+    def LDAP_USER_ATTRIBUTES(self) -> str:
+        """Comma-separated LDAP attributes to retrieve"""
+        return self._get_config_value(
+            "LDAP_USER_ATTRIBUTES",
+            default="cn,mail,uid,displayName,department,title"
+        )
+
+    @computed_field
+    @property
+    def LDAP_TIMEOUT(self) -> int:
+        """LDAP connection/search timeout in seconds"""
+        value = self._get_config_value("LDAP_TIMEOUT", default="10")
+        return int(value)
+
     # Read environment variables from .env file, if it exists
     # extra='ignore' prevents validation errors from extra env vars
     model_config = SettingsConfigDict(

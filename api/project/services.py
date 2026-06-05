@@ -523,6 +523,7 @@ def submit_pipeline_job(
     platform: "ActionPlatform",
     project_type: str,
     username: str,
+    email: str | None = None,
     reference: str | None = None,
     auto_release: bool | None = None,
     s3_client=None
@@ -541,6 +542,7 @@ def submit_pipeline_job(
         platform: Platform name (arvados or sevenbridges)
         project_type: Pipeline type (e.g., RNA-Seq)
         username: Username of the user submitting the job
+        email: Email of the user submitting the job (available as template variable)
         reference: Export reference label (required for export action)
         auto_release: Auto-release flag (only valid for export action)
         s3_client: Optional boto3 S3 client
@@ -627,6 +629,7 @@ def submit_pipeline_job(
     # Prepare template context with all variables needed for interpolation
     template_context = {
         "username": username,
+        "email": email,
         "projectid": project.project_id,
         "project_type": project_type,
         "platform": platform.value,
