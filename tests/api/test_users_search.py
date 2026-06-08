@@ -1,7 +1,6 @@
 """
 Tests for /users/search endpoint and user search services.
 """
-import os
 from unittest.mock import patch, MagicMock
 
 from fastapi.testclient import TestClient
@@ -10,6 +9,27 @@ from sqlmodel import Session
 from api.auth.models import User
 from api.users.models import UserSearchResult
 from api.users.services import search_users, search_users_db
+
+
+def _mock_app_settings(settings_dict):
+    """Create a mock for app_settings with typed getters."""
+    mock = MagicMock()
+    mock.get.side_effect = lambda key, default=None: settings_dict.get(
+        key, default
+    )
+    mock.get_bool.side_effect = lambda key, default=False: (
+        settings_dict.get(key, str(default)).lower().strip()
+        in ("true", "1", "yes")
+        if settings_dict.get(key) is not None
+        and settings_dict.get(key).strip() != ""
+        else default
+    )
+    mock.get_int.side_effect = lambda key, default=0: (
+        int(settings_dict[key])
+        if key in settings_dict and settings_dict[key].strip() != ""
+        else default
+    )
+    return mock
 
 
 # --- Route Tests ---
@@ -184,10 +204,14 @@ class TestUserSearchRoute:
             )
         ]
 
+        mock_settings = _mock_app_settings({"LDAP_ENABLED": "true"})
+
         with patch(
             "api.users.services.search_users_ldap",
             return_value=mock_ldap_results,
-        ), patch.dict(os.environ, {"LDAP_ENABLED": "true"}):
+        ), patch(
+            "api.users.services.app_settings", mock_settings
+        ):
             response = client.get(
                 "/api/v1/users/search", params={"q": "ldapuser"}
             )
@@ -214,10 +238,14 @@ class TestUserSearchRoute:
         session.add(user)
         session.commit()
 
+        mock_settings = _mock_app_settings({"LDAP_ENABLED": "true"})
+
         with patch(
             "api.users.services.search_users_ldap",
             return_value=None,  # None means LDAP unavailable
-        ), patch.dict(os.environ, {"LDAP_ENABLED": "true"}):
+        ), patch(
+            "api.users.services.app_settings", mock_settings
+        ):
             response = client.get(
                 "/api/v1/users/search", params={"q": "dbuser"}
             )
@@ -352,7 +380,9 @@ class TestSearchUsersOrchestration:
         session.add(user)
         session.commit()
 
-        with patch.dict(os.environ, {"LDAP_ENABLED": "false"}):
+        mock_settings = _mock_app_settings({"LDAP_ENABLED": "false"})
+
+        with patch("api.users.services.app_settings", mock_settings):
             result = search_users(session, "dbonly")
 
         assert result.source == "database"
@@ -372,10 +402,12 @@ class TestSearchUsersOrchestration:
             )
         ]
 
+        mock_settings = _mock_app_settings({"LDAP_ENABLED": "true"})
+
         with patch(
             "api.users.services.search_users_ldap",
             return_value=mock_results,
-        ), patch.dict(os.environ, {"LDAP_ENABLED": "true"}):
+        ), patch("api.users.services.app_settings", mock_settings):
             result = search_users(session, "ldapuser")
 
         assert result.source == "ldap"
@@ -394,10 +426,12 @@ class TestSearchUsersOrchestration:
         session.add(user)
         session.commit()
 
+        mock_settings = _mock_app_settings({"LDAP_ENABLED": "true"})
+
         with patch(
             "api.users.services.search_users_ldap",
             return_value=None,
-        ), patch.dict(os.environ, {"LDAP_ENABLED": "true"}):
+        ), patch("api.users.services.app_settings", mock_settings):
             result = search_users(session, "fallback")
 
         assert result.source == "database"
@@ -416,10 +450,12 @@ class TestSearchUsersOrchestration:
         session.add(user)
         session.commit()
 
+        mock_settings = _mock_app_settings({"LDAP_ENABLED": "true"})
+
         with patch(
             "api.users.services.search_users_ldap",
             return_value=[],  # Empty list means LDAP worked, just no matches
-        ), patch.dict(os.environ, {"LDAP_ENABLED": "true"}):
+        ), patch("api.users.services.app_settings", mock_settings):
             result = search_users(session, "testuser")
 
         assert result.source == "ldap"
@@ -428,7 +464,9 @@ class TestSearchUsersOrchestration:
 
     def test_query_passed_through(self, session: Session):
         """Query string is included in response"""
-        with patch.dict(os.environ, {"LDAP_ENABLED": "false"}):
+        mock_settings = _mock_app_settings({"LDAP_ENABLED": "false"})
+
+        with patch("api.users.services.app_settings", mock_settings):
             result = search_users(session, "searchterm")
 
         assert result.query == "searchterm"
@@ -444,7 +482,9 @@ class TestLDAPService:
         """Returns None when LDAP is not enabled"""
         from api.users.ldap_service import search_users_ldap
 
-        with patch.dict(os.environ, {"LDAP_ENABLED": "false"}):
+        mock_settings = _mock_app_settings({"LDAP_ENABLED": "false"})
+
+        with patch("api.users.ldap_service.app_settings", mock_settings):
             result = search_users_ldap("test")
 
         assert result is None
@@ -453,10 +493,15 @@ class TestLDAPService:
         """Returns None when LDAP connection fails"""
         from api.users.ldap_service import search_users_ldap
 
+        mock_settings = _mock_app_settings({
+            "LDAP_ENABLED": "true",
+            "LDAP_SERVER": "ldap://fake",
+        })
+
         with patch(
             "api.users.ldap_service.get_ldap_connection",
             return_value=None,
-        ), patch.dict(os.environ, {"LDAP_ENABLED": "true", "LDAP_SERVER": "ldap://fake"}):
+        ), patch("api.users.ldap_service.app_settings", mock_settings):
             result = search_users_ldap("test")
 
         assert result is None
@@ -465,7 +510,9 @@ class TestLDAPService:
         """get_ldap_connection returns None when LDAP is disabled"""
         from api.users.ldap_service import get_ldap_connection
 
-        with patch.dict(os.environ, {"LDAP_ENABLED": "false"}):
+        mock_settings = _mock_app_settings({"LDAP_ENABLED": "false"})
+
+        with patch("api.users.ldap_service.app_settings", mock_settings):
             result = get_ldap_connection()
 
         assert result is None
@@ -474,9 +521,10 @@ class TestLDAPService:
         """get_ldap_connection returns None when no server is configured"""
         from api.users.ldap_service import get_ldap_connection
 
-        with patch.dict(os.environ, {"LDAP_ENABLED": "true"}, clear=False):
-            # Remove LDAP_SERVER if it exists
-            os.environ.pop("LDAP_SERVER", None)
+        mock_settings = _mock_app_settings({"LDAP_ENABLED": "true"})
+        # LDAP_SERVER not in settings dict -> get() returns None
+
+        with patch("api.users.ldap_service.app_settings", mock_settings):
             result = get_ldap_connection()
 
         assert result is None
@@ -489,13 +537,18 @@ class TestLDAPService:
         mock_conn = MagicMock()
         mock_conn.search.side_effect = LDAPException("Search failed")
 
+        mock_settings = _mock_app_settings({
+            "LDAP_ENABLED": "true",
+            "LDAP_SERVER": "ldap://fake",
+            "LDAP_BASE_DN": "dc=example,dc=com",
+            "LDAP_USER_SEARCH_FILTER": "(|(cn=*{query}*)(uid=*{query}*))",
+            "LDAP_USER_ATTRIBUTES": "cn,mail,uid,displayName,department,title",
+        })
+
         with patch(
             "api.users.ldap_service.get_ldap_connection",
             return_value=mock_conn,
-        ), patch.dict(
-            os.environ,
-            {"LDAP_ENABLED": "true", "LDAP_SERVER": "ldap://fake"},
-        ):
+        ), patch("api.users.ldap_service.app_settings", mock_settings):
             result = search_users_ldap("test")
 
         assert result is None
@@ -517,17 +570,18 @@ class TestLDAPService:
         mock_conn = MagicMock()
         mock_conn.entries = [mock_entry]
 
+        mock_settings = _mock_app_settings({
+            "LDAP_ENABLED": "true",
+            "LDAP_SERVER": "ldap://fake",
+            "LDAP_BASE_DN": "dc=example,dc=com",
+            "LDAP_USER_SEARCH_FILTER": "(|(cn=*{query}*)(uid=*{query}*))",
+            "LDAP_USER_ATTRIBUTES": "cn,mail,uid,displayName,department,title",
+        })
+
         with patch(
             "api.users.ldap_service.get_ldap_connection",
             return_value=mock_conn,
-        ), patch.dict(
-            os.environ,
-            {
-                "LDAP_ENABLED": "true",
-                "LDAP_SERVER": "ldap://fake",
-                "LDAP_BASE_DN": "dc=example,dc=com",
-            },
-        ):
+        ), patch("api.users.ldap_service.app_settings", mock_settings):
             result = search_users_ldap("jdoe")
 
         assert result is not None

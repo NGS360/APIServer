@@ -30,13 +30,26 @@ class AppSettings:
     def __init__(self):
         self._cache: dict[str, str] = {}
         self._loaded = False
+        self._engine_override = None
 
-    def load(self) -> None:
-        """Load all settings from DB into memory. Call once at startup."""
-        from core.db import engine
+    def load(self, bind=None) -> None:
+        """Load all settings from DB into memory. Call once at startup.
+
+        Args:
+            bind: Optional SQLAlchemy engine or connection override (for tests).
+                  Once provided, it is remembered for subsequent loads.
+        """
         from api.settings.models import Setting
 
-        with Session(engine) as session:
+        if bind is not None:
+            self._engine_override = bind
+
+        target_bind = self._engine_override
+        if target_bind is None:
+            from core.db import engine as default_engine
+            target_bind = default_engine
+
+        with Session(target_bind) as session:
             settings = session.exec(select(Setting)).all()
             self._cache = {s.key: s.value for s in settings}
             self._loaded = True

@@ -570,6 +570,20 @@ def reset_settings_cache():
     get_settings.cache_clear()
 
 
+@pytest.fixture(autouse=True)
+def reset_app_settings():
+    """Reset the app_settings singleton between tests to prevent
+    cross-test contamination from the DB-backed settings cache."""
+    from core.app_settings import app_settings
+    app_settings._cache.clear()
+    app_settings._loaded = False
+    app_settings._engine_override = None
+    yield
+    app_settings._cache.clear()
+    app_settings._loaded = False
+    app_settings._engine_override = None
+
+
 @pytest.fixture(name="session")
 def session_fixture():
     """Provide a fresh database session for each test"""
