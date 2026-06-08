@@ -588,12 +588,12 @@ def reset_app_settings():
 def session_fixture():
     """Provide a fresh database session for each test.
 
-    Note: Uses a shared-cache in-memory database (file::memory:?cache=shared)
-    which allows multiple connections from different threads to access the same
-    database. StaticPool ensures connections are reused.
+    Note: Uses a file-based in-memory database with shared cache mode.
+    The file:memdb1?mode=memory&cache=shared syntax creates a named in-memory
+    database that can be accessed from multiple connections/threads.
     """
     engine = create_engine(
-        "sqlite:///file::memory:?cache=shared&uri=true",
+        "sqlite:///file:memdb1?mode=memory&cache=shared",
         connect_args={"check_same_thread": False, "uri": True},
         poolclass=StaticPool
     )
