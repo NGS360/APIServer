@@ -601,6 +601,7 @@ def session_fixture():
     # Seed test settings
     from api.settings.models import Setting
     test_settings = [
+        # S3/Lambda settings
         Setting(
             key="DATA_BUCKET_URI",
             value="s3://test-data-bucket",
@@ -625,10 +626,308 @@ def session_fixture():
             name="Manifest Validation Lambda",
             description="Test Lambda function for manifest validation"
         ),
+        # JWT / Auth settings
+        Setting(
+            key="JWT_SECRET_KEY",
+            value="test-secret-key-for-jwt-tokens-do-not-use-in-production",
+            name="JWT Secret Key",
+            description="Secret key for JWT token generation"
+        ),
+        Setting(
+            key="JWT_ALGORITHM",
+            value="HS256",
+            name="JWT Algorithm",
+            description="Algorithm for JWT token generation"
+        ),
+        Setting(
+            key="ACCESS_TOKEN_EXPIRE_MINUTES",
+            value="30",
+            name="Access Token Expiry",
+            description="Access token expiration time in minutes"
+        ),
+        Setting(
+            key="REFRESH_TOKEN_EXPIRE_DAYS",
+            value="7",
+            name="Refresh Token Expiry",
+            description="Refresh token expiration time in days"
+        ),
+        # Password Policy
+        Setting(
+            key="PASSWORD_MIN_LENGTH",
+            value="8",
+            name="Password Min Length",
+            description="Minimum password length"
+        ),
+        Setting(
+            key="PASSWORD_REQUIRE_UPPERCASE",
+            value="true",
+            name="Password Require Uppercase",
+            description="Require uppercase letter in password"
+        ),
+        Setting(
+            key="PASSWORD_REQUIRE_LOWERCASE",
+            value="true",
+            name="Password Require Lowercase",
+            description="Require lowercase letter in password"
+        ),
+        Setting(
+            key="PASSWORD_REQUIRE_DIGIT",
+            value="true",
+            name="Password Require Digit",
+            description="Require digit in password"
+        ),
+        Setting(
+            key="PASSWORD_REQUIRE_SPECIAL",
+            value="false",
+            name="Password Require Special",
+            description="Require special character in password"
+        ),
+        # Account Lockout
+        Setting(
+            key="MAX_FAILED_LOGIN_ATTEMPTS",
+            value="5",
+            name="Max Failed Login Attempts",
+            description="Maximum failed login attempts before lockout"
+        ),
+        Setting(
+            key="ACCOUNT_LOCKOUT_DURATION_MINUTES",
+            value="30",
+            name="Account Lockout Duration",
+            description="Account lockout duration in minutes"
+        ),
+        # Email settings
+        Setting(
+            key="EMAIL_ENABLED",
+            value="false",
+            name="Email Enabled",
+            description="Enable email sending"
+        ),
+        Setting(
+            key="FROM_EMAIL",
+            value="test@example.com",
+            name="From Email",
+            description="From email address"
+        ),
+        Setting(
+            key="FROM_NAME",
+            value="Test System",
+            name="From Name",
+            description="From name for emails"
+        ),
+        Setting(
+            key="FRONTEND_URL",
+            value="http://localhost:3000",
+            name="Frontend URL",
+            description="Frontend application URL"
+        ),
+        # OpenSearch
+        Setting(
+            key="OPENSEARCH_HOST",
+            value="localhost",
+            name="OpenSearch Host",
+            description="OpenSearch host"
+        ),
+        Setting(
+            key="OPENSEARCH_PORT",
+            value="9200",
+            name="OpenSearch Port",
+            description="OpenSearch port"
+        ),
+        Setting(
+            key="OPENSEARCH_USER",
+            value="",
+            name="OpenSearch User",
+            description="OpenSearch username"
+        ),
+        Setting(
+            key="OPENSEARCH_PASSWORD",
+            value="",
+            name="OpenSearch Password",
+            description="OpenSearch password"
+        ),
+        Setting(
+            key="OPENSEARCH_USE_SSL",
+            value="false",
+            name="OpenSearch Use SSL",
+            description="Use SSL for OpenSearch"
+        ),
+        Setting(
+            key="OPENSEARCH_VERIFY_CERTS",
+            value="false",
+            name="OpenSearch Verify Certs",
+            description="Verify SSL certs for OpenSearch"
+        ),
+        # Storage
+        Setting(
+            key="STORAGE_BACKEND",
+            value="filesystem",
+            name="Storage Backend",
+            description="Storage backend (filesystem or s3)"
+        ),
+        Setting(
+            key="STORAGE_ROOT_PATH",
+            value="/tmp/test-storage",
+            name="Storage Root Path",
+            description="Root path for file storage"
+        ),
+        # OAuth - Google
+        Setting(
+            key="OAUTH_GOOGLE_CLIENT_ID",
+            value="",
+            name="Google OAuth Client ID",
+            description="Google OAuth client ID"
+        ),
+        Setting(
+            key="OAUTH_GOOGLE_CLIENT_SECRET",
+            value="",
+            name="Google OAuth Client Secret",
+            description="Google OAuth client secret"
+        ),
+        # OAuth - GitHub
+        Setting(
+            key="OAUTH_GITHUB_CLIENT_ID",
+            value="",
+            name="GitHub OAuth Client ID",
+            description="GitHub OAuth client ID"
+        ),
+        Setting(
+            key="OAUTH_GITHUB_CLIENT_SECRET",
+            value="",
+            name="GitHub OAuth Client Secret",
+            description="GitHub OAuth client secret"
+        ),
+        # OAuth - Microsoft
+        Setting(
+            key="OAUTH_MICROSOFT_CLIENT_ID",
+            value="",
+            name="Microsoft OAuth Client ID",
+            description="Microsoft OAuth client ID"
+        ),
+        Setting(
+            key="OAUTH_MICROSOFT_CLIENT_SECRET",
+            value="",
+            name="Microsoft OAuth Client Secret",
+            description="Microsoft OAuth client secret"
+        ),
+        # OAuth - Corporate SSO
+        Setting(
+            key="OAUTH_CORP_NAME",
+            value="corp",
+            name="Corporate OAuth Name",
+            description="Corporate OAuth provider name"
+        ),
+        Setting(
+            key="OAUTH_CORP_DISPLAY_NAME",
+            value="Corporate SSO",
+            name="Corporate OAuth Display Name",
+            description="Corporate OAuth display name"
+        ),
+        Setting(
+            key="OAUTH_CORP_CLIENT_ID",
+            value="test-corp-client-id",
+            name="Corporate OAuth Client ID",
+            description="Corporate OAuth client ID"
+        ),
+        Setting(
+            key="OAUTH_CORP_CLIENT_SECRET",
+            value="test-corp-client-secret",
+            name="Corporate OAuth Client Secret",
+            description="Corporate OAuth client secret"
+        ),
+        Setting(
+            key="OAUTH_CORP_AUTHORIZE_URL",
+            value="https://corp.example.com/oauth/authorize",
+            name="Corporate OAuth Authorize URL",
+            description="Corporate OAuth authorize URL"
+        ),
+        Setting(
+            key="OAUTH_CORP_TOKEN_URL",
+            value="https://corp.example.com/oauth/token",
+            name="Corporate OAuth Token URL",
+            description="Corporate OAuth token URL"
+        ),
+        Setting(
+            key="OAUTH_CORP_USERINFO_URL",
+            value="https://corp.example.com/oauth/userinfo",
+            name="Corporate OAuth Userinfo URL",
+            description="Corporate OAuth userinfo URL"
+        ),
+        Setting(
+            key="OAUTH_CORP_SCOPES",
+            value="openid email profile",
+            name="Corporate OAuth Scopes",
+            description="Corporate OAuth scopes"
+        ),
+        # LDAP
+        Setting(
+            key="LDAP_ENABLED",
+            value="false",
+            name="LDAP Enabled",
+            description="Enable LDAP authentication"
+        ),
+        Setting(
+            key="LDAP_SERVER",
+            value="",
+            name="LDAP Server",
+            description="LDAP server address"
+        ),
+        Setting(
+            key="LDAP_PORT",
+            value="389",
+            name="LDAP Port",
+            description="LDAP server port"
+        ),
+        Setting(
+            key="LDAP_USE_SSL",
+            value="false",
+            name="LDAP Use SSL",
+            description="Use SSL for LDAP"
+        ),
+        Setting(
+            key="LDAP_BIND_DN",
+            value="",
+            name="LDAP Bind DN",
+            description="LDAP bind DN"
+        ),
+        Setting(
+            key="LDAP_BIND_PASSWORD",
+            value="",
+            name="LDAP Bind Password",
+            description="LDAP bind password"
+        ),
+        Setting(
+            key="LDAP_BASE_DN",
+            value="",
+            name="LDAP Base DN",
+            description="LDAP base DN"
+        ),
+        Setting(
+            key="LDAP_USER_SEARCH_FILTER",
+            value="(uid={username})",
+            name="LDAP User Search Filter",
+            description="LDAP user search filter"
+        ),
+        Setting(
+            key="LDAP_USER_ATTRIBUTES",
+            value="uid,mail,cn",
+            name="LDAP User Attributes",
+            description="LDAP user attributes to fetch"
+        ),
+        Setting(
+            key="LDAP_TIMEOUT",
+            value="10",
+            name="LDAP Timeout",
+            description="LDAP connection timeout in seconds"
+        ),
     ]
     for setting in test_settings:
         session.add(setting)
     session.commit()
+
+    # Configure app_settings to use the test engine
+    from core.app_settings import app_settings
+    app_settings._engine_override = engine
+    app_settings.load()
 
     yield session
 
