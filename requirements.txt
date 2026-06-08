@@ -81,7 +81,7 @@ httpx==0.28.1
     #   ngs360-server (pyproject.toml)
     #   fastapi
     #   fastapi-cloud-cli
-idna==3.15
+idna==3.18
     # via
     #   anyio
     #   email-validator
