@@ -588,13 +588,13 @@ def reset_app_settings():
 def session_fixture():
     """Provide a fresh database session for each test.
 
-    Note: This returns both the engine and a session. The engine is shared
-    across threads (via StaticPool with check_same_thread=False), but each
-    test client request should create its own session via get_db_override.
+    Note: Uses a shared-cache in-memory database (file::memory:?cache=shared)
+    which allows multiple connections from different threads to access the same
+    database. StaticPool ensures connections are reused.
     """
     engine = create_engine(
-        "sqlite://",
-        connect_args={"check_same_thread": False},
+        "sqlite:///file::memory:?cache=shared&uri=true",
+        connect_args={"check_same_thread": False, "uri": True},
         poolclass=StaticPool
     )
     SQLModel.metadata.create_all(bind=engine)
@@ -972,9 +972,9 @@ def unauthenticated_client_fixture(
     import boto3
 
     def get_db_override():
-        # Create a new session for each request to avoid cross-thread issues
-        with Session(session._test_engine) as db:
-            yield db
+        # Use the same session across all requests in this test
+        # StaticPool + check_same_thread=False allows cross-thread access
+        yield session
 
     def get_opensearch_client_override():
         return mock_opensearch_client
@@ -1014,9 +1014,9 @@ def client_fixture(
     from api.auth.models import User
 
     def get_db_override():
-        # Create a new session for each request to avoid cross-thread issues
-        with Session(session._test_engine) as db:
-            yield db
+        # Use the same session across all requests in this test
+        # StaticPool + check_same_thread=False allows cross-thread access
+        yield session
 
     def get_opensearch_client_override():
         return mock_opensearch_client
@@ -1085,9 +1085,9 @@ def superuser_client_fixture(
     from api.auth.models import User
 
     def get_db_override():
-        # Create a new session for each request to avoid cross-thread issues
-        with Session(session._test_engine) as db:
-            yield db
+        # Use the same session across all requests in this test
+        # StaticPool + check_same_thread=False allows cross-thread access
+        yield session
 
     def get_opensearch_client_override():
         return mock_opensearch_client
