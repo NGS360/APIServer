@@ -12,6 +12,7 @@ def test_create_file_via_api_with_subdirectory(client: TestClient, test_project)
             "project_id": test_project.project_id,
             "relative_path": "raw_data/sample1",
             "description": "Test file in subdirectory",
+            "overwrite": "true",
         },
         files={"content": ("test.txt", b"test content", "text/plain")},
     )
@@ -31,6 +32,7 @@ def test_create_file_via_api_at_root(client: TestClient, test_project):
             "project_id": test_project.project_id,
             # relative_path not provided - file goes to root
             "description": "Project report",
+            "overwrite": "true",
         },
         files={"content": ("report.pdf", b"%PDF-1.4...", "application/pdf")},
     )
