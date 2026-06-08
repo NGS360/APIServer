@@ -3,7 +3,7 @@ import pytest
 
 from fastapi.testclient import TestClient
 from sqlmodel import Session, create_engine, SQLModel
-from sqlalchemy.pool import NullPool
+from sqlalchemy.pool import QueuePool
 
 from core.config import get_settings
 from core.deps import get_db, get_opensearch_client, get_s3_client
@@ -597,7 +597,9 @@ def session_fixture(tmp_path):
     engine = create_engine(
         f"sqlite:///{db_file}",
         connect_args={"check_same_thread": False},
-        poolclass=NullPool  # No pooling - each request gets a fresh connection
+        poolclass=QueuePool,
+        pool_size=20,
+        max_overflow=0
     )
     SQLModel.metadata.create_all(bind=engine)
 
