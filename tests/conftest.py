@@ -596,6 +596,9 @@ def session_fixture(tmp_path):
     with in-memory databases. TestClient's worker threads can safely access the
     same file-based database.
     """
+    # Import Setting model BEFORE create_all so SQLModel knows about the table
+    from api.settings.models import Setting
+
     # Create a temporary database file
     db_file = tmp_path / "test.db"
     engine = create_engine(
@@ -610,7 +613,6 @@ def session_fixture(tmp_path):
     session = Session(bind=engine, expire_on_commit=False)
 
     # Seed test settings
-    from api.settings.models import Setting
     test_settings = [
         # S3/Lambda settings
         Setting(
