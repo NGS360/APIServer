@@ -586,17 +586,20 @@ def reset_app_settings():
 
 @pytest.fixture(name="session")
 def session_fixture():
-    """Provide a fresh database session for each test"""
+    """Provide a fresh database session for each test.
+
+    Note: This returns both the engine and a session. The engine is shared
+    across threads (via StaticPool with check_same_thread=False), but each
+    test client request should create its own session via get_db_override.
+    """
     engine = create_engine(
         "sqlite://",
         connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-        pool_pre_ping=True
+        poolclass=StaticPool
     )
-    connection = engine.connect()
-    SQLModel.metadata.create_all(bind=connection)
+    SQLModel.metadata.create_all(bind=engine)
 
-    session = Session(bind=connection, expire_on_commit=False)
+    session = Session(bind=engine, expire_on_commit=False)
 
     # Seed test settings
     from api.settings.models import Setting
@@ -929,17 +932,19 @@ def session_fixture():
     app_settings._engine_override = engine
     app_settings.load()
 
+    # Store engine on the session object so client fixtures can access it
+    session._test_engine = engine
+
     yield session
 
-    # Cleanup: properly close session, connection, and dispose engine
+    # Cleanup: properly close session and dispose engine
     try:
         session.rollback()
     except Exception:
         pass
     finally:
         session.close()
-        SQLModel.metadata.drop_all(bind=connection)
-        connection.close()
+        SQLModel.metadata.drop_all(bind=engine)
         engine.dispose()
 
 
@@ -967,7 +972,9 @@ def unauthenticated_client_fixture(
     import boto3
 
     def get_db_override():
-        return session
+        # Create a new session for each request to avoid cross-thread issues
+        with Session(session._test_engine) as db:
+            yield db
 
     def get_opensearch_client_override():
         return mock_opensearch_client
@@ -1007,7 +1014,9 @@ def client_fixture(
     from api.auth.models import User
 
     def get_db_override():
-        return session
+        # Create a new session for each request to avoid cross-thread issues
+        with Session(session._test_engine) as db:
+            yield db
 
     def get_opensearch_client_override():
         return mock_opensearch_client
@@ -1076,7 +1085,9 @@ def superuser_client_fixture(
     from api.auth.models import User
 
     def get_db_override():
-        return session
+        # Create a new session for each request to avoid cross-thread issues
+        with Session(session._test_engine) as db:
+            yield db
 
     def get_opensearch_client_override():
         return mock_opensearch_client
