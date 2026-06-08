@@ -585,16 +585,18 @@ def reset_app_settings():
 
 
 @pytest.fixture(name="session")
-def session_fixture():
+def session_fixture(tmp_path):
     """Provide a fresh database session for each test.
 
-    Note: Uses a file-based in-memory database with shared cache mode.
-    The file:memdb1?mode=memory&cache=shared syntax creates a named in-memory
-    database that can be accessed from multiple connections/threads.
+    Note: Uses a temporary file-based SQLite database to avoid threading issues
+    with in-memory databases. TestClient's worker threads can safely access the
+    same file-based database.
     """
+    # Create a temporary database file
+    db_file = tmp_path / "test.db"
     engine = create_engine(
-        "sqlite:///file:memdb1?mode=memory&cache=shared",
-        connect_args={"check_same_thread": False, "uri": True},
+        f"sqlite:///{db_file}",
+        connect_args={"check_same_thread": False},
         poolclass=StaticPool
     )
     SQLModel.metadata.create_all(bind=engine)
