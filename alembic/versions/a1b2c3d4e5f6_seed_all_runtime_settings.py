@@ -423,7 +423,7 @@ def upgrade() -> None:
     conn = op.get_bind()
     for setting in SETTINGS_TO_SEED:
         exists = conn.execute(
-            sa.text("SELECT 1 FROM setting WHERE key = :key"),
+            sa.text("SELECT 1 FROM setting WHERE `key` = :key"),
             {"key": setting["key"]}
         ).fetchone()
         if not exists:
