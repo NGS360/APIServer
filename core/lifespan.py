@@ -140,7 +140,6 @@ def _log_setting(key: str, value):
         logger.info("  %s: %s", key, value)
 
 
-
 # Handle startup/shutdown tasks
 @asynccontextmanager
 async def lifespan(app: FastAPI):
