@@ -3,7 +3,10 @@ Database configuration
 """
 
 from sqlmodel import create_engine, Session
+from alembic.config import Config
+from alembic import command
 from core.config import get_settings
+from core.logger import logger
 
 # Get database URI
 database_uri = str(get_settings().SQLALCHEMY_DATABASE_URI)
@@ -28,3 +31,14 @@ else:
 def get_session():
     with Session(engine) as session:
         yield session
+
+
+def init_db():
+    logger.info("Running database migrations...")
+    alembic_cfg = Config("alembic.ini")
+    try:
+        command.upgrade(alembic_cfg, "head")
+    except Exception as e:
+        logger.error(f"Database migration failed: {e}")
+        raise RuntimeError(f"Database migration failed: {e}")
+    logger.info("Migrations completed successfully.")

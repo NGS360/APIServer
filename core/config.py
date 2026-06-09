@@ -123,7 +123,7 @@ class Settings(BaseSettings):
     def SQLALCHEMY_DATABASE_URI(self) -> str:
         """Database connection URI (defaults to local mysql db)"""
         return self._get_config_value(
-            "SQLALCHEMY_DATABASE_URI", default="mysql+pymysql://root:password@localhost:3306/ngs360"
+            "SQLALCHEMY_DATABASE_URI", default="mysql+pymysql://root:password@localhost:3306/db"
         )
 
     @computed_field

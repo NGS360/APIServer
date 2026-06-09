@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from sqlmodel import Session, select
 from core.config import get_settings
-from core.db import engine
+from core.db import engine, init_db
 from core.app_settings import app_settings
 
 from core.opensearch import get_opensearch_client, init_indexes
@@ -163,9 +163,17 @@ async def lifespan(app: FastAPI):
         _log_setting(key, value)
     _log_setting("client_origin", settings.client_origin)
 
-    # If db is sqllite in memory, run migration scripts
+    # If db is sqllite in memory, raise error since we won't support it
     if settings.SQLALCHEMY_DATABASE_URI.startswith("sqlite://"):
         raise RuntimeError("SQLLite not supported.  Please use MySQL or PostgreSQL.")
+
+    # Initialize database (if not done already)
+    try:
+        logger.info("Initializing database...")
+        init_db()
+        logger.info("Database initialized successfully")
+    except Exception as e:
+        raise RuntimeError(f"Cannot start application: database initialization failed - {str(e)}")
 
     # Sync environment variables to database settings (one-time seeding)
     logger.info("Syncing environment variables to database settings...")
