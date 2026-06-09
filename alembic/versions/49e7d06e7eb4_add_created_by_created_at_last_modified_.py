@@ -45,13 +45,19 @@ def back_fill():
         UPDATE project
         SET
             created_at = CASE
-                WHEN project_id REGEXP '^P-[0-9]{8}-[0-9]{4}$' THEN
+                WHEN project_id REGEXP '^P-[0-9]{8}-[0-9]{4}$'
+                    AND SUBSTRING(project_id, 3, 8) != '00000000'
+                    AND STR_TO_DATE(SUBSTRING(project_id, 3, 8), '%Y%m%d') IS NOT NULL
+                THEN
                     STR_TO_DATE(SUBSTRING(project_id, 3, 8), '%Y%m%d')
                 ELSE
                     '1970-01-01 00:00:00'
             END,
             last_modified = CASE
-                WHEN project_id REGEXP '^P-[0-9]{8}-[0-9]{4}$' THEN
+                WHEN project_id REGEXP '^P-[0-9]{8}-[0-9]{4}$'
+                    AND SUBSTRING(project_id, 3, 8) != '00000000'
+                    AND STR_TO_DATE(SUBSTRING(project_id, 3, 8), '%Y%m%d') IS NOT NULL
+                THEN
                     STR_TO_DATE(SUBSTRING(project_id, 3, 8), '%Y%m%d')
                 ELSE
                     '1970-01-01 00:00:00'
