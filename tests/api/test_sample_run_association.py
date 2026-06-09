@@ -43,7 +43,7 @@ def _get_run_uuid(session: Session, run_id: str):
 
 def _create_sample(session: Session) -> str:
     """Insert a project + sample and return the sample id (UUID str)."""
-    project = Project(name="Test Project")
+    project = Project(name="Test Project", created_by="testuser")
     project.project_id = generate_project_id(session=session)
     project.attributes = []
     session.add(project)

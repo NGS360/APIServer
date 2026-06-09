@@ -148,5 +148,8 @@ app.include_router(users_router, prefix=API_PREFIX)
 if __name__ == "__main__":
     # For debugging purposes
     import uvicorn
+    import os
 
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+    host = os.getenv("API_HOST", "127.0.0.1")
+    port = int(os.getenv("API_PORT", 8000))
+    uvicorn.run("main:app", host=host, port=port, reload=True)

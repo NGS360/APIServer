@@ -2,16 +2,15 @@
 Models for the Project API
 """
 
+from datetime import datetime, timezone
 import uuid
 from sqlmodel import SQLModel, Field, Relationship, UniqueConstraint
-from typing import List, TYPE_CHECKING
+from typing import List
 from pydantic import ConfigDict
 
-if TYPE_CHECKING:
-    from api.samples.models import Sample
-    from api.qcmetrics.models import QCRecord
-
 from api.runs.models import SequencingRunPublic
+from api.samples.models import Sample
+from api.qcmetrics.models import QCRecord
 
 
 class Attribute(SQLModel):
@@ -35,6 +34,14 @@ class Project(SQLModel, table=True):
     id: uuid.UUID | None = Field(default_factory=uuid.uuid4, primary_key=True)
     project_id: str = Field(unique=True)
     name: str | None = Field(max_length=2048)
+
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    created_by: str
+    last_modified: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+        sa_column_kwargs={"onupdate": lambda: datetime.now(timezone.utc)}
+    )
+
     attributes: List[ProjectAttribute] | None = Relationship(back_populates="projects")
     samples: List["Sample"] = Relationship(back_populates="project")
     qcrecords: List["QCRecord"] = Relationship(back_populates="project")
@@ -59,6 +66,9 @@ class ProjectUpdate(SQLModel):
 class ProjectPublic(SQLModel):
     project_id: str
     name: str | None
+    created_by: str
+    created_at: datetime
+    last_modified: datetime
     data_folder_uri: str | None
     results_folder_uri: str | None
     attributes: List[Attribute] | None

@@ -75,14 +75,19 @@ def generate_project_id(*, session: Session) -> str:
 
 
 def create_project(
-    *, session: Session, project_in: ProjectCreate, opensearch_client: OpenSearch = None
+    session: Session,
+    project_in: ProjectCreate,
+    current_user: str,
+    opensearch_client: OpenSearch = None
 ) -> ProjectPublic:
     """
     Create a new project with optional attributes.
     """
     # Create initial project
     project = Project(
-        project_id=generate_project_id(session=session), name=project_in.name
+        project_id=generate_project_id(session=session),
+        name=project_in.name,
+        created_by=current_user
     )
     session.add(project)
     session.flush()
@@ -96,7 +101,7 @@ def create_project(
         # Parse and create project attributes
         # linking to new project
         project_attributes = [
-            ProjectAttribute(project_id=project.id, key=attr.key, value=attr.value)
+            ProjectAttribute(project_id=project.id, key=attr.key.strip(), value=attr.value.strip())
             for attr in project_in.attributes
         ]
 
@@ -119,6 +124,9 @@ def create_project(
     return ProjectPublic(
         project_id=project.project_id,
         name=project.name,
+        created_at=project.created_at,
+        created_by=project.created_by,
+        last_modified=project.last_modified,
         data_folder_uri=f"{data_bucket}/{project.project_id}/",
         results_folder_uri=f"{results_bucket}/{project.project_id}/",
         attributes=project.attributes,
@@ -164,6 +172,9 @@ def get_projects(
         ProjectPublic(
             project_id=project.project_id,
             name=project.name,
+            created_at=project.created_at,
+            created_by=project.created_by,
+            last_modified=project.last_modified,
             data_folder_uri=f"{data_bucket}/{project.project_id}/",
             results_folder_uri=f"{results_bucket}/{project.project_id}/",
             attributes=project.attributes,
@@ -242,6 +253,9 @@ def get_project_by_project_id(session: Session, project_id: str) -> ProjectPubli
     return ProjectPublic(
         project_id=project.project_id,
         name=project.name,
+        created_at=project.created_at,
+        created_by=project.created_by,
+        last_modified=project.last_modified,
         data_folder_uri=f"{data_bucket}/{project.project_id}/",
         results_folder_uri=f"{results_bucket}/{project.project_id}/",
         attributes=project.attributes,
@@ -301,6 +315,9 @@ def update_project(
             )
             session.add(new_attr)
 
+    # Explicitly bump last_modified (onupdate only fires when the project row itself changes)
+    project.last_modified = datetime.now(tz.utc)
+
     session.commit()
     session.refresh(project)
 
@@ -315,6 +332,9 @@ def update_project(
     return ProjectPublic(
         project_id=project.project_id,
         name=project.name,
+        created_at=project.created_at,
+        created_by=project.created_by,
+        last_modified=project.last_modified,
         data_folder_uri=f"{data_bucket}/{project.project_id}/",
         results_folder_uri=f"{results_bucket}/{project.project_id}/",
         attributes=project.attributes,
@@ -387,6 +407,9 @@ def patch_project(
                     )
                 )
 
+    # Explicitly bump last_modified (onupdate only fires when the project row itself changes)
+    project.last_modified = datetime.now(tz.utc)
+
     session.commit()
     session.refresh(project)
 
@@ -405,6 +428,9 @@ def patch_project(
     return ProjectPublic(
         project_id=project.project_id,
         name=project.name,
+        created_at=project.created_at,
+        created_by=project.created_by,
+        last_modified=project.last_modified,
         data_folder_uri=f"{data_bucket}/{project.project_id}/",
         results_folder_uri=(
             f"{results_bucket}/{project.project_id}/"
@@ -471,6 +497,9 @@ def search_projects(
                     ProjectPublic(
                         project_id=project.project_id,
                         name=project.name,
+                        created_at=project.created_at,
+                        created_by=project.created_by,
+                        last_modified=project.last_modified,
                         data_folder_uri=f"{data_bucket}/{project.project_id}/",
                         results_folder_uri=f"{results_bucket}/{project.project_id}/",
                         attributes=project.attributes,

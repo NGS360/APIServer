@@ -23,7 +23,7 @@ from api.runs.models import SequencingRun, SampleSequencingRun
 
 def _create_project(session, project_id="P-TEST-001"):
     """Create a test project and return it."""
-    project = Project(project_id=project_id, name="Test Project")
+    project = Project(project_id=project_id, name="Test Project", created_by="testuser")
     session.add(project)
     session.commit()
     session.refresh(project)

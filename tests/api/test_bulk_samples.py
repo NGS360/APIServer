@@ -18,7 +18,7 @@ from api.files.models import File, FileSample, FileProject, FileHash, FileTag
 
 def _create_project(session: Session, name: str = "Test Project") -> str:
     """Create a project and return its project_id."""
-    project = Project(name=name)
+    project = Project(name=name, created_by="testuser")
     project.project_id = generate_project_id(session=session)
     project.attributes = []
     session.add(project)
