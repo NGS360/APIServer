@@ -16,7 +16,7 @@ from api.project.services import generate_project_id
 
 def _create_project(session: Session, name: str = "Test Project") -> Project:
     """Helper to create a project."""
-    project = Project(name=name)
+    project = Project(name=name, created_by="test_user")
     project.project_id = generate_project_id(session=session)
     project.attributes = []
     session.add(project)

@@ -7,6 +7,16 @@ from api.files.models import File, FileSample, FileTag
 from api.project.services import generate_project_id
 
 
+def _create_project(session: Session, name: str = "Test Project") -> Project:
+    """Helper function to create a project."""
+    project = Project(name=name, created_by="testuser")
+    project.project_id = generate_project_id(session=session)
+    project.attributes = []
+    session.add(project)
+    session.commit()
+    return project
+
+
 def test_get_samples_for_a_project_with_no_samples(
     client: TestClient, session: Session
 ):
@@ -14,11 +24,7 @@ def test_get_samples_for_a_project_with_no_samples(
     Test that we can get all samples for a project
     """
     # Add a project to the database
-    new_project = Project(name="Test Project")
-    new_project.project_id = generate_project_id(session=session)
-    new_project.attributes = []
-    session.add(new_project)
-    session.commit()
+    new_project = _create_project(session)
 
     # Test No samples
     response = client.get(f"/api/v1/projects/{new_project.project_id}/samples")
@@ -39,16 +45,10 @@ def test_get_samples_for_a_project_with_samples(client: TestClient, session: Ses
     Test that we can get all samples for a project with samples
     """
     # Add a project to the database
-    new_project_1 = Project(name="Test Project 1")
-    new_project_1.project_id = generate_project_id(session=session)
-    new_project_1.attributes = []
-    session.add(new_project_1)
+    new_project_1 = _create_project(session, name="Test Project 1")
 
     # Add a second project
-    new_project_2 = Project(name="Test Project 2")
-    new_project_2.project_id = generate_project_id(session=session)
-    new_project_2.attributes = []
-    session.add(new_project_2)
+    new_project_2 = _create_project(session, name="Test Project 2")
 
     # Add sample 1
     sample_1 = Sample(sample_id="Sample_1", project_id=new_project_1.project_id)
@@ -138,11 +138,7 @@ def test_add_sample_to_project(client: TestClient, session: Session):
     Test that we can add a sample to a project
     """
     # Add a project to the database
-    new_project = Project(name="Test Project")
-    new_project.project_id = generate_project_id(session=session)
-    new_project.attributes = []
-    session.add(new_project)
-    session.commit()
+    new_project = _create_project(session, name="Test Project")
 
     # Add a sample to the project
     sample_data = {
@@ -167,11 +163,7 @@ def test_fail_to_add__sample_with_duplicate_attributes(
     Test that we properly fail to add a sample with duplicate keys.
     """
     # Add a project to the database
-    new_project = Project(name="Test Project")
-    new_project.project_id = generate_project_id(session=session)
-    new_project.attributes = []
-    session.add(new_project)
-    session.commit()
+    new_project = _create_project(session, name="Test Project")
 
     # Add a sample to the project
     sample_data = {
@@ -192,11 +184,7 @@ def test_fail_to_add_sample_with_case_insensitive_duplicate_attributes(
     client: TestClient, session: Session
 ):
     """Test that adding a sample with attribute keys differing only in case returns 400."""
-    new_project = Project(name="Test Project")
-    new_project.project_id = generate_project_id(session=session)
-    new_project.attributes = []
-    session.add(new_project)
-    session.commit()
+    new_project = _create_project(session, name="Test Project")
 
     sample_data = {
         "sample_id": "Sample_1",
@@ -218,11 +206,7 @@ def test_fail_to_add_sample_to_project(client: TestClient, session: Session):
     Test that we fail to add a sample to a project when a projecT_id is provided in sample data
     """
     # Add a project to the database
-    new_project = Project(name="Test Project")
-    new_project.project_id = generate_project_id(session=session)
-    new_project.attributes = []
-    session.add(new_project)
-    session.commit()
+    new_project = _create_project(session, name="Test Project")
 
     # Add a sample to the project
     sample_data = {
@@ -269,15 +253,8 @@ def test_add_samples_with_same_sampleid_to_different_projects(
     Test that we can add samples with the same sample_id to different projects
     """
     # Add two projects to the database
-    new_project_1 = Project(name="Test Project 1")
-    new_project_1.project_id = generate_project_id(session=session)
-    new_project_1.attributes = []
-    session.add(new_project_1)
-
-    new_project_2 = Project(name="Test Project 2")
-    new_project_2.project_id = generate_project_id(session=session)
-    new_project_2.attributes = []
-    session.add(new_project_2)
+    new_project_1 = _create_project(session, name="Test Project 1")
+    new_project_2 = _create_project(session, name="Test Project 2")
 
     session.commit()
 
@@ -316,11 +293,7 @@ def test_update_sample_attribute(client: TestClient, session: Session):
     Test that we can update a sample attribute
     """
     # Add a project to the database
-    new_project = Project(name="Test Project")
-    new_project.project_id = generate_project_id(session=session)
-    new_project.attributes = []
-    session.add(new_project)
-    session.commit()
+    new_project = _create_project(session, name="Test Project")
 
     # Add a sample to the project
     sample_data = {
@@ -353,16 +326,6 @@ def test_update_sample_attribute(client: TestClient, session: Session):
 # ---------------------------------------------------------------------------
 # ?include=files tests
 # ---------------------------------------------------------------------------
-
-
-def _seed_project(session: Session) -> Project:
-    """Create a project and return it."""
-    project = Project(name="Include-Files Project")
-    project.project_id = generate_project_id(session=session)
-    project.attributes = []
-    session.add(project)
-    session.flush()
-    return project
 
 
 def _seed_sample(session: Session, project: Project, name: str) -> Sample:
@@ -401,7 +364,7 @@ def test_get_samples_include_files_with_tagged_files(
 ):
     """With ?include=files, samples that have files should return them with
     flat-dict tags."""
-    project = _seed_project(session)
+    project = _create_project(session, name="Include-Files Project")
     sample = _seed_sample(session, project, "SampleWithFastqs")
 
     _attach_file(
@@ -445,7 +408,7 @@ def test_get_samples_include_files_sample_with_no_files(
     client: TestClient, session: Session
 ):
     """A sample with no associated files should return ``files: null``."""
-    project = _seed_project(session)
+    project = _create_project(session, name="Include-Files Project")
     _seed_sample(session, project, "LonelySample")
     session.commit()
 
@@ -463,7 +426,7 @@ def test_get_samples_include_files_with_untagged_files(
     client: TestClient, session: Session
 ):
     """A file with no tags should still appear; tags should be null."""
-    project = _seed_project(session)
+    project = _create_project(session, name="Include-Files Project")
     sample = _seed_sample(session, project, "SampleNoTags")
     _attach_file(session, sample, uri="s3://bucket/P-1234/SampleNoTags.bam")
     session.commit()
@@ -486,7 +449,7 @@ def test_get_samples_include_files_pagination_works(
     client: TestClient, session: Session
 ):
     """Pagination should still work correctly when include=files."""
-    project = _seed_project(session)
+    project = _create_project(session, name="Include-Files Project")
     for i in range(5):
         s = _seed_sample(session, project, f"PaginatedSample_{i:02d}")
         _attach_file(
@@ -535,11 +498,7 @@ def test_get_samples_include_files_pagination_works(
 
 def test_sample_created_at_set_on_creation(client: TestClient, session: Session):
     """Verify created_at is populated when a sample is created."""
-    new_project = Project(name="Test Project")
-    new_project.project_id = generate_project_id(session=session)
-    new_project.attributes = []
-    session.add(new_project)
-    session.commit()
+    new_project = _create_project(session, name="Test Project")
 
     sample_data = {"sample_id": "TS_1", "attributes": [{"key": "k", "value": "v"}]}
     response = client.post(
@@ -555,11 +514,7 @@ def test_sample_created_at_set_on_creation(client: TestClient, session: Session)
 
 def test_sample_updated_at_set_on_update(client: TestClient, session: Session):
     """Verify updated_at is populated when a sample attribute is modified."""
-    new_project = Project(name="Test Project")
-    new_project.project_id = generate_project_id(session=session)
-    new_project.attributes = []
-    session.add(new_project)
-    session.commit()
+    new_project = _create_project(session, name="Test Project")
 
     sample_data = {"sample_id": "TS_2", "attributes": [{"key": "k", "value": "v"}]}
     client.post(
@@ -585,7 +540,7 @@ def test_get_samples_include_files_mixed_samples(
 ):
     """A project with a mix of samples (with and without files) returns the
     correct shape for each."""
-    project = _seed_project(session)
+    project = _create_project(session, name="Include-Files Project")
 
     # Sample with files
     s1 = _seed_sample(session, project, "SampleWithFiles")
@@ -619,7 +574,7 @@ def test_get_samples_file_versions_latest_deduplicates(
     URI should be returned per sample."""
     from datetime import datetime, timezone
 
-    project = _seed_project(session)
+    project = _create_project(session, name="Include-Files Project")
     sample = _seed_sample(session, project, "SampleDedupLatest")
 
     uri = "s3://bucket/P-1234/SampleDedupLatest_R1.fastq.gz"
@@ -674,7 +629,7 @@ def test_get_samples_file_versions_all_returns_all(
     """With file_versions=all, all versions of each URI should be returned."""
     from datetime import datetime, timezone
 
-    project = _seed_project(session)
+    project = _create_project(session, name="Include-Files Project")
     sample = _seed_sample(session, project, "SampleDedupAll")
 
     uri = "s3://bucket/P-1234/SampleDedupAll_R1.fastq.gz"
@@ -723,7 +678,7 @@ def test_get_samples_file_versions_latest_distinct_uris_preserved(
     """Deduplication only collapses same-URI files; distinct URIs are kept."""
     from datetime import datetime, timezone
 
-    project = _seed_project(session)
+    project = _create_project(session, name="Include-Files Project")
     sample = _seed_sample(session, project, "SampleDistinctURIs")
 
     uri_r1 = "s3://bucket/P-1234/SampleDistinctURIs_R1.fastq.gz"
@@ -773,7 +728,7 @@ def test_get_samples_file_versions_without_include_files_ignored(
     client: TestClient, session: Session
 ):
     """file_versions param has no effect when include=files is not specified."""
-    project = _seed_project(session)
+    project = _create_project(session, name="Include-Files Project")
     _seed_sample(session, project, "SampleNoInclude")
     session.commit()
 

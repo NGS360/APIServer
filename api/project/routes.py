@@ -41,13 +41,19 @@ router = APIRouter(prefix="/projects")
     response_model=ProjectPublic,
 )
 def create_project(
-    session: SessionDep, opensearch_client: OpenSearchDep, project_in: ProjectCreate
+    session: SessionDep,
+    opensearch_client: OpenSearchDep,
+    project_in: ProjectCreate,
+    current_user: CurrentUser
 ) -> ProjectPublic:
     """
     Create a new project with optional attributes.
     """
     return services.create_project(
-        session=session, project_in=project_in, opensearch_client=opensearch_client
+        session=session,
+        project_in=project_in,
+        current_user=current_user.username,
+        opensearch_client=opensearch_client
     )
 
 
