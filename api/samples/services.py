@@ -194,6 +194,7 @@ def get_samples(
             sample_id=sample.sample_id,
             project_id=sample.project_id,
             attributes=sample.attributes,
+            created_at=sample.created_at,
         )
         for sample in samples
     ]
@@ -367,14 +368,30 @@ def _apply_column_filter(statement, column, value):
 
 
 def _apply_date_filter(statement, value: str):
-    """Apply a date prefix filter on Sample.created_at (e.g. '2026-01-21')."""
-    if not isinstance(value, str) or Sample.created_at is None:
-        return statement
+    """Apply a date filter on Sample.created_at.
+
+    Accepts either a date (``2026-01-21``) or an ISO datetime whose date part
+    is used (``2026-01-21T10:30:00``). Unparseable input raises HTTP 400 rather
+    than silently returning every row.
+    """
+    if not isinstance(value, str):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid 'created_on' value; expected a date (YYYY-MM-DD).",
+        )
+    # Use the date portion of a date or ISO datetime (e.g. '2026-01-21' or
+    # '2026-01-21T10:30:00'); datetime.fromisoformat handles both.
     try:
-        date = datetime.strptime(value, "%Y-%m-%d").date()
-        return statement.where(func.date(Sample.created_at) == date)
+        date = datetime.fromisoformat(value).date()
     except ValueError:
-        return statement  # Invalid date format — skip
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"Invalid 'created_on' value '{value}'; "
+                "expected a date (YYYY-MM-DD)."
+            ),
+        )
+    return statement.where(func.date(Sample.created_at) == date)
 
 
 def _build_sample_query(
@@ -473,6 +490,7 @@ def search_samples(
             sample_id=sample.sample_id,
             project_id=sample.project_id,
             attributes=sample.attributes,
+            created_at=sample.created_at,
         )
         for sample in samples
     ]

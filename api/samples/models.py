@@ -70,6 +70,7 @@ class SamplePublic(SQLModel):
     project_id: str
     attributes: List[Attribute] | None
     run_id: str | None = None
+    created_at: datetime | None = None
 
 
 class SamplesPublic(SQLModel):
