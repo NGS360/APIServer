@@ -11,7 +11,6 @@ from alembic import op
 import sqlalchemy as sa
 import sqlmodel
 
-import re
 
 # revision identifiers, used by Alembic.
 revision: str = '49e7d06e7eb4'
@@ -21,46 +20,43 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def back_fill():
-    """Backfill created_by, created_at, and last_modified from projectattribute entries."""
-    from datetime import datetime, timezone
-    from sqlmodel import Session, select
-    from api.project.models import Project, ProjectAttribute
-
-    # Use alembic's connection to avoid lock contention with DDL
+    """Backfill created_by, created_at, and last_modified using pure SQL."""
     bind = op.get_bind()
-    with Session(bind=bind) as session:
-        # Get all projects ordered by project_id
-        projects = session.exec(select(Project).order_by(Project.project_id)).all()
-
-        pattern = r"^P-(\d{4})(\d{2})(\d{2})-(\d{4})$"
-
-        # For each project, get the created_by and createdate values from the projectattribute table
-        for project in projects:
-            # Handle created_by
-            created_by_stmt = select(ProjectAttribute.value).where(
-                ProjectAttribute.project_id == project.id,
-                ProjectAttribute.key.in_(["createby", "createdby"])
-            )
-            created_by_value = session.exec(created_by_stmt).first()
-
-            # Fallback for projects without a matching attribute
-            project.created_by = created_by_value or "unknown"
-
-            # project.project_id is format is P-YYYYMMDD-#####
-            # Parse out year, month, date to create a datetime object for created_at
-            match = re.match(pattern, project.project_id)
-            if match:
-                year, month, day = match.group(1), match.group(2), match.group(3)
-                try:
-                    created_at_value = datetime(int(year), int(month), int(day), tzinfo=timezone.utc)
-                except ValueError:
-                    created_at_value = datetime(1970, 1, 1, tzinfo=timezone.utc)
-            else:
-                created_at_value = datetime(1970, 1, 1, tzinfo=timezone.utc)
-
-            project.created_at = created_at_value
-            project.last_modified = project.created_at
-            session.add(project)
+    
+    # Update created_by from projectattribute table in a single query
+    bind.execute(sa.text("""
+        UPDATE project
+        SET created_by = COALESCE(
+            (
+                SELECT value
+                FROM projectattribute
+                WHERE projectattribute.project_id = project.id
+                AND LOWER(`key`) IN ('createby', 'createdby', 'businessowner', 'Business Owner')
+                LIMIT 1
+            ),
+            'unknown'
+        )
+    """))
+    
+    # Update created_at and last_modified by parsing project_id in a single query
+    # project_id format is P-YYYYMMDD-####
+    # Extract date using SUBSTRING and convert using STR_TO_DATE (MySQL)
+    bind.execute(sa.text("""
+        UPDATE project
+        SET
+            created_at = CASE
+                WHEN project_id REGEXP '^P-[0-9]{8}-[0-9]{4}$' THEN
+                    STR_TO_DATE(SUBSTRING(project_id, 3, 8), '%Y%m%d')
+                ELSE
+                    '1970-01-01 00:00:00'
+            END,
+            last_modified = CASE
+                WHEN project_id REGEXP '^P-[0-9]{8}-[0-9]{4}$' THEN
+                    STR_TO_DATE(SUBSTRING(project_id, 3, 8), '%Y%m%d')
+                ELSE
+                    '1970-01-01 00:00:00'
+            END
+    """))
 
 
 def upgrade() -> None:
