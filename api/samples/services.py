@@ -194,6 +194,7 @@ def get_samples(
             sample_id=sample.sample_id,
             project_id=sample.project_id,
             attributes=sample.attributes,
+            created_at=sample.created_at,
         )
         for sample in samples
     ]
@@ -367,14 +368,30 @@ def _apply_column_filter(statement, column, value):
 
 
 def _apply_date_filter(statement, value: str):
-    """Apply a date prefix filter on Sample.created_at (e.g. '2026-01-21')."""
-    if not isinstance(value, str) or Sample.created_at is None:
-        return statement
+    """Apply a date filter on Sample.created_at.
+
+    Accepts either a date (``2026-01-21``) or an ISO datetime whose date part
+    is used (``2026-01-21T10:30:00``). Unparseable input raises HTTP 400 rather
+    than silently returning every row.
+    """
+    if not isinstance(value, str):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid 'created_at' value; expected a date (YYYY-MM-DD).",
+        )
+    # Use the date portion of a date or ISO datetime (e.g. '2026-01-21' or
+    # '2026-01-21T10:30:00'); datetime.fromisoformat handles both.
     try:
-        date = datetime.strptime(value, "%Y-%m-%d").date()
-        return statement.where(func.date(Sample.created_at) == date)
+        date = datetime.fromisoformat(value).date()
     except ValueError:
-        return statement  # Invalid date format — skip
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"Invalid 'created_at' value '{value}'; "
+                "expected a date (YYYY-MM-DD)."
+            ),
+        )
+    return statement.where(func.date(Sample.created_at) == date)
 
 
 def _build_sample_query(
@@ -387,7 +404,7 @@ def _build_sample_query(
     Args:
         filters: dict of top-level or attribute filters.
             - Keys in FIELD_MAP are mapped to Sample columns.
-            - 'created_on' is handled as date prefix match.
+            - 'created_at' is handled as date prefix match.
             - 'tags' key (if present) is extracted and handled separately.
             - Other keys are treated as SampleAttribute key searches.
         tags: Explicit tags dict (from POST body's filter_on.tags).
@@ -410,7 +427,7 @@ def _build_sample_query(
             statement = _apply_column_filter(
                 statement, getattr(Sample, column_name), value
             )
-        elif key == "created_on":
+        elif key == "created_at":
             statement = _apply_date_filter(statement, value)
         else:
             statement = _apply_attribute_filter(statement, key, value)
@@ -441,7 +458,7 @@ def search_samples(
     Args:
         session: Database session
         filters: dict of filter parameters (projectid, samplename,
-                 created_on, attribute keys, tags)
+                 created_at, attribute keys, tags)
         tags: Optional explicit tags dict
         page: Page number (1-indexed)
         per_page: Number of items per page
@@ -473,6 +490,7 @@ def search_samples(
             sample_id=sample.sample_id,
             project_id=sample.project_id,
             attributes=sample.attributes,
+            created_at=sample.created_at,
         )
         for sample in samples
     ]

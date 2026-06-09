@@ -36,7 +36,7 @@ def search_samples_get(
     Supported filter keys:
     - ``projectid``: exact match on project ID
     - ``samplename``: exact match on sample name
-    - ``created_on``: date prefix match (YYYY-MM-DD) on created_at
+    - ``created_at``: date prefix match (YYYY-MM-DD) on created_at
     - Any other key: matched against sample attributes (case-insensitive key)
 
     Multiple filters are AND'd together.
@@ -84,7 +84,7 @@ def search_samples_post(
     ``filter_on`` supports:
     - ``projectid`` (str or list)
     - ``samplename`` (str or list)
-    - ``created_on`` (str, date prefix match)
+    - ``created_at`` (str, date prefix match)
     - ``tags`` (dict of key/value pairs, matched case-insensitively)
     - Any other key is matched against sample attributes
 
