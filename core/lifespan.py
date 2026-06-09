@@ -162,6 +162,10 @@ async def lifespan(app: FastAPI):
         _log_setting(key, value)
     _log_setting("client_origin", settings.client_origin)
 
+    # If db is sqllite in memory, run migration scripts
+    if settings.SQLALCHEMY_DATABASE_URI.startswith("sqlite://"):
+        raise RuntimeError("SQLLite not supported.  Please use MySQL or PostgreSQL.")
+
     # Sync environment variables to database settings (one-time seeding)
     logger.info("Syncing environment variables to database settings...")
     try:
