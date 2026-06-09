@@ -126,6 +126,21 @@ def sync_env_to_settings():
         session.commit()
 
 
+def _log_setting(key: str, value):
+    """Log a setting, masking sensitive values"""
+    if ("PASSWORD" in key or "SECRET" in key) and value is not None:
+        logger.info("  %s: %s", key, "*****")
+    elif "SQLALCHEMY_DATABASE_URI" in key and value is not None:
+        import re
+        masked_value = re.sub(
+            r"://(.*?):(.*?)@", r"://\1:*****@", value
+        )
+        logger.info("  %s: %s", key, masked_value)
+    else:
+        logger.info("  %s: %s", key, value)
+
+
+
 # Handle startup/shutdown tasks
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -135,19 +150,6 @@ async def lifespan(app: FastAPI):
     # Print bootstrap configuration
     logger.info("Bootstrap Configuration:")
     settings = get_settings()
-
-    def _log_setting(key: str, value):
-        """Log a setting, masking sensitive values"""
-        if ("PASSWORD" in key or "SECRET" in key) and value is not None:
-            logger.info("  %s: %s", key, "*****")
-        elif "SQLALCHEMY_DATABASE_URI" in key and value is not None:
-            import re
-            masked_value = re.sub(
-                r"://(.*?):(.*?)@", r"://\1:*****@", value
-            )
-            logger.info("  %s: %s", key, masked_value)
-        else:
-            logger.info("  %s: %s", key, value)
 
     # Log bootstrap settings
     bootstrap_fields = [
