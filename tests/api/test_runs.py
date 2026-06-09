@@ -525,6 +525,38 @@ def test_get_run_samplesheet(client: TestClient, session: Session):
     assert "id" not in data["Summary"]  # Database ID should not be exposed
 
 
+def test_get_run_samplesheet_with_bom(client: TestClient, session: Session):
+    """A samplesheet encoded with a UTF-8 BOM should still parse correctly."""
+
+    # This fixture's SampleSheet.csv is encoded utf-8-sig (leading BOM)
+    run_folder = (
+        Path(__file__).parent.parent / "fixtures" / "190110_MACHINE123_0003_BOMFLOWCELL"
+    )
+
+    new_run = SequencingRun(
+        id=uuid4(),
+        run_id="190110_MACHINE123_0003_BOMFLOWCELL",
+        run_date=datetime.date(2019, 1, 10),
+        machine_id="MACHINE123",
+        run_number="3",
+        flowcell_id="BOMFLOWCELL",
+        experiment_name="Test Experiment",
+        run_folder_uri=run_folder.as_posix(),
+        status=RunStatus.READY,
+    )
+    session.add(new_run)
+    session.commit()
+
+    run_id = "190110_MACHINE123_0003_BOMFLOWCELL"
+    response = client.get(f"/api/v1/runs/{run_id}/samplesheet")
+    assert response.status_code == 200
+    data = response.json()
+    # The BOM must not leak into the first parsed Header key/section
+    assert "Header" in data
+    assert data["Header"]
+    assert not any(key.startswith("﻿") for key in data["Header"])
+
+
 def test_get_run_samplesheet_no_result(client: TestClient, session: Session):
     """Test that we get the correct response when no samplesheet is available"""
 
@@ -554,14 +586,14 @@ def test_get_run_samplesheet_no_result(client: TestClient, session: Session):
     assert response.status_code == 204
 
 
-@patch('api.runs.services.IlluminaSampleSheet')
+@patch('api.runs.services.smart_open')
 def test_get_run_samplesheet_no_s3_credentials(
-    mock_sample_sheet, client: TestClient, session: Session
+    mock_smart_open, client: TestClient, session: Session
 ):
     """Test that we get the correct response when no AWS credentials are configured"""
 
-    # Mock the SampleSheet to raise NoCredentialsError
-    mock_sample_sheet.side_effect = NoCredentialsError()
+    # Mock opening the samplesheet to raise NoCredentialsError
+    mock_smart_open.side_effect = NoCredentialsError()
 
     # Set the test run folder to an S3 path
     run_folder = "s3://bucket/path/to/run"

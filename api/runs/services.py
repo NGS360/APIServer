@@ -313,7 +313,10 @@ def get_run_samplesheet(session: Session, run_id: str):
     if run.run_folder_uri:
         sample_sheet_path = f"{run.run_folder_uri}/SampleSheet.csv"
         try:
-            sample_sheet = IlluminaSampleSheet(sample_sheet_path)
+            # Open with utf-8-sig so a leading UTF-8 BOM is stripped before
+            # the samplesheet is parsed if present
+            with smart_open(sample_sheet_path, 'r', encoding='utf-8-sig') as f:
+                sample_sheet = IlluminaSampleSheet(f)
             sample_sheet = sample_sheet.to_json()
             sample_sheet = json.loads(sample_sheet)
             sample_sheet_json['Header'] = sample_sheet['Header']
@@ -465,7 +468,10 @@ def upload_samplesheet(
 
     # After successful upload, read back the samplesheet to return its content
     try:
-        sample_sheet = IlluminaSampleSheet(samplesheet_path)
+        # Open with utf-8-sig so a leading UTF-8 BOM is stripped before
+        # the samplesheet is parsed (some Windows tools emit a BOM).
+        with smart_open(samplesheet_path, 'r', encoding='utf-8-sig') as f:
+            sample_sheet = IlluminaSampleSheet(f)
         sample_sheet = sample_sheet.to_json()
         sample_sheet = json.loads(sample_sheet)
         sample_sheet_json = {
