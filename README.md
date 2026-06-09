@@ -13,33 +13,6 @@ It uses FastAPI for building the API and SQLModel (SQLAlchemy + Pydantic) for da
   - `routes.py`: Contains the FastAPI routes for handling HTTP requests related to the feature.
   - `services.py`: Contains the business logic and database interactions for the feature.
 
-```text
-APIServer/
-├── main.py                  # Application entry point
-├── core/                    # Core functionality 
-│   ├── config.py            # Configuration settings
-│   ├── db.py                # Database connection
-│   ├── deps.py              # Dependency injection
-│   ├── lifespan.py          # Application lifecycle
-│   ├── logger.py            # Logging configuration
-│   ├── opensearch.py        # OpenSearch integration
-│   └── security.py          # Security utilities
-└── api/                     # API endpoints by feature
-    ├── auth/                # Authentication (OAuth2)
-    ├── files/               # Unified file management
-    ├── jobs/                # Batch job management
-    ├── manifest/            # Manifest handling
-    ├── platforms/           # Platform information
-    ├── project/             # Project management
-    ├── qcmetrics/           # QC metrics from pipelines
-    ├── runs/                # Sequencing run management
-    ├── samples/             # Sample management
-    ├── search/              # Search capabilities
-    ├── settings/            # System settings
-    ├── vendors/             # Vendor management
-    └── workflow/            # Workflow management
-```
-
 ## Key Components
 
 ### FastAPI Setup (main.py)
