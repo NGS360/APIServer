@@ -20,52 +20,43 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def back_fill():
-    """Backfill created_by, created_at, and last_modified from projectattribute entries."""
-    from datetime import datetime, timezone
-    from email.utils import parsedate_to_datetime
-    from sqlmodel import Session, select
-    from api.project.models import Project, ProjectAttribute
-
-    EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
-
-    # Use alembic's connection to avoid lock contention with DDL
+    """Backfill created_by, created_at, and last_modified using pure SQL."""
     bind = op.get_bind()
-    with Session(bind=bind) as session:
-        # Get all projects ordered by project_id
-        projects = session.exec(select(Project).order_by(Project.project_id)).all()
-
-        # For each project, get the created_by and createdate values from the projectattribute table
-        for project in projects:
-            # Query projectattribute using the project's UUID (project.id),
-            # not the string project_id
-            created_by_stmt = select(ProjectAttribute.value).where(
-                ProjectAttribute.project_id == project.id,
-                ProjectAttribute.key.in_(["createby", "createdby"])
-            )
-            created_by_value = session.exec(created_by_stmt).first()
-
-            createdate_stmt = select(ProjectAttribute.value).where(
-                ProjectAttribute.project_id == project.id,
-                ProjectAttribute.key == "createdate"
-            )
-            createdate_value = session.exec(createdate_stmt).first()
-
-            # Fallback for projects without a matching attribute
-            project.created_by = created_by_value or "unknown"
-
-            # Parse RFC 2822 date format (e.g. 'Wed, 10 Nov 2021 00:00:00 GMT')
-            if createdate_value:
-                try:
-                    project.created_at = parsedate_to_datetime(createdate_value)
-                except (ValueError, TypeError):
-                    project.created_at = EPOCH
-            else:
-                project.created_at = EPOCH
-
-            project.last_modified = project.created_at
-            session.add(project)
-
-        session.commit()
+    
+    # Update created_by from projectattribute table in a single query
+    bind.execute(sa.text("""
+        UPDATE project
+        SET created_by = COALESCE(
+            (
+                SELECT value
+                FROM projectattribute
+                WHERE projectattribute.project_id = project.id
+                AND LOWER(`key`) IN ('createby', 'createdby', 'businessowner', 'Business Owner')
+                LIMIT 1
+            ),
+            'unknown'
+        )
+    """))
+    
+    # Update created_at and last_modified by parsing project_id in a single query
+    # project_id format is P-YYYYMMDD-####
+    # Extract date using SUBSTRING and convert using STR_TO_DATE (MySQL)
+    bind.execute(sa.text("""
+        UPDATE project
+        SET
+            created_at = CASE
+                WHEN project_id REGEXP '^P-[0-9]{8}-[0-9]{4}$' THEN
+                    STR_TO_DATE(SUBSTRING(project_id, 3, 8), '%Y%m%d')
+                ELSE
+                    '1970-01-01 00:00:00'
+            END,
+            last_modified = CASE
+                WHEN project_id REGEXP '^P-[0-9]{8}-[0-9]{4}$' THEN
+                    STR_TO_DATE(SUBSTRING(project_id, 3, 8), '%Y%m%d')
+                ELSE
+                    '1970-01-01 00:00:00'
+            END
+    """))
 
 
 def upgrade() -> None:
