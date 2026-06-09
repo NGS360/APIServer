@@ -26,6 +26,7 @@ from api.vendors.routes import router as vendors_router
 from api.workflow.routes import router as workflow_router
 from api.pipeline.routes import router as pipeline_router
 from api.platforms.routes import router as platforms_router
+from api.users.routes import router as users_router
 
 
 # Customize route id's
@@ -141,10 +142,14 @@ app.include_router(vendors_router, prefix=API_PREFIX)
 app.include_router(workflow_router, prefix=API_PREFIX)
 app.include_router(pipeline_router, prefix=API_PREFIX)
 app.include_router(platforms_router, prefix=API_PREFIX)
+app.include_router(users_router, prefix=API_PREFIX)
 
 
 if __name__ == "__main__":
     # For debugging purposes
     import uvicorn
+    import os
 
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+    host = os.getenv("API_HOST", "127.0.0.1")
+    port = int(os.getenv("API_PORT", 8000))
+    uvicorn.run("main:app", host=host, port=port, reload=True)

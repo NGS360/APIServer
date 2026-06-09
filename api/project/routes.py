@@ -493,6 +493,7 @@ def submit_pipeline_job(
         platform=request.platform,
         project_type=request.project_type,
         username=current_user.username,
+        email=current_user.email,
         reference=request.reference,
         auto_release=request.auto_release,
         s3_client=s3_client

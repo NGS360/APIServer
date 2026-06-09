@@ -543,6 +543,7 @@ def isolate_test_environment():
     original_env = os.environ.copy()
 
     # Set test-specific environment variables
+    os.environ["LDAP_ENABLED"] = "false"
     os.environ["SQLALCHEMY_DATABASE_URI"] = "sqlite://"  # In-memory DB
     os.environ["OPENSEARCH_HOST"] = "localhost"
     os.environ["OPENSEARCH_PORT"] = "9200"

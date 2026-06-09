@@ -8,7 +8,7 @@ from opensearchpy import OpenSearch
 from tests.fixtures.test_projects import basic_projects
 
 
-def test_search_projects(client: TestClient):
+def test_search_projects_no_projects(client: TestClient):
     """
     Project search that returns a ProjectsPublic model
     with sorting and pagination for rendering the table
@@ -19,10 +19,8 @@ def test_search_projects(client: TestClient):
     than handling pagination from the database.
     """
 
-    url = "/api/v1/projects/search"
-
     # Test No projects, this also ensure we are using the test db
-    response = client.get(f"{url}", params={"query": "AI"})
+    response = client.get("/api/v1/projects/search", params={"query": "AI"})
     assert response.status_code == 200
     assert response.json() == {
         "data": [],
@@ -34,6 +32,9 @@ def test_search_projects(client: TestClient):
         "has_prev": False,
     }
 
+
+def test_search_projects(client: TestClient):
+
     # Add a project to search for
     new_project = {
         "name": "AI Research",
@@ -43,12 +44,11 @@ def test_search_projects(client: TestClient):
             {"key": "Priority", "value": "High"},
         ],
     }
-
     response = client.post("/api/v1/projects", json=new_project)
     assert response.status_code == 201
 
     # Now search for the project
-    response = client.get(f"{url}", params={"query": "AI"})
+    response = client.get("/api/v1/projects/search", params={"query": "AI"})
     assert response.status_code == 200
     response_json = response.json()
 
@@ -198,15 +198,15 @@ def test_search(client: TestClient, opensearch_client: OpenSearch):
     Test unified search endpoint for search bar that
     returns a response model for each index in OpenSearch.
 
-    For example, if projects and runs both exist, then the return
+    For example, if projects, runs, and samples all exist, then the return
     structure should be
 
     SearchResponse:
         projects: ProjectsPublic
         runs: SequencingRunsPublic
+        samples: SamplesPublic
 
-    where ProjectsPublic is returned by the get projects endpoint and
-    SequencingRunsPublic is returned by the get runs endpoint.
+    where each is the paginated public model for that entity type.
 
     Each new index should append another prop to this SearchResponse.
     """
@@ -223,15 +223,17 @@ def test_search(client: TestClient, opensearch_client: OpenSearch):
     assert response.status_code == 200
     response_json = response.json()
 
-    # Has projects and runs indicies (even if no data is returned)
+    # Has projects, runs, and samples indices (even if no data is returned)
     assert "projects" in response_json
     assert "runs" in response_json
+    assert "samples" in response_json
 
     # Data is returned (update runs when populated)
     assert response_json["projects"]["data"]
     assert response_json["runs"]["data"] == []
     projects = response_json["projects"]
     runs = response_json["runs"]
+    samples = response_json["samples"]
 
     # Project structure
     assert projects["data"][0]["name"] == "Test project 1"
@@ -251,3 +253,71 @@ def test_search(client: TestClient, opensearch_client: OpenSearch):
     assert runs["per_page"] == 5
     assert runs["has_next"] is False
     assert runs["has_prev"] is False
+
+    # Sample structure (no samples created, so empty)
+    assert len(samples["data"]) == 0
+    assert samples["total_items"] == 0
+    assert samples["total_pages"] == 0
+    assert samples["current_page"] == 1
+    assert samples["per_page"] == 5
+    assert samples["has_next"] is False
+    assert samples["has_prev"] is False
+
+
+def test_search_returns_samples(client: TestClient):
+    """
+    Test that unified search returns samples found via OpenSearch.
+
+    This exercises the search_samples_opensearch path end-to-end,
+    including the UUID-to-string conversion when looking up samples
+    from the database after OpenSearch returns hits with string _id values.
+
+    Regression test for: 1e71a59 (UUID/string type mismatch in dict lookup)
+    """
+    # Create a project first
+    project_response = client.post(
+        "/api/v1/projects",
+        json={"name": "Genomics Study", "attributes": []},
+    )
+    assert project_response.status_code == 201
+    project_id = project_response.json()["project_id"]
+
+    # Create samples via the API (this indexes them in OpenSearch with
+    # _id = str(sample.id), which is a UUID string like "a1b2c3d4-...")
+    sample_names = ["RNA_Sample_001", "RNA_Sample_002", "DNA_Sample_003"]
+    for name in sample_names:
+        resp = client.post(
+            f"/api/v1/projects/{project_id}/samples",
+            json={
+                "sample_id": name,
+                "attributes": [
+                    {"key": "Tissue", "value": "Liver"},
+                    {"key": "Method", "value": "RNA-Seq"},
+                ],
+            },
+        )
+        assert resp.status_code == 201
+
+    # Search via unified endpoint — this calls search_samples_opensearch
+    # which must correctly map OpenSearch _id strings back to DB UUIDs
+    response = client.get(
+        "/api/v1/search",
+        params={"query": "RNA", "n_results": 5},
+    )
+    assert response.status_code == 200
+    result = response.json()
+
+    samples = result["samples"]
+    assert samples["total_items"] == 2
+    assert len(samples["data"]) == 2
+
+    # Verify the actual sample data is populated (not silently dropped)
+    returned_names = {s["sample_id"] for s in samples["data"]}
+    assert "RNA_Sample_001" in returned_names
+    assert "RNA_Sample_002" in returned_names
+
+    # Each result should have full sample structure
+    for sample in samples["data"]:
+        assert sample["project_id"] == project_id
+        assert sample["attributes"] is not None
+        assert len(sample["attributes"]) == 2
