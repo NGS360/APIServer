@@ -8,7 +8,7 @@ from opensearchpy import OpenSearch
 from tests.fixtures.test_projects import basic_projects
 
 
-def test_search_projects(client: TestClient):
+def test_search_projects_no_projects(client: TestClient):
     """
     Project search that returns a ProjectsPublic model
     with sorting and pagination for rendering the table
@@ -19,10 +19,8 @@ def test_search_projects(client: TestClient):
     than handling pagination from the database.
     """
 
-    url = "/api/v1/projects/search"
-
     # Test No projects, this also ensure we are using the test db
-    response = client.get(f"{url}", params={"query": "AI"})
+    response = client.get("/api/v1/projects/search", params={"query": "AI"})
     assert response.status_code == 200
     assert response.json() == {
         "data": [],
@@ -34,6 +32,9 @@ def test_search_projects(client: TestClient):
         "has_prev": False,
     }
 
+
+def test_search_projects(client: TestClient):
+
     # Add a project to search for
     new_project = {
         "name": "AI Research",
@@ -43,12 +44,11 @@ def test_search_projects(client: TestClient):
             {"key": "Priority", "value": "High"},
         ],
     }
-
     response = client.post("/api/v1/projects", json=new_project)
     assert response.status_code == 201
 
     # Now search for the project
-    response = client.get(f"{url}", params={"query": "AI"})
+    response = client.get("/api/v1/projects/search", params={"query": "AI"})
     assert response.status_code == 200
     response_json = response.json()
 
