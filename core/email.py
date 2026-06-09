@@ -2,7 +2,7 @@
 Email service for sending transactional emails
 """
 import logging
-from core.config import get_settings
+from core.app_settings import app_settings
 
 logger = logging.getLogger(__name__)
 
@@ -23,16 +23,17 @@ def send_password_reset_email(
     Returns:
         True if email was sent successfully
     """
-    settings = get_settings()
-
-    if not settings.EMAIL_ENABLED:
+    if not app_settings.get_bool("EMAIL_ENABLED"):
         logger.warning(
             f"Email disabled. Would send password reset to {email}"
         )
         return False
 
     # Build reset URL
-    reset_url = f"{settings.FRONTEND_URL}/reset-password?token={token}"
+    frontend_url = app_settings.get(
+        "FRONTEND_URL", "http://localhost:3000"
+    )
+    reset_url = f"{frontend_url}/reset-password?token={token}"
 
     subject = "Password Reset Request"
     body = f"""
@@ -76,16 +77,17 @@ def send_verification_email(
     Returns:
         True if email was sent successfully
     """
-    settings = get_settings()
-
-    if not settings.EMAIL_ENABLED:
+    if not app_settings.get_bool("EMAIL_ENABLED"):
         logger.warning(
             f"Email disabled. Would send verification to {email}"
         )
         return False
 
     # Build verification URL
-    verify_url = f"{settings.FRONTEND_URL}/verify-email?token={token}"
+    frontend_url = app_settings.get(
+        "FRONTEND_URL", "http://localhost:3000"
+    )
+    verify_url = f"{frontend_url}/verify-email?token={token}"
 
     subject = "Verify Your Email Address"
     body = f"""
@@ -124,9 +126,7 @@ def send_welcome_email(email: str, user_name: str) -> bool:
     Returns:
         True if email was sent successfully
     """
-    settings = get_settings()
-
-    if not settings.EMAIL_ENABLED:
+    if not app_settings.get_bool("EMAIL_ENABLED"):
         logger.warning(f"Email disabled. Would send welcome to {email}")
         return False
 
@@ -165,23 +165,27 @@ def _send_email_aws_ses(to_email: str, subject: str, body: str) -> None:
     Raises:
         Exception: If email sending fails
     """
-    settings = get_settings()
+    from core.config import get_settings
 
     try:
         import boto3
         from botocore.exceptions import ClientError
 
+        bootstrap = get_settings()
+        from_name = app_settings.get("FROM_NAME", "NGS360")
+        from_email = app_settings.get("FROM_EMAIL", "noreply@example.com")
+
         # Create SES client
         ses_client = boto3.client(
             'ses',
-            region_name=settings.AWS_REGION,
-            aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
-            aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY
+            region_name=bootstrap.AWS_REGION,
+            aws_access_key_id=bootstrap.AWS_ACCESS_KEY_ID,
+            aws_secret_access_key=bootstrap.AWS_SECRET_ACCESS_KEY
         )
 
         # Send email
         response = ses_client.send_email(
-            Source=f"{settings.FROM_NAME} <{settings.FROM_EMAIL}>",
+            Source=f"{from_name} <{from_email}>",
             Destination={'ToAddresses': [to_email]},
             Message={
                 'Subject': {'Data': subject, 'Charset': 'UTF-8'},
@@ -191,7 +195,9 @@ def _send_email_aws_ses(to_email: str, subject: str, body: str) -> None:
             }
         )
 
-        logger.debug(f"Email sent. Message ID: {response['MessageId']}")
+        logger.debug(
+            f"Email sent. Message ID: {response['MessageId']}"
+        )
 
     except ClientError as e:
         error_code = e.response['Error']['Code']
@@ -199,7 +205,9 @@ def _send_email_aws_ses(to_email: str, subject: str, body: str) -> None:
         logger.error(f"SES error {error_code}: {error_message}")
         raise Exception(f"Failed to send email: {error_message}")
     except ImportError:
-        logger.error("boto3 not installed. Cannot send emails via SES.")
+        logger.error(
+            "boto3 not installed. Cannot send emails via SES."
+        )
         raise Exception("Email service not configured")
     except Exception as e:
         logger.error(f"Unexpected error sending email: {e}")
@@ -223,21 +231,31 @@ def _send_email(to_email: str, subject: str, body: str) -> None:
     from email.mime.multipart import MIMEMultipart
     from email.utils import formataddr
 
-    settings = get_settings()
+    mail_server = app_settings.get("MAIL_SERVER")
+    mail_port = app_settings.get("MAIL_PORT")
+    from_name = app_settings.get("FROM_NAME", "NGS360")
+    from_email = app_settings.get("FROM_EMAIL", "noreply@example.com")
+    mail_username = app_settings.get("MAIL_USERNAME")
+    mail_password = app_settings.get("MAIL_PASSWORD")
+    mail_use_tls = app_settings.get_bool("MAIL_USE_TLS")
 
     # Validate SMTP configuration
-    if not settings.MAIL_SERVER:
+    if not mail_server:
         logger.error("MAIL_SERVER not configured")
-        raise Exception("Email service not configured: MAIL_SERVER is required")
+        raise Exception(
+            "Email service not configured: MAIL_SERVER is required"
+        )
 
-    if not settings.MAIL_PORT:
+    if not mail_port:
         logger.error("MAIL_PORT not configured")
-        raise Exception("Email service not configured: MAIL_PORT is required")
+        raise Exception(
+            "Email service not configured: MAIL_PORT is required"
+        )
 
     try:
         # Create message
         msg = MIMEMultipart()
-        msg['From'] = formataddr((settings.FROM_NAME, settings.FROM_EMAIL))
+        msg['From'] = formataddr((from_name, from_email))
         msg['To'] = to_email
         msg['Subject'] = subject
 
@@ -245,23 +263,27 @@ def _send_email(to_email: str, subject: str, body: str) -> None:
         msg.attach(MIMEText(body, 'plain', 'utf-8'))
 
         # Connect to SMTP server
-        mail_port = int(settings.MAIL_PORT)
+        port = int(mail_port)
 
-        logger.debug(f"Connecting to SMTP server {settings.MAIL_SERVER}:{mail_port}")
+        logger.debug(
+            f"Connecting to SMTP server {mail_server}:{port}"
+        )
 
         # Create SMTP connection
-        smtp_server = smtplib.SMTP(settings.MAIL_SERVER, mail_port, timeout=30)
+        smtp_server = smtplib.SMTP(mail_server, port, timeout=30)
 
         try:
             # Enable TLS if configured
-            if settings.MAIL_USE_TLS:
+            if mail_use_tls:
                 logger.debug("Starting TLS")
                 smtp_server.starttls()
 
             # Authenticate if credentials provided
-            if settings.MAIL_USERNAME and settings.MAIL_PASSWORD:
-                logger.debug(f"Authenticating as {settings.MAIL_USERNAME}")
-                smtp_server.login(settings.MAIL_USERNAME, settings.MAIL_PASSWORD)
+            if mail_username and mail_password:
+                logger.debug(
+                    f"Authenticating as {mail_username}"
+                )
+                smtp_server.login(mail_username, mail_password)
 
             # Send email
             smtp_server.send_message(msg)
@@ -273,13 +295,17 @@ def _send_email(to_email: str, subject: str, body: str) -> None:
 
     except smtplib.SMTPAuthenticationError as e:
         logger.error(f"SMTP authentication failed: {e}")
-        raise Exception("Failed to send email: Authentication failed")
+        raise Exception(
+            "Failed to send email: Authentication failed"
+        )
     except smtplib.SMTPException as e:
         logger.error(f"SMTP error: {e}")
         raise Exception(f"Failed to send email: {str(e)}")
     except ValueError as e:
         logger.error(f"Invalid MAIL_PORT value: {e}")
-        raise Exception("Email service misconfigured: Invalid port number")
+        raise Exception(
+            "Email service misconfigured: Invalid port number"
+        )
     except Exception as e:
         logger.error(f"Unexpected error sending email: {e}")
         raise Exception(f"Failed to send email: {str(e)}")

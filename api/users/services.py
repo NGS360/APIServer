@@ -8,7 +8,7 @@ from sqlmodel import Session, select, or_, col
 from api.auth.models import User
 from api.users.models import UserSearchResult, UserSearchResponse
 from api.users.ldap_service import search_users_ldap
-from core.config import get_settings
+from core.app_settings import app_settings
 
 logger = logging.getLogger(__name__)
 
@@ -71,10 +71,8 @@ def search_users(
     Returns:
         UserSearchResponse with results and source indicator.
     """
-    settings = get_settings()
-
     # Try LDAP first if enabled
-    if settings.LDAP_ENABLED:
+    if app_settings.get_bool("LDAP_ENABLED"):
         ldap_results = search_users_ldap(query, limit)
         if ldap_results is not None:
             return UserSearchResponse(

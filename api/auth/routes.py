@@ -10,7 +10,7 @@ from fastapi.security import OAuth2PasswordRequestForm
 
 from core.deps import SessionDep
 from core.security import create_access_token, create_refresh_token
-from core.config import get_settings
+from core.app_settings import app_settings
 from api.auth.models import (
     User, UserRegister, UserPublic, TokenResponse,
     RefreshTokenRequest, PasswordResetRequest, PasswordResetConfirm,
@@ -97,7 +97,6 @@ def login(
     device_info = f"{user_agent[:100]}"
 
     # Create tokens
-    settings = get_settings()
     access_token = create_access_token({"sub": str(user.id)})
     refresh_token = create_refresh_token(session, user.username, device_info)
 
@@ -105,7 +104,9 @@ def login(
         access_token=access_token,
         refresh_token=refresh_token.token,
         token_type="bearer",
-        expires_in=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60
+        expires_in=app_settings.get_int(
+            "ACCESS_TOKEN_EXPIRE_MINUTES", default=30
+        ) * 60
     )
 
 

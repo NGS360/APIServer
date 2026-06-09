@@ -1,6 +1,19 @@
 """
-Application Configuration
-Add constants, secrets, env variables here
+Application Configuration - Bootstrap Only
+
+This module contains ONLY the minimal settings needed to bootstrap the
+application (connect to DB, set up logging, configure CORS). All other
+runtime configuration lives in the DB-backed `setting` table and is
+accessed via `core.app_settings.app_settings`.
+
+Bootstrap env vars:
+    - SQLALCHEMY_DATABASE_URI: Database connection string
+    - AWS_REGION: AWS region for SDK calls
+    - AWS_ACCESS_KEY_ID: AWS credentials
+    - AWS_SECRET_ACCESS_KEY: AWS credentials
+    - ENV_SECRETS: AWS Secrets Manager secret name
+    - LOG_LEVEL: Application log level
+    - client_origin: CORS allowed origin
 """
 
 from functools import lru_cache
@@ -49,13 +62,17 @@ def get_secret(secret_name: str, region_name: str) -> dict | None:
     )
 
 
-# Define settings class for univeral access
 class Settings(BaseSettings):
-    # Computed or constant values
+    """
+    Bootstrap configuration - only values needed before the DB is available.
+
+    All other runtime settings are in the DB `setting` table and accessed
+    via `core.app_settings.app_settings`.
+    """
+    # CORS origin for the frontend client
     client_origin: str | None = os.getenv("client_origin")
 
     # Cache for AWS Secrets Manager to avoid multiple API calls
-    # Note: Must use PrivateAttr for Pydantic v2 private attributes
     _secret_cache: dict | None = PrivateAttr(default=None)
 
     def _get_config_value(
@@ -64,12 +81,12 @@ class Settings(BaseSettings):
         default: str | None = None
     ) -> str | None:
         """
-        Get configuration value from environment variable or AWS Secrets Manager (with caching).
+        Get configuration value from environment variable or
+        AWS Secrets Manager (with caching).
 
         Args:
             env_var_name: Environment variable name to check first
-            secret_key_name: Key name in AWS Secrets (defaults to env_var_name if not provided)
-            default: Default value to return if not found in env or secrets
+            default: Default value if not found
 
         Returns:
             Configuration value, or default value if not found
@@ -80,13 +97,13 @@ class Settings(BaseSettings):
             return env_value
 
         # 2. Try to get from AWS Secrets Manager with caching
-        # Use cached secret if available
         if self._secret_cache is None:
             env_secret = os.getenv('ENV_SECRETS')
             if env_secret:
-                self._secret_cache = get_secret(env_secret,
-                                                os.getenv("AWS_REGION",
-                                                          'us-east-1'))
+                self._secret_cache = get_secret(
+                    env_secret,
+                    os.getenv("AWS_REGION", 'us-east-1')
+                )
         if self._secret_cache:
             secret_value = self._secret_cache.get(env_var_name)
             if secret_value is not None:
@@ -98,381 +115,36 @@ class Settings(BaseSettings):
     @computed_field
     @property
     def LOG_LEVEL(self) -> str:
-        """Get application log level from env or secrets (defaults to INFO)"""
+        """Application log level (defaults to INFO)"""
         return self._get_config_value("LOG_LEVEL", default="INFO")
 
-    # SQLAlchemy - Create db connection string
     @computed_field
     @property
     def SQLALCHEMY_DATABASE_URI(self) -> str:
-        """Build database URI from env or secrets, defaults to sqlite://"""
-        return self._get_config_value("SQLALCHEMY_DATABASE_URI", default="sqlite://")
+        """Database connection URI (defaults to local mysql db)"""
+        return self._get_config_value(
+            "SQLALCHEMY_DATABASE_URI", default="mysql+pymysql://root:password@localhost:3306/db"
+        )
 
-    # ElasticSearch Configuration
-    @computed_field
-    @property
-    def OPENSEARCH_HOST(self) -> str | None:
-        """Get OpenSearch host from env or secrets"""
-        return self._get_config_value("OPENSEARCH_HOST")
-
-    @computed_field
-    @property
-    def OPENSEARCH_PORT(self) -> str | None:
-        """Get OpenSearch post from env or secrets"""
-        return self._get_config_value("OPENSEARCH_PORT")
-
-    @computed_field
-    @property
-    def OPENSEARCH_USER(self) -> str | None:
-        """Get OpenSearch user from env or secrets"""
-        return self._get_config_value("OPENSEARCH_USER")
-
-    @computed_field
-    @property
-    def OPENSEARCH_PASSWORD(self) -> str | None:
-        """Get OpenSearch password from env or secrets"""
-        # Note: Secret key is 'OPENSEARCH_PASS' not 'OPENSEARCH_PASSWORD'
-        return self._get_config_value("OPENSEARCH_PASSWORD")
-
-    @computed_field
-    @property
-    def OPENSEARCH_USE_SSL(self) -> bool:
-        """Get OpenSearch use SSL flag from env or secrets"""
-        value = self._get_config_value("OPENSEARCH_USE_SSL", default="true")
-        return value.lower() in ("true", "1", "yes")
-
-    @computed_field
-    @property
-    def OPENSEARCH_VERIFY_CERTS(self) -> bool:
-        """Get OpenSearch certificate verification setting from env or secrets (defaults to False)"""
-        value = self._get_config_value("OPENSEARCH_VERIFY_CERTS", default="false")
-        return value.lower() in ("true", "1", "yes")
-
-    # AWS Configuration
     @computed_field
     @property
     def AWS_ACCESS_KEY_ID(self) -> str | None:
-        """Get AWS Access Key ID from env or secrets"""
+        """AWS Access Key ID"""
         return self._get_config_value("AWS_ACCESS_KEY_ID")
 
     @computed_field
     @property
     def AWS_SECRET_ACCESS_KEY(self) -> str | None:
-        """Get AWS Secret Access Key from env or secrets"""
+        """AWS Secret Access Key"""
         return self._get_config_value("AWS_SECRET_ACCESS_KEY")
 
     @computed_field
     @property
     def AWS_REGION(self) -> str:
-        """Get AWS Region from env or secrets (defaults to us-east-1)"""
+        """AWS Region (defaults to us-east-1)"""
         return self._get_config_value("AWS_REGION", default="us-east-1")
 
-    # Options are from api.files.models.StorageBackend
-    STORAGE_BACKEND: str = os.getenv("STORAGE_BACKEND", "s3")
-    STORAGE_ROOT_PATH: str = os.getenv("STORAGE_URI", "s3://my-storage-bucket")
-
-    # JWT Configuration
-    @computed_field
-    @property
-    def JWT_SECRET_KEY(self) -> str:
-        """Get JWT secret key from env or secrets"""
-        return self._get_config_value(
-            "JWT_SECRET_KEY",
-            default="change-this-secret-key-in-production"
-        )
-
-    @computed_field
-    @property
-    def JWT_ALGORITHM(self) -> str:
-        """Get JWT algorithm from env or secrets"""
-        return self._get_config_value("JWT_ALGORITHM", default="HS256")
-
-    @computed_field
-    @property
-    def ACCESS_TOKEN_EXPIRE_MINUTES(self) -> int:
-        """Get access token expiration in minutes"""
-        value = self._get_config_value("ACCESS_TOKEN_EXPIRE_MINUTES", default="30")
-        return int(value)
-
-    @computed_field
-    @property
-    def REFRESH_TOKEN_EXPIRE_DAYS(self) -> int:
-        """Get refresh token expiration in days"""
-        value = self._get_config_value("REFRESH_TOKEN_EXPIRE_DAYS", default="30")
-        return int(value)
-
-    # Password Policy
-    @computed_field
-    @property
-    def PASSWORD_MIN_LENGTH(self) -> int:
-        """Get minimum password length"""
-        value = self._get_config_value("PASSWORD_MIN_LENGTH", default="8")
-        return int(value)
-
-    @computed_field
-    @property
-    def PASSWORD_REQUIRE_UPPERCASE(self) -> bool:
-        """Check if password requires uppercase"""
-        value = self._get_config_value("PASSWORD_REQUIRE_UPPERCASE", default="true")
-        return value.lower() in ("true", "1", "yes")
-
-    @computed_field
-    @property
-    def PASSWORD_REQUIRE_LOWERCASE(self) -> bool:
-        """Check if password requires lowercase"""
-        value = self._get_config_value("PASSWORD_REQUIRE_LOWERCASE", default="true")
-        return value.lower() in ("true", "1", "yes")
-
-    @computed_field
-    @property
-    def PASSWORD_REQUIRE_DIGIT(self) -> bool:
-        """Check if password requires digit"""
-        value = self._get_config_value("PASSWORD_REQUIRE_DIGIT", default="true")
-        return value.lower() in ("true", "1", "yes")
-
-    @computed_field
-    @property
-    def PASSWORD_REQUIRE_SPECIAL(self) -> bool:
-        """Check if password requires special character"""
-        value = self._get_config_value("PASSWORD_REQUIRE_SPECIAL", default="false")
-        return value.lower() in ("true", "1", "yes")
-
-    # Account Lockout
-    @computed_field
-    @property
-    def MAX_FAILED_LOGIN_ATTEMPTS(self) -> int:
-        """Get max failed login attempts before lockout"""
-        value = self._get_config_value("MAX_FAILED_LOGIN_ATTEMPTS", default="5")
-        return int(value)
-
-    @computed_field
-    @property
-    def ACCOUNT_LOCKOUT_DURATION_MINUTES(self) -> int:
-        """Get account lockout duration in minutes"""
-        value = self._get_config_value("ACCOUNT_LOCKOUT_DURATION_MINUTES", default="30")
-        return int(value)
-
-    # Email Configuration
-    @computed_field
-    @property
-    def EMAIL_ENABLED(self) -> bool:
-        """Check if email is enabled"""
-        value = self._get_config_value("EMAIL_ENABLED", default="false")
-        return value.lower() in ("true", "1", "yes")
-
-    @computed_field
-    @property
-    def FROM_EMAIL(self) -> str:
-        """Get from email address"""
-        return self._get_config_value("FROM_EMAIL", default="noreply@example.com")
-
-    @computed_field
-    @property
-    def FROM_NAME(self) -> str:
-        """Get from name"""
-        return self._get_config_value("FROM_NAME", default="NGS360")
-
-    @computed_field
-    @property
-    def FRONTEND_URL(self) -> str:
-        """Get frontend URL"""
-        return self._get_config_value("FRONTEND_URL", default="http://localhost:3000")
-
-    @computed_field
-    @property
-    def MAIL_SERVER(self) -> str | None:
-        """Get mail server"""
-        return self._get_config_value("MAIL_SERVER")
-
-    @computed_field
-    @property
-    def MAIL_PORT(self) -> str | None:
-        """Get mail server port"""
-        return self._get_config_value("MAIL_PORT")
-
-    @computed_field
-    @property
-    def MAIL_USERNAME(self) -> str | None:
-        """Get mail username"""
-        return self._get_config_value("MAIL_USERNAME")
-
-    @computed_field
-    @property
-    def MAIL_PASSWORD(self) -> str | None:
-        """Get mail password"""
-        return self._get_config_value("MAIL_PASSWORD")
-
-    @computed_field
-    @property
-    def MAIL_USE_TLS(self) -> bool:
-        """Check if mail uses TLS"""
-        value = self._get_config_value("MAIL_USE_TLS", default="false")
-        return value.lower() in ("true", "1", "yes")
-
-    @computed_field
-    @property
-    def MAIL_ADMINS(self) -> str | None:
-        """Get mail admins"""
-        return self._get_config_value("MAIL_ADMINS")
-
-    # OAuth2 Configuration
-    @computed_field
-    @property
-    def OAUTH_GOOGLE_CLIENT_ID(self) -> str | None:
-        """Get Google OAuth client ID"""
-        return self._get_config_value("OAUTH_GOOGLE_CLIENT_ID")
-
-    @computed_field
-    @property
-    def OAUTH_GOOGLE_CLIENT_SECRET(self) -> str | None:
-        """Get Google OAuth client secret"""
-        return self._get_config_value("OAUTH_GOOGLE_CLIENT_SECRET")
-
-    @computed_field
-    @property
-    def OAUTH_GITHUB_CLIENT_ID(self) -> str | None:
-        """Get GitHub OAuth client ID"""
-        return self._get_config_value("OAUTH_GITHUB_CLIENT_ID")
-
-    @computed_field
-    @property
-    def OAUTH_GITHUB_CLIENT_SECRET(self) -> str | None:
-        """Get GitHub OAuth client secret"""
-        return self._get_config_value("OAUTH_GITHUB_CLIENT_SECRET")
-
-    @computed_field
-    @property
-    def OAUTH_MICROSOFT_CLIENT_ID(self) -> str | None:
-        """Get Microsoft OAuth client ID"""
-        return self._get_config_value("OAUTH_MICROSOFT_CLIENT_ID")
-
-    @computed_field
-    @property
-    def OAUTH_MICROSOFT_CLIENT_SECRET(self) -> str | None:
-        """Get Microsoft OAuth client secret"""
-        return self._get_config_value("OAUTH_MICROSOFT_CLIENT_SECRET")
-
-    # For Oauth2 Corporate SSO
-    @computed_field
-    @property
-    def OAUTH_CORP_NAME(self) -> str | None:
-        return self._get_config_value("OAUTH_CORP_NAME")
-
-    @computed_field
-    @property
-    def OAUTH_CORP_DISPLAY_NAME(self) -> str | None:
-        return self._get_config_value("OAUTH_CORP_DISPLAY_NAME", default=self.OAUTH_CORP_NAME)
-
-    @computed_field
-    @property
-    def OAUTH_CORP_CLIENT_ID(self) -> str | None:
-        """Get Corporate OAuth client ID"""
-        return self._get_config_value("OAUTH_CORP_CLIENT_ID")
-
-    @computed_field
-    @property
-    def OAUTH_CORP_CLIENT_SECRET(self) -> str | None:
-        """Get Corporate OAuth client secret"""
-        return self._get_config_value("OAUTH_CORP_CLIENT_SECRET")
-
-    @computed_field
-    @property
-    def OAUTH_CORP_AUTHORIZE_URL(self) -> str | None:
-        """Get Corporate OAuth authorization URL"""
-        return self._get_config_value("OAUTH_CORP_AUTHORIZE_URL")
-
-    @computed_field
-    @property
-    def OAUTH_CORP_TOKEN_URL(self) -> str | None:
-        """Get Corporate OAuth token URL"""
-        return self._get_config_value("OAUTH_CORP_TOKEN_URL")
-
-    @computed_field
-    @property
-    def OAUTH_CORP_USERINFO_URL(self) -> str | None:
-        """Get Corporate OAuth userinfo URL"""
-        return self._get_config_value("OAUTH_CORP_USERINFO_URL")
-
-    @computed_field
-    @property
-    def OAUTH_CORP_SCOPES(self) -> str | None:
-        """Get Corporate OAuth scopes (comma-separated)"""
-        return self._get_config_value("OAUTH_CORP_SCOPES", default="openid,email,profile")
-
-    # LDAP Configuration
-    @computed_field
-    @property
-    def LDAP_ENABLED(self) -> bool:
-        """Check if LDAP is enabled for user search"""
-        value = self._get_config_value("LDAP_ENABLED", default="false")
-        return value.lower() in ("true", "1", "yes")
-
-    @computed_field
-    @property
-    def LDAP_SERVER(self) -> str | None:
-        """LDAP server URL (e.g., ldap://ldap.example.com or ldaps://ldap.example.com)"""
-        return self._get_config_value("LDAP_SERVER")
-
-    @computed_field
-    @property
-    def LDAP_PORT(self) -> int:
-        """LDAP server port (389 for LDAP, 636 for LDAPS)"""
-        value = self._get_config_value("LDAP_PORT", default="389")
-        return int(value)
-
-    @computed_field
-    @property
-    def LDAP_USE_SSL(self) -> bool:
-        """Whether to use SSL/TLS for LDAP connection"""
-        value = self._get_config_value("LDAP_USE_SSL", default="false")
-        return value.lower() in ("true", "1", "yes")
-
-    @computed_field
-    @property
-    def LDAP_BIND_DN(self) -> str | None:
-        """Distinguished Name for LDAP bind (service account)"""
-        return self._get_config_value("LDAP_BIND_DN")
-
-    @computed_field
-    @property
-    def LDAP_BIND_PASSWORD(self) -> str | None:
-        """Password for LDAP bind"""
-        return self._get_config_value("LDAP_BIND_PASSWORD")
-
-    @computed_field
-    @property
-    def LDAP_BASE_DN(self) -> str | None:
-        """Base DN for user search (e.g., ou=People,dc=example,dc=com)"""
-        return self._get_config_value("LDAP_BASE_DN")
-
-    @computed_field
-    @property
-    def LDAP_USER_SEARCH_FILTER(self) -> str:
-        """LDAP search filter template. Use {query} as placeholder.
-        Default searches cn, mail, and uid."""
-        return self._get_config_value(
-            "LDAP_USER_SEARCH_FILTER",
-            default="(|(cn=*{query}*)(mail=*{query}*)(uid=*{query}*))"
-        )
-
-    @computed_field
-    @property
-    def LDAP_USER_ATTRIBUTES(self) -> str:
-        """Comma-separated LDAP attributes to retrieve"""
-        return self._get_config_value(
-            "LDAP_USER_ATTRIBUTES",
-            default="cn,mail,uid,displayName,department,title"
-        )
-
-    @computed_field
-    @property
-    def LDAP_TIMEOUT(self) -> int:
-        """LDAP connection/search timeout in seconds"""
-        value = self._get_config_value("LDAP_TIMEOUT", default="10")
-        return int(value)
-
     # Read environment variables from .env file, if it exists
-    # extra='ignore' prevents validation errors from extra env vars
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
@@ -485,12 +157,13 @@ class Settings(BaseSettings):
 @lru_cache
 def get_settings() -> Settings:
     """
-    Get settings instance, cached for performance
+    Get bootstrap settings instance, cached for performance.
+
+    NOTE: For runtime settings (JWT, OAuth, email, LDAP, etc.),
+    use `from core.app_settings import app_settings` instead.
     """
     return Settings()
 
 
 if __name__ == "__main__":
-    # To use in other modules
-    # from core.config import get_settings
     print(get_settings().SQLALCHEMY_DATABASE_URI)

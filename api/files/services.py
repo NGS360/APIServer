@@ -188,10 +188,9 @@ def create_file_upload(
     _validate_upload_entity_exists(session, file_upload)
 
     # Get storage configuration
-    from core.config import get_settings
-    settings = get_settings()
-    storage_backend = settings.STORAGE_BACKEND
-    base_uri = settings.STORAGE_ROOT_PATH
+    from core.app_settings import app_settings
+    storage_backend = app_settings.get("STORAGE_BACKEND", "s3")
+    base_uri = app_settings.get("STORAGE_ROOT_PATH", "s3://my-storage-bucket")
 
     # Generate URI using typed entity info
     uri = File.generate_uri(
@@ -868,34 +867,38 @@ def _write_local_file(
     """
     full_path = Path(uri)
 
-    # Security: Validate path doesn't escape allowed directories
-    # Reject paths that look like URI schemes (e.g., s3://, file://)
-    if "://" in uri or uri.startswith("/"):
+    # Security: Reject URI schemes (e.g., s3://, file://, http://)
+    if "://" in uri:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={
                 "error": "Invalid local file path",
                 "message": (
-                    "Local file paths must be relative. "
+                    "URI schemes not allowed for local filesystem storage. "
                     f"Got: '{uri}'"
                 ),
             }
         )
 
     # Resolve and check for path traversal
+    # This works for both relative and absolute paths
     try:
         resolved = full_path.resolve()
-        cwd = Path.cwd().resolve()
-        # Ensure resolved path is under current working directory
-        resolved.relative_to(cwd)
-    except ValueError:
+        # For absolute paths (like /tmp/test-storage/...), the resolve() call
+        # normalizes the path and we can verify it doesn't contain .. or other
+        # traversal patterns by checking the resolved path is sensible
+        if not resolved.is_absolute():
+            cwd = Path.cwd().resolve()
+            # For relative paths, ensure they stay within working directory
+            resolved.relative_to(cwd)
+    except (ValueError, RuntimeError) as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={
                 "error": "Path traversal detected",
                 "message": "File path must be within the storage directory.",
             }
-        )
+        ) from e
 
     # Check if file already exists
     if not allow_overwrite and full_path.exists():

@@ -221,39 +221,70 @@ class TestOAuthLogin:
 
     def test_get_available_providers(self, client: TestClient):
         """Test retrieving 1 available OAuth providers"""
+        from api.auth.oauth2_service import OAuth2ProviderConfig
 
-        with patch("api.auth.oauth2_service.get_settings") as mock_settings:
-            # Explicitly disable other providers (or else they are MagicMock'd)
-            mock_settings.return_value.OAUTH_GOOGLE_CLIENT_ID = None
-            mock_settings.return_value.OAUTH_GOOGLE_CLIENT_SECRET = None
-            mock_settings.return_value.OAUTH_GITHUB_CLIENT_ID = None
-            mock_settings.return_value.OAUTH_GITHUB_CLIENT_SECRET = None
-            mock_settings.return_value.OAUTH_MICROSOFT_CLIENT_ID = None
-            mock_settings.return_value.OAUTH_MICROSOFT_CLIENT_SECRET = None
-            mock_settings.return_value.OAUTH_CORP_NAME = "testcorp"
-            mock_settings.return_value.OAUTH_CORP_DISPLAY_NAME = "TestCorp"
-            mock_settings.return_value.OAUTH_CORP_CLIENT_ID = "test_client_id"
-            mock_settings.return_value.OAUTH_CORP_CLIENT_SECRET = "test_secret"
-            mock_settings.return_value.client_origin = "http://localhost:3000"
+        oauth_settings = {
+            "OAUTH_GOOGLE_CLIENT_ID": None,
+            "OAUTH_GOOGLE_CLIENT_SECRET": None,
+            "OAUTH_GITHUB_CLIENT_ID": None,
+            "OAUTH_GITHUB_CLIENT_SECRET": None,
+            "OAUTH_MICROSOFT_CLIENT_ID": None,
+            "OAUTH_MICROSOFT_CLIENT_SECRET": None,
+            "OAUTH_CORP_NAME": "testcorp",
+            "OAUTH_CORP_DISPLAY_NAME": "TestCorp",
+            "OAUTH_CORP_CLIENT_ID": "test_client_id",
+            "OAUTH_CORP_CLIENT_SECRET": "test_secret",
+        }
 
-            response = client.get("/api/v1/auth/oauth/providers")
-            assert response.status_code == 200
-            data = response.json()
-            assert data["count"] == 1
-            assert "providers" in data
-            assert isinstance(data["providers"], list)
-            assert len(data["providers"]) == 1
+        # Reset class-level cached config to prevent stale YAML state
+        saved_config = OAuth2ProviderConfig._config
+        saved_providers = OAuth2ProviderConfig._providers
+        # Use empty YAML providers so only dynamic corp provider is found
+        OAuth2ProviderConfig._config = {"providers": {}}
+        OAuth2ProviderConfig._providers = {}
+
+        try:
+            with patch(
+                "api.auth.oauth2_service.app_settings"
+            ) as mock_app_settings:
+                mock_app_settings.get.side_effect = (
+                    lambda key, default=None: oauth_settings.get(key, default)
+                )
+
+                response = client.get("/api/v1/auth/oauth/providers")
+                assert response.status_code == 200
+                data = response.json()
+                assert data["count"] == 1
+                assert "providers" in data
+                assert isinstance(data["providers"], list)
+                assert len(data["providers"]) == 1
+        finally:
+            OAuth2ProviderConfig._config = saved_config
+            OAuth2ProviderConfig._providers = saved_providers
 
     def test_oauth_login_redirect(self, client: TestClient):
         """Test successful OAuth login (mocked)"""
-        with patch("api.auth.oauth2_service.get_settings") as mock_settings:
-            mock_settings.return_value.client_origin = "http://localhost:3000"
-            mock_settings.return_value.OAUTH_CORP_NAME = "corp"
-            mock_settings.return_value.OAUTH_CORP_CLIENT_ID = "test_client_id"
-            mock_settings.return_value.OAUTH_CORP_CLIENT_SECRET = "test_secret"
-            mock_settings.return_value.OAUTH_CORP_AUTHORIZE_URL = "https://oauth.testcorp.com/authorize"  # noqa: E501
-            mock_settings.return_value.OAUTH_CORP_TOKEN_URL = "https://oauth.testcorp.com/token"  # noqa: E501
-            mock_settings.return_value.OAUTH_CORP_USERINFO_URL = "https://oauth.testcorp.com/userinfo"  # noqa: E501
+        oauth_settings = {
+            "OAUTH_CORP_NAME": "corp",
+            "OAUTH_CORP_CLIENT_ID": "test_client_id",
+            "OAUTH_CORP_CLIENT_SECRET": "test_secret",
+            "OAUTH_CORP_AUTHORIZE_URL": "https://oauth.testcorp.com/authorize",
+            "OAUTH_CORP_TOKEN_URL": "https://oauth.testcorp.com/token",
+            "OAUTH_CORP_USERINFO_URL": "https://oauth.testcorp.com/userinfo",
+            "OAUTH_CORP_SCOPES": "openid,email,profile",
+        }
+
+        with patch(
+            "api.auth.oauth2_service.app_settings"
+        ) as mock_app_settings, patch(
+            "api.auth.oauth_routes.get_settings"
+        ) as mock_bootstrap:
+            mock_app_settings.get.side_effect = (
+                lambda key, default=None: oauth_settings.get(key, default)
+            )
+            mock_bootstrap.return_value.client_origin = (
+                "http://localhost:3000"
+            )
 
             response = client.get(
                 "/api/v1/auth/oauth/corp/authorize",
@@ -264,14 +295,31 @@ class TestOAuthLogin:
 
     def test_oauth_login_callback(self, client: TestClient, mock_oauth_provider):
         """Test OAuth callback handling (mocked)"""
-        with patch("api.auth.oauth2_service.get_settings") as mock_settings:
-            mock_settings.return_value.client_origin = "http://localhost:3000"
-            mock_settings.return_value.OAUTH_CORP_NAME = "corp"
-            mock_settings.return_value.OAUTH_CORP_CLIENT_ID = "test_client_id"
-            mock_settings.return_value.OAUTH_CORP_CLIENT_SECRET = "test_secret"
-            mock_settings.return_value.OAUTH_CORP_AUTHORIZE_URL = "https://oauth.testcorp.com/authorize"  # noqa: E501
-            mock_settings.return_value.OAUTH_CORP_TOKEN_URL = "https://oauth.testcorp.com/token"
-            mock_settings.return_value.OAUTH_CORP_USERINFO_URL = "https://oauth.testcorp.com/userinfo"  # noqa: E501
+        oauth_settings = {
+            "OAUTH_CORP_NAME": "corp",
+            "OAUTH_CORP_CLIENT_ID": "test_client_id",
+            "OAUTH_CORP_CLIENT_SECRET": "test_secret",
+            "OAUTH_CORP_AUTHORIZE_URL": "https://oauth.testcorp.com/authorize",
+            "OAUTH_CORP_TOKEN_URL": "https://oauth.testcorp.com/token",
+            "OAUTH_CORP_USERINFO_URL": "https://oauth.testcorp.com/userinfo",
+            "OAUTH_CORP_SCOPES": "openid,email,profile",
+            "ACCESS_TOKEN_EXPIRE_MINUTES": "30",
+        }
+
+        with patch(
+            "api.auth.oauth2_service.app_settings"
+        ) as mock_app_settings, patch(
+            "api.auth.oauth_routes.get_settings"
+        ) as mock_bootstrap, patch(
+            "api.auth.oauth_routes.app_settings"
+        ) as mock_route_app_settings:
+            mock_app_settings.get.side_effect = (
+                lambda key, default=None: oauth_settings.get(key, default)
+            )
+            mock_bootstrap.return_value.client_origin = (
+                "http://localhost:3000"
+            )
+            mock_route_app_settings.get_int.return_value = 30
 
             response = client.get(
                 "/api/v1/auth/oauth/corp/callback",

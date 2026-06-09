@@ -25,7 +25,7 @@ def update_setting(
     key: str,
     update_request: SettingUpdate
 ) -> Setting:
-    """Update a specific setting"""
+    """Update a specific setting and invalidate the AppSettings cache."""
     setting = session.exec(
         select(Setting).where(Setting.key == key)
     ).first()
@@ -43,10 +43,17 @@ def update_setting(
     session.commit()
     session.refresh(setting)
 
+    # Invalidate the in-memory AppSettings cache so all readers
+    # pick up the new value immediately.
+    from core.app_settings import app_settings
+    app_settings.invalidate()
+
     return setting
 
 
-def get_settings_by_tag(session: SessionDep, tag_key: str, tag_value: str) -> list[Setting]:
+def get_settings_by_tag(
+    session: SessionDep, tag_key: str, tag_value: str
+) -> list[Setting]:
     """Get all settings that have a specific tag key-value pair"""
     # Get all settings
     all_settings = session.exec(select(Setting)).all()
@@ -56,7 +63,10 @@ def get_settings_by_tag(session: SessionDep, tag_key: str, tag_value: str) -> li
     for setting in all_settings:
         if setting.tags:
             for tag in setting.tags:
-                if tag.get('key') == tag_key and tag.get('value') == tag_value:
+                if (
+                    tag.get('key') == tag_key
+                    and tag.get('value') == tag_value
+                ):
                     filtered_settings.append(setting)
                     break
 
@@ -70,8 +80,8 @@ def get_setting_value(
     """
     Get a setting value (string only) from the database.
 
-    This is a convenience function for application code that needs config values
-    without the full Setting object or exception handling.
+    This is a convenience function for application code that needs
+    config values without the full Setting object or exception handling.
 
     The database is the single source of truth for settings.
 

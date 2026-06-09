@@ -3,7 +3,7 @@ OpenSearch configuration
 """
 
 from opensearchpy import OpenSearch
-from core.config import get_settings
+from core.app_settings import app_settings
 from core.logger import logger
 
 INDEXES = ["projects", "samples", "illumina_runs"]
@@ -18,28 +18,34 @@ def get_opensearch_client():
         return client
 
     # Connect to opensearch
-    if get_settings().OPENSEARCH_USER and get_settings().OPENSEARCH_PASSWORD:
-        auth = (get_settings().OPENSEARCH_USER, get_settings().OPENSEARCH_PASSWORD)
+    os_user = app_settings.get("OPENSEARCH_USER")
+    os_password = app_settings.get("OPENSEARCH_PASSWORD")
+
+    if os_user and os_password:
+        auth = (os_user, os_password)
     else:
         auth = None
 
-    if get_settings().OPENSEARCH_HOST is None:
+    os_host = app_settings.get("OPENSEARCH_HOST")
+
+    if not os_host:
         client = None
     else:
         client = OpenSearch(
             hosts=[
                 {
-                    "host": get_settings().OPENSEARCH_HOST,
-                    "port": get_settings().OPENSEARCH_PORT,
+                    "host": os_host,
+                    "port": app_settings.get("OPENSEARCH_PORT"),
                 }
             ],
-            http_compress=True,  # enables gzip compression for request bodies
+            http_compress=True,
             http_auth=auth,
-            use_ssl=get_settings().OPENSEARCH_USE_SSL,
-            verify_certs=get_settings().OPENSEARCH_VERIFY_CERTS,
-            # ssl_assert_hostname = False,
-            # ssl_show_warn = False,
-            # ca_certs = ca_certs_path
+            use_ssl=app_settings.get_bool(
+                "OPENSEARCH_USE_SSL", default=True
+            ),
+            verify_certs=app_settings.get_bool(
+                "OPENSEARCH_VERIFY_CERTS", default=False
+            ),
         )
     return client
 

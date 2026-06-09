@@ -16,7 +16,7 @@ from core.security import (
     create_refresh_token, generate_secure_token, validate_password_strength,
     generate_api_key,
 )
-from core.config import get_settings
+from core.app_settings import app_settings
 from core.email import send_password_reset_email, send_verification_email
 
 
@@ -216,12 +216,13 @@ def refresh_access_token(session: Session, refresh_token_str: str) -> dict:
     session.add(refresh_token)
     session.commit()
 
-    settings = get_settings()
     return {
         "access_token": access_token,
         "refresh_token": new_refresh_token.token,
         "token_type": "bearer",
-        "expires_in": settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60
+        "expires_in": app_settings.get_int(
+            "ACCESS_TOKEN_EXPIRE_MINUTES", default=30
+        ) * 60
     }
 
 
@@ -447,12 +448,18 @@ def update_last_login(session: Session, user_id: str) -> None:
 
 def increment_failed_login(session: Session, user: User) -> None:
     """Increment failed login attempts and lock account if needed"""
-    settings = get_settings()
     user.failed_login_attempts += 1
 
-    if user.failed_login_attempts >= settings.MAX_FAILED_LOGIN_ATTEMPTS:
+    max_attempts = app_settings.get_int(
+        "MAX_FAILED_LOGIN_ATTEMPTS", default=5
+    )
+    lockout_minutes = app_settings.get_int(
+        "ACCOUNT_LOCKOUT_DURATION_MINUTES", default=30
+    )
+
+    if user.failed_login_attempts >= max_attempts:
         user.locked_until = datetime.now(timezone.utc) + timedelta(
-            minutes=settings.ACCOUNT_LOCKOUT_DURATION_MINUTES
+            minutes=lockout_minutes
         )
 
     session.add(user)
