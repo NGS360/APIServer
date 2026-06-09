@@ -11,6 +11,7 @@ from alembic import op
 import sqlalchemy as sa
 import sqlmodel
 
+import re
 
 # revision identifiers, used by Alembic.
 revision: str = '49e7d06e7eb4'
@@ -22,11 +23,8 @@ depends_on: Union[str, Sequence[str], None] = None
 def back_fill():
     """Backfill created_by, created_at, and last_modified from projectattribute entries."""
     from datetime import datetime, timezone
-    from email.utils import parsedate_to_datetime
     from sqlmodel import Session, select
     from api.project.models import Project, ProjectAttribute
-
-    EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
 
     # Use alembic's connection to avoid lock contention with DDL
     bind = op.get_bind()
@@ -34,38 +32,35 @@ def back_fill():
         # Get all projects ordered by project_id
         projects = session.exec(select(Project).order_by(Project.project_id)).all()
 
+        pattern = r"^P-(\d{4})(\d{2})(\d{2})-(\d{4})$"
+
         # For each project, get the created_by and createdate values from the projectattribute table
         for project in projects:
-            # Query projectattribute using the project's UUID (project.id),
-            # not the string project_id
+            # Handle created_by
             created_by_stmt = select(ProjectAttribute.value).where(
                 ProjectAttribute.project_id == project.id,
                 ProjectAttribute.key.in_(["createby", "createdby"])
             )
             created_by_value = session.exec(created_by_stmt).first()
 
-            createdate_stmt = select(ProjectAttribute.value).where(
-                ProjectAttribute.project_id == project.id,
-                ProjectAttribute.key == "createdate"
-            )
-            createdate_value = session.exec(createdate_stmt).first()
-
             # Fallback for projects without a matching attribute
             project.created_by = created_by_value or "unknown"
 
-            # Parse RFC 2822 date format (e.g. 'Wed, 10 Nov 2021 00:00:00 GMT')
-            if createdate_value:
+            # project.project_id is format is P-YYYYMMDD-#####
+            # Parse out year, month, date to create a datetime object for created_at
+            match = re.match(pattern, project.project_id)
+            if match:
+                year, month, day = match.group(1), match.group(2), match.group(3)
                 try:
-                    project.created_at = parsedate_to_datetime(createdate_value)
-                except (ValueError, TypeError):
-                    project.created_at = EPOCH
+                    created_at_value = datetime(int(year), int(month), int(day), tzinfo=timezone.utc)
+                except ValueError:
+                    created_at_value = datetime(1970, 1, 1, tzinfo=timezone.utc)
             else:
-                project.created_at = EPOCH
+                created_at_value = datetime(1970, 1, 1, tzinfo=timezone.utc)
 
+            project.created_at = created_at_value
             project.last_modified = project.created_at
             session.add(project)
-
-        session.commit()
 
 
 def upgrade() -> None:
