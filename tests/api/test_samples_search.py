@@ -138,8 +138,8 @@ class TestV1GetSearch:
         assert data["total_items"] == 1
         assert data["data"][0]["sample_id"] == "S1"
 
-    def test_search_by_created_on(self, client: TestClient, session: Session):
-        """Search by created_on matches date prefix of created_at."""
+    def test_search_by_created_at(self, client: TestClient, session: Session):
+        """Search by created_at matches date prefix of created_at."""
         project = _create_project(session)
         _create_sample(
             session, project, "S1",
@@ -153,7 +153,7 @@ class TestV1GetSearch:
 
         response = client.get(
             "/api/v1/samples/search",
-            params={"created_on": "2026-01-21"},
+            params={"created_at": "2026-01-21"},
         )
         assert response.status_code == 200
         data = response.json()
@@ -162,10 +162,10 @@ class TestV1GetSearch:
         # created_at is surfaced in the response (date prefix matches the filter)
         assert data["data"][0]["created_at"].startswith("2026-01-21")
 
-    def test_search_by_created_on_iso_datetime(
+    def test_search_by_created_at_iso_datetime(
         self, client: TestClient, session: Session
     ):
-        """created_on accepts a full ISO datetime and matches on its date part."""
+        """created_at accepts a full ISO datetime and matches on its date part."""
         project = _create_project(session)
         _create_sample(
             session, project, "S1",
@@ -175,15 +175,15 @@ class TestV1GetSearch:
 
         response = client.get(
             "/api/v1/samples/search",
-            params={"created_on": "2026-01-21T10:30:00"},
+            params={"created_at": "2026-01-21T10:30:00"},
         )
         assert response.status_code == 200
         assert response.json()["total_items"] == 1
 
-    def test_search_by_created_on_invalid_format(
+    def test_search_by_created_at_invalid_format(
         self, client: TestClient, session: Session
     ):
-        """Malformed created_on returns 400, not a silent unfiltered dump.
+        """Malformed created_at returns 400, not a silent unfiltered dump.
 
         Regression: a trailing 'T' (or any unparseable value) used to be caught
         and the filter silently dropped, returning every sample in the project.
@@ -195,7 +195,7 @@ class TestV1GetSearch:
 
         response = client.get(
             "/api/v1/samples/search",
-            params={"projectid": project.project_id, "created_on": "2024-09-13T"},
+            params={"projectid": project.project_id, "created_at": "2024-09-13T"},
         )
         assert response.status_code == 400
 

@@ -377,7 +377,7 @@ def _apply_date_filter(statement, value: str):
     if not isinstance(value, str):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid 'created_on' value; expected a date (YYYY-MM-DD).",
+            detail="Invalid 'created_at' value; expected a date (YYYY-MM-DD).",
         )
     # Use the date portion of a date or ISO datetime (e.g. '2026-01-21' or
     # '2026-01-21T10:30:00'); datetime.fromisoformat handles both.
@@ -387,7 +387,7 @@ def _apply_date_filter(statement, value: str):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=(
-                f"Invalid 'created_on' value '{value}'; "
+                f"Invalid 'created_at' value '{value}'; "
                 "expected a date (YYYY-MM-DD)."
             ),
         )
@@ -404,7 +404,7 @@ def _build_sample_query(
     Args:
         filters: dict of top-level or attribute filters.
             - Keys in FIELD_MAP are mapped to Sample columns.
-            - 'created_on' is handled as date prefix match.
+            - 'created_at' is handled as date prefix match.
             - 'tags' key (if present) is extracted and handled separately.
             - Other keys are treated as SampleAttribute key searches.
         tags: Explicit tags dict (from POST body's filter_on.tags).
@@ -427,7 +427,7 @@ def _build_sample_query(
             statement = _apply_column_filter(
                 statement, getattr(Sample, column_name), value
             )
-        elif key == "created_on":
+        elif key == "created_at":
             statement = _apply_date_filter(statement, value)
         else:
             statement = _apply_attribute_filter(statement, key, value)
@@ -458,7 +458,7 @@ def search_samples(
     Args:
         session: Database session
         filters: dict of filter parameters (projectid, samplename,
-                 created_on, attribute keys, tags)
+                 created_at, attribute keys, tags)
         tags: Optional explicit tags dict
         page: Page number (1-indexed)
         per_page: Number of items per page
