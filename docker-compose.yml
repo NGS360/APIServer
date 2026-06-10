@@ -136,4 +136,3 @@ volumes:
 
 networks:
   ngs360-network:
-    external: true
