@@ -61,7 +61,7 @@ services:
       - "plugins.security.disabled=true"
       - "OPENSEARCH_INITIAL_ADMIN_PASSWORD=0penSearch!"
     healthcheck:
-      test: ['CMD-SHELL', 'curl -s http://localhost:9200/_cluster/health | grep -q "green"']
+      test: ['CMD-SHELL', 'curl -s http://localhost:9200/_cluster/health | grep -qE "green|yellow"']
       interval: 3s
       retries: 5
       start_period: 30s
