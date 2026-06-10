@@ -31,7 +31,7 @@ services:
     ports:
       - "3000:3000"
     environment:
-      - client_origin=http://localhost:8080
+      - client_origin=http://localhost:8080,http://frontend:8080
       # Database variables
       - SQLALCHEMY_DATABASE_URI=mysql+pymysql://root:rootpassword@db:3306/ngs360
       # Open search

@@ -141,7 +141,7 @@ def submit_batch_job(
     settings = get_settings()
     container_overrides.setdefault("environment", [])
     container_overrides["environment"].append(
-        {"name": "NGS360_API_ENDPOINT", "value": settings.client_origin}
+        {"name": "NGS360_API_ENDPOINT", "value": settings.get_primary_origin()}
     )
     logger.info(f"Container overrides: {container_overrides}")
 

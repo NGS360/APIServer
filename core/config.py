@@ -52,7 +52,20 @@ def get_secret(secret_name: str, region_name: str) -> dict | None:
 # Define settings class for univeral access
 class Settings(BaseSettings):
     # Computed or constant values
+    # Supports comma-separated list of origins for CORS
     client_origin: str | None = os.getenv("client_origin")
+
+    def get_allowed_origins(self) -> list[str]:
+        """Parse client_origin into a list of allowed origins for CORS."""
+        if not self.client_origin:
+            return []
+        # Split by comma and strip whitespace from each origin
+        return [origin.strip() for origin in self.client_origin.split(",") if origin.strip()]
+
+    def get_primary_origin(self) -> str:
+        """Get the primary (first) origin for use in OAuth redirects and other single-origin contexts."""
+        origins = self.get_allowed_origins()
+        return origins[0] if origins else ""
 
     # Cache for AWS Secrets Manager to avoid multiple API calls
     # Note: Must use PrivateAttr for Pydantic v2 private attributes

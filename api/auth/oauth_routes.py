@@ -56,7 +56,7 @@ def oauth_authorize(
     if not redirect_uri:
         logger.debug(f"No redirect_uri provided, using default for provider {provider}")
         redirect_uri = (
-            f"{settings.client_origin}/api/v1/auth/oauth/"
+            f"{settings.get_primary_origin()}/api/v1/auth/oauth/"
             f"{provider}/callback"
         )
     logger.debug(f"Using redirect_uri: {redirect_uri} for provider {provider}")
@@ -113,7 +113,7 @@ async def oauth_callback(
     # Use default redirect URI if not provided
     if not redirect_uri:
         redirect_uri = (
-            f"{settings.client_origin}/api/v1/auth/oauth/"
+            f"{settings.get_primary_origin()}/api/v1/auth/oauth/"
             f"{provider}/callback"
         )
 
@@ -210,7 +210,7 @@ async def link_oauth_provider(
 
     # Build redirect URI
     redirect_uri = (
-        f"{settings.client_origin}/api/v1/auth/oauth/{provider}/callback"
+        f"{settings.get_primary_origin()}/api/v1/auth/oauth/{provider}/callback"
     )
 
     try:
