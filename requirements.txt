@@ -39,7 +39,7 @@ click==8.4.0
     #   rich-toolkit
     #   sample-sheet
     #   uvicorn
-cryptography==46.0.7
+cryptography==49.0.0
     # via
     #   ngs360-server (pyproject.toml)
     #   authlib
