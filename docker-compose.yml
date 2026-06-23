@@ -31,6 +31,8 @@ services:
     ports:
       - "3000:3000"
     environment:
+      # Bind to all interfaces inside the container so Docker's port mapping works
+      - API_HOST=0.0.0.0
       - client_origin=http://localhost:8080
       # Database variables
       - SQLALCHEMY_DATABASE_URI=mysql+pymysql://root:rootpassword@db:3306/ngs360
@@ -61,7 +63,9 @@ services:
       - "plugins.security.disabled=true"
       - "OPENSEARCH_INITIAL_ADMIN_PASSWORD=0penSearch!"
     healthcheck:
-      test: ['CMD-SHELL', 'curl -s http://localhost:9200/_cluster/health | grep -q "green"']
+      # Single-node clusters sit at "yellow" once indices exist (replicas can't be
+      # assigned), so accept yellow or green.
+      test: ["CMD-SHELL", "curl -s http://localhost:9200/_cluster/health | grep -qE '\"status\":\"(green|yellow)\"'"]
       interval: 3s
       retries: 5
       start_period: 30s
