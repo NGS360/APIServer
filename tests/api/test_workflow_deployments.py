@@ -1,10 +1,12 @@
 """Tests for WorkflowDeployment CRUD endpoints."""
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlmodel import Session
 
 from api.platforms.models import Platform
 from api.workflow.models import Workflow, WorkflowVersion
+from core.config import get_settings
 
 
 # ---------------------------------------------------------------------------
@@ -505,3 +507,235 @@ def test_workflow_deployments_engine_no_match_empty(
     )
     assert resp.status_code == 200
     assert resp.json() == []
+
+
+# ---------------------------------------------------------------------------
+# Omics auto-register flow
+# ---------------------------------------------------------------------------
+
+OMICS_ENGINE = "AWSHealthOmics (us-east)"
+OMICS_ARN_PREFIX = "arn:aws:omics:us-east-1:123456789012:"
+
+
+@pytest.fixture(name="omics_env")
+def omics_env_fixture(monkeypatch):
+    """Set OMICS_REGISTER_WORKFLOW_LAMBDA env + clear settings cache."""
+    monkeypatch.setenv(
+        "OMICS_REGISTER_WORKFLOW_LAMBDA", "test-omics-register-lambda",
+    )
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
+
+
+def _seed_omics_platform(session: Session) -> None:
+    session.add(Platform(name=OMICS_ENGINE))
+    session.commit()
+
+
+def _create_cwl_workflow_and_version(
+    session: Session,
+) -> tuple[str, str, int]:
+    """Insert a workflow + CWL version; return (wf_id, version_uuid, version_num)."""
+    wf = Workflow(
+        name="CWL Alignment",
+        created_by="testuser",
+    )
+    session.add(wf)
+    session.flush()
+    ver = WorkflowVersion(
+        workflow_id=wf.id,
+        version=1,
+        definition_uri="s3://bucket/align.cwl",
+        created_by="testuser",
+    )
+    session.add(ver)
+    session.commit()
+    session.refresh(wf)
+    session.refresh(ver)
+    return str(wf.id), str(ver.id), ver.version
+
+
+def test_omics_deployment_first_version_registers_via_lambda(
+    client: TestClient, session: Session,
+    mock_lambda_client, omics_env,
+):
+    """First Omics deployment of a workflow uses action=create_workflow."""
+    _seed_omics_platform(session)
+    wf_id, ver_id, ver_num = _create_cwl_workflow_and_version(session)
+
+    arn = f"{OMICS_ARN_PREFIX}workflow/1324105/version/{ver_id}"
+    mock_lambda_client.set_response({
+        "statusCode": 200,
+        "workflow_id": "1324105",
+        "arn": arn,
+        "message": "Registered",
+    })
+
+    resp = client.post(
+        f"/api/v1/workflows/{wf_id}/versions/{ver_num}/deployments",
+        json={"engine": OMICS_ENGINE},
+    )
+    assert resp.status_code == 201, resp.text
+    data = resp.json()
+    assert data["engine"] == OMICS_ENGINE
+    assert data["external_id"] == arn
+
+    # Lambda was invoked with create_workflow action
+    assert len(mock_lambda_client.invocations) == 1
+    inv = mock_lambda_client.invocations[0]
+    assert inv["FunctionName"] == "test-omics-register-lambda"
+    assert inv["Payload"]["action"] == "create_workflow"
+    assert inv["Payload"]["source"] == "ngs360"
+    assert inv["Payload"]["name"] == "CWL Alignment"
+    assert inv["Payload"]["cwl_s3_path"] == "s3://bucket/align.cwl"
+    assert inv["Payload"]["id"] == ver_id
+
+
+def test_omics_deployment_second_version_uses_create_version(
+    client: TestClient, session: Session,
+    mock_lambda_client, omics_env,
+):
+    """A Workflow that already has an Omics deployment uses create_workflow_version."""
+    _seed_omics_platform(session)
+
+    wf = Workflow(name="Multi", created_by="testuser")
+    session.add(wf)
+    session.flush()
+    v1 = WorkflowVersion(
+        workflow_id=wf.id, version=1,
+        definition_uri="s3://b/v1.cwl", created_by="testuser",
+    )
+    v2 = WorkflowVersion(
+        workflow_id=wf.id, version=2,
+        definition_uri="s3://b/v2.cwl", created_by="testuser",
+    )
+    session.add_all([v1, v2])
+    session.commit()
+    session.refresh(wf)
+    session.refresh(v1)
+    session.refresh(v2)
+    wf_id = str(wf.id)
+
+    # Seed an existing Omics deployment on v1 (caller-supplied external_id path)
+    v1_arn = f"{OMICS_ARN_PREFIX}workflow/9999999/version/{v1.id}"
+    resp1 = client.post(
+        f"/api/v1/workflows/{wf_id}/versions/1/deployments",
+        json={"engine": OMICS_ENGINE, "external_id": v1_arn},
+    )
+    assert resp1.status_code == 201, resp1.text
+    assert mock_lambda_client.invocations == []  # caller supplied → no Lambda
+
+    # Now deploy v2 without external_id → Lambda is invoked, action=create_workflow_version
+    v2_arn = f"{OMICS_ARN_PREFIX}workflow/9999999/version/{v2.id}"
+    mock_lambda_client.set_response({
+        "statusCode": 200,
+        "version_name": str(v2.id),
+        "omics_workflow_id": "9999999",
+        "arn": v2_arn,
+    })
+    resp2 = client.post(
+        f"/api/v1/workflows/{wf_id}/versions/2/deployments",
+        json={"engine": OMICS_ENGINE},
+    )
+    assert resp2.status_code == 201, resp2.text
+
+    inv = mock_lambda_client.invocations[-1]
+    assert inv["Payload"]["action"] == "create_workflow_version"
+    assert inv["Payload"]["omics_workflow_id"] == "9999999"
+    assert inv["Payload"]["version_name"] == str(v2.id)
+    assert inv["Payload"]["cwl_s3_path"] == "s3://b/v2.cwl"
+
+
+def test_omics_deployment_lambda_not_configured(
+    client: TestClient, session: Session, monkeypatch,
+):
+    """Without OMICS_REGISTER_WORKFLOW_LAMBDA set, Omics auto-register fails 500."""
+    _seed_omics_platform(session)
+    wf_id, _, ver_num = _create_cwl_workflow_and_version(session)
+
+    monkeypatch.delenv("OMICS_REGISTER_WORKFLOW_LAMBDA", raising=False)
+    get_settings.cache_clear()
+
+    resp = client.post(
+        f"/api/v1/workflows/{wf_id}/versions/{ver_num}/deployments",
+        json={"engine": OMICS_ENGINE},
+    )
+    assert resp.status_code == 500
+    assert "OMICS_REGISTER_WORKFLOW_LAMBDA" in resp.json()["detail"]
+
+
+def test_omics_deployment_lambda_returns_error_status(
+    client: TestClient, session: Session,
+    mock_lambda_client, omics_env,
+):
+    """Lambda error statusCode propagates as 502."""
+    _seed_omics_platform(session)
+    wf_id, _, ver_num = _create_cwl_workflow_and_version(session)
+
+    mock_lambda_client.set_response({
+        "statusCode": 500,
+        "error": "WorkflowRegistrationError",
+        "message": "ECR auth failed",
+    })
+
+    resp = client.post(
+        f"/api/v1/workflows/{wf_id}/versions/{ver_num}/deployments",
+        json={"engine": OMICS_ENGINE},
+    )
+    assert resp.status_code == 502
+    assert "ECR auth failed" in resp.json()["detail"]
+
+
+def test_omics_deployment_lambda_missing_arn(
+    client: TestClient, session: Session,
+    mock_lambda_client, omics_env,
+):
+    """Lambda success but no arn field returns 502."""
+    _seed_omics_platform(session)
+    wf_id, _, ver_num = _create_cwl_workflow_and_version(session)
+
+    mock_lambda_client.set_response({
+        "statusCode": 200,
+        "workflow_id": "1324105",
+    })
+
+    resp = client.post(
+        f"/api/v1/workflows/{wf_id}/versions/{ver_num}/deployments",
+        json={"engine": OMICS_ENGINE},
+    )
+    assert resp.status_code == 502
+    assert "arn" in resp.json()["detail"]
+
+
+def test_omics_deployment_with_explicit_external_id_skips_lambda(
+    client: TestClient, session: Session,
+    mock_lambda_client, omics_env,
+):
+    """Caller-supplied external_id is stored as-is; Lambda is not invoked."""
+    _seed_omics_platform(session)
+    wf_id, ver_id, ver_num = _create_cwl_workflow_and_version(session)
+
+    arn = f"{OMICS_ARN_PREFIX}workflow/4256500/version/{ver_id}"
+    resp = client.post(
+        f"/api/v1/workflows/{wf_id}/versions/{ver_num}/deployments",
+        json={"engine": OMICS_ENGINE, "external_id": arn},
+    )
+    assert resp.status_code == 201
+    assert resp.json()["external_id"] == arn
+    assert mock_lambda_client.invocations == []
+
+
+def test_non_omics_deployment_without_external_id_400(
+    client: TestClient, session: Session,
+):
+    """Non-Omics engine without external_id is rejected 400."""
+    _seed_platforms(session)
+    wf_id, _, ver_num = _create_workflow_and_version(session)
+
+    resp = client.post(
+        f"/api/v1/workflows/{wf_id}/versions/{ver_num}/deployments",
+        json={"engine": "Arvados"},
+    )
+    assert resp.status_code == 400
+    assert "external_id is required" in resp.json()["detail"]

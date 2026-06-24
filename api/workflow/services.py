@@ -4,8 +4,11 @@ Workflow Service
 CRUD operations for Workflow, WorkflowVersion, WorkflowVersionAlias,
 and WorkflowDeployment entities.
 """
+import json
 from uuid import UUID
 
+import boto3
+from botocore.exceptions import ClientError, NoCredentialsError
 from fastapi import HTTPException, status
 from sqlmodel import Session, select
 from sqlalchemy import func
@@ -30,6 +33,8 @@ from api.workflow.models import (
     WorkflowVersionAliasPublic,
     WorkflowVersionAliasSet,
 )
+from core.config import get_settings
+from core.logger import logger
 
 
 # ---------------------------------------------------------------------------
@@ -460,6 +465,156 @@ def alias_to_public(
 # WorkflowDeployment CRUD
 # ---------------------------------------------------------------------------
 
+def _find_existing_omics_deployment(
+    session: Session,
+    workflow: Workflow,
+    engine: str,
+) -> WorkflowDeployment | None:
+    """Return the most recent Omics deployment for this Workflow, if any.
+
+    Used to decide between Lambda action `create_workflow` (first time on Omics)
+    and `create_workflow_version` (workflow already registered on Omics).
+    """
+    return session.exec(
+        select(WorkflowDeployment)
+        .join(WorkflowVersion)
+        .where(
+            WorkflowVersion.workflow_id == workflow.id,
+            WorkflowDeployment.engine == engine,
+        )
+        .order_by(WorkflowVersion.version.desc())
+    ).first()
+
+
+def _invoke_omics_register_lambda(payload: dict) -> dict:
+    """Invoke the Omics workflow-registration Lambda and return parsed body."""
+    settings = get_settings()
+    function_name = settings.OMICS_REGISTER_WORKFLOW_LAMBDA
+    if not function_name:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=(
+                "OMICS_REGISTER_WORKFLOW_LAMBDA is not configured. "
+                "Set the env var to the Lambda function name."
+            ),
+        )
+
+    logger.info(
+        "Invoking Omics-register Lambda '%s' with action=%s",
+        function_name,
+        payload.get("action"),
+    )
+
+    try:
+        lambda_client = boto3.client("lambda", region_name=settings.AWS_REGION)
+        response = lambda_client.invoke(
+            FunctionName=function_name,
+            InvocationType="RequestResponse",
+            Payload=json.dumps(payload),
+        )
+    except NoCredentialsError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="AWS credentials not found. Cannot invoke Omics Lambda.",
+        ) from exc
+    except ClientError as exc:
+        code = exc.response["Error"]["Code"]
+        msg = exc.response["Error"]["Message"]
+        logger.error("Omics Lambda ClientError: %s - %s", code, msg)
+        if code == "ResourceNotFoundException":
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Lambda function not found: {function_name}",
+            ) from exc
+        if code == "AccessDeniedException":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Access denied to Lambda function: {function_name}",
+            ) from exc
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Lambda error: {msg}",
+        ) from exc
+
+    body = json.loads(response["Payload"].read().decode("utf-8"))
+    logger.debug("Omics Lambda response: %s", body)
+
+    if "FunctionError" in response:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=(
+                f"Omics Lambda execution error: "
+                f"{body.get('errorMessage', 'unknown')}"
+            ),
+        )
+
+    if body.get("statusCode") and body["statusCode"] >= 400:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=(
+                f"Omics registration failed: "
+                f"{body.get('message') or body.get('error') or body}"
+            ),
+        )
+
+    arn = body.get("arn")
+    if not arn:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=(
+                "Omics Lambda did not return an 'arn' field. "
+                f"Response: {body}"
+            ),
+        )
+
+    return body
+
+
+def _register_workflow_on_omics(
+    session: Session,
+    workflow: Workflow,
+    version: WorkflowVersion,
+    engine: str,
+) -> str:
+    """Register the workflow/version on AWS HealthOmics via Lambda; return ARN."""
+    prior = _find_existing_omics_deployment(session, workflow, engine)
+
+    if prior is None:
+        payload = {
+            "source": "ngs360",
+            "action": "create_workflow",
+            "name": workflow.name,
+            "cwl_s3_path": version.definition_uri,
+            "id": str(version.id),
+        }
+    else:
+        # Reuse the omics workflow id from the prior deployment's ARN.
+        # ARN format: arn:aws:omics:<region>:<acct>:workflow/<id>/version/<name>
+        try:
+            omics_workflow_id = (
+                prior.external_id.split(":workflow/")[1].split("/")[0]
+            )
+        except (IndexError, AttributeError) as exc:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=(
+                    f"Could not parse Omics workflow id from prior "
+                    f"deployment external_id '{prior.external_id}'."
+                ),
+            ) from exc
+        payload = {
+            "source": "ngs360",
+            "action": "create_workflow_version",
+            "omics_workflow_id": omics_workflow_id,
+            "version_name": str(version.id),
+            "cwl_s3_path": version.definition_uri,
+            "id": str(version.id),
+        }
+
+    body = _invoke_omics_register_lambda(payload)
+    return body["arn"]
+
+
 def create_workflow_deployment(
     session: Session,
     workflow_id: str,
@@ -467,7 +622,13 @@ def create_workflow_deployment(
     deployment_in: WorkflowDeploymentCreate,
     created_by: str,
 ) -> WorkflowDeployment:
-    """Deploy a workflow version on a specific platform."""
+    """Deploy a workflow version on a specific platform.
+
+    If the caller supplies ``external_id`` we trust it and store as-is.
+    Otherwise, for engine ``AWSHealthOmics (us-east)`` the API server
+    registers the workflow on AWS HealthOmics via a Lambda and stores the
+    returned ARN. For other engines the caller must provide ``external_id``.
+    """
     # Verify version exists and belongs to this workflow
     version = get_workflow_version_by_num(session, workflow_id, version_num)
 
@@ -490,10 +651,25 @@ def create_workflow_deployment(
             ),
         )
 
+    if deployment_in.external_id:
+        external_id = deployment_in.external_id
+    elif deployment_in.engine == "AWSHealthOmics (us-east)":
+        external_id = _register_workflow_on_omics(
+            session, version.workflow, version, deployment_in.engine,
+        )
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"external_id is required for engine "
+                f"'{deployment_in.engine}'."
+            ),
+        )
+
     deployment = WorkflowDeployment(
         workflow_version_id=version.id,
         engine=deployment_in.engine,
-        external_id=deployment_in.external_id,
+        external_id=external_id,
         created_by=created_by,
     )
 
