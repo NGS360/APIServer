@@ -167,6 +167,12 @@ class Settings(BaseSettings):
         """Get AWS Region from env or secrets (defaults to us-east-1)"""
         return self._get_config_value("AWS_REGION", default="us-east-1")
 
+    @computed_field
+    @property
+    def OMICS_REGISTER_WORKFLOW_LAMBDA(self) -> str | None:
+        """Lambda function name that registers a workflow on AWS HealthOmics."""
+        return self._get_config_value("OMICS_REGISTER_WORKFLOW_LAMBDA")
+
     # Options are from api.files.models.StorageBackend
     STORAGE_BACKEND: str = os.getenv("STORAGE_BACKEND", "s3")
     STORAGE_ROOT_PATH: str = os.getenv("STORAGE_URI", "s3://my-storage-bucket")
