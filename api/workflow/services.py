@@ -585,7 +585,7 @@ def _register_workflow_on_omics(
             "action": "create_workflow",
             "name": workflow.name,
             "cwl_s3_path": version.definition_uri,
-            "id": str(version.id),
+            "id": str(version.workflow_id),
         }
     else:
         # Reuse the omics workflow id from the prior deployment's ARN.
@@ -606,9 +606,9 @@ def _register_workflow_on_omics(
             "source": "ngs360",
             "action": "create_workflow_version",
             "omics_workflow_id": omics_workflow_id,
-            "version_name": str(version.id),
+            "version_name": str(version.version),
             "cwl_s3_path": version.definition_uri,
-            "id": str(version.id),
+            "id": str(version.workflow_id),
         }
 
     body = _invoke_omics_register_lambda(payload)
