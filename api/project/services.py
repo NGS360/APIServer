@@ -518,7 +518,10 @@ def search_projects(
         )
 
     except Exception as e:
-        details = f"{project.project_id}: {str(e)}"
+        if project:
+            details = f"{project.project_id}: {str(e)}"
+        else:
+            details = str(e)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=details
         )
