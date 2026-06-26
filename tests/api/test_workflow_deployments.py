@@ -627,10 +627,10 @@ def test_omics_deployment_second_version_uses_create_version(
     assert mock_lambda_client.invocations == []  # caller supplied → no Lambda
 
     # Now deploy v2 without external_id → Lambda is invoked, action=create_workflow_version
-    v2_arn = f"{OMICS_ARN_PREFIX}workflow/9999999/version/{v2.id}"
+    v2_arn = f"{OMICS_ARN_PREFIX}workflow/9999999/version/2"
     mock_lambda_client.set_response({
         "statusCode": 200,
-        "version_name": str(v2.id),
+        "version_name": "2",
         "omics_workflow_id": "9999999",
         "arn": v2_arn,
     })
@@ -643,7 +643,7 @@ def test_omics_deployment_second_version_uses_create_version(
     inv = mock_lambda_client.invocations[-1]
     assert inv["Payload"]["action"] == "create_workflow_version"
     assert inv["Payload"]["omics_workflow_id"] == "9999999"
-    assert inv["Payload"]["version_name"] == str(v2.id)
+    assert inv["Payload"]["version_name"] == "2"
     assert inv["Payload"]["cwl_s3_path"] == "s3://b/v2.cwl"
 
 
