@@ -470,7 +470,7 @@ def _find_existing_omics_deployment(
     workflow: Workflow,
     engine: str,
 ) -> WorkflowDeployment | None:
-    """Return the most recent Omics deployment for this Workflow, if any.
+    """Return the first Omics deployment for this Workflow, if any.
 
     Used to decide between Lambda action `create_workflow` (first time on Omics)
     and `create_workflow_version` (workflow already registered on Omics).
@@ -482,7 +482,7 @@ def _find_existing_omics_deployment(
             WorkflowVersion.workflow_id == workflow.id,
             WorkflowDeployment.engine == engine,
         )
-        .order_by(WorkflowVersion.version.desc())
+        .order_by(WorkflowVersion.version.asc())
     ).first()
 
 
