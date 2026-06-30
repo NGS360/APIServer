@@ -13,9 +13,10 @@ Endpoints:
 from typing import Optional
 import uuid
 
-from fastapi import APIRouter, Depends, Query, status, Form, UploadFile
+from fastapi import APIRouter, Depends, HTTPException, Query, status, Form, UploadFile
 from fastapi import File as FastAPIFile
 from fastapi.responses import RedirectResponse
+from pydantic import ValidationError
 
 from api.files.models import FileUploadCreate
 
@@ -113,19 +114,25 @@ def upload_file(
       => s3://bucket/project/P-123/raw_data/sample1/filename.txt
     """
 
-    file_upload = FileUploadCreate(
-        filename=filename,
-        description=description,
-        project_id=project_id,
-        sequencing_run_id=sequencing_run_id,
-        qcrecord_id=qcrecord_id,
-        pipeline_id=pipeline_id,
-        is_public=is_public,
-        created_by=created_by,
-        relative_path=relative_path,
-        overwrite=overwrite,
-        role=role,
-    )
+    try:
+        file_upload = FileUploadCreate(
+            filename=filename,
+            description=description,
+            project_id=project_id,
+            sequencing_run_id=sequencing_run_id,
+            qcrecord_id=qcrecord_id,
+            pipeline_id=pipeline_id,
+            is_public=is_public,
+            created_by=created_by,
+            relative_path=relative_path,
+            overwrite=overwrite,
+            role=role,
+        )
+    except ValidationError as e:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=e.errors(),
+        )
 
     file_content = None
     if content and content.filename:
