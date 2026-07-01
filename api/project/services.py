@@ -5,9 +5,11 @@ Services for the Project API
 from datetime import datetime, timezone as tz
 from typing import Literal
 import boto3
+import logging
+
 from fastapi import HTTPException, status
 from api.utils import check_duplicate_attribute_keys
-from pydantic import PositiveInt
+from pydantic import PositiveInt, ValidationError
 from pytz import timezone
 from sqlmodel import Session, func, select
 from sqlalchemy.orm import selectinload
@@ -46,6 +48,8 @@ from api.samples.models import (
     Attribute,
 )
 from api.runs.models import SequencingRun, SequencingRunPublic, SampleSequencingRun
+
+logger = logging.getLogger(__name__)
 
 
 def generate_project_id(*, session: Session) -> str:
