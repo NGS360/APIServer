@@ -64,7 +64,9 @@ fastapi-cli==0.0.24
 fastapi-cloud-cli==0.19.0
     # via fastapi-cli
 fastar==0.11.0
-    # via fastapi-cloud-cli
+    # via
+    #   fastapi
+    #   fastapi-cloud-cli
 grpcio==1.81.0
     # via opensearch-protobufs
 gunicorn==25.3.0
