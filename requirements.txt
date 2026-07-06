@@ -180,7 +180,7 @@ rignore==0.7.6
     # via fastapi-cloud-cli
 rsa==4.9.1
     # via python-jose
-s3transfer==0.19.0
+s3transfer==0.16.1
     # via boto3
 sample-sheet==0.13.0
     # via ngs360-server (pyproject.toml)
