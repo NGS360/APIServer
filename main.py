@@ -15,8 +15,6 @@ from core.lifespan import lifespan
 from core.config import get_settings
 from core.db import engine
 
-logger = logging.getLogger(__name__)
-
 from api.auth.routes import router as auth_router
 from api.auth.oauth_routes import router as oauth_router
 from api.actions.routes import router as actions_router
@@ -35,6 +33,7 @@ from api.pipeline.routes import router as pipeline_router
 from api.platforms.routes import router as platforms_router
 from api.users.routes import router as users_router
 
+logger = logging.getLogger(__name__)
 
 # Customize route id's
 # Helpful for creating sensible names in the client
