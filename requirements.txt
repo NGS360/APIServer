@@ -143,7 +143,7 @@ pydantic-settings==2.14.1
     #   fastapi
 pygments==2.20.0
     # via rich
-pymysql==1.1.2
+pymysql==1.2.0
     # via ngs360-server (pyproject.toml)
 python-dateutil==2.9.0.post0
     # via
