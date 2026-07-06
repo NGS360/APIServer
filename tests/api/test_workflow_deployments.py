@@ -589,7 +589,7 @@ def test_omics_deployment_first_version_registers_via_lambda(
     assert inv["Payload"]["source"] == "ngs360"
     assert inv["Payload"]["name"] == "CWL Alignment"
     assert inv["Payload"]["cwl_s3_path"] == "s3://bucket/align.cwl"
-    assert inv["Payload"]["id"] == ver_id
+    assert inv["Payload"]["id"] == wf_id
 
 
 def test_omics_deployment_second_version_uses_create_version(
