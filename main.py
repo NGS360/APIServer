@@ -35,6 +35,7 @@ from api.users.routes import router as users_router
 
 logger = logging.getLogger(__name__)
 
+
 # Customize route id's
 # Helpful for creating sensible names in the client
 def custom_generate_unique_id(route: APIRoute):
