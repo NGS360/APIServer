@@ -3,6 +3,7 @@ Database configuration
 """
 
 from sqlmodel import create_engine, Session
+from sqlalchemy import event
 from core.config import get_settings
 
 # Get database URI
@@ -22,6 +23,23 @@ else:
         pool_size=5,             # Number of connections in pool
         max_overflow=10          # Max additional connections during spikes
     )
+
+
+# For MySQL/MariaDB, enforce strict date handling on every new connection so
+# invalid "zero dates" (e.g. '1000-00-01') can no longer be written. Existing
+# bad rows are still returned on read and handled by ProjectPublic's validator;
+# this prevents new ones from being introduced.
+if database_uri.startswith("mysql"):
+    @event.listens_for(engine, "connect")
+    def _set_mysql_sql_mode(dbapi_connection, connection_record):
+        cursor = dbapi_connection.cursor()
+        try:
+            cursor.execute(
+                "SET SESSION sql_mode=CONCAT(@@sql_mode, "
+                "',NO_ZERO_DATE,NO_ZERO_IN_DATE,STRICT_TRANS_TABLES')"
+            )
+        finally:
+            cursor.close()
 
 
 # Yield session

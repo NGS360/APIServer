@@ -2,13 +2,18 @@
 Main entrypoint for the FastAPI server
 """
 
+import logging
+
 from fastapi import FastAPI, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
+from sqlalchemy import text
+from sqlmodel import Session
 from core.lifespan import lifespan
 from core.config import get_settings
+from core.db import engine
 
 from api.auth.routes import router as auth_router
 from api.auth.oauth_routes import router as oauth_router
@@ -28,6 +33,8 @@ from api.workflow.routes import router as workflow_router
 from api.pipeline.routes import router as pipeline_router
 from api.platforms.routes import router as platforms_router
 from api.users.routes import router as users_router
+
+logger = logging.getLogger(__name__)
 
 
 # Customize route id's
@@ -117,6 +124,21 @@ def root():
 
 @app.get("/api/health", tags=["health"])
 def health_check():
+    """Health check that also probes database connectivity.
+
+    Returns 503 when the database is unreachable so the load balancer marks the
+    target unhealthy instead of routing traffic to an instance that can't serve
+    DB-backed requests (e.g. new instances that lack RDS security-group access).
+    """
+    try:
+        with Session(engine) as session:
+            session.execute(text("SELECT 1"))
+    except Exception as e:
+        logger.exception("Health check database probe failed: %s", e)
+        return JSONResponse(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            content={"status": "error", "message": "Database connectivity check failed."},
+        )
     return {"status": "ok", "message": "NGS360 API is running."}
 
 

@@ -5,9 +5,11 @@ Services for the Project API
 from datetime import datetime, timezone as tz
 from typing import Literal
 import boto3
+import logging
+
 from fastapi import HTTPException, status
 from api.utils import check_duplicate_attribute_keys
-from pydantic import PositiveInt
+from pydantic import PositiveInt, ValidationError
 from pytz import timezone
 from sqlmodel import Session, func, select
 from sqlalchemy.orm import selectinload
@@ -46,6 +48,8 @@ from api.samples.models import (
     Attribute,
 )
 from api.runs.models import SequencingRun, SequencingRunPublic, SampleSequencingRun
+
+logger = logging.getLogger(__name__)
 
 
 def generate_project_id(*, session: Session) -> str:
@@ -168,20 +172,24 @@ def get_projects(
     results_bucket = get_setting_value(session, "RESULTS_BUCKET_URI")
 
     # Map to public project
-    public_projects = [
-        ProjectPublic(
-            project_id=project.project_id,
-            name=project.name,
-            created_at=project.created_at,
-            created_by=project.created_by,
-            last_modified=project.last_modified,
-            data_folder_uri=f"{data_bucket}/{project.project_id}/",
-            results_folder_uri=f"{results_bucket}/{project.project_id}/",
-            attributes=project.attributes,
-            sequencing_runs=None  # Sequencing runs are not included for performance reasons
-        )
-        for project in projects
-    ]
+    public_projects = []
+    for project in projects:
+        try:
+            public_projects.append(
+                ProjectPublic(
+                    project_id=project.project_id,
+                    name=project.name,
+                    created_at=project.created_at,
+                    created_by=project.created_by,
+                    last_modified=project.last_modified,
+                    data_folder_uri=f"{data_bucket}/{project.project_id}/",
+                    results_folder_uri=f"{results_bucket}/{project.project_id}/",
+                    attributes=project.attributes,
+                    sequencing_runs=None  # Sequencing runs are not included for performance reasons
+                )
+            )
+        except ValidationError as e:
+            logger.error("Skipping project %s due to invalid data: %s", project.project_id, e)
 
     return ProjectsPublic(
         data=public_projects,

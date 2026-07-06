@@ -4,6 +4,7 @@ Authentication models for users, tokens, and OAuth providers
 from datetime import datetime, timezone
 from enum import Enum
 import uuid
+from sqlalchemy import Column, Text
 from sqlmodel import Field, SQLModel
 from pydantic import EmailStr, ConfigDict
 
@@ -78,9 +79,11 @@ class OAuthProvider(SQLModel, table=True):
     provider_name: str = Field(max_length=50)
     provider_user_id: str = Field(index=True, max_length=255)
 
-    # OAuth tokens (should be encrypted in production)
-    access_token: str | None = Field(default=None, max_length=1000)
-    refresh_token: str | None = Field(default=None, max_length=1000)
+    # OAuth tokens (should be encrypted in production).
+    # TEXT, not VARCHAR: corporate SSO issues stateless JWTs that exceed any
+    # reasonable VARCHAR limit (>1KB), which caused MySQL error 1406 on write.
+    access_token: str | None = Field(default=None, sa_column=Column(Text))
+    refresh_token: str | None = Field(default=None, sa_column=Column(Text))
     token_expires_at: datetime | None = Field(default=None)
 
     # Timestamps
