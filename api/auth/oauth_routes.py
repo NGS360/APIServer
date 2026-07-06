@@ -174,6 +174,9 @@ async def oauth_callback(
     except HTTPException:
         raise
     except Exception as e:
+        logger.exception(
+            "OAuth authentication failed for provider %s: %s", provider, e
+        )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"OAuth authentication failed: {str(e)}"
@@ -254,6 +257,10 @@ async def link_oauth_provider(
     except HTTPException:
         raise
     except Exception as e:
+        logger.exception(
+            "Failed to link OAuth provider %s to user %s: %s",
+            provider, current_user.id, e
+        )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Failed to link account: {str(e)}"
