@@ -167,6 +167,29 @@ class Settings(BaseSettings):
         """Get AWS Region from env or secrets (defaults to us-east-1)"""
         return self._get_config_value("AWS_REGION", default="us-east-1")
 
+    @computed_field
+    @property
+    def LLM_BASE_URL(self) -> str | None:
+        """Base URL of the LLM provider.
+
+        The Anthropic-compatible endpoint is ``<base>/anthropic`` and the
+        OpenAI-compatible endpoint is ``<base>/openai/v1``. Store the base
+        only; the chat service appends the provider path.
+        """
+        return self._get_config_value("LLM_BASE_URL")
+
+    @computed_field
+    @property
+    def LLM_API_KEY(self) -> str | None:
+        """Bearer key for the LLM (shared across both endpoints)."""
+        return self._get_config_value("LLM_API_KEY")
+
+    @computed_field
+    @property
+    def LLM_MODEL(self) -> str:
+        """Model id/alias"""
+        return self._get_config_value("LLM_MODEL", default="claude-opus-4-8")
+
     # Options are from api.files.models.StorageBackend
     STORAGE_BACKEND: str = os.getenv("STORAGE_BACKEND", "s3")
     STORAGE_ROOT_PATH: str = os.getenv("STORAGE_URI", "s3://my-storage-bucket")
