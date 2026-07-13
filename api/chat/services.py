@@ -11,8 +11,10 @@ import asyncio
 import json
 import uuid
 from typing import Any, AsyncGenerator
+from fastapi import HTTPException
+from langsmith import traceable
 
-from api.chat.models import ChatContext
+from api.chat.models import ChatContext, ChatRequest
 
 # Project the demo navigation directive falls back to when the user hasn't
 # referenced one with "#".
@@ -124,3 +126,62 @@ async def stream_canned_reply(prompt: str, user_name: str) -> AsyncGenerator[str
     yield sse_chunk({"type": "text-end", "id": "t1"})
     yield sse_chunk({"type": "finish"})
     yield "data: [DONE]\n\n"
+
+
+#################
+
+
+def extract_text_from_message(msg: dict[str, Any]) -> str:
+    content = msg.get("content", "")
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: list[str] = []
+        for item in content:
+            if isinstance(item, dict) and "text" in item:
+                parts.append(str(item["text"]))
+            else:
+                parts.append(str(item))
+        return "".join(parts)
+    return str(content)
+
+
+@traceable(name="fastapi_non_streaming_chat")
+async def run_chat(req: ChatRequest, client) -> dict[str, Any]:
+    thread_id = req.thread_id
+    if not thread_id:
+        thread = await client.threads.create()
+        thread_id = thread["thread_id"]
+
+    last_state: dict[str, Any] | None = None
+
+    try:
+        async with asyncio.timeout(60):
+            async for chunk in client.runs.stream(
+                thread_id,
+                LANGSMITH_ASSISTANT_ID,
+                input={"messages": [{"role": "user", "content": req.message}]},
+                stream_mode="values",
+            ):
+                last_state = chunk.data
+    except TimeoutError as exc:
+        raise HTTPException(status_code=504, detail="Upstream chat timeout") from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"LangSmith invocation failed: {type(exc).__name__}") from exc
+
+    if not last_state:
+        raise HTTPException(status_code=502, detail="No state returned from LangSmith")
+
+    messages = last_state.get("messages", [])
+    assistant_text = ""
+    for msg in reversed(messages):
+        role = str(msg.get("role", "")).lower()
+        if role in {"assistant", "ai"}:
+            assistant_text = extract_text_from_message(msg)
+            break
+
+    return {
+        "thread_id": thread_id,
+        "reply": assistant_text,
+        "state": last_state,
+    }
