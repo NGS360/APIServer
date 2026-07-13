@@ -210,7 +210,7 @@ typer==0.26.7
     # via
     #   fastapi-cli
     #   fastapi-cloud-cli
-typing-extensions==4.15.0
+typing-extensions==4.16.0
     # via
     #   alembic
     #   fastapi
