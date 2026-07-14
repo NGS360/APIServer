@@ -2,6 +2,8 @@
 Models for the AI Assistant Chat API
 """
 
+from typing import Any
+
 from pydantic import BaseModel, Field
 
 
@@ -20,6 +22,18 @@ class ChatContext(BaseModel):
 
     page: ChatContextEntity | None = None
     references: list[ChatContextEntity] = []
+
+
+# class ChatRequest(BaseModel):
+#     """
+#     Request body sent by the frontend's useChat hook: the full UIMessage
+#     history. Messages are kept loosely typed — the UIMessage shape (ids,
+#     roles, typed parts) is owned by the Vercel AI SDK protocol, and the
+#     orchestrator only consumes the parts it understands.
+#     """
+
+#     messages: list[dict[str, Any]]
+#     context: ChatContext | None = None
 
 
 class ChatRequest(BaseModel):
