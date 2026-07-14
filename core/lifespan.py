@@ -127,31 +127,6 @@ async def lifespan(app: FastAPI):
     client = get_opensearch_client()
     init_indexes(client)
 
-    # Initialize the LangGraph client for the AI Assistant chat feature.
-    # The client is stashed on app.state so chat routes can reach it via
-    # request.app.state.langgraph.
-    logger.info("Initializing LangGraph chat client...")
-    if not settings.LANGSMITH_API_KEY:
-        logger.warning(
-            "LANGSMITH_API_KEY is not set - chat endpoints will fail until it "
-            "is configured (via env or Secrets Manager)."
-        )
-    try:
-        from langgraph_sdk import get_client as get_langgraph_client
-
-        app.state.langgraph = get_langgraph_client(
-            url=settings.LANGGRAPH_DEPLOYMENT_URL,
-            api_key=settings.LANGSMITH_API_KEY,
-        )
-        logger.info(
-            "LangGraph chat client initialized (url=%s, assistant=%s)",
-            settings.LANGGRAPH_DEPLOYMENT_URL,
-            settings.LANGSMITH_ASSISTANT_ID,
-        )
-    except Exception as e:  # noqa: BLE001 - don't block startup on chat setup
-        app.state.langgraph = None
-        logger.warning(f"Failed to initialize LangGraph chat client: {e}")
-
     logger.info("In lifespan...yield")
     try:
         yield
