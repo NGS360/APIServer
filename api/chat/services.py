@@ -1,9 +1,10 @@
 """
 Chat-related services
 
-Streams assistant replies using the Vercel AI SDK UI Message Stream Protocol
-(SSE JSON chunks terminated by [DONE]), which the frontend consumes via
-useChat from @ai-sdk/react. Protocol reference:
+Invokes the deployed NGS360 SQL Agent (LangGraph Platform) and adapts its token
+stream into the Vercel AI SDK UI Message Stream Protocol (SSE JSON chunks
+terminated by [DONE]), which the frontend consumes via useChat from
+@ai-sdk/react. Protocol reference:
 https://ai-sdk.dev/docs/ai-sdk-ui/stream-protocol
 """
 
@@ -11,43 +12,20 @@ import asyncio
 import json
 import uuid
 from typing import Any, AsyncGenerator
+
 from fastapi import HTTPException
-from langsmith import traceable
 
-from api.chat.models import ChatContext, ChatRequest
+from api.chat.models import ChatRequest
+from core.config import get_settings
 
-# Project the demo navigation directive falls back to when the user hasn't
-# referenced one with "#".
-DEMO_PROJECT_ID = "P-20260507-0008"
+# Wall-clock ceilings for a single upstream invocation.
+NON_STREAMING_TIMEOUT_S = 60
+STREAMING_TIMEOUT_S = 120
 
-# Entity types the navigate directive can route to (a subset of the "#"
-# reference types — these have detail pages in the app).
-NAVIGABLE_TYPES = ("project", "run", "job")
-
-
-def navigation_target(context: ChatContext | None) -> dict[str, str]:
-    """Pick where to navigate from the entities the user referenced via "#".
-
-    Returns the first navigable reference as ``{destination, id}``, falling back
-    to the demo project when none was referenced.
-    """
-    if context is not None:
-        for ref in context.references:
-            if ref.type in NAVIGABLE_TYPES:
-                return {"destination": ref.type, "id": ref.id}
-    return {"destination": "project", "id": DEMO_PROJECT_ID}
-
-
-def last_user_text(messages: list[dict[str, Any]]) -> str:
-    """Extract the text of the most recent user message from UIMessage parts."""
-    for message in reversed(messages):
-        if message.get("role") == "user":
-            return " ".join(
-                part.get("text", "")
-                for part in message.get("parts", [])
-                if part.get("type") == "text"
-            )
-    return ""
+# The agent graph streams tokens from multiple nodes; only this node produces
+# the user-facing answer. Tokens from other nodes (e.g. the "tools" node's raw
+# SQL results) are intermediate reasoning and are not forwarded to the UI.
+FINAL_ANSWER_NODE = "reasoning"
 
 
 def sse_chunk(payload: dict[str, Any]) -> str:
@@ -55,83 +33,8 @@ def sse_chunk(payload: dict[str, Any]) -> str:
     return f"data: {json.dumps(payload)}\n\n"
 
 
-async def stream_reply(
-    messages: list[dict[str, Any]], user_name: str, context: ChatContext | None
-) -> AsyncGenerator[str, None]:
-    """
-    Dispatch to a canned response based on the latest user message.
-
-    Stands in for the in-house orchestrator: a prompt mentioning "navigate"
-    streams a ``data-navigate`` UI directive to the entity the user referenced
-    with "#" (or the demo project); everything else gets the text stub.
-    """
-    prompt = last_user_text(messages).lower()
-    if "navigate" in prompt:
-        async for chunk in stream_navigate_demo(navigation_target(context)):
-            yield chunk
-        return
-    async for chunk in stream_canned_reply(prompt, user_name):
-        yield chunk
-
-
-async def stream_navigate_demo(target: dict[str, str]) -> AsyncGenerator[str, None]:
-    """
-    Canned navigation: stream a short message, then a transient ``data-navigate``
-    data part the frontend consumes via useChat's onData to route the user to
-    ``target`` ({destination, id}).
-
-    This is a one-way UI directive (a data part, not a tool call): the browser
-    acts on it and nothing is returned to the model, so there's no tool
-    lifecycle to manage. transient=True keeps it out of saved chat history.
-    """
-    yield sse_chunk({"type": "start", "messageId": f"msg_{uuid.uuid4().hex}"})
-
-    text = f"Sure — taking you to {target['destination']} {target['id']} now."
-    yield sse_chunk({"type": "text-start", "id": "t1"})
-    for word in text.split(" "):
-        yield sse_chunk({"type": "text-delta", "id": "t1", "delta": word + " "})
-        await asyncio.sleep(0.02)
-    yield sse_chunk({"type": "text-end", "id": "t1"})
-
-    yield sse_chunk(
-        {"type": "data-navigate", "data": target, "transient": True}
-    )
-
-    yield sse_chunk({"type": "finish"})
-    yield "data: [DONE]\n\n"
-
-
-async def stream_canned_reply(prompt: str, user_name: str) -> AsyncGenerator[str, None]:
-    """
-    Stub generator: streams a canned reply token by token.
-
-    TODO: replace the body of this generator with the in-house orchestrator —
-    anything that yields text deltas (and later tool/source/data-* chunks)
-    can be framed with sse_chunk() unchanged.
-    """
-    reply = (
-        f"Hi {user_name}, you asked: \"{prompt}\"\n\n"
-        "This is a canned streaming response from the NGS360 API. "
-        "The real assistant will be able to answer questions about your "
-        "projects, runs, and samples once the orchestrator is connected. "
-        "Each word you see arriving individually was sent as its own "
-        "text-delta chunk over SSE."
-    )
-
-    yield sse_chunk({"type": "start", "messageId": f"msg_{uuid.uuid4().hex}"})
-    yield sse_chunk({"type": "text-start", "id": "t1"})
-    for word in reply.split(" "):
-        yield sse_chunk({"type": "text-delta", "id": "t1", "delta": word + " "})
-        await asyncio.sleep(0.03)  # simulate model latency so streaming is visible
-    yield sse_chunk({"type": "text-end", "id": "t1"})
-    yield sse_chunk({"type": "finish"})
-    yield "data: [DONE]\n\n"
-
-
-#################
-
-
 def extract_text_from_message(msg: dict[str, Any]) -> str:
+    """Flatten a LangChain-style message ``content`` (str or list of parts) to text."""
     content = msg.get("content", "")
     if isinstance(content, str):
         return content
@@ -146,42 +49,115 @@ def extract_text_from_message(msg: dict[str, Any]) -> str:
     return str(content)
 
 
-@traceable(name="fastapi_non_streaming_chat")
-async def run_chat(req: ChatRequest, client) -> dict[str, Any]:
-    thread_id = req.thread_id
-    if not thread_id:
-        thread = await client.threads.create()
-        thread_id = thread["thread_id"]
+async def _resolve_thread_id(req: ChatRequest, client) -> str:
+    """Return the request's thread id, creating a new thread when absent."""
+    if req.thread_id:
+        return req.thread_id
+    thread = await client.threads.create()
+    return thread["thread_id"]
 
+
+async def run_chat(req: ChatRequest, client) -> dict[str, Any]:
+    """Non-streaming chat: invoke the agent and return the final assistant reply."""
+    if client is None:
+        raise HTTPException(status_code=502, detail="Chat agent is not configured")
+
+    settings = get_settings()
+    thread_id = await _resolve_thread_id(req, client)
     last_state: dict[str, Any] | None = None
 
     try:
-        async with asyncio.timeout(60):
+        async with asyncio.timeout(NON_STREAMING_TIMEOUT_S):
             async for chunk in client.runs.stream(
                 thread_id,
-                LANGSMITH_ASSISTANT_ID,
+                settings.LANGSMITH_ASSISTANT_ID,
                 input={"messages": [{"role": "user", "content": req.message}]},
                 stream_mode="values",
             ):
                 last_state = chunk.data
     except TimeoutError as exc:
         raise HTTPException(status_code=504, detail="Upstream chat timeout") from exc
+    except HTTPException:
+        raise
     except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"LangSmith invocation failed: {type(exc).__name__}") from exc
+        raise HTTPException(
+            status_code=502,
+            detail=f"LangSmith invocation failed: {type(exc).__name__}",
+        ) from exc
 
     if not last_state:
         raise HTTPException(status_code=502, detail="No state returned from LangSmith")
 
-    messages = last_state.get("messages", [])
-    assistant_text = ""
-    for msg in reversed(messages):
-        role = str(msg.get("role", "")).lower()
-        if role in {"assistant", "ai"}:
-            assistant_text = extract_text_from_message(msg)
-            break
+    # Prefer the agent's dedicated final_answer; fall back to the last assistant message.
+    assistant_text = last_state.get("final_answer") or ""
+    if not assistant_text:
+        for msg in reversed(last_state.get("messages", [])):
+            role = str(msg.get("role", msg.get("type", ""))).lower()
+            if role in {"assistant", "ai"}:
+                assistant_text = extract_text_from_message(msg)
+                break
 
     return {
         "thread_id": thread_id,
         "reply": assistant_text,
         "state": last_state,
     }
+
+
+async def stream_chat_vercel(
+    req: ChatRequest, client
+) -> AsyncGenerator[str, None]:
+    """
+    Stream the agent's reply framed as the Vercel AI SDK UI Message Stream
+    protocol, so the frontend's useChat hook consumes it unchanged.
+
+    LangGraph's ``messages-tuple`` stream yields (message_chunk, metadata) token
+    pairs; each token is reframed as a ``text-delta`` chunk.
+    """
+    if client is None:
+        yield sse_chunk({"type": "start", "messageId": f"msg_{uuid.uuid4().hex}"})
+        yield sse_chunk(
+            {"type": "error", "errorText": "Chat agent is not configured"}
+        )
+        yield "data: [DONE]\n\n"
+        return
+
+    settings = get_settings()
+
+    yield sse_chunk({"type": "start", "messageId": f"msg_{uuid.uuid4().hex}"})
+    yield sse_chunk({"type": "text-start", "id": "t1"})
+
+    try:
+        thread_id = await _resolve_thread_id(req, client)
+        async with asyncio.timeout(STREAMING_TIMEOUT_S):
+            async for chunk in client.runs.stream(
+                thread_id,
+                settings.LANGSMITH_ASSISTANT_ID,
+                input={"messages": [{"role": "user", "content": req.message}]},
+                stream_mode="messages-tuple",
+            ):
+                if chunk.event != "messages":
+                    continue
+                message_chunk, metadata = chunk.data
+                # Only forward the final answer node's tokens; skip intermediate
+                # reasoning/tool output so it doesn't bleed into the UI.
+                if metadata.get("langgraph_node") != FINAL_ANSWER_NODE:
+                    continue
+                token = message_chunk.get("content")
+                if token:
+                    yield sse_chunk(
+                        {"type": "text-delta", "id": "t1", "delta": token}
+                    )
+        yield sse_chunk({"type": "text-end", "id": "t1"})
+        yield sse_chunk({"type": "finish"})
+    except TimeoutError:
+        yield sse_chunk({"type": "text-end", "id": "t1"})
+        yield sse_chunk({"type": "error", "errorText": "Upstream chat timeout"})
+    except Exception as exc:
+        safe_detail = str(exc).replace("\n", " ")[:300]
+        yield sse_chunk({"type": "text-end", "id": "t1"})
+        yield sse_chunk(
+            {"type": "error", "errorText": f"Upstream error: {safe_detail}"}
+        )
+
+    yield "data: [DONE]\n\n"
