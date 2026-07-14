@@ -104,15 +104,13 @@ class Settings(BaseSettings):
     # AI Assistant Chat - deployed NGS360 SQL Agent on the LangGraph Platform
     @computed_field
     @property
-    def LANGGRAPH_DEPLOYMENT_URL(self) -> str:
-        """Base URL of the deployed LangGraph agent (LangSmith/LangGraph Platform)."""
-        return self._get_config_value(
-            "LANGGRAPH_DEPLOYMENT_URL",
-            default=(
-                "https://langgraph-research-dataplane-dev.web-dev.bms.com/lgp/"
-                "ngs360-sql-agent-202435a6e1da5a59b8f85029b6dc87cd"
-            ),
-        )
+    def LANGGRAPH_DEPLOYMENT_URL(self) -> str | None:
+        """Base URL of the deployed LangGraph agent (LangSmith/LangGraph Platform).
+
+        No default: must be supplied via env var or Secrets Manager for the
+        target environment. Chat endpoints are disabled when it is unset.
+        """
+        return self._get_config_value("LANGGRAPH_DEPLOYMENT_URL")
 
     @computed_field
     @property
