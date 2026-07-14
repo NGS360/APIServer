@@ -212,7 +212,7 @@ class File(SQLModel, table=True):
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     uri: str = Field(max_length=512)  # File location (not unique alone)
     original_filename: str | None = Field(default=None, max_length=255)  # For uploads only
-    size: int | None = Field(default=None, sa_type=BigInteger)  # File size in bytes (BIGINT — supports files > 2 GB)
+    size: int | None = Field(default=None, sa_type=BigInteger)  # Bytes (BIGINT — files > 2 GB)
     created_on: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     created_by: str | None = Field(default=None, max_length=100)  # User identifier
     source: str | None = Field(default=None, max_length=1024)  # Origin of file record
