@@ -49,13 +49,6 @@ services:
       - OAUTH_GOOGLE_CLIENT_SECRET=${OAUTH_GOOGLE_CLIENT_SECRET:-test}
       - OAUTH_GITHUB_CLIENT_ID=${OAUTH_GITHUB_CLIENT_ID:-test}
       - OAUTH_GITHUB_CLIENT_SECRET=${OAUTH_GITHUB_CLIENT_SECRET:-test}
-      # AI Assistant Chat (deployed NGS360 SQL Agent on the LangGraph Platform).
-      # Supply LANGSMITH_API_KEY and LANGGRAPH_DEPLOYMENT_URL via a host .env
-      # file (see .env.example); chat endpoints are disabled when either is
-      # unset. The assistant id defaults to the graph name.
-      - LANGSMITH_API_KEY=${LANGSMITH_API_KEY}
-      - LANGGRAPH_DEPLOYMENT_URL=${LANGGRAPH_DEPLOYMENT_URL}
-      - LANGSMITH_ASSISTANT_ID=${LANGSMITH_ASSISTANT_ID:-ngs360_sql_agent}
     volumes: # this allows live reloading of the backend code
       - ${PWD}:/app
       - /app/.venv  # isolate container venv from host
