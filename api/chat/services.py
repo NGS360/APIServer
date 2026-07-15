@@ -49,18 +49,38 @@ def extract_text_from_message(msg: dict[str, Any]) -> str:
     return str(content)
 
 
+def latest_user_text(req: ChatRequest) -> str:
+    """Concatenate the text parts of the most recent user message.
+
+    Scanning ``messages`` in reverse handles both the ``submit-message`` and
+    ``regenerate-message`` triggers, since the last user turn is always present.
+    """
+    for msg in reversed(req.messages):
+        if msg.role == "user":
+            return "".join(p.text for p in msg.parts if p.type == "text" and p.text)
+    return ""
+
+
 async def _resolve_thread_id(req: ChatRequest, client) -> str:
-    """Return the request's thread id, creating a new thread when absent."""
-    if req.thread_id:
-        return req.thread_id
-    thread = await client.threads.create()
-    return thread["thread_id"]
+    """Map the stable chat id to a LangGraph thread.
+
+    The AI SDK sends the same chat ``id`` on every message of a conversation, so
+    using it as the thread id gives multi-turn continuity with no round-trip.
+    Creation is idempotent (``if_exists="do_nothing"``): the first message
+    creates the thread, later ones reuse it.
+    """
+    await client.threads.create(thread_id=req.id, if_exists="do_nothing")
+    return req.id
 
 
 async def run_chat(req: ChatRequest, client) -> dict[str, Any]:
     """Non-streaming chat: invoke the agent and return the final assistant reply."""
     if client is None:
         raise HTTPException(status_code=502, detail="Chat agent is not configured")
+
+    message = latest_user_text(req)
+    if not message:
+        raise HTTPException(status_code=400, detail="No user message provided")
 
     settings = get_settings()
     thread_id = await _resolve_thread_id(req, client)
@@ -71,7 +91,7 @@ async def run_chat(req: ChatRequest, client) -> dict[str, Any]:
             async for chunk in client.runs.stream(
                 thread_id,
                 settings.LANGSMITH_ASSISTANT_ID,
-                input={"messages": [{"role": "user", "content": req.message}]},
+                input={"messages": [{"role": "user", "content": message}]},
                 stream_mode="values",
             ):
                 last_state = chunk.data
@@ -122,6 +142,13 @@ async def stream_chat_vercel(
         yield "data: [DONE]\n\n"
         return
 
+    message = latest_user_text(req)
+    if not message:
+        yield sse_chunk({"type": "start", "messageId": f"msg_{uuid.uuid4().hex}"})
+        yield sse_chunk({"type": "error", "errorText": "No user message provided"})
+        yield "data: [DONE]\n\n"
+        return
+
     settings = get_settings()
 
     yield sse_chunk({"type": "start", "messageId": f"msg_{uuid.uuid4().hex}"})
@@ -133,7 +160,7 @@ async def stream_chat_vercel(
             async for chunk in client.runs.stream(
                 thread_id,
                 settings.LANGSMITH_ASSISTANT_ID,
-                input={"messages": [{"role": "user", "content": req.message}]},
+                input={"messages": [{"role": "user", "content": message}]},
                 stream_mode="messages-tuple",
             ):
                 if chunk.event != "messages":

@@ -55,8 +55,9 @@ class FakeRuns:
 
 
 class FakeThreads:
-    async def create(self):
-        return {"thread_id": "thread-123"}
+    async def create(self, thread_id=None, if_exists=None, **kwargs):
+        # The chat id is supplied as thread_id (idempotent create); echo it back.
+        return {"thread_id": thread_id or "thread-123"}
 
     async def get_state(self, thread_id):
         return {"thread_id": thread_id, "values": {"messages": []}}
@@ -96,22 +97,36 @@ def _sse_data_chunks(text):
     return [json.loads(line.removeprefix("data: ")) for line in lines[:-1]]
 
 
+def _envelope(text="What is NGS360?", chat_id="chat-1"):
+    """Build the Vercel AI SDK useChat request body the frontend sends."""
+    return {
+        "id": chat_id,
+        "trigger": "submit-message",
+        "messages": [
+            {"id": "m1", "role": "user", "parts": [{"type": "text", "text": text}]}
+        ],
+    }
+
+
 def test_chat_json_returns_reply(client, fake_langgraph):
     """POST /chat returns the agent's final answer as JSON."""
-    response = client.post("/api/v1/chat", json={"message": "How many projects?"})
+    response = client.post(
+        "/api/v1/chat", json=_envelope("How many projects?", chat_id="chat-1")
+    )
 
     assert response.status_code == 200
     body = response.json()
-    assert body["thread_id"] == "thread-123"
+    # The chat id doubles as the LangGraph thread id.
+    assert body["thread_id"] == "chat-1"
     assert body["reply"] == "42 projects."
     assert body["state"]["executed_sql"]
 
 
-def test_chat_json_reuses_thread_id(client, fake_langgraph):
-    """A provided thread_id is echoed back rather than creating a new thread."""
+def test_chat_json_uses_chat_id_as_thread(client, fake_langgraph):
+    """The stable chat id is used as the thread id for multi-turn continuity."""
     response = client.post(
         "/api/v1/chat",
-        json={"message": "And how many runs?", "thread_id": "existing-thread"},
+        json=_envelope("And how many runs?", chat_id="existing-thread"),
     )
     assert response.status_code == 200
     assert response.json()["thread_id"] == "existing-thread"
@@ -121,7 +136,7 @@ def test_chat_stream_emits_vercel_protocol(client, fake_langgraph):
     """POST /chat/stream emits the Vercel UI Message Stream over SSE."""
     fake_langgraph(FakeLangGraphClient(tokens=["What ", "is ", "NGS360?"]))
 
-    response = client.post("/api/v1/chat/stream", json={"message": "hi"})
+    response = client.post("/api/v1/chat/stream", json=_envelope("hi"))
 
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/event-stream")
@@ -147,7 +162,7 @@ def test_chat_stream_reports_upstream_error(client, fake_langgraph):
     """An upstream failure is surfaced as an error chunk, still ending in [DONE]."""
     fake_langgraph(FakeLangGraphClient(raise_exc=RuntimeError("boom")))
 
-    response = client.post("/api/v1/chat/stream", json={"message": "hi"})
+    response = client.post("/api/v1/chat/stream", json=_envelope("hi"))
 
     assert response.status_code == 200
     chunks = _sse_data_chunks(response.text)
@@ -158,7 +173,7 @@ def test_chat_json_upstream_error_returns_502(client, fake_langgraph):
     """A non-streaming upstream failure maps to a 502."""
     fake_langgraph(FakeLangGraphClient(raise_exc=RuntimeError("boom")))
 
-    response = client.post("/api/v1/chat", json={"message": "hi"})
+    response = client.post("/api/v1/chat", json=_envelope("hi"))
     assert response.status_code == 502
 
 
@@ -170,13 +185,23 @@ def test_get_thread_state(client, fake_langgraph):
 
 
 def test_chat_requires_auth(unauthenticated_client, fake_langgraph):
-    response = unauthenticated_client.post(
-        "/api/v1/chat", json={"message": "What is NGS360?"}
-    )
+    response = unauthenticated_client.post("/api/v1/chat", json=_envelope())
     assert response.status_code == 401
 
 
-def test_chat_rejects_empty_message(client, fake_langgraph):
-    """The message field has a min length of 1, so an empty string is a 422."""
-    response = client.post("/api/v1/chat", json={"message": ""})
+def test_chat_rejects_missing_messages(client, fake_langgraph):
+    """An envelope with no messages is rejected by schema validation (422)."""
+    response = client.post("/api/v1/chat", json={"id": "chat-1", "messages": []})
     assert response.status_code == 422
+
+
+def test_chat_rejects_empty_user_text(client, fake_langgraph):
+    """An envelope whose user message has no text yields a 400 empty-message guard."""
+    response = client.post(
+        "/api/v1/chat",
+        json={
+            "id": "chat-1",
+            "messages": [{"id": "m1", "role": "user", "parts": []}],
+        },
+    )
+    assert response.status_code == 400
