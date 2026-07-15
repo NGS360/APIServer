@@ -6,6 +6,7 @@ framing against controllable upstream behaviour.
 """
 
 import json
+import uuid
 from types import SimpleNamespace
 
 import pytest
@@ -97,6 +98,13 @@ def _sse_data_chunks(text):
     return [json.loads(line.removeprefix("data: ")) for line in lines[:-1]]
 
 
+def _expected_thread_id(chat_id):
+    """The thread UUID the service derives from a chat id (mirrors services.py)."""
+    from api.chat.services import THREAD_NAMESPACE
+
+    return str(uuid.uuid5(THREAD_NAMESPACE, chat_id))
+
+
 def _envelope(text="What is NGS360?", chat_id="chat-1"):
     """Build the Vercel AI SDK useChat request body the frontend sends."""
     return {
@@ -116,20 +124,20 @@ def test_chat_json_returns_reply(client, fake_langgraph):
 
     assert response.status_code == 200
     body = response.json()
-    # The chat id doubles as the LangGraph thread id.
-    assert body["thread_id"] == "chat-1"
+    # The chat id maps to a deterministic thread UUID.
+    assert body["thread_id"] == _expected_thread_id("chat-1")
     assert body["reply"] == "42 projects."
     assert body["state"]["executed_sql"]
 
 
 def test_chat_json_uses_chat_id_as_thread(client, fake_langgraph):
-    """The stable chat id is used as the thread id for multi-turn continuity."""
-    response = client.post(
-        "/api/v1/chat",
-        json=_envelope("And how many runs?", chat_id="existing-thread"),
-    )
-    assert response.status_code == 200
-    assert response.json()["thread_id"] == "existing-thread"
+    """The stable chat id maps to a stable thread UUID for multi-turn continuity."""
+    thread = _expected_thread_id("conv-42")
+    first = client.post("/api/v1/chat", json=_envelope("How many?", chat_id="conv-42"))
+    second = client.post("/api/v1/chat", json=_envelope("And runs?", chat_id="conv-42"))
+    assert first.json()["thread_id"] == thread
+    # Same chat id -> same thread on the follow-up (deterministic, no round-trip).
+    assert second.json()["thread_id"] == thread
 
 
 def test_chat_stream_emits_vercel_protocol(client, fake_langgraph):

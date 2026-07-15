@@ -27,6 +27,11 @@ STREAMING_TIMEOUT_S = 120
 # SQL results) are intermediate reasoning and are not forwarded to the UI.
 FINAL_ANSWER_NODE = "reasoning"
 
+# Namespace for deriving a stable thread UUID from the AI SDK chat id. LangGraph
+# Platform requires thread ids to be UUIDs, but the SDK chat id is a short random
+# string, so we map it deterministically (same chat id -> same thread UUID).
+THREAD_NAMESPACE = uuid.UUID("6ff7a1e2-4c3b-4d5e-9a0b-1c2d3e4f5a6b")
+
 
 def sse_chunk(payload: dict[str, Any]) -> str:
     """Frame one protocol chunk as an SSE data line."""
@@ -65,12 +70,15 @@ async def _resolve_thread_id(req: ChatRequest, client) -> str:
     """Map the stable chat id to a LangGraph thread.
 
     The AI SDK sends the same chat ``id`` on every message of a conversation, so
-    using it as the thread id gives multi-turn continuity with no round-trip.
+    deriving a deterministic UUID from it gives multi-turn continuity with no
+    round-trip. LangGraph Platform requires thread ids to be UUIDs, and the SDK
+    chat id is a short random string, so we hash it into a UUID via ``uuid5``.
     Creation is idempotent (``if_exists="do_nothing"``): the first message
     creates the thread, later ones reuse it.
     """
-    await client.threads.create(thread_id=req.id, if_exists="do_nothing")
-    return req.id
+    thread_id = str(uuid.uuid5(THREAD_NAMESPACE, req.id))
+    await client.threads.create(thread_id=thread_id, if_exists="do_nothing")
+    return thread_id
 
 
 async def run_chat(req: ChatRequest, client) -> dict[str, Any]:
