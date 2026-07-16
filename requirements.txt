@@ -192,7 +192,7 @@ six==1.17.0
     # via
     #   ecdsa
     #   python-dateutil
-smart-open==7.5.0
+smart-open==8.0.1
     # via ngs360-server (pyproject.toml)
 sqlalchemy==2.0.51
     # via
