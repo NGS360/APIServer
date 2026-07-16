@@ -168,7 +168,7 @@ requests==2.34.2
     # via
     #   opensearch-py
     #   sample-sheet
-rich==14.3.3
+rich==15.0.0
     # via
     #   rich-toolkit
     #   typer
