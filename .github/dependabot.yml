@@ -5,7 +5,24 @@
 
 version: 2
 updates:
-  - package-ecosystem: "pip" # See documentation for possible values
-    directory: "/" # Location of package manifests
+  # Python dependencies are managed by uv via pyproject.toml + uv.lock.
+  # The "uv" ecosystem performs a full resolution, so transitive pins stay
+  # consistent. requirements.txt is a generated export consumed by Elastic
+  # Beanstalk; it is regenerated automatically by the sync-requirements
+  # workflow whenever Dependabot changes uv.lock or pyproject.toml.
+  - package-ecosystem: "uv"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      # Collapse routine minor/patch bumps into a single PR to reduce noise.
+      python-minor-patch:
+        update-types:
+          - "minor"
+          - "patch"
+
+  # Keep the GitHub Actions used in CI up to date as well.
+  - package-ecosystem: "github-actions"
+    directory: "/"
     schedule:
       interval: "weekly"
