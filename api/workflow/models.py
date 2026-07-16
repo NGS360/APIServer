@@ -206,7 +206,7 @@ class WorkflowVersionAliasPublic(SQLModel):
 
 class WorkflowDeploymentCreate(SQLModel):
     engine: str
-    external_id: str
+    external_id: str | None = None
 
 
 class WorkflowDeploymentPublic(SQLModel):
