@@ -8,6 +8,7 @@ from sqlmodel import Session
 from fastapi import Depends
 from opensearchpy import OpenSearch
 
+from core.langgraph import get_langgraph_client
 from core.db import engine
 
 
@@ -37,3 +38,4 @@ def get_s3_client():
 SessionDep: TypeAlias = Annotated[Session, Depends(get_db)]
 OpenSearchDep: TypeAlias = Annotated[OpenSearch, Depends(get_opensearch_client)]
 S3ClientDep: TypeAlias = Annotated[object, Depends(get_s3_client)]
+LangGraphDep: TypeAlias = Annotated[object, Depends(get_langgraph_client)]

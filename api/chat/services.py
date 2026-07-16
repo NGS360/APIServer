@@ -159,7 +159,7 @@ async def run_chat(req: ChatRequest, client) -> dict[str, Any]:
         async with asyncio.timeout(60):
             async for chunk in client.runs.stream(
                 thread_id,
-                LANGSMITH_ASSISTANT_ID,
+                "agent", # LANGSMITH_ASSISTANT_ID,
                 input={"messages": [{"role": "user", "content": req.message}]},
                 stream_mode="values",
             ):
