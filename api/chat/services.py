@@ -49,6 +49,11 @@ def last_user_text(messages: list[dict[str, Any]]) -> str:
             )
     return ""
 
+# Namespace for deriving a stable thread UUID from the AI SDK chat id. LangGraph
+# Platform requires thread ids to be UUIDs, but the SDK chat id is a short random
+# string, so we map it deterministically (same chat id -> same thread UUID).
+THREAD_NAMESPACE = uuid.UUID("6ff7a1e2-4c3b-4d5e-9a0b-1c2d3e4f5a6b")
+
 
 def sse_chunk(payload: dict[str, Any]) -> str:
     """Frame one protocol chunk as an SSE data line."""
@@ -147,20 +152,53 @@ def extract_text_from_message(msg: dict[str, Any]) -> str:
 
 
 @traceable(name="fastapi_non_streaming_chat")
+def latest_user_text(req: ChatRequest) -> str:
+    """Concatenate the text parts of the most recent user message.
+
+    Scanning ``messages`` in reverse handles both the ``submit-message`` and
+    ``regenerate-message`` triggers, since the last user turn is always present.
+    """
+    for msg in reversed(req.messages):
+        if msg.role == "user":
+            return "".join(p.text for p in msg.parts if p.type == "text" and p.text)
+    return ""
+
+
+async def _resolve_thread_id(req: ChatRequest, client) -> str:
+    """Map the stable chat id to a LangGraph thread.
+
+    The AI SDK sends the same chat ``id`` on every message of a conversation, so
+    deriving a deterministic UUID from it gives multi-turn continuity with no
+    round-trip. LangGraph Platform requires thread ids to be UUIDs, and the SDK
+    chat id is a short random string, so we hash it into a UUID via ``uuid5``.
+    Creation is idempotent (``if_exists="do_nothing"``): the first message
+    creates the thread, later ones reuse it.
+    """
+    thread_id = str(uuid.uuid5(THREAD_NAMESPACE, req.id))
+    await client.threads.create(thread_id=thread_id, if_exists="do_nothing")
+    return thread_id
+
+
 async def run_chat(req: ChatRequest, client) -> dict[str, Any]:
     thread_id = req.thread_id
     if not thread_id:
         thread = await client.threads.create()
         thread_id = thread["thread_id"]
 
+    message = latest_user_text(req)
+    if not message:
+        raise HTTPException(status_code=400, detail="No user message provided")
+
+    settings = get_settings()
+    thread_id = await _resolve_thread_id(req, client)
     last_state: dict[str, Any] | None = None
 
     try:
         async with asyncio.timeout(60):
             async for chunk in client.runs.stream(
                 thread_id,
-                "agent", # LANGSMITH_ASSISTANT_ID,
-                input={"messages": [{"role": "user", "content": req.message}]},
+                settings.LANGSMITH_ASSISTANT_ID,
+                input={"messages": [{"role": "user", "content": message}]},
                 stream_mode="values",
             ):
                 last_state = chunk.data
@@ -185,3 +223,69 @@ async def run_chat(req: ChatRequest, client) -> dict[str, Any]:
         "reply": assistant_text,
         "state": last_state,
     }
+
+
+async def stream_chat_vercel(
+    req: ChatRequest, client
+) -> AsyncGenerator[str, None]:
+    """
+    Stream the agent's reply framed as the Vercel AI SDK UI Message Stream
+    protocol, so the frontend's useChat hook consumes it unchanged.
+
+    LangGraph's ``messages-tuple`` stream yields (message_chunk, metadata) token
+    pairs; each token is reframed as a ``text-delta`` chunk.
+    """
+    if client is None:
+        yield sse_chunk({"type": "start", "messageId": f"msg_{uuid.uuid4().hex}"})
+        yield sse_chunk(
+            {"type": "error", "errorText": "Chat agent is not configured"}
+        )
+        yield "data: [DONE]\n\n"
+        return
+
+    message = latest_user_text(req)
+    if not message:
+        yield sse_chunk({"type": "start", "messageId": f"msg_{uuid.uuid4().hex}"})
+        yield sse_chunk({"type": "error", "errorText": "No user message provided"})
+        yield "data: [DONE]\n\n"
+        return
+
+    settings = get_settings()
+
+    yield sse_chunk({"type": "start", "messageId": f"msg_{uuid.uuid4().hex}"})
+    yield sse_chunk({"type": "text-start", "id": "t1"})
+
+    try:
+        thread_id = await _resolve_thread_id(req, client)
+        async with asyncio.timeout(STREAMING_TIMEOUT_S):
+            async for chunk in client.runs.stream(
+                thread_id,
+                settings.LANGSMITH_ASSISTANT_ID,
+                input={"messages": [{"role": "user", "content": message}]},
+                stream_mode="messages-tuple",
+            ):
+                if chunk.event != "messages":
+                    continue
+                message_chunk, metadata = chunk.data
+                # Only forward the final answer node's tokens; skip intermediate
+                # reasoning/tool output so it doesn't bleed into the UI.
+                if metadata.get("langgraph_node") != FINAL_ANSWER_NODE:
+                    continue
+                token = message_chunk.get("content")
+                if token:
+                    yield sse_chunk(
+                        {"type": "text-delta", "id": "t1", "delta": token}
+                    )
+        yield sse_chunk({"type": "text-end", "id": "t1"})
+        yield sse_chunk({"type": "finish"})
+    except TimeoutError:
+        yield sse_chunk({"type": "text-end", "id": "t1"})
+        yield sse_chunk({"type": "error", "errorText": "Upstream chat timeout"})
+    except Exception as exc:
+        safe_detail = str(exc).replace("\n", " ")[:300]
+        yield sse_chunk({"type": "text-end", "id": "t1"})
+        yield sse_chunk(
+            {"type": "error", "errorText": f"Upstream error: {safe_detail}"}
+        )
+
+    yield "data: [DONE]\n\n"
