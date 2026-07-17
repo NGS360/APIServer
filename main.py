@@ -105,7 +105,7 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 
 # CORS settings to allow client-server communication
 # Set with env variable
-origins = [get_settings().client_origin]
+origins = [origin for origin in [get_settings().client_origin] if origin is not None]
 
 app.add_middleware(
     CORSMiddleware,
