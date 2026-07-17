@@ -162,17 +162,6 @@ def test_chat_stream_emits_vercel_protocol(client, fake_langgraph):
     assert "testuser" in text
 
 
-<<<<<<< HEAD
-def test_chat_requires_auth(unauthenticated_client):
-    response = _post_chat(unauthenticated_client)
-    assert response.status_code == 401
-
-
-def test_chat_handles_empty_history(client):
-    response = client.post("/api/v1/chat", json={"messages": []})
-    assert response.status_code == 200
-    assert "data: [DONE]" in response.text
-=======
 def test_chat_stream_reports_upstream_error(client, fake_langgraph):
     """An upstream failure is surfaced as an error chunk, still ending in [DONE]."""
     fake_langgraph(FakeLangGraphClient(raise_exc=RuntimeError("boom")))
@@ -220,4 +209,3 @@ def test_chat_rejects_empty_user_text(client, fake_langgraph):
         },
     )
     assert response.status_code == 400
->>>>>>> feature/ai-chat-integration-deploy
