@@ -101,6 +101,33 @@ class Settings(BaseSettings):
         """Get application log level from env or secrets (defaults to INFO)"""
         return self._get_config_value("LOG_LEVEL", default="INFO")
 
+    # AI Assistant Chat - deployed NGS360 SQL Agent on the LangGraph Platform
+    @computed_field
+    @property
+    def LANGGRAPH_DEPLOYMENT_URL(self) -> str:
+        """Base URL of the deployed LangGraph agent (LangSmith/LangGraph Platform)."""
+        return self._get_config_value(
+            "LANGGRAPH_DEPLOYMENT_URL",
+            default=(
+                "https://langgraph-research-dataplane-dev.web-dev.bms.com/lgp/"
+                "ngs360-sql-agent-202435a6e1da5a59b8f85029b6dc87cd"
+            ),
+        )
+
+    @computed_field
+    @property
+    def LANGSMITH_ASSISTANT_ID(self) -> str:
+        """Graph name (or assistant UUID) to invoke on the deployment."""
+        return self._get_config_value(
+            "LANGSMITH_ASSISTANT_ID", default="ngs360_sql_agent"
+        )
+
+    @computed_field
+    @property
+    def LANGSMITH_API_KEY(self) -> str | None:
+        """LangSmith API key sent as the X-Api-Key header when calling the agent."""
+        return self._get_config_value("LANGSMITH_API_KEY")
+
     # SQLAlchemy - Create db connection string
     @computed_field
     @property
