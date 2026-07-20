@@ -502,16 +502,6 @@ class Settings(BaseSettings):
         value = self._get_config_value("LDAP_TIMEOUT", default="10")
         return int(value)
 
-    @computed_field
-    @property
-    def LANGSMITH_DEPLOYMENT_URL(self) -> str | None:
-        return self._get_config_value("LANGSMITH_DEPLOYMENT_URL")
-
-    @computed_field
-    @property
-    def LANGSMITH_API_KEY(self) -> str | None:
-        return self._get_config_value("LANGSMITH_API_KEY")
-
     # Read environment variables from .env file, if it exists
     # extra='ignore' prevents validation errors from extra env vars
     model_config = SettingsConfigDict(
