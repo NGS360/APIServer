@@ -1,4 +1,9 @@
-"""Tests for the AI Assistant chat streaming endpoint."""
+"""Tests for the AI Assistant chat endpoints (backed by the LangGraph agent).
+
+The deployed agent is never contacted: a fake LangGraph client is stashed on
+``app.state.langgraph`` so the routes exercise the real request/response and SSE
+framing against controllable upstream behaviour.
+"""
 
 import json
 import uuid
@@ -145,11 +150,8 @@ def test_chat_stream_emits_vercel_protocol(client, fake_langgraph):
     assert response.headers["content-type"].startswith("text/event-stream")
     assert response.headers["x-vercel-ai-ui-message-stream"] == "v1"
 
-    lines = [line for line in response.text.split("\n") if line.startswith("data: ")]
-    assert lines[-1] == "data: [DONE]"
-
-    chunks = [json.loads(line.removeprefix("data: ")) for line in lines[:-1]]
-    types = [chunk["type"] for chunk in chunks]
+    chunks = _sse_data_chunks(response.text)
+    types = [c["type"] for c in chunks]
     assert types[0] == "start"
     assert chunks[0]["messageId"].startswith("msg_")
     assert types[1] == "text-start"
@@ -158,8 +160,10 @@ def test_chat_stream_emits_vercel_protocol(client, fake_langgraph):
     assert all(t == "text-delta" for t in types[2:-2])
 
     text = "".join(c["delta"] for c in chunks if c["type"] == "text-delta")
-    assert "What is NGS360?" in text
-    assert "testuser" in text
+    # Only the final-answer node's tokens are forwarded; the intermediate
+    # "tools" node output is filtered out.
+    assert text == "What is NGS360?"
+    assert "raw tool output" not in text
 
 
 def test_chat_stream_reports_upstream_error(client, fake_langgraph):
