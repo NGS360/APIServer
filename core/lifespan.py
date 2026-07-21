@@ -9,7 +9,6 @@ from sqlmodel import Session, select
 from core.config import get_settings
 from core.db import engine
 
-# from core.db import init_db, drop_tables
 from core.opensearch import get_opensearch_client, init_indexes
 from core.logger import logger
 
@@ -68,7 +67,7 @@ async def lifespan(app: FastAPI):
         elif "SQLALCHEMY_DATABASE_URI" in key and value is not None:
             # Mask password in database URI if present
             import re
-            masked_value = re.sub(r"://(.*?):(.*?)@", r"://\1:*****@", value)
+            masked_value = re.sub(r"://([^:@/]*):([^@]*)@", r"://\1:*****@", value)
             logger.info("  %s: %s", key, masked_value)
         else:
             logger.info("  %s: %s", key, value)
