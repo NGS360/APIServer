@@ -1,8 +1,8 @@
 """Tests for the AI Assistant chat endpoints (backed by the LangGraph agent).
 
-The deployed agent is never contacted: a fake LangGraph client is stashed on
-``app.state.langgraph`` so the routes exercise the real request/response and SSE
-framing against controllable upstream behaviour.
+The deployed agent is never contacted: a fake LangGraph client is injected via
+the ``get_langgraph_client`` dependency override so the routes exercise the real
+request/response and SSE framing against controllable upstream behaviour.
 """
 
 import json
@@ -11,6 +11,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from core.deps import get_langgraph_client
 from main import app
 
 
@@ -76,19 +77,19 @@ class FakeLangGraphClient:
 
 @pytest.fixture(name="fake_langgraph")
 def fake_langgraph_fixture():
-    """Install a fake LangGraph client on app.state for the duration of a test.
+    """Override the ``get_langgraph_client`` dependency with a fake client.
 
     Yields a setter so a test can swap in a client with custom behaviour.
     """
-    original = getattr(app.state, "langgraph", None)
+    current = {"client": FakeLangGraphClient()}
 
     def _set(client):
-        app.state.langgraph = client
+        current["client"] = client
         return client
 
-    _set(FakeLangGraphClient())
+    app.dependency_overrides[get_langgraph_client] = lambda: current["client"]
     yield _set
-    app.state.langgraph = original
+    app.dependency_overrides.pop(get_langgraph_client, None)
 
 
 def _sse_data_chunks(text):
