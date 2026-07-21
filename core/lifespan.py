@@ -10,6 +10,7 @@ from core.config import get_settings
 from core.db import engine
 
 from core.opensearch import get_opensearch_client, init_indexes
+from core.langgraph import get_langgraph_client
 from core.logger import logger
 
 
@@ -113,6 +114,7 @@ async def lifespan(app: FastAPI):
         logger.warning(f"Failed to sync environment variables: {e}")
 
     # Initialize database (if not done already)
+    # Database initialization is done via alembic hence not part of this code.
     # try:
     #  logger.info("Initializing database...")
     #  init_db()
@@ -126,34 +128,8 @@ async def lifespan(app: FastAPI):
     client = get_opensearch_client()
     init_indexes(client)
 
-    # Initialize the LangGraph client for the AI Assistant chat feature.
-    # The client is stashed on app.state so chat routes can reach it via
-    # request.app.state.langgraph. Chat endpoints stay disabled (client is
-    # None) until both the deployment URL and API key are configured.
     logger.info("Initializing LangGraph chat client...")
-    app.state.langgraph = None
-    if not settings.LANGGRAPH_DEPLOYMENT_URL or not settings.LANGSMITH_API_KEY:
-        logger.warning(
-            "LANGGRAPH_DEPLOYMENT_URL and/or LANGSMITH_API_KEY are not set - "
-            "chat endpoints are disabled until they are configured (via env or "
-            "Secrets Manager)."
-        )
-    else:
-        try:
-            from langgraph_sdk import get_client as get_langgraph_client
-
-            app.state.langgraph = get_langgraph_client(
-                url=settings.LANGGRAPH_DEPLOYMENT_URL,
-                api_key=settings.LANGSMITH_API_KEY,
-            )
-            logger.info(
-                "LangGraph chat client initialized (url=%s, assistant=%s)",
-                settings.LANGGRAPH_DEPLOYMENT_URL,
-                settings.LANGSMITH_ASSISTANT_ID,
-            )
-        except Exception as e:  # noqa: BLE001 - don't block startup on chat setup
-            app.state.langgraph = None
-            logger.warning(f"Failed to initialize LangGraph chat client: {e}")
+    get_langgraph_client()
 
     logger.info("In lifespan...yield")
     try:
