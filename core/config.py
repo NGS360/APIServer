@@ -7,6 +7,7 @@ from functools import lru_cache
 import os
 import json
 from pathlib import Path
+from typing import overload
 from pydantic import computed_field, PrivateAttr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 import boto3
@@ -57,6 +58,14 @@ class Settings(BaseSettings):
     # Cache for AWS Secrets Manager to avoid multiple API calls
     # Note: Must use PrivateAttr for Pydantic v2 private attributes
     _secret_cache: dict | None = PrivateAttr(default=None)
+
+    @overload
+    def _get_config_value(self, env_var_name: str, default: str) -> str: ...
+
+    @overload
+    def _get_config_value(
+        self, env_var_name: str, default: None = None
+    ) -> str | None: ...
 
     def _get_config_value(
         self,
@@ -117,7 +126,7 @@ class Settings(BaseSettings):
     def LANGSMITH_ASSISTANT_ID(self) -> str:
         """Graph name (or assistant UUID) to invoke on the deployment."""
         return self._get_config_value(
-            "LANGSMITH_ASSISTANT_ID", default="ngs360_sql_agent"
+            "LANGSMITH_ASSISTANT_ID", default="ngs360_agent"
         )
 
     @computed_field
