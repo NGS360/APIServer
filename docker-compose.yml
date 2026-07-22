@@ -55,7 +55,7 @@ services:
       # unset. The assistant id defaults to the graph name.
       - LANGSMITH_API_KEY=${LANGSMITH_API_KEY}
       - LANGGRAPH_DEPLOYMENT_URL=${LANGGRAPH_DEPLOYMENT_URL}
-      - LANGSMITH_ASSISTANT_ID=${LANGSMITH_ASSISTANT_ID:-ngs360_sql_agent}
+      - LANGSMITH_ASSISTANT_ID=${LANGSMITH_ASSISTANT_ID:-ngs360_agent}
     volumes: # this allows live reloading of the backend code
       - ${PWD}:/app
       - /app/.venv  # isolate container venv from host
