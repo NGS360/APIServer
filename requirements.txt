@@ -18,13 +18,13 @@ authlib==1.7.2
     # via ngs360-server (pyproject.toml)
 bcrypt==5.0.0
     # via ngs360-server (pyproject.toml)
-boto3==1.43.49
+boto3==1.43.54
     # via ngs360-server (pyproject.toml)
-botocore==1.43.49
+botocore==1.43.54
     # via
     #   boto3
     #   s3transfer
-certifi==2026.6.17
+certifi==2026.7.22
     # via
     #   httpcore
     #   httpx
@@ -61,9 +61,9 @@ email-validator==2.3.0
     #   pydantic
 events==0.5
     # via opensearch-py
-fastapi==0.139.1
+fastapi==0.139.2
     # via ngs360-server (pyproject.toml)
-fastapi-cli==0.0.31
+fastapi-cli==0.0.32
     # via fastapi
 fastapi-cloud-cli==0.22.2
     # via fastapi-cli
@@ -73,7 +73,7 @@ fastar==0.11.0
     #   fastapi-cloud-cli
 grpcio==1.82.1
     # via opensearch-protobufs
-gunicorn==25.3.0
+gunicorn==26.0.0
     # via ngs360-server (pyproject.toml)
 h11==0.16.0
     # via
@@ -108,7 +108,7 @@ jsonpatch==1.33
     # via langchain-core
 jsonpointer==3.1.1
     # via jsonpatch
-langchain-core==1.4.9
+langchain-core==1.5.0
     # via langgraph-sdk
 langchain-protocol==0.0.18
     # via
@@ -116,7 +116,7 @@ langchain-protocol==0.0.18
     #   langgraph-sdk
 langgraph-sdk==0.4.2
     # via ngs360-server (pyproject.toml)
-langsmith==0.10.7
+langsmith==0.10.9
     # via langchain-core
 ldap3==2.9.1
     # via ngs360-server (pyproject.toml)
@@ -213,15 +213,15 @@ rich-toolkit==0.20.3
     # via
     #   fastapi-cli
     #   fastapi-cloud-cli
-rignore==0.7.6
+rignore==0.8.0
     # via fastapi-cloud-cli
 rsa==4.9.1
     # via python-jose
-s3transfer==0.19.1
+s3transfer==0.19.2
     # via boto3
 sample-sheet==0.13.0
     # via ngs360-server (pyproject.toml)
-sentry-sdk==2.65.0
+sentry-sdk==2.66.1
     # via fastapi-cloud-cli
 shellingham==1.5.4
     # via typer

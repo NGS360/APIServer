@@ -1,0 +1,44 @@
+name: Sync requirements.txt
+# requirements.txt is a generated export of pyproject.toml consumed by Elastic
+# Beanstalk at deploy time (pip install -r requirements.txt). Dependabot's "uv"
+# ecosystem updates pyproject.toml / uv.lock but does NOT touch requirements.txt,
+# so this workflow regenerates it on Dependabot branches and commits it back to
+# the PR, keeping the deployed dependency set consistent with the lock file.
+
+on:
+  push:
+    branches:
+      - "dependabot/**"
+    paths:
+      - "pyproject.toml"
+      - "uv.lock"
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.8.3"
+
+      - name: Regenerate requirements.txt
+        run: uv pip compile pyproject.toml -o requirements.txt
+
+      - name: Commit and push if changed
+        run: |
+          if git diff --quiet -- requirements.txt; then
+            echo "requirements.txt already in sync; nothing to do."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add requirements.txt
+          git commit -m "chore: regenerate requirements.txt from uv.lock"
+          git push
