@@ -110,7 +110,7 @@ class Settings(BaseSettings):
         """Get application log level from env or secrets (defaults to INFO)"""
         return self._get_config_value("LOG_LEVEL", default="INFO")
 
-    # AI Assistant Chat - deployed NGS360 SQL Agent on the LangGraph Platform
+    # AI Assistant Chat - deployed NGS360 LLM Agent on the LangGraph Platform
     @computed_field
     @property
     def LANGGRAPH_DEPLOYMENT_URL(self) -> str | None:
