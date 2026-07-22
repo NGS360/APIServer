@@ -102,7 +102,6 @@ def dedupe_table(
     conflicts and ``conflicts`` is a list of report dicts for manual review.
     """
     table_name = model.__tablename__
-    parent_col = getattr(model, parent_attr)
 
     rows = session.exec(select(model)).all()
 
