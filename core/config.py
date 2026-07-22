@@ -7,6 +7,7 @@ from functools import lru_cache
 import os
 import json
 from pathlib import Path
+from typing import overload
 from pydantic import computed_field, PrivateAttr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 import boto3
@@ -58,6 +59,14 @@ class Settings(BaseSettings):
     # Note: Must use PrivateAttr for Pydantic v2 private attributes
     _secret_cache: dict | None = PrivateAttr(default=None)
 
+    @overload
+    def _get_config_value(self, env_var_name: str, default: str) -> str: ...
+
+    @overload
+    def _get_config_value(
+        self, env_var_name: str, default: None = None
+    ) -> str | None: ...
+
     def _get_config_value(
         self,
         env_var_name: str,
@@ -100,6 +109,31 @@ class Settings(BaseSettings):
     def LOG_LEVEL(self) -> str:
         """Get application log level from env or secrets (defaults to INFO)"""
         return self._get_config_value("LOG_LEVEL", default="INFO")
+
+    # AI Assistant Chat - deployed NGS360 LLM Agent on the LangGraph Platform
+    @computed_field
+    @property
+    def LANGGRAPH_DEPLOYMENT_URL(self) -> str | None:
+        """Base URL of the deployed LangGraph agent (LangSmith/LangGraph Platform).
+
+        No default: must be supplied via env var or Secrets Manager for the
+        target environment. Chat endpoints are disabled when it is unset.
+        """
+        return self._get_config_value("LANGGRAPH_DEPLOYMENT_URL")
+
+    @computed_field
+    @property
+    def LANGSMITH_ASSISTANT_ID(self) -> str:
+        """Graph name (or assistant UUID) to invoke on the deployment."""
+        return self._get_config_value(
+            "LANGSMITH_ASSISTANT_ID", default="ngs360_agent"
+        )
+
+    @computed_field
+    @property
+    def LANGSMITH_API_KEY(self) -> str | None:
+        """LangSmith API key sent as the X-Api-Key header when calling the agent."""
+        return self._get_config_value("LANGSMITH_API_KEY")
 
     # SQLAlchemy - Create db connection string
     @computed_field

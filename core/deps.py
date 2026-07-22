@@ -3,7 +3,7 @@ Define functions/aliases for dependency injection
 """
 
 from collections.abc import Generator
-from typing import Annotated, TypeAlias
+from typing import Annotated, Any, TypeAlias
 from sqlmodel import Session
 from fastapi import Depends
 from opensearchpy import OpenSearch
@@ -25,6 +25,14 @@ def get_opensearch_client() -> Generator[OpenSearch, None, None]:
     yield client
 
 
+def get_langgraph_client() -> Generator[Any, None, None]:
+    from core.langgraph import client  # Import the global client
+
+    # The client may be None when chat is not configured; the chat services
+    # handle that case (raising 502 / emitting an in-stream error) themselves.
+    yield client
+
+
 def get_s3_client():
     """Get S3 client for dependency injection"""
     try:
@@ -36,4 +44,5 @@ def get_s3_client():
 
 SessionDep: TypeAlias = Annotated[Session, Depends(get_db)]
 OpenSearchDep: TypeAlias = Annotated[OpenSearch, Depends(get_opensearch_client)]
+LangGraphDep: TypeAlias = Annotated[Any, Depends(get_langgraph_client)]
 S3ClientDep: TypeAlias = Annotated[object, Depends(get_s3_client)]
