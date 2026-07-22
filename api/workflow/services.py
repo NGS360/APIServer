@@ -14,6 +14,7 @@ from sqlmodel import Session, select
 from sqlalchemy import func
 
 from api.platforms.models import Platform
+from api.utils import check_duplicate_attribute_keys
 from api.workflow.models import (
     Attribute,
     Workflow,
@@ -87,18 +88,9 @@ def create_workflow(
 
     # Handle attribute mapping
     if workflow_in.attributes:
-        # Prevent duplicate keys
-        seen: set[str] = set()
-        keys = [attr.key for attr in workflow_in.attributes]
-        dups = [k for k in keys if k in seen or seen.add(k)]
-        if dups:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=(
-                    f"Duplicate keys ({', '.join(dups)}) "
-                    "are not allowed in workflow attributes."
-                ),
-            )
+        check_duplicate_attribute_keys(
+            workflow_in.attributes, "workflow attributes"
+        )
 
         workflow_attributes = [
             WorkflowAttribute(
@@ -260,18 +252,9 @@ def create_workflow_version(
 
     # Handle attribute mapping
     if version_in.attributes:
-        # Prevent duplicate keys
-        seen: set[str] = set()
-        keys = [attr.key for attr in version_in.attributes]
-        dups = [k for k in keys if k in seen or seen.add(k)]
-        if dups:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=(
-                    f"Duplicate keys ({', '.join(dups)}) "
-                    "are not allowed in workflow version attributes."
-                ),
-            )
+        check_duplicate_attribute_keys(
+            version_in.attributes, "workflow version attributes"
+        )
 
         version_attributes = [
             WorkflowVersionAttribute(
