@@ -4,6 +4,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlmodel import Session
 
+from api.files.models import File
 from api.platforms.models import Platform
 from api.workflow.models import Workflow, WorkflowVersion
 from core.config import get_settings
@@ -739,3 +740,155 @@ def test_non_omics_deployment_without_external_id_400(
     )
     assert resp.status_code == 400
     assert "external_id is required" in resp.json()["detail"]
+
+
+# ---------------------------------------------------------------------------
+# ngs360:// definition URI resolution for Omics deployments
+# ---------------------------------------------------------------------------
+
+def _create_ngs360_cwl_workflow_and_version(
+    session: Session,
+    definition_uri: str,
+) -> tuple[str, str, int]:
+    """Insert a workflow + version with an arbitrary definition_uri."""
+    wf = Workflow(name="NGS360 CWL", created_by="testuser")
+    session.add(wf)
+    session.flush()
+    ver = WorkflowVersion(
+        workflow_id=wf.id,
+        version=1,
+        definition_uri=definition_uri,
+        created_by="testuser",
+    )
+    session.add(ver)
+    session.commit()
+    session.refresh(wf)
+    session.refresh(ver)
+    return str(wf.id), str(ver.id), ver.version
+
+
+def test_omics_deployment_resolves_ngs360_definition_uri(
+    client: TestClient, session: Session,
+    mock_lambda_client, omics_env,
+):
+    """ngs360://<file-id> is resolved to the file's s3:// uri before Lambda."""
+    _seed_omics_platform(session)
+
+    # Seed a File record that stands in for the NGS360 upload
+    file_record = File(
+        uri="s3://bmsrd-ngs-omics/ngs360-file-store/staging/project/"
+            "P-00000000-0001/launcher_inputs/wgs.packed.cwl",
+        original_filename="wgs.packed.cwl",
+        created_by="testuser",
+        storage_backend="s3",
+    )
+    session.add(file_record)
+    session.commit()
+    session.refresh(file_record)
+
+    wf_id, ver_id, ver_num = _create_ngs360_cwl_workflow_and_version(
+        session, definition_uri=f"ngs360://{file_record.id}",
+    )
+
+    arn = f"{OMICS_ARN_PREFIX}workflow/1324105/version/{ver_id}"
+    mock_lambda_client.set_response({
+        "statusCode": 200,
+        "workflow_id": "1324105",
+        "arn": arn,
+    })
+
+    resp = client.post(
+        f"/api/v1/workflows/{wf_id}/versions/{ver_num}/deployments",
+        json={"engine": OMICS_ENGINE},
+    )
+    assert resp.status_code == 201, resp.text
+
+    inv = mock_lambda_client.invocations[-1]
+    assert inv["Payload"]["cwl_s3_path"] == file_record.uri
+
+
+def test_omics_deployment_ngs360_file_not_found_returns_404(
+    client: TestClient, session: Session,
+    mock_lambda_client, omics_env,
+):
+    """Unknown ngs360 file id yields 404 and no Lambda invocation."""
+    _seed_omics_platform(session)
+
+    missing_id = "00000000-0000-0000-0000-000000000000"
+    wf_id, _, ver_num = _create_ngs360_cwl_workflow_and_version(
+        session, definition_uri=f"ngs360://{missing_id}",
+    )
+
+    resp = client.post(
+        f"/api/v1/workflows/{wf_id}/versions/{ver_num}/deployments",
+        json={"engine": OMICS_ENGINE},
+    )
+    assert resp.status_code == 404
+    assert mock_lambda_client.invocations == []
+
+
+def test_omics_deployment_ngs360_invalid_uuid_returns_400(
+    client: TestClient, session: Session,
+    mock_lambda_client, omics_env,
+):
+    """Malformed ngs360:// id (not a UUID) yields 400."""
+    _seed_omics_platform(session)
+
+    wf_id, _, ver_num = _create_ngs360_cwl_workflow_and_version(
+        session, definition_uri="ngs360://not-a-uuid",
+    )
+
+    resp = client.post(
+        f"/api/v1/workflows/{wf_id}/versions/{ver_num}/deployments",
+        json={"engine": OMICS_ENGINE},
+    )
+    assert resp.status_code == 400
+    assert mock_lambda_client.invocations == []
+
+
+def test_omics_deployment_ngs360_non_s3_backing_returns_400(
+    client: TestClient, session: Session,
+    mock_lambda_client, omics_env,
+):
+    """A local-backed NGS360 file cannot back an Omics deployment."""
+    _seed_omics_platform(session)
+
+    file_record = File(
+        uri="local/path/workflow.cwl",
+        original_filename="workflow.cwl",
+        created_by="testuser",
+        storage_backend="local",
+    )
+    session.add(file_record)
+    session.commit()
+    session.refresh(file_record)
+
+    wf_id, _, ver_num = _create_ngs360_cwl_workflow_and_version(
+        session, definition_uri=f"ngs360://{file_record.id}",
+    )
+
+    resp = client.post(
+        f"/api/v1/workflows/{wf_id}/versions/{ver_num}/deployments",
+        json={"engine": OMICS_ENGINE},
+    )
+    assert resp.status_code == 400
+    assert mock_lambda_client.invocations == []
+
+
+def test_omics_deployment_unsupported_scheme_returns_400(
+    client: TestClient, session: Session,
+    mock_lambda_client, omics_env,
+):
+    """Non-s3, non-ngs360 definition_uri is rejected before Lambda."""
+    _seed_omics_platform(session)
+
+    wf_id, _, ver_num = _create_ngs360_cwl_workflow_and_version(
+        session, definition_uri="https://example.com/wf.cwl",
+    )
+
+    resp = client.post(
+        f"/api/v1/workflows/{wf_id}/versions/{ver_num}/deployments",
+        json={"engine": OMICS_ENGINE},
+    )
+    assert resp.status_code == 400
+    assert mock_lambda_client.invocations == []

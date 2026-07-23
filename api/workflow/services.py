@@ -13,6 +13,7 @@ from fastapi import HTTPException, status
 from sqlmodel import Session, select
 from sqlalchemy import func
 
+from api.files.models import File
 from api.platforms.models import Platform
 from api.workflow.models import (
     Attribute,
@@ -465,6 +466,62 @@ def alias_to_public(
 # WorkflowDeployment CRUD
 # ---------------------------------------------------------------------------
 
+NGS360_URI_SCHEME = "ngs360://"
+
+
+def _resolve_cwl_definition_to_s3(
+    session: Session,
+    definition_uri: str,
+) -> str:
+    """Resolve a workflow definition URI to an s3:// path.
+
+    - ``s3://...`` is returned as-is.
+    - ``ngs360://<file-id>`` is resolved via the local ``File`` table to the
+      underlying ``s3://`` URI (only s3-backed files are supported for Omics).
+    - Anything else is rejected as 400.
+    """
+    if definition_uri.startswith("s3://"):
+        return definition_uri
+
+    if not definition_uri.startswith(NGS360_URI_SCHEME):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"Unsupported definition_uri scheme: '{definition_uri}'. "
+                "Expected 's3://' or 'ngs360://<file-id>'."
+            ),
+        )
+
+    raw_id = definition_uri[len(NGS360_URI_SCHEME):].strip("/")
+    try:
+        file_uuid = UUID(raw_id)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"Invalid NGS360 file id in definition_uri "
+                f"'{definition_uri}': '{raw_id}' is not a UUID."
+            ),
+        ) from exc
+
+    file_record = session.get(File, file_uuid)
+    if not file_record:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"NGS360 file '{raw_id}' not found.",
+        )
+
+    if not file_record.uri or not file_record.uri.startswith("s3://"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"NGS360 file '{raw_id}' is not backed by S3 "
+                f"(uri='{file_record.uri}')."
+            ),
+        )
+    return file_record.uri
+
+
 def _find_existing_omics_deployment(
     session: Session,
     workflow: Workflow,
@@ -578,13 +635,14 @@ def _register_workflow_on_omics(
 ) -> str:
     """Register the workflow/version on AWS HealthOmics via Lambda; return ARN."""
     prior = _find_existing_omics_deployment(session, workflow, engine)
+    cwl_s3_path = _resolve_cwl_definition_to_s3(session, version.definition_uri)
 
     if prior is None:
         payload = {
             "source": "ngs360",
             "action": "create_workflow",
             "name": workflow.name,
-            "cwl_s3_path": version.definition_uri,
+            "cwl_s3_path": cwl_s3_path,
             "id": str(version.workflow_id),
         }
     else:
@@ -607,7 +665,7 @@ def _register_workflow_on_omics(
             "action": "create_workflow_version",
             "omics_workflow_id": omics_workflow_id,
             "version_name": str(version.version),
-            "cwl_s3_path": version.definition_uri,
+            "cwl_s3_path": cwl_s3_path,
             "id": str(version.workflow_id),
         }
 
