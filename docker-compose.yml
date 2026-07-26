@@ -31,6 +31,8 @@ services:
     ports:
       - "3000:3000"
     environment:
+      # Bind to all interfaces inside the container so Docker's port mapping works
+      - API_HOST=0.0.0.0
       - client_origin=http://localhost:8080
       # Database variables
       - SQLALCHEMY_DATABASE_URI=mysql+pymysql://root:rootpassword@db:3306/ngs360
@@ -47,6 +49,13 @@ services:
       - OAUTH_GOOGLE_CLIENT_SECRET=${OAUTH_GOOGLE_CLIENT_SECRET:-test}
       - OAUTH_GITHUB_CLIENT_ID=${OAUTH_GITHUB_CLIENT_ID:-test}
       - OAUTH_GITHUB_CLIENT_SECRET=${OAUTH_GITHUB_CLIENT_SECRET:-test}
+      # AI Assistant Chat (deployed NGS360 LLM Agent on the LangGraph Platform).
+      # Supply LANGSMITH_API_KEY and LANGGRAPH_DEPLOYMENT_URL via a host .env
+      # file (see .env.example); chat endpoints are disabled when either is
+      # unset. The assistant id defaults to the graph name.
+      - LANGSMITH_API_KEY=${LANGSMITH_API_KEY}
+      - LANGGRAPH_DEPLOYMENT_URL=${LANGGRAPH_DEPLOYMENT_URL}
+      - LANGSMITH_ASSISTANT_ID=${LANGSMITH_ASSISTANT_ID:-ngs360_agent}
     volumes: # this allows live reloading of the backend code
       - ${PWD}:/app
       - /app/.venv  # isolate container venv from host
@@ -61,7 +70,9 @@ services:
       - "plugins.security.disabled=true"
       - "OPENSEARCH_INITIAL_ADMIN_PASSWORD=0penSearch!"
     healthcheck:
-      test: ['CMD-SHELL', 'curl -s http://localhost:9200/_cluster/health | grep -q "green"']
+      # Single-node clusters sit at "yellow" once indices exist (replicas can't be
+      # assigned), so accept yellow or green.
+      test: ["CMD-SHELL", "curl -s http://localhost:9200/_cluster/health | grep -qE '\"status\":\"(green|yellow)\"'"]
       interval: 3s
       retries: 5
       start_period: 30s

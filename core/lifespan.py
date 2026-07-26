@@ -9,8 +9,8 @@ from sqlmodel import Session, select
 from core.config import get_settings
 from core.db import engine
 
-# from core.db import init_db, drop_tables
 from core.opensearch import get_opensearch_client, init_indexes
+from core.langgraph import get_langgraph_client
 from core.logger import logger
 
 
@@ -68,7 +68,7 @@ async def lifespan(app: FastAPI):
         elif "SQLALCHEMY_DATABASE_URI" in key and value is not None:
             # Mask password in database URI if present
             import re
-            masked_value = re.sub(r"://(.*?):(.*?)@", r"://\1:*****@", value)
+            masked_value = re.sub(r"://([^:@/]*):([^@]*)@", r"://\1:*****@", value)
             logger.info("  %s: %s", key, masked_value)
         else:
             logger.info("  %s: %s", key, value)
@@ -114,6 +114,7 @@ async def lifespan(app: FastAPI):
         logger.warning(f"Failed to sync environment variables: {e}")
 
     # Initialize database (if not done already)
+    # Database initialization is done via alembic hence not part of this code.
     # try:
     #  logger.info("Initializing database...")
     #  init_db()
@@ -126,6 +127,9 @@ async def lifespan(app: FastAPI):
     logger.info("Initializing OpenSearch indexes...")
     client = get_opensearch_client()
     init_indexes(client)
+
+    logger.info("Initializing LangGraph chat client...")
+    get_langgraph_client()
 
     logger.info("In lifespan...yield")
     try:
