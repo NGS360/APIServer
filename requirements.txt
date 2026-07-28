@@ -71,6 +71,8 @@ fastar==0.11.0
     # via
     #   fastapi
     #   fastapi-cloud-cli
+greenlet==3.5.4
+    # via sqlalchemy
 grpcio==1.83.0
     # via opensearch-protobufs
 gunicorn==26.0.0
@@ -132,7 +134,7 @@ markupsafe==3.0.3
     #   mako
 mdurl==0.1.2
     # via markdown-it-py
-opensearch-protobufs==1.6.0
+opensearch-protobufs==1.2.0
     # via opensearch-py
 opensearch-py==3.2.0
     # via ngs360-server (pyproject.toml)
@@ -164,7 +166,7 @@ pydantic==2.13.4
     #   pydantic-extra-types
     #   pydantic-settings
     #   sqlmodel
-pydantic-core==2.47.0
+pydantic-core==2.46.4
     # via pydantic
 pydantic-extra-types==2.11.1
     # via fastapi
@@ -254,6 +256,7 @@ typer==0.27.0
 typing-extensions==4.16.0
     # via
     #   alembic
+    #   anyio
     #   fastapi
     #   grpcio
     #   langchain-core
@@ -265,6 +268,7 @@ typing-extensions==4.16.0
     #   rich-toolkit
     #   sqlalchemy
     #   sqlmodel
+    #   starlette
     #   typing-inspection
 typing-inspection==0.4.2
     # via
