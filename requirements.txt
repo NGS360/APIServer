@@ -61,7 +61,7 @@ email-validator==2.3.0
     #   pydantic
 events==0.5
     # via opensearch-py
-fastapi==0.139.2
+fastapi==0.140.7
     # via ngs360-server (pyproject.toml)
 fastapi-cli==0.0.32
     # via fastapi
@@ -71,6 +71,8 @@ fastar==0.11.0
     # via
     #   fastapi
     #   fastapi-cloud-cli
+greenlet==3.5.4
+    # via sqlalchemy
 grpcio==1.82.1
     # via opensearch-protobufs
 gunicorn==26.0.0
@@ -254,6 +256,7 @@ typer==0.27.0
 typing-extensions==4.16.0
     # via
     #   alembic
+    #   anyio
     #   fastapi
     #   grpcio
     #   langchain-core
@@ -265,6 +268,7 @@ typing-extensions==4.16.0
     #   rich-toolkit
     #   sqlalchemy
     #   sqlmodel
+    #   starlette
     #   typing-inspection
 typing-inspection==0.4.2
     # via
