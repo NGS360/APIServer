@@ -11,7 +11,7 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
-from langgraph_sdk.errors import NotFoundError
+from langgraph_sdk.errors import InternalServerError, NotFoundError
 
 from core.deps import get_langgraph_client
 from main import app
@@ -66,11 +66,29 @@ def _not_found():
     )
 
 
+def _unavailable():
+    """What the SDK raises when the deployment is down (a 503 reaches us as this)."""
+    request = httpx.Request("POST", "http://langgraph.test/threads")
+    return InternalServerError(
+        "503 Service Temporarily Unavailable",
+        response=httpx.Response(503, request=request),
+        body=None,
+    )
+
+
 class FakeThreads:
     """Fake ``client.threads`` that remembers created threads and their metadata,
     so ownership checks behave like the real API across requests."""
 
-    def __init__(self, existing=None, get_error=None, first_messages=None, states=None):
+    def __init__(
+        self,
+        existing=None,
+        get_error=None,
+        first_messages=None,
+        states=None,
+        create_error=None,
+        search_error=None,
+    ):
         # thread_id -> metadata
         self.threads = dict(existing or {})
         # thread_id -> checkpointed state `values`
@@ -78,6 +96,9 @@ class FakeThreads:
         # Set to raise something other than a 404 from get(), to prove the
         # ownership check fails closed rather than treating it as "absent".
         self.get_error = get_error
+        # Set to make create()/search() fail, standing in for a down deployment.
+        self.create_error = create_error
+        self.search_error = search_error
         # thread_id -> the text `extract` would pull from its first message
         self.first_messages = dict(first_messages or {})
 
@@ -103,6 +124,8 @@ class FakeThreads:
         extract=None,
         **kwargs,
     ):
+        if self.search_error is not None:
+            raise self.search_error
         rows = []
         for index, tid in enumerate(self._matching(metadata)):
             row = {
@@ -121,6 +144,8 @@ class FakeThreads:
         return len(self._matching(metadata))
 
     async def create(self, thread_id=None, if_exists=None, metadata=None, **kwargs):
+        if self.create_error is not None:
+            raise self.create_error
         tid = thread_id or "thread-123"
         self.threads.setdefault(tid, metadata or {})
         return {"thread_id": tid, "metadata": self.threads[tid]}
@@ -151,6 +176,8 @@ class FakeLangGraphClient:
         thread_get_error=None,
         first_messages=None,
         states=None,
+        thread_create_error=None,
+        thread_search_error=None,
     ):
         self.runs = FakeRuns(
             tokens if tokens is not None else ["Hello", " world"],
@@ -162,6 +189,8 @@ class FakeLangGraphClient:
             get_error=thread_get_error,
             first_messages=first_messages,
             states=states,
+            create_error=thread_create_error,
+            search_error=thread_search_error,
         )
 
 
@@ -747,3 +776,118 @@ def test_chat_rejects_empty_user_text(client, fake_langgraph):
         },
     )
     assert response.status_code == 400
+
+
+# --- The agent deployment is unreachable ------------------------------------
+#
+# A 503 from the deployment must reach the caller as 502 (bad gateway: our
+# upstream failed), never 500. The streaming route is the exception, and only
+# once its SSE body has started.
+
+
+def test_new_chat_502s_when_the_agent_is_unavailable(
+    client, fake_langgraph, chat_user
+):
+    """Creating the thread for a brand-new chat degrades to 502, not 500.
+
+    threads.create was the one upstream call in the module without a guard, so
+    an outage escaped as an unhandled exception and Starlette returned a bare
+    500 with a stack trace.
+    """
+    fake_langgraph(FakeLangGraphClient(thread_create_error=_unavailable()))
+
+    response = client.post("/api/v1/chat", json=_envelope("hi"))
+
+    assert response.status_code == 502
+
+
+def test_new_chat_stream_502s_when_the_agent_is_unavailable(
+    client, fake_langgraph, chat_user
+):
+    """The streaming route resolves its thread before the SSE body starts.
+
+    So an outage there is still answerable with a status code, rather than the
+    in-band error the generator has to fall back on later.
+    """
+    fake_langgraph(FakeLangGraphClient(thread_create_error=_unavailable()))
+
+    response = client.post("/api/v1/chat/stream", json=_envelope("hi"))
+
+    assert response.status_code == 502
+
+
+def test_list_threads_502s_when_the_agent_is_unavailable(
+    client, fake_langgraph, chat_user
+):
+    """History listing reports the upstream failure rather than an empty list."""
+    fake_langgraph(FakeLangGraphClient(thread_search_error=_unavailable()))
+
+    response = client.get("/api/v1/chat/threads")
+
+    assert response.status_code == 502
+
+
+def test_continuing_a_thread_502s_when_the_agent_is_unavailable(
+    client, fake_langgraph, chat_user
+):
+    """The ownership lookup fails closed on an outage; it can't read as "absent"."""
+    fake_langgraph(FakeLangGraphClient(thread_get_error=_unavailable()))
+
+    response = client.post(
+        "/api/v1/chat",
+        json=_envelope("hi", thread_id="6d1f1e5c-6a5a-4c1e-9d3b-0f2a7b8c9d02"),
+    )
+
+    assert response.status_code == 502
+
+
+# --- Chat is not configured at all ------------------------------------------
+#
+# LANGGRAPH_DEPLOYMENT_URL / LANGSMITH_API_KEY unset leaves the client None, so
+# every route has to say so rather than raising an AttributeError.
+
+
+@pytest.mark.parametrize(
+    "method,path",
+    [
+        ("post", "/api/v1/chat"),
+        ("get", "/api/v1/chat/threads"),
+        ("delete", "/api/v1/chat/threads"),
+        ("get", f"/api/v1/chat/threads/{uuid.uuid4()}"),
+        ("get", f"/api/v1/chat/threads/{uuid.uuid4()}/messages"),
+        ("delete", f"/api/v1/chat/threads/{uuid.uuid4()}"),
+    ],
+)
+def test_routes_502_when_the_agent_is_not_configured(
+    client, fake_langgraph, chat_user, method, path
+):
+    """Every non-streaming chat route reports an unconfigured agent as 502."""
+    fake_langgraph(None)
+
+    kwargs = {"json": _envelope("hi")} if method == "post" else {}
+    response = getattr(client, method)(path, **kwargs)
+
+    assert response.status_code == 502
+    assert response.json()["detail"] == "Chat agent is not configured"
+
+
+def test_chat_stream_reports_an_unconfigured_agent_in_band(
+    client, fake_langgraph, chat_user
+):
+    """The streaming route answers 200 and puts the failure in the stream.
+
+    useChat only understands the SSE protocol, so a protocol-shaped error is
+    what surfaces in the UI. This is why get_langgraph_client yields None
+    instead of raising, and why /chat/stream keeps the nullable dependency.
+    """
+    fake_langgraph(None)
+
+    response = client.post("/api/v1/chat/stream", json=_envelope("hi"))
+
+    assert response.status_code == 200
+    chunks = _sse_data_chunks(response.text)
+    assert chunks[0]["type"] == "start"
+    assert chunks[-1] == {
+        "type": "error",
+        "errorText": "Chat agent is not configured",
+    }

@@ -36,7 +36,7 @@ THREAD_DATA_PART = "data-thread"
 
 # Thread metadata key recording which user owns a thread. New thread ids are
 # assigned here, but continuing a conversation means naming one, so this is what
-# stops an authenticated user reaching someone else's — see verify_thread_owner.
+# stops an authenticated user reaching someone else's — see require_owned_thread.
 OWNER_METADATA_KEY = "ngs360_user_id"
 
 # Optional per-thread title override, for when renaming is added. Until then a
@@ -86,28 +86,24 @@ def latest_user_text(req: ChatRequest) -> str:
     return ""
 
 
-async def get_owned_thread(
+async def require_owned_thread(
     client, thread_id: str, user_id: str
-) -> dict[str, Any] | None:
-    """Fetch ``thread_id`` if ``user_id`` owns it.
+) -> dict[str, Any]:
+    """The caller's thread, or 404 if it is absent or someone else's.
 
-    Returns the thread if it exists and is theirs, None if it doesn't exist yet.
-    Raises 404 — not 403 — when it belongs to someone else, so probing can't
-    distinguish "not yours" from "not there".
+    Absent and not-yours both raise 404 — not 403 — so probing can't distinguish
+    the two. This is the only ownership gate: every route that reads or continues
+    a thread takes the id from the caller, so without it an authenticated user who
+    learned another user's thread id could read that conversation, or append a
+    turn to it and read the answer back.
 
-    This matters because every route that reads or continues a thread takes the id
-    from the caller: without the check, an authenticated user who learned another
-    user's thread id could read that conversation, or append a turn to it and read
-    the answer back.
-
-    Only a genuine 404 counts as "doesn't exist". Swallowing every error here
-    would fail open — a transient upstream blip would look like an absent thread,
-    and callers treat that as "safe to proceed".
+    Only a genuine 404 upstream counts as "doesn't exist". Swallowing every error
+    would fail open, letting a transient blip look like an absent thread.
     """
     try:
         thread = await client.threads.get(thread_id)
-    except NotFoundError:
-        return None
+    except NotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Thread not found") from exc
     except Exception as exc:
         raise HTTPException(
             status_code=502, detail="Could not verify thread ownership"
@@ -117,11 +113,6 @@ async def get_owned_thread(
     if metadata.get(OWNER_METADATA_KEY) != user_id:
         raise HTTPException(status_code=404, detail="Thread not found")
     return thread
-
-
-async def verify_thread_owner(client, thread_id: str, user_id: str) -> bool:
-    """Whether ``user_id`` owns an existing ``thread_id``. See get_owned_thread."""
-    return await get_owned_thread(client, thread_id, user_id) is not None
 
 
 async def resolve_thread(req: ChatRequest, client, user_id: str) -> str:
@@ -135,18 +126,23 @@ async def resolve_thread(req: ChatRequest, client, user_id: str) -> str:
     """
     if req.thread_id is not None:
         thread_id = str(req.thread_id)
-        if not await verify_thread_owner(client, thread_id, user_id):
-            raise HTTPException(status_code=404, detail="Thread not found")
+        await require_owned_thread(client, thread_id, user_id)
         return thread_id
 
     thread_id = str(uuid.uuid4())
-    await client.threads.create(
-        thread_id=thread_id,
-        metadata={
-            OWNER_METADATA_KEY: user_id,
-            "ngs360_created_at": datetime.now(timezone.utc).isoformat(),
-        },
-    )
+    try:
+        await client.threads.create(
+            thread_id=thread_id,
+            metadata={
+                OWNER_METADATA_KEY: user_id,
+                "ngs360_created_at": datetime.now(timezone.utc).isoformat(),
+            },
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Thread creation failed: {type(exc).__name__}",
+        ) from exc
     return thread_id
 
 
@@ -177,9 +173,6 @@ async def list_threads(
     in thread metadata — there is no local table, so this is the only place the
     user/thread association lives.
     """
-    if client is None:
-        raise HTTPException(status_code=502, detail="Chat agent is not configured")
-
     owner = {OWNER_METADATA_KEY: user_id}
     try:
         threads = await client.threads.search(
@@ -266,16 +259,12 @@ def transcript_from_state(state: dict[str, Any]) -> list[dict[str, Any]]:
     return messages
 
 
-async def get_thread_messages(
-    client, thread_id: str, user_id: str
-) -> dict[str, Any]:
-    """The caller's thread as the user saw it: its transcript as UIMessages."""
-    if client is None:
-        raise HTTPException(status_code=502, detail="Chat agent is not configured")
+async def get_thread_messages(client, thread_id: str) -> dict[str, Any]:
+    """A thread as the user saw it: its transcript as UIMessages.
 
-    if await get_owned_thread(client, thread_id, user_id) is None:
-        raise HTTPException(status_code=404, detail="Thread not found")
-
+    Ownership is the route's OwnedThreadDep to enforce, so reach this only
+    through a route that declares it.
+    """
     try:
         state = await client.threads.get_state(thread_id)
     except Exception as exc:
@@ -290,14 +279,12 @@ async def get_thread_messages(
     }
 
 
-async def delete_thread(client, thread_id: str, user_id: str) -> None:
-    """Delete one of the caller's chat threads, agent memory included."""
-    if client is None:
-        raise HTTPException(status_code=502, detail="Chat agent is not configured")
+async def delete_thread(client, thread_id: str) -> None:
+    """Delete one chat thread, agent memory included.
 
-    if await get_owned_thread(client, thread_id, user_id) is None:
-        raise HTTPException(status_code=404, detail="Thread not found")
-
+    Ownership is the route's OwnedThreadDep to enforce, so reach this only
+    through a route that declares it.
+    """
     try:
         await client.threads.delete(thread_id)
     except Exception as exc:
@@ -313,9 +300,6 @@ async def delete_all_threads(client, user_id: str) -> int:
     Pages through the owner's threads rather than trusting one search page, so
     "clear all" doesn't quietly leave older ones behind.
     """
-    if client is None:
-        raise HTTPException(status_code=502, detail="Chat agent is not configured")
-
     owner = {OWNER_METADATA_KEY: user_id}
     deleted = 0
     try:
@@ -337,9 +321,6 @@ async def delete_all_threads(client, user_id: str) -> int:
 
 async def run_chat(req: ChatRequest, client, user_id: str) -> dict[str, Any]:
     """Non-streaming chat: invoke the agent and return the final assistant reply."""
-    if client is None:
-        raise HTTPException(status_code=502, detail="Chat agent is not configured")
-
     message = latest_user_text(req)
     if not message:
         raise HTTPException(status_code=400, detail="No user message provided")
