@@ -40,7 +40,7 @@ click==8.4.2
     #   rich-toolkit
     #   sample-sheet
     #   uvicorn
-cryptography==49.0.0
+cryptography==50.0.0
     # via
     #   ngs360-server (pyproject.toml)
     #   authlib
@@ -295,7 +295,7 @@ uvloop==0.22.1
     # via uvicorn
 watchfiles==1.2.0
     # via uvicorn
-websockets==16.1.1
+websockets==15.0.1
     # via
     #   langgraph-sdk
     #   langsmith
