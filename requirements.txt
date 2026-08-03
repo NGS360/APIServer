@@ -6,7 +6,7 @@ annotated-doc==0.0.4
     # via
     #   fastapi
     #   typer
-annotated-types==0.7.0
+annotated-types==0.8.0
     # via pydantic
 anyio==4.14.2
     # via
@@ -18,9 +18,9 @@ authlib==1.7.2
     # via ngs360-server (pyproject.toml)
 bcrypt==5.0.0
     # via ngs360-server (pyproject.toml)
-boto3==1.43.54
+boto3==1.43.57
     # via ngs360-server (pyproject.toml)
-botocore==1.43.54
+botocore==1.43.57
     # via
     #   boto3
     #   s3transfer
@@ -61,7 +61,7 @@ email-validator==2.3.0
     #   pydantic
 events==0.5
     # via opensearch-py
-fastapi==0.139.2
+fastapi==0.140.7
     # via ngs360-server (pyproject.toml)
 fastapi-cli==0.0.32
     # via fastapi
@@ -71,7 +71,9 @@ fastar==0.11.0
     # via
     #   fastapi
     #   fastapi-cloud-cli
-grpcio==1.82.1
+greenlet==3.5.4
+    # via sqlalchemy
+grpcio==1.83.0
     # via opensearch-protobufs
 gunicorn==26.0.0
     # via ngs360-server (pyproject.toml)
@@ -108,7 +110,7 @@ jsonpatch==1.33
     # via langchain-core
 jsonpointer==3.1.1
     # via jsonpatch
-langchain-core==1.5.0
+langchain-core==1.5.1
     # via langgraph-sdk
 langchain-protocol==0.0.18
     # via
@@ -116,7 +118,7 @@ langchain-protocol==0.0.18
     #   langgraph-sdk
 langgraph-sdk==0.4.2
     # via ngs360-server (pyproject.toml)
-langsmith==0.10.9
+langsmith==0.10.10
     # via langchain-core
 ldap3==2.9.1
     # via ngs360-server (pyproject.toml)
@@ -191,7 +193,7 @@ python-multipart==0.0.32
     # via
     #   ngs360-server (pyproject.toml)
     #   fastapi
-pytz==2026.2
+pytz==2026.3.post1
     # via ngs360-server (pyproject.toml)
 pyyaml==6.0.3
     # via
@@ -254,6 +256,7 @@ typer==0.27.0
 typing-extensions==4.16.0
     # via
     #   alembic
+    #   anyio
     #   fastapi
     #   grpcio
     #   langchain-core
@@ -265,6 +268,7 @@ typing-extensions==4.16.0
     #   rich-toolkit
     #   sqlalchemy
     #   sqlmodel
+    #   starlette
     #   typing-inspection
 typing-inspection==0.4.2
     # via
@@ -296,7 +300,7 @@ websockets==16.1.1
     #   langgraph-sdk
     #   langsmith
     #   uvicorn
-wrapt==2.2.2
+wrapt==2.3.0
     # via smart-open
 xxhash==3.8.1
     # via langsmith
