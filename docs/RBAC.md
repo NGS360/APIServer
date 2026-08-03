@@ -19,18 +19,18 @@ The measurements below are the baseline this design is written against. Regenera
 | Metric | Value |
 |--------|-------|
 | Total API routes | 116 (111 feature routes + 5 OAuth) |
-| Routes with **no** authentication | 85 |
+| Routes with **no** authentication | 84 |
 | — of those, legitimately public (login, register, password reset, OAuth handshake) | 11 |
-| — **routes that must be closed** | **74** |
-| Routes gated by `is_superuser` | 3 |
+| — **routes that must be closed** | **73** |
+| Routes gated by `is_superuser` | 4 |
 | Distinct permissions today | 1 (`users.is_superuser`) |
 | Membership / role / permission tables | 0 |
 
-Routers with **zero** authentication references: `actions` (5 routes), `jobs` (6), `manifest` (3), `platforms` (3), `samples` (3), `search` (1), `settings` (3), `vendors` (5). Partially open: `runs` (13/16 open), `project` (9/16), `workflow` (9/13), `files` (7/9), `qcmetrics` (4/5), `pipeline` (3/5).
+Routers with **zero** authentication references: `actions` (5 routes), `jobs` (6), `manifest` (3), `platforms` (3), `samples` (3), `search` (1), `vendors` (5). Partially open: `runs` (13/16 open), `project` (9/16), `workflow` (9/13), `files` (7/9), `qcmetrics` (4/5), `pipeline` (3/5), `settings` (2/3).
 
-The three `is_superuser`-gated routes are `DELETE /projects/{project_id}/samples/{sample_id}` (`api/project/routes.py:400`), `PATCH /files/{file_id}` (`api/files/routes.py:264`), and `DELETE /files/{file_id}` (`api/files/routes.py:290`).
+The four `is_superuser`-gated routes are `DELETE /projects/{project_id}/samples/{sample_id}` (`api/project/routes.py:400`), `PATCH /files/{file_id}` (`api/files/routes.py:264`), `DELETE /files/{file_id}` (`api/files/routes.py:290`), and `PUT /settings/{key}` (`api/settings/routes.py:55`).
 
-> **Immediate hazard, independent of this design.** `PUT /api/v1/settings/{key}` is unauthenticated in production. It writes `DATA_BUCKET_URI`, `RESULTS_BUCKET_URI`, `DEMUX_WORKFLOW_CONFIGS_BUCKET_URI`, and `MANIFEST_VALIDATION_LAMBDA` — the values that determine where the platform reads and writes data and which Lambda it invokes. If Phase 1b (below) is more than roughly two weeks out, close this route as a standalone hotfix rather than waiting for the rollout.
+> **Resolved ahead of this design.** `PUT /api/v1/settings/{key}` was unauthenticated in production — it writes `DATA_BUCKET_URI`, `RESULTS_BUCKET_URI`, `DEMUX_WORKFLOW_CONFIGS_BUCKET_URI`, and `MANIFEST_VALIDATION_LAMBDA`, the values determining where the platform reads and writes data and which Lambda it invokes. Closed as a standalone hotfix in [#361](https://github.com/NGS360/APIServer/pull/361) rather than waiting for the rollout below; it now requires `CurrentSuperuser`. Reads (`GET /settings`, `GET /settings/{key}`) remain open and are still in scope for Phase 1d.
 
 ## Architecture
 
@@ -544,7 +544,7 @@ for r in (actions_router, chat_router, files_router, jobs_router, manifest_route
 # auth_router and oauth_router keep their existing public registration
 ```
 
-Router-level dependencies are additive and cannot be overridden per route, so only the weakest common requirement — authentication — belongs there; permission checks layer on per route. This closes all 74 open routes in one change and makes "forgot to protect the new route" structurally impossible.
+Router-level dependencies are additive and cannot be overridden per route, so only the weakest common requirement — authentication — belongs there; permission checks layer on per route. This closes all 73 remaining open routes in one change and makes "forgot to protect the new route" structurally impossible.
 
 ### List endpoints filter rows; they do not return 403
 
@@ -666,13 +666,13 @@ And, required by the SPA so it can decide which controls to render rather than r
 
 ## Rollout
 
-Phase 1 — closing the 74 open routes — is the highest-value security work, but it is **not one pull request**. It spans five consumer systems, two of which currently send no credential at all. Shipping it as a single change is the most likely way this project gets rolled back.
+Phase 1 — closing the 73 remaining open routes — is the highest-value security work, but it is **not one pull request**. It spans five consumer systems, two of which currently send no credential at all. Shipping it as a single change is the most likely way this project gets rolled back.
 
 | Phase | Content | Breaking | Done when |
 |-------|---------|----------|-----------|
-| **0** | Commit `.ebextensions/db-migrate.config`; add `ENVIRONMENT`; JSON logging + request-ID middleware; attach `OptionalUser` to all 74 open routes for identity logging only | No | 7 days of production logs exist and can answer "which open routes received anonymous traffic, from which user agents and IPs" |
+| **0** | Commit `.ebextensions/db-migrate.config`; add `ENVIRONMENT`; JSON logging + request-ID middleware; attach `OptionalUser` to all 73 open routes for identity logging only | No | 7 days of production logs exist and can answer "which open routes received anonymous traffic, from which user agents and IPs" |
 | **1a** | Create service-account users and API keys; land and deploy consumer changes **while the endpoints are still open** | No | Logs show zero anonymous traffic from known consumers in all three tiers |
-| **1b** | Close destructive and configuration writes: `PUT /settings/{key}` and every `DELETE` | **Yes** | Deployed to prod; no 401 spike from unknown callers |
+| **1b** | Close destructive and configuration writes: every `DELETE` (`PUT /settings/{key}` already done in [#361](https://github.com/NGS360/APIServer/pull/361)) | **Yes** | Deployed to prod; no 401 spike from unknown callers |
 | **1c** | Close remaining writes; stop honouring client-supplied `created_by` | **Yes** | As above |
 | **1d** | Close reads | **Yes** | CI asserts every route not in `PUBLIC_ROUTES` returns 401 unauthenticated; 7 days with no anonymous non-public requests |
 | **2** | RBAC schema, catalog seeding, resolver, `/auth/me` permission fields. **No route behaviour change** | No | Catalog present in all three tiers; resolution-matrix test passes; the diff touches no route's authorization |
@@ -682,7 +682,7 @@ Phase 1 — closing the 74 open routes — is the highest-value security work, b
 | **6** | Row-level read filtering and pagination | **Yes** | Pagination tests pass; list totals reflect membership |
 | **7** | Frontend permission gating, MCP hardening, access reporting | No | — |
 
-**Phase 0 is not optional.** There is no request-logging middleware today, and therefore no inventory of who calls the 74 open routes. Skipping it means discovering consumers from a production outage. It uses `optional_current_user` (already present at `api/auth/deps.py:163`), which returns `None` rather than raising — zero behaviour change, but the caller's identity becomes available for logging.
+**Phase 0 is not optional.** There is no request-logging middleware today, and therefore no inventory of who calls the 73 remaining open routes. Skipping it means discovering consumers from a production outage. It uses `optional_current_user` (already present at `api/auth/deps.py:163`), which returns `None` rather than raising — zero behaviour change, but the caller's identity becomes available for logging.
 
 Each breaking wave deploys dev → soak → staging → soak → prod.
 
@@ -882,14 +882,14 @@ Project-scoped permissions are **not** inlined into `/auth/me`; with a five-figu
 4. **Pin the mode.** Set `RBAC_MODE=enforce` in `isolate_test_environment` so tests always exercise the strict path. The existing `reset_settings_cache` fixture clears the `lru_cache` per test, so per-test `monkeypatch.setenv` still works for dry-run cases.
 5. Add a parametrizable `client_as(global_roles=..., project_roles=...)` factory rather than more fixture copies.
 
-Budget for genuinely touching five to ten modules where tests relied on unauthenticated access — `tests/api/test_settings.py` calling `PUT /settings/{key}` is the obvious one — not all 32.
+Budget for genuinely touching five to ten modules where tests relied on unauthenticated access — `tests/api/test_settings.py` was the first such case and was already migrated to the `superuser_client` fixture in [#361](https://github.com/NGS360/APIServer/pull/361), which is a worked example of the pattern — not all 32.
 
 ### Required new coverage
 
 | Test | What it protects |
 |------|------------------|
 | **Permission-resolution matrix** | Table-driven over `(global_roles, project_roles, is_superuser, key_scope, permission, scope)`. Pure function, no HTTP. Highest value per line. |
-| **Route-coverage guard** | Walk `app.routes`, inspect `route.dependant.dependencies`, and assert every route is either in a hardcoded `PUBLIC_ROUTES` list or carries an authentication dependency. Fails CI the moment someone adds a route without deciding — this is what prevents drift back to 74 open routes. |
+| **Route-coverage guard** | Walk `app.routes`, inspect `route.dependant.dependencies`, and assert every route is either in a hardcoded `PUBLIC_ROUTES` list or carries an authentication dependency. Fails CI the moment someone adds a route without deciding — this is what prevents drift back to 73 open routes. |
 | **Unauthenticated-closure regression** | Parametrized over every non-public route: `unauthenticated_client` must get **401**, not 200 and not 500. |
 | **Negative 403 tests** | Per permission family; assert status, that `detail` is a string, and that `required_permission` is present. |
 | **Cross-project isolation** | A member of P1 gets 403 or 404 on every project-scoped route for P2. |
@@ -963,7 +963,7 @@ Both are audited. A read-only script wrapper provides break-glass when the API i
 
 These are limitations of the design or pre-existing problems that RBAC interacts with. They are recorded here rather than left implicit.
 
-1. **`PUT /api/v1/settings/{key}` is unauthenticated in production today.** Close it as a standalone hotfix if Phase 1b is not imminent.
+1. ~~**`PUT /api/v1/settings/{key}` is unauthenticated in production today.**~~ **Resolved** in [#361](https://github.com/NGS360/APIServer/pull/361) — now requires `CurrentSuperuser`. `GET /settings` and `GET /settings/{key}` remain open, pending Phase 1d.
 2. **Actor-field spoofing must be fixed alongside Phase 1c, or RBAC is theatre.** `POST /files/upload` accepts `created_by` as a client-supplied form field (`api/files/routes.py:89`), and `FileCreate` / `FileUpdate` accept it on the JSON paths. Once authenticated, these must be overwritten from the principal server-side. The ownership backfill depends on provenance that is currently caller-asserted.
 3. **No offboarding path.** With local database assignment and no directory sync, grants only accumulate: a departed employee retains roles, memberships, and API keys indefinitely. An access-control system with no revocation path is weaker than the honest absence of one. v1 requires at minimum a periodic job reporting users no longer resolvable in LDAP — the plumbing already exists (`LDAP_ENABLED=true` in staging and prod, `api/users/ldap_service.py`) — even if it only produces a report.
 4. **Direct-database bypass channels.** `ngs360-sql-langgraph-agent` runs natural-language SQL across the whole schema; `APIServer/scripts/*` and the ETL write directly to the database and S3. API-level RBAC is a partial control while these exist, and they also bypass the audit trail. Named owners and a follow-up are required; least-privilege database users are the mechanism.
