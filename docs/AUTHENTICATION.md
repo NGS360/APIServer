@@ -274,6 +274,8 @@ def admin_only_endpoint(current_user: CurrentSuperuser):
     return {"user": current_user.email}
 ```
 
+These dependencies cover *authentication* and the single `is_superuser` privilege bit. Fine-grained authorization — roles, permissions, and per-project membership — is specified in [RBAC.md](RBAC.md), which also documents the routes that currently have no authentication at all and the phased plan for closing them.
+
 ## OAuth2 Provider Setup
 
 ### Google OAuth2
