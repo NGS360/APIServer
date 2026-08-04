@@ -5,6 +5,7 @@ the ``get_langgraph_client`` dependency override so the routes exercise the real
 request/response and SSE framing against controllable upstream behaviour.
 """
 
+import asyncio
 import json
 import uuid
 from types import SimpleNamespace
@@ -20,19 +21,50 @@ from main import app
 class FakeRuns:
     """Fake ``client.runs`` whose ``stream`` mimics the LangGraph SDK.
 
-    ``values`` mode yields whole-state chunks; ``messages-tuple`` mode yields
+    ``values`` mode yields whole-state chunks; ``messages-tuple`` mode yields the
     (message_chunk, metadata) token pairs under the ``messages`` event.
+
+    ``script`` replaces the default (one filtered-out intermediate token, then
+    the answer's tokens) so a test can stage tool calls and tool results in a
+    chosen order — which the stream is expected to render as nothing at all.
+    ``hang_s`` sleeps before finishing, for the timeout path.
     """
 
-    def __init__(self, tokens, final_answer, raise_exc=None):
+    def __init__(
+        self, tokens, final_answer, raise_exc=None, script=None, hang_s=None
+    ):
         self.tokens = tokens
         self.final_answer = final_answer
         self.raise_exc = raise_exc
+        self.script = script
+        self.hang_s = hang_s
+        # Every stream_mode the route asked for, so a test can assert on it.
+        self.stream_modes = []
+
+    @property
+    def stream_mode(self):
+        """The single mode the streaming route asked for."""
+        return self.stream_modes[-1] if self.stream_modes else None
+
+    def _default_script(self):
+        """Today's behaviour: an intermediate token, then the answer."""
+        return [
+            # An intermediate reasoning token that must not reach the answer.
+            _message_event("raw tool output", node="tools"),
+            *[_message_event(token) for token in self.tokens],
+        ]
 
     async def stream(self, thread_id, assistant_id, input, stream_mode):
+        self.stream_modes.append(stream_mode)
         if self.raise_exc is not None:
             raise self.raise_exc
-        if stream_mode == "values":
+        modes = stream_mode if isinstance(stream_mode, list) else [stream_mode]
+        if "messages-tuple" in modes:
+            for event in self.script if self.script is not None else self._default_script():
+                yield event
+            if self.hang_s is not None:
+                await asyncio.sleep(self.hang_s)
+        elif "values" in modes:
             full_text = "".join(self.tokens)
             state = {
                 "messages": [
@@ -43,19 +75,38 @@ class FakeRuns:
                 "executed_sql": ["SELECT COUNT(*) FROM projects"],
             }
             yield SimpleNamespace(event="values", data=state)
-        elif stream_mode == "messages-tuple":
-            # An intermediate tool-node token that must be filtered out.
-            yield SimpleNamespace(
-                event="messages",
-                data=({"content": "raw tool output"}, {"langgraph_node": "tools"}),
-            )
-            for token in self.tokens:
-                yield SimpleNamespace(
-                    event="messages",
-                    data=({"content": token}, {"langgraph_node": "reasoning"}),
-                )
         else:  # pragma: no cover - defensive
             raise ValueError(f"unexpected stream_mode {stream_mode}")
+
+
+def _message_event(content, node="reasoning", event="messages", **message):
+    """One ``messages-tuple`` chunk: a message dict plus its node metadata."""
+    return SimpleNamespace(
+        event=event,
+        data=({"content": content, **message}, {"langgraph_node": node}),
+    )
+
+
+def _tool_call_event(name, args, call_id="call_1", node="reasoning", message_id="ai-1"):
+    """An assistant message that asks for a tool call, whole rather than streamed."""
+    return _message_event(
+        "",
+        node=node,
+        id=message_id,
+        tool_calls=[{"name": name, "args": args, "id": call_id}],
+    )
+
+
+def _tool_result_event(content, call_id="call_1", name="sql", status="success"):
+    """A ToolMessage carrying that call's result, as the tools node emits it."""
+    return _message_event(
+        content,
+        node="tools",
+        type="tool",
+        name=name,
+        tool_call_id=call_id,
+        status=status,
+    )
 
 
 def _not_found():
@@ -178,11 +229,15 @@ class FakeLangGraphClient:
         states=None,
         thread_create_error=None,
         thread_search_error=None,
+        script=None,
+        hang_s=None,
     ):
         self.runs = FakeRuns(
             tokens if tokens is not None else ["Hello", " world"],
             final_answer,
             raise_exc=raise_exc,
+            script=script,
+            hang_s=hang_s,
         )
         self.threads = FakeThreads(
             existing_threads,
@@ -238,10 +293,16 @@ def chat_user_fixture(client):
 
 
 def _sse_data_chunks(text):
-    """Parse the JSON payloads from the SSE ``data:`` lines, excluding [DONE]."""
+    """Parse the JSON payloads from the SSE ``data:`` lines.
+
+    Every run ends with a ``done`` or an ``error`` frame — explicitly, rather
+    than by the body just stopping, so the client can tell a finished run from a
+    dropped connection. That is asserted here so no individual test has to.
+    """
     lines = [line for line in text.split("\n") if line.startswith("data: ")]
-    assert lines[-1] == "data: [DONE]"
-    return [json.loads(line.removeprefix("data: ")) for line in lines[:-1]]
+    chunks = [json.loads(line.removeprefix("data: ")) for line in lines]
+    assert chunks[-1]["type"] in {"done", "error"}, chunks[-1]
+    return chunks
 
 
 def _envelope(text="What is NGS360?", thread_id=None, chat_id="chat-1"):
@@ -663,29 +724,30 @@ def test_delete_all_threads_only_touches_the_callers(
     assert set(fake.threads.threads) == {"theirs", "legacy"}
 
 
-def test_chat_stream_emits_vercel_protocol(client, fake_langgraph):
-    """POST /chat/stream emits the Vercel UI Message Stream over SSE."""
+def test_chat_stream_emits_this_apis_own_frames_over_sse(client, fake_langgraph):
+    """POST /chat/stream emits our frames, not the AI SDK's.
+
+    The browser does consume the SDK's UI Message Stream protocol, but the
+    mapping is the client transport's job, so nothing here is named for it: no
+    `start`, no text-start/text-end pairing, no x-vercel header.
+    """
     fake_langgraph(FakeLangGraphClient(tokens=["What ", "is ", "NGS360?"]))
 
     response = client.post("/api/v1/chat/stream", json=_envelope("hi"))
 
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/event-stream")
-    assert response.headers["x-vercel-ai-ui-message-stream"] == "v1"
+    assert "x-vercel-ai-ui-message-stream" not in response.headers
 
     chunks = _sse_data_chunks(response.text)
     types = [c["type"] for c in chunks]
-    assert types[0] == "start"
-    assert chunks[0]["messageId"].startswith("msg_")
-    # The assigned thread id comes before any text, so the client still learns it
-    # if the run fails midway.
-    assert types[1] == "data-thread"
-    assert types[2] == "text-start"
-    assert types[-2] == "text-end"
-    assert types[-1] == "finish"
-    assert all(t == "text-delta" for t in types[3:-2])
+    # The thread id comes first, so the client still learns it if the run fails
+    # midway; then text; then exactly one terminal frame.
+    assert types[0] == "thread"
+    assert types[-1] == "done"
+    assert all(t == "text" for t in types[1:-1])
 
-    text = "".join(c["delta"] for c in chunks if c["type"] == "text-delta")
+    text = "".join(c["delta"] for c in chunks if c["type"] == "text")
     # Only the final-answer node's tokens are forwarded; the intermediate
     # "tools" node output is filtered out.
     assert text == "What is NGS360?"
@@ -699,10 +761,10 @@ def test_chat_stream_announces_the_assigned_thread(client, fake_langgraph, chat_
     response = client.post("/api/v1/chat/stream", json=_envelope("hi"))
 
     announced = [
-        c for c in _sse_data_chunks(response.text) if c["type"] == "data-thread"
+        c for c in _sse_data_chunks(response.text) if c["type"] == "thread"
     ]
     assert len(announced) == 1
-    thread_id = announced[0]["data"]["thread_id"]
+    thread_id = announced[0]["thread_id"]
     # It names the thread that was actually created for this turn.
     assert list(fake.threads.threads) == [thread_id]
 
@@ -719,13 +781,13 @@ def test_chat_stream_announces_the_thread_the_client_named(
     )
 
     announced = [
-        c for c in _sse_data_chunks(response.text) if c["type"] == "data-thread"
+        c for c in _sse_data_chunks(response.text) if c["type"] == "thread"
     ]
-    assert announced[0]["data"]["thread_id"] == thread_id
+    assert announced[0]["thread_id"] == thread_id
 
 
 def test_chat_stream_reports_upstream_error(client, fake_langgraph):
-    """An upstream failure is surfaced as an error chunk, still ending in [DONE]."""
+    """An upstream failure is surfaced as an error chunk, as the run's terminal frame."""
     fake_langgraph(FakeLangGraphClient(raise_exc=RuntimeError("boom")))
 
     response = client.post("/api/v1/chat/stream", json=_envelope("hi"))
@@ -733,6 +795,504 @@ def test_chat_stream_reports_upstream_error(client, fake_langgraph):
     assert response.status_code == 200
     chunks = _sse_data_chunks(response.text)
     assert any(c["type"] == "error" for c in chunks)
+
+
+# --- The agent's tool work is invisible, except for the names ----------------
+#
+# The volume of tool detail the agent produces is overwhelming, so none of its
+# CONTENT reaches the user. The one thing that does cross is a tool's NAME, on a
+# status frame, so the working indicator can say which step is running.
+#
+# That is the whole boundary, and it is what these tests guard: names yes,
+# arguments and results never. A test that starts asserting a tool's content on
+# the wire is a sign the boundary is being reopened by accident.
+
+# Tool payloads copied verbatim off the live dev graph (thread
+# fbd16cae-4d4e-5d00-a9e9-ec5bc9bd6f73, read 2026-08-03). Kept real because what
+# matters is that nothing about them — not the "ERROR: " prefix, not the row
+# data, not the echoed SQL — can leak into the answer.
+REAL_QUERY_FAILURE = (
+    "ERROR: Query failed: MySQL Error: 1146 (42S02): Table 'ngs360.fileentity' "
+    "doesn't exist\nPlease fix the query and try again."
+)
+REAL_QUERY_SUCCESS = (
+    "SQL executed:\n  SELECT * FROM sequencingrun LIMIT 1\n\n"
+    "Showing rows 1-1 of 1 total:\n\n"
+    "id                               | status\n"
+    "------------------------------------------\n"
+    "000dd8e3ddd74900aead83e57681999a | READY "
+)
+
+# Every frame type the stream is allowed to emit.
+ANSWER_FRAMES = {
+    "thread",
+    "status",
+    "text",
+    "done",
+    "error",
+}
+
+
+def _stream_chunks(client, **envelope):
+    """POST to the streaming route and parse its protocol chunks."""
+    response = client.post("/api/v1/chat/stream", json=_envelope(**envelope))
+    assert response.status_code == 200
+    return _sse_data_chunks(response.text)
+
+
+def test_chat_stream_asks_upstream_only_for_message_tokens(client, fake_langgraph):
+    """One stream mode. The answer's tokens are all this endpoint reads.
+
+    Pinned because the second mode an earlier revision asked for ("updates")
+    existed solely to carry the graph's executed_sql to the UI. Re-adding a mode
+    means re-opening that decision.
+    """
+    fake = fake_langgraph(FakeLangGraphClient())
+
+    _stream_chunks(client, text="hi")
+
+    assert fake.runs.stream_mode == "messages-tuple"
+
+
+def test_chat_stream_forwards_a_tool_name_but_none_of_its_content(
+    client, fake_langgraph
+):
+    """The name reaches the client; the query it ran and the rows it got do not."""
+    fake_langgraph(
+        FakeLangGraphClient(
+            script=[
+                _tool_call_event(
+                    "query_database", {"sql": "SELECT COUNT(*) FROM project"}
+                ),
+                _tool_result_event("11013", name="query_database"),
+                _message_event("There are "),
+                _message_event("11,013."),
+            ]
+        )
+    )
+
+    chunks = _stream_chunks(client, text="how many?")
+
+    assert [c["type"] for c in chunks] == [
+        "thread",
+        "status",
+        "text",
+        "text",
+        "done",
+    ]
+    status = next(c for c in chunks if c["type"] == "status")
+    assert status["tool"] == "query_database"
+    # The name and nothing else — no part id, no SDK framing. Giving the status
+    # a stable part id so it rewrites one line is the transport's job now.
+    assert set(status) == {"type", "tool"}
+    # The answer, and not one character of the tool's arguments or output.
+    assert "".join(c["delta"] for c in chunks if c["type"] == "text") == (
+        "There are 11,013."
+    )
+    assert "11013" not in str(chunks)
+    assert "SELECT COUNT(*)" not in str(chunks)
+
+
+def test_chat_stream_reports_each_tool_in_the_order_they_run(
+    client, fake_langgraph
+):
+    """One status frame per tool, so the indicator tracks the agent's progress."""
+    fake_langgraph(
+        FakeLangGraphClient(
+            script=[
+                _tool_call_event("list_tables", {}, call_id="c1"),
+                _tool_result_event("project, sample", name="list_tables"),
+                _tool_call_event(
+                    "get_table_schema", {"table": "project"},
+                    call_id="c2", message_id="ai-2",
+                ),
+                _tool_result_event("id, name", name="get_table_schema"),
+                _message_event("Two tables."),
+            ]
+        )
+    )
+
+    chunks = _stream_chunks(client, text="what tables?")
+
+    assert [
+        c["tool"] for c in chunks if c["type"] == "status"
+    ] == ["list_tables", "get_table_schema"]
+
+
+def test_chat_stream_does_not_report_a_tool_result_as_a_new_step(
+    client, fake_langgraph
+):
+    """Only calls move the indicator. A result is the step finishing, not starting.
+
+    The result message carries the same tool name, so without the call/result
+    distinction every tool would be announced twice.
+    """
+    fake_langgraph(
+        FakeLangGraphClient(
+            script=[
+                _tool_call_event("list_tables", {}),
+                _tool_result_event("project, sample", name="list_tables"),
+                _message_event("Two."),
+            ]
+        )
+    )
+
+    chunks = _stream_chunks(client, text="what tables?")
+
+    assert len([c for c in chunks if c["type"] == "status"]) == 1
+
+
+def test_chat_stream_skips_a_tool_call_that_has_no_usable_name(
+    client, fake_langgraph
+):
+    """An unnamed call leaves the previous label up rather than blanking it.
+
+    The name comes from a graph we don't own, so it may be missing or junk. A
+    blank status would clear the indicator's detail line mid-run, which reads as
+    the agent having stopped; keeping the last real label is the better failure.
+    """
+    fake_langgraph(
+        FakeLangGraphClient(
+            script=[
+                _tool_call_event("list_tables", {}, call_id="c1"),
+                # Neither of these names a tool.
+                _message_event(
+                    "", id="ai-2", tool_calls=[{"args": {}, "id": "c2"}]
+                ),
+                _message_event(
+                    "", id="ai-3", tool_calls=[{"name": "  ", "args": {}, "id": "c3"}]
+                ),
+                _message_event("Done."),
+            ]
+        )
+    )
+
+    chunks = _stream_chunks(client, text="what tables?")
+
+    assert [
+        c["tool"] for c in chunks if c["type"] == "status"
+    ] == ["list_tables"]
+
+
+def test_chat_stream_leaks_no_frame_type_outside_the_answer_contract(
+    client, fake_langgraph
+):
+    """Whatever the graph does, only the seven answer frames go out.
+
+    Broad on purpose: a tool frame, reasoning part or step marker added back by
+    accident fails here rather than surfacing in the UI.
+    """
+    fake_langgraph(
+        FakeLangGraphClient(
+            script=[
+                _tool_call_event("list_tables", {}),
+                _tool_result_event("project, sample, file", name="list_tables"),
+                _tool_call_event(
+                    "query_database",
+                    {"sql": "SELECT 1"},
+                    call_id="c2",
+                    message_id="ai-2",
+                ),
+                _tool_result_event(
+                    REAL_QUERY_SUCCESS, call_id="c2", name="query_database"
+                ),
+                # A failure, which an earlier revision turned into a
+                # tool-output-error frame.
+                _tool_call_event(
+                    "query_database",
+                    {"sql": "SELECT * FROM fileentity"},
+                    call_id="c3",
+                    message_id="ai-3",
+                ),
+                _tool_result_event(
+                    REAL_QUERY_FAILURE, call_id="c3", name="query_database"
+                ),
+                _message_event("One run is READY."),
+            ]
+        )
+    )
+
+    chunks = _stream_chunks(client, text="tell me about runs")
+
+    assert {c["type"] for c in chunks} <= ANSWER_FRAMES
+    assert not any(c["type"].startswith("tool-") for c in chunks)
+    assert not any(c["type"].startswith("data-executed") for c in chunks)
+    # Not even the error text of a failed tool call reaches the client.
+    assert "fileentity" not in str(chunks)
+    assert "ERROR:" not in str(chunks)
+
+
+def test_chat_stream_announces_a_streamed_tool_call_once(client, fake_langgraph):
+    """Argument fragments are dropped, and the call is announced a single time.
+
+    A streamed AIMessageChunk carries ``tool_call_chunks`` rather than
+    ``tool_calls``, arriving as a run of fragments of which only the first names
+    the tool. Without the dedupe the indicator would be rewritten on every
+    fragment, and the arguments those fragments carry must not escape either.
+    """
+    fake_langgraph(
+        FakeLangGraphClient(
+            script=[
+                _message_event(
+                    "",
+                    id="ai-1",
+                    tool_call_chunks=[
+                        {
+                            "name": "query_database",
+                            "args": '{"sql": "SEL',
+                            "id": "call_c",
+                            "index": 0,
+                        },
+                    ],
+                ),
+                _message_event(
+                    "",
+                    id="ai-1",
+                    tool_call_chunks=[
+                        {"name": None, "args": 'ECT 1"}', "id": None, "index": 0},
+                    ],
+                ),
+                _message_event("Just one."),
+            ]
+        )
+    )
+
+    chunks = _stream_chunks(client, text="one?")
+
+    assert [c["type"] for c in chunks] == [
+        "thread",
+        "status",
+        "text",
+        "done",
+    ]
+    status = next(c for c in chunks if c["type"] == "status")
+    assert status["tool"] == "query_database"
+    assert "SELECT" not in str(chunks)
+
+
+def test_chat_stream_drops_a_tool_result_routed_through_the_answer_node(
+    client, fake_langgraph
+):
+    """The node filter alone would not catch this one.
+
+    A tool result whose metadata says it came from the answer node is still a
+    tool result. Without the tool-message guard its raw rows would be spliced
+    into the reply as though the agent had said them.
+    """
+    fake_langgraph(
+        FakeLangGraphClient(
+            script=[
+                _message_event(
+                    "raw rows the user must never see",
+                    node="reasoning",
+                    type="tool",
+                    tool_call_id="call_a",
+                    name="query_database",
+                ),
+                _message_event("Two runs failed QC."),
+            ]
+        )
+    )
+
+    chunks = _stream_chunks(client, text="what failed?")
+
+    text = "".join(c["delta"] for c in chunks if c["type"] == "text")
+    assert text == "Two runs failed QC."
+    assert "raw rows" not in str(chunks)
+
+
+def test_chat_stream_keeps_intermediate_reasoning_out_of_the_answer(
+    client, fake_langgraph
+):
+    """Text from a node other than the answer node is not the answer."""
+    fake_langgraph(
+        FakeLangGraphClient(
+            script=[
+                _message_event("I should count the projects", node="planner"),
+                _message_event("There are 11,013."),
+            ]
+        )
+    )
+
+    chunks = _stream_chunks(client, text="how many?")
+
+    text = "".join(c["delta"] for c in chunks if c["type"] == "text")
+    assert text == "There are 11,013."
+    assert "I should count" not in str(chunks)
+
+
+def test_chat_stream_never_splices_a_tool_use_block_into_the_answer(
+    client, fake_langgraph
+):
+    """Multi-modal content carries tool_use blocks beside the text.
+
+    Only the text blocks become deltas — stringifying a block we don't
+    understand would put a serialized tool call in the middle of the reply.
+    """
+    fake_langgraph(
+        FakeLangGraphClient(
+            script=[
+                _message_event(
+                    [
+                        {"type": "text", "text": "Checking"},
+                        {
+                            "type": "tool_use",
+                            "name": "query_database",
+                            "input": {"sql": "SELECT 1"},
+                        },
+                        {"type": "text", "text": " now."},
+                    ]
+                ),
+            ]
+        )
+    )
+
+    chunks = _stream_chunks(client, text="hi")
+
+    assert "".join(c["delta"] for c in chunks if c["type"] == "text") == (
+        "Checking now."
+    )
+    assert "tool_use" not in str(chunks)
+    assert "SELECT 1" not in str(chunks)
+
+
+# --- The working indicator depends on when text starts -----------------------
+#
+# The client gets no frame telling it the agent is busy; it infers that from
+# having an assistant message with no text yet. So the first text frame is the
+# boundary between "Thinking…" and the answer, and these pin both sides of it.
+
+
+def test_chat_stream_sends_no_text_before_the_agent_speaks(client, fake_langgraph):
+    """No text frame reaches the client during the tool phase.
+
+    Any text at all would end the working indicator immediately, while the agent
+    still had all its tool calls to make.
+    """
+    fake_langgraph(
+        FakeLangGraphClient(
+            script=[
+                _tool_call_event("query_database", {"sql": "SELECT 1"}),
+                _tool_result_event("1", name="query_database"),
+                _message_event("One."),
+            ]
+        )
+    )
+
+    types = [c["type"] for c in _stream_chunks(client, text="hi")]
+
+    # No text at all until the agent actually speaks, so the client has an
+    # assistant message with no text for the whole tool phase — which is what it
+    # renders the indicator for.
+    assert types[0] == "thread"
+    assert types.index("text") > types.index("status")
+    assert types[-1] == "done"
+
+
+def test_chat_stream_omits_the_text_part_when_the_turn_had_no_text(
+    client, fake_langgraph
+):
+    """A turn that produced no answer text has no text part at all, not an empty one."""
+    fake_langgraph(
+        FakeLangGraphClient(
+            script=[
+                _tool_call_event("query_database", {"sql": "SELECT 1"}),
+                _tool_result_event("1", name="query_database"),
+            ]
+        )
+    )
+
+    types = [c["type"] for c in _stream_chunks(client, text="hi")]
+
+    assert types == ["thread", "status", "done"]
+
+
+def test_chat_stream_timeout_before_any_text_still_terminates(
+    client, fake_langgraph, monkeypatch
+):
+    """Timing out mid-tool ends the run with an error frame and no text."""
+    from api.chat import services
+
+    monkeypatch.setattr(services, "STREAMING_TIMEOUT_S", 0.05)
+    fake_langgraph(
+        FakeLangGraphClient(
+            script=[_tool_call_event("query_database", {"sql": "SELECT 1"})],
+            hang_s=5,
+        )
+    )
+
+    chunks = _stream_chunks(client, text="hi")
+
+    assert [c["type"] for c in chunks] == [
+        "thread",
+        "status",
+        "error",
+    ]
+    assert chunks[-1]["message"] == "Upstream chat timeout"
+
+
+def test_chat_stream_timeout_closes_a_text_part_it_opened(
+    client, fake_langgraph, monkeypatch
+):
+    """Timing out mid-answer keeps the text already sent and then errors."""
+    from api.chat import services
+
+    monkeypatch.setattr(services, "STREAMING_TIMEOUT_S", 0.05)
+    fake_langgraph(
+        FakeLangGraphClient(script=[_message_event("Half an ans")], hang_s=5)
+    )
+
+    types = [c["type"] for c in _stream_chunks(client, text="hi")]
+
+    assert types == [
+        "thread",
+        "text",
+        "error",
+    ]
+
+
+def test_chat_stream_upstream_failure_before_any_text_terminates(
+    client, fake_langgraph
+):
+    """The generic failure path also ends in exactly one error frame."""
+    fake_langgraph(FakeLangGraphClient(raise_exc=RuntimeError("boom")))
+
+    types = [c["type"] for c in _stream_chunks(client, text="hi")]
+
+    assert types == ["thread", "error"]
+
+
+def test_chat_stream_ignores_stream_events_it_does_not_understand(
+    client, fake_langgraph
+):
+    """Unknown or reshaped upstream events are skipped, not unpacked blindly.
+
+    A subgraph namespaces the event name and the messages modes are sometimes
+    suffixed, so a chunk that isn't the shape we expect must not raise
+    mid-stream.
+    """
+    fake_langgraph(
+        FakeLangGraphClient(
+            script=[
+                SimpleNamespace(event="metadata", data={"run_id": "r1"}),
+                # A messages event whose payload is not a (message, metadata) pair.
+                SimpleNamespace(event="messages/metadata", data={"r1": {}}),
+                SimpleNamespace(
+                    event="updates", data={"sql": {"executed_sql": ["Q"]}}
+                ),
+                # The namespaced form a subgraph produces.
+                _message_event("ok", event="sub:1|messages"),
+            ]
+        )
+    )
+
+    chunks = _stream_chunks(client, text="hi")
+
+    assert [c["type"] for c in chunks] == [
+        "thread",
+        "text",
+        "done",
+    ]
 
 
 def test_chat_json_upstream_error_returns_502(client, fake_langgraph):
@@ -886,8 +1446,82 @@ def test_chat_stream_reports_an_unconfigured_agent_in_band(
 
     assert response.status_code == 200
     chunks = _sse_data_chunks(response.text)
-    assert chunks[0]["type"] == "start"
-    assert chunks[-1] == {
-        "type": "error",
-        "errorText": "Chat agent is not configured",
+    # No thread frame: there is no thread, and nothing was invoked.
+    assert chunks == [
+        {"type": "error", "message": "Chat agent is not configured"}
+    ]
+
+
+# --- The frame models themselves ---------------------------------------------
+#
+# The tests above assert on the JSON that reaches the client, which is what the
+# contract actually is. These assert on the models that produce it.
+#
+# Note what is NOT asserted here any more: the AI SDK's rules. Those are checked
+# where the SDK actually is, in the client transport's mapping against the real
+# types. These frames are ours, so all that is left to pin is our own shape.
+
+
+def test_a_frame_serializes_to_exactly_the_expected_json():
+    """The wire bytes, spelled out: snake_case, no SDK framing, nothing extra."""
+    from api.chat.models import ChatFrameStatus, ChatFrameText, ChatFrameThread
+
+    assert ChatFrameThread(thread_id="abc").model_dump_json() == (
+        '{"type":"thread","thread_id":"abc"}'
+    )
+    assert ChatFrameStatus(tool="query_database").model_dump_json() == (
+        '{"type":"status","tool":"query_database"}'
+    )
+    assert ChatFrameText(delta="hi").model_dump_json() == (
+        '{"type":"text","delta":"hi"}'
+    )
+
+
+def test_the_frame_union_covers_exactly_the_types_the_stream_emits():
+    """The contract is closed: five frames, and none of them SDK frames.
+
+    Pinned so adding one is a deliberate change here, paired with teaching the
+    client transport to map it — a frame the transport does not know is a frame
+    the browser silently drops.
+    """
+    import typing
+
+    from api.chat.models import ChatFrame
+
+    members = typing.get_args(typing.get_args(ChatFrame)[0])
+    emitted = {
+        typing.get_args(m.model_fields["type"].annotation)[0] for m in members
     }
+    assert emitted == {"thread", "status", "text", "done", "error"}
+
+
+def test_no_frame_of_a_whole_run_serializes_a_null(client, fake_langgraph):
+    """No frame carries a null: every field is required and always filled.
+
+    Kept because it is cheap and because a null on the wire is a bug in any
+    protocol, not only the SDK's.
+    """
+    fake_langgraph(
+        FakeLangGraphClient(
+            script=[
+                _tool_call_event("query_database", {"sql": "SELECT 1"}),
+                _tool_result_event("11013", name="query_database"),
+                _message_event("There are 11013."),
+            ]
+        )
+    )
+
+    chunks = _stream_chunks(client, text="how many?")
+
+    assert {c["type"] for c in chunks} == {"thread", "status", "text", "done"}
+    for chunk in chunks:
+        assert None not in _nested_values(chunk), chunk
+
+
+def _nested_values(value):
+    """Every scalar reachable inside a parsed frame, for the no-null assertion."""
+    if isinstance(value, dict):
+        return [v for item in value.values() for v in _nested_values(item)]
+    if isinstance(value, list):
+        return [v for item in value for v in _nested_values(item)]
+    return [value]

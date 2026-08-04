@@ -2,14 +2,24 @@
 Chat-related services
 
 Invokes the deployed NGS360 SQL Agent (LangGraph Platform) and adapts its token
-stream into the Vercel AI SDK UI Message Stream Protocol (SSE JSON chunks
-terminated by [DONE]), which the frontend consumes via useChat from
-@ai-sdk/react. Protocol reference:
-https://ai-sdk.dev/docs/ai-sdk-ui/stream-protocol
+stream into this API's own SSE frames, which the frontend's chat transport maps
+onto the Vercel AI SDK UI Message Stream protocol for useChat.
+
+The stream carries the answer's text, the thread id, and the name of whichever
+tool is running — nothing else about how the agent got there. No text arrives
+while the agent works, which is what the client renders as "Thinking…", so that
+absence is load-bearing.
+
+Sections below, in dependency order:
+
+1. Reading the agent graph's messages — everything coupled to a graph we don't
+   own.
+2. Thread lifecycle — ownership, listing, transcripts, deletion.
+3. Invoking the agent — the non-streaming reply.
+4. Streaming the answer — SSE framing and ordering.
 """
 
 import asyncio
-import json
 import uuid
 from datetime import datetime, timezone
 from typing import Any, AsyncGenerator
@@ -17,45 +27,42 @@ from typing import Any, AsyncGenerator
 from fastapi import HTTPException
 from langgraph_sdk.errors import NotFoundError
 
-from api.chat.models import ChatRequest
+from api.chat.models import (
+    ChatFrame,
+    ChatFrameDone,
+    ChatFrameError,
+    ChatFrameStatus,
+    ChatFrameText,
+    ChatFrameThread,
+    ChatRequest,
+)
 from core.config import get_settings
 
 # Wall-clock ceilings for a single upstream invocation.
 NON_STREAMING_TIMEOUT_S = 60
 STREAMING_TIMEOUT_S = 120
 
-# The agent graph streams tokens from multiple nodes; only this node produces
-# the user-facing answer. Tokens from other nodes (e.g. the "tools" node's raw
-# SQL results) are intermediate reasoning and are not forwarded to the UI.
+
+# ---------------------------------------------------------------------------
+# 1. Reading the agent graph's messages
+# ---------------------------------------------------------------------------
+#
+# The graph is in another repository, so its node names and message shapes are
+# assumptions. Everything here skips what it doesn't recognize rather than
+# raising, and the chunks are deliberately not modelled — a strict model would
+# turn "the graph added a field" into a 502 on every message.
+
+# The only node that produces the user-facing answer. Text is gated to it so a
+# node we don't expect to speak cannot narrate over the reply.
 FINAL_ANSWER_NODE = "reasoning"
 
-# Stream part carrying the thread id back to the client. "data-*" is the AI SDK's
-# channel for application data alongside the reply; the client validates it in
-# lib/chat-directives.ts.
-THREAD_DATA_PART = "data-thread"
-
-# Thread metadata key recording which user owns a thread. New thread ids are
-# assigned here, but continuing a conversation means naming one, so this is what
-# stops an authenticated user reaching someone else's — see require_owned_thread.
-OWNER_METADATA_KEY = "ngs360_user_id"
-
-# Optional per-thread title override, for when renaming is added. Until then a
-# title is derived from the thread's first message.
-TITLE_METADATA_KEY = "ngs360_title"
-TITLE_MAX_LENGTH = 48
-
-# Pulls each thread's first message out of its checkpointed state server-side,
-# so listing costs one round trip and never ships whole transcripts.
-FIRST_MESSAGE_EXTRACT = {"first_msg": "values.messages[0].content"}
-
-# Deliberately excludes "values": with it, a list response would carry every
-# transcript on the page.
-LIST_SELECT = ["thread_id", "created_at", "updated_at", "metadata"]
+# The token/metadata pairs that make up the answer. Nothing else is read.
+STREAM_MODE = "messages-tuple"
 
 
-def sse_chunk(payload: dict[str, Any]) -> str:
-    """Frame one protocol chunk as an SSE data line."""
-    return f"data: {json.dumps(payload)}\n\n"
+def message_role(msg: dict[str, Any]) -> str:
+    """Normalize a message's role. LangGraph uses ``type``; tests use ``role``."""
+    return str(msg.get("role", msg.get("type", ""))).lower()
 
 
 def extract_text_from_message(msg: dict[str, Any]) -> str:
@@ -74,16 +81,109 @@ def extract_text_from_message(msg: dict[str, Any]) -> str:
     return str(content)
 
 
-def latest_user_text(req: ChatRequest) -> str:
-    """Concatenate the text parts of the most recent user message.
+def chunk_text(msg: dict[str, Any]) -> str:
+    """The text of a message chunk, ignoring blocks that aren't text.
 
-    Scanning ``messages`` in reverse handles both the ``submit-message`` and
-    ``regenerate-message`` triggers, since the last user turn is always present.
+    Unlike extract_text_from_message, never stringifies a block it doesn't
+    understand: content lists also carry tool_use blocks.
     """
-    for msg in reversed(req.messages):
-        if msg.role == "user":
-            return "".join(p.text for p in msg.parts if p.type == "text" and p.text)
+    content = msg.get("content")
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: list[str] = []
+        for item in content:
+            if isinstance(item, str):
+                parts.append(item)
+            elif isinstance(item, dict) and isinstance(item.get("text"), str):
+                if item.get("type", "text") in {"text", "text_delta"}:
+                    parts.append(item["text"])
+        return "".join(parts)
     return ""
+
+
+def is_tool_message(msg: dict[str, Any]) -> bool:
+    """Is this a tool result rather than the model's own output?
+
+    Only used to exclude it: the node filter alone would not stop a result
+    routed through FINAL_ANSWER_NODE. Role is matched by prefix because ``type``
+    is "tool" or "ToolMessageChunk" depending on how the graph sends it.
+    """
+    if message_role(msg).startswith("tool"):
+        return True
+    return bool(msg.get("tool_call_id"))
+
+
+def tool_names_requested(msg: dict[str, Any]) -> list[str]:
+    """The names of the tools an assistant message asks for, in order.
+
+    Both shapes: a whole ``AIMessage`` carries ``tool_calls``, a streamed chunk
+    carries ``tool_call_chunks``. Only the name is read — the ``args`` beside it
+    must not leave the server. Unusable names are skipped, leaving the previous
+    label up rather than blanking it.
+    """
+    names: list[str] = []
+    for key in ("tool_calls", "tool_call_chunks"):
+        calls = msg.get(key)
+        if not isinstance(calls, list):
+            continue
+        for call in calls:
+            if not isinstance(call, dict):
+                continue
+            name = call.get("name")
+            if isinstance(name, str) and name.strip():
+                names.append(name.strip())
+    return names
+
+
+def message_tuple(data: Any) -> tuple[dict[str, Any], dict[str, Any]] | None:
+    """A ``messages-tuple`` payload as (message, metadata), or None if it isn't one.
+
+    The pair arrives as a list once it has been through JSON, so the shape is
+    checked rather than unpacked blindly.
+    """
+    if isinstance(data, (list, tuple)) and len(data) == 2:
+        message, metadata = data
+        if isinstance(message, dict):
+            return message, metadata if isinstance(metadata, dict) else {}
+    return None
+
+
+def stream_event_kind(event: Any) -> str:
+    """Which stream mode a LangGraph stream part came from.
+
+    The event name is not always the bare mode: a subgraph namespaces it
+    (``"node:1|messages"``) and the messages modes are sometimes suffixed
+    (``"messages/partial"``). Anything unrecognized is returned as itself so the
+    caller can ignore it.
+    """
+    if not isinstance(event, str):
+        return ""
+    name = event.split("|")[-1].split("/")[0].strip().lower()
+    return "messages" if name.startswith("messages") else name
+
+
+# ---------------------------------------------------------------------------
+# 2. Thread lifecycle: ownership, listing, transcripts
+# ---------------------------------------------------------------------------
+
+# Records which user owns a thread. Ids are assigned here, but continuing a
+# conversation means naming one, so this is what stops an authenticated user
+# reaching someone else's — see require_owned_thread.
+OWNER_METADATA_KEY = "ngs360_user_id"
+
+# Optional per-thread title override, for when renaming is added. Until then a
+# title is derived from the thread's first message.
+TITLE_METADATA_KEY = "ngs360_title"
+TITLE_MAX_LENGTH = 48
+
+# Pulls each thread's first message out of its checkpointed state server-side,
+# so listing costs one round trip and never ships whole transcripts.
+FIRST_MESSAGE_EXTRACT = {"first_msg": "values.messages[0].content"}
+
+# Deliberately excludes "values": with it, a list response would carry every
+# transcript on the page.
+LIST_SELECT = ["thread_id", "created_at", "updated_at", "metadata"]
 
 
 async def require_owned_thread(
@@ -91,14 +191,12 @@ async def require_owned_thread(
 ) -> dict[str, Any]:
     """The caller's thread, or 404 if it is absent or someone else's.
 
-    Absent and not-yours both raise 404 — not 403 — so probing can't distinguish
-    the two. This is the only ownership gate: every route that reads or continues
-    a thread takes the id from the caller, so without it an authenticated user who
-    learned another user's thread id could read that conversation, or append a
-    turn to it and read the answer back.
+    Absent and not-yours both raise 404, not 403, so probing can't tell them
+    apart. This is the only ownership gate: every route takes the thread id from
+    the caller, so without it one user could read another's conversation.
 
-    Only a genuine 404 upstream counts as "doesn't exist". Swallowing every error
-    would fail open, letting a transient blip look like an absent thread.
+    Only a genuine upstream 404 counts as "doesn't exist" — swallowing every
+    error would fail open, letting a transient blip look like an absent thread.
     """
     try:
         thread = await client.threads.get(thread_id)
@@ -116,13 +214,11 @@ async def require_owned_thread(
 
 
 async def resolve_thread(req: ChatRequest, client, user_id: str) -> str:
-    """Return the thread this turn belongs to, creating one if the client has none.
+    """The thread this turn belongs to, creating one if the client has none.
 
-    Thread ids are assigned here, like every other id in this API, rather than
-    accepted from the client. A request that names a thread is continuing one, so
-    it must pass the ownership check; naming a thread that's gone (a stale link,
-    say) is a 404 and the client starts a new chat rather than silently resurrect
-    the id.
+    Ids are assigned here rather than accepted from the client. Naming a thread
+    means continuing it, so it must pass the ownership check; naming one that is
+    gone is a 404, and the client starts a new chat rather than resurrect the id.
     """
     if req.thread_id is not None:
         thread_id = str(req.thread_id)
@@ -169,9 +265,8 @@ async def list_threads(
 ) -> dict[str, Any]:
     """Page through the caller's chat threads, newest activity first.
 
-    Reads straight from the agent's thread store, filtered by the owner recorded
-    in thread metadata — there is no local table, so this is the only place the
-    user/thread association lives.
+    Filtered by the owner in thread metadata. There is no local table, so that
+    metadata is the only place the user/thread association lives.
     """
     owner = {OWNER_METADATA_KEY: user_id}
     try:
@@ -217,31 +312,20 @@ async def list_threads(
     }
 
 
-def _message_role(msg: dict[str, Any]) -> str:
-    """Normalize a stored message's role. LangGraph uses ``type``; tests use ``role``."""
-    return str(msg.get("role", msg.get("type", ""))).lower()
-
-
 def transcript_from_state(state: dict[str, Any]) -> list[dict[str, Any]]:
     """Rebuild the visible conversation from a thread's checkpointed state.
 
-    Stored state holds the agent's whole working history — tool calls and raw
-    tool output included — but the UI only ever saw the final answers. Two kinds
-    of message are dropped to reproduce what was on screen:
-
-    * ``tool`` messages, which are raw query output.
-    * ``ai`` messages with empty content, which are the tool-call steps.
-
-    That leaves the content-bearing ``ai`` messages, which come from the same
-    node the live stream forwards (FINAL_ANSWER_NODE). If the graph ever grows
-    another node that emits text, this would start showing messages that never
-    appeared in the stream — worth revisiting alongside any graph change.
+    Stored state holds the agent's whole working history, but the UI only ever
+    saw the final answers, so two kinds of message are dropped: ``tool``
+    messages (raw query output) and empty-content ``ai`` messages (the tool-call
+    steps). What is left came from FINAL_ANSWER_NODE, the same node the live
+    stream forwards — worth revisiting if the graph grows another talkative one.
     """
     messages: list[dict[str, Any]] = []
     for msg in state.get("messages") or []:
         if not isinstance(msg, dict):
             continue
-        role = _message_role(msg)
+        role = message_role(msg)
         text = extract_text_from_message(msg)
         if role in {"human", "user"}:
             out_role = "user"
@@ -297,8 +381,8 @@ async def delete_thread(client, thread_id: str) -> None:
 async def delete_all_threads(client, user_id: str) -> int:
     """Delete every chat thread belonging to the caller. Returns the count.
 
-    Pages through the owner's threads rather than trusting one search page, so
-    "clear all" doesn't quietly leave older ones behind.
+    Pages rather than trusting one search page, so "clear all" doesn't quietly
+    leave older threads behind.
     """
     owner = {OWNER_METADATA_KEY: user_id}
     deleted = 0
@@ -317,6 +401,23 @@ async def delete_all_threads(client, user_id: str) -> int:
             status_code=502,
             detail=f"Thread delete failed: {type(exc).__name__}",
         ) from exc
+
+
+# ---------------------------------------------------------------------------
+# 3. Invoking the agent: the non-streaming reply
+# ---------------------------------------------------------------------------
+
+
+def latest_user_text(req: ChatRequest) -> str:
+    """Concatenate the text parts of the most recent user message.
+
+    Scanning ``messages`` in reverse handles both the ``submit-message`` and
+    ``regenerate-message`` triggers, since the last user turn is always present.
+    """
+    for msg in reversed(req.messages):
+        if msg.role == "user":
+            return "".join(p.text for p in msg.parts if p.type == "text" and p.text)
+    return ""
 
 
 async def run_chat(req: ChatRequest, client, user_id: str) -> dict[str, Any]:
@@ -355,8 +456,7 @@ async def run_chat(req: ChatRequest, client, user_id: str) -> dict[str, Any]:
     assistant_text = last_state.get("final_answer") or ""
     if not assistant_text:
         for msg in reversed(last_state.get("messages", [])):
-            role = str(msg.get("role", msg.get("type", ""))).lower()
-            if role in {"assistant", "ai"}:
+            if message_role(msg) in {"assistant", "ai"}:
                 assistant_text = extract_text_from_message(msg)
                 break
 
@@ -367,44 +467,47 @@ async def run_chat(req: ChatRequest, client, user_id: str) -> dict[str, Any]:
     }
 
 
-async def stream_chat_vercel(
+# ---------------------------------------------------------------------------
+# 4. Streaming the answer: SSE framing and ordering
+# ---------------------------------------------------------------------------
+
+
+def sse_chunk(frame: ChatFrame) -> str:
+    """Frame one protocol chunk as an SSE data line."""
+    return f"data: {frame.model_dump_json()}\n\n"
+
+
+async def stream_chat(
     req: ChatRequest, client, thread_id: str | None
 ) -> AsyncGenerator[str, None]:
-    """
-    Stream the agent's reply framed as the Vercel AI SDK UI Message Stream
-    protocol, so the frontend's useChat hook consumes it unchanged.
+    """Stream the agent's reply as this API's own SSE frames.
 
-    LangGraph's ``messages-tuple`` stream yields (message_chunk, metadata) token
-    pairs; each token is reframed as a ``text-delta`` chunk.
+    ``messages-tuple`` yields (message_chunk, metadata) pairs. A tool call
+    contributes its name; tool results and non-answer nodes contribute nothing.
 
     ``thread_id`` is resolved by the route so an ownership failure can be a real
-    HTTP status; once the SSE body has started, every error has to be an in-band
-    error chunk on a 200. It is None only when chat is unconfigured, which the
-    first branch below already covers.
+    HTTP status — once the body has started, every error has to be an in-band
+    error frame on a 200. It is None only when chat is unconfigured.
     """
     if client is None or thread_id is None:
-        yield sse_chunk({"type": "start", "messageId": f"msg_{uuid.uuid4().hex}"})
-        yield sse_chunk(
-            {"type": "error", "errorText": "Chat agent is not configured"}
-        )
-        yield "data: [DONE]\n\n"
+        yield sse_chunk(ChatFrameError(message="Chat agent is not configured"))
         return
 
     message = latest_user_text(req)
     if not message:
-        yield sse_chunk({"type": "start", "messageId": f"msg_{uuid.uuid4().hex}"})
-        yield sse_chunk({"type": "error", "errorText": "No user message provided"})
-        yield "data: [DONE]\n\n"
+        yield sse_chunk(ChatFrameError(message="No user message provided"))
         return
 
     settings = get_settings()
 
-    yield sse_chunk({"type": "start", "messageId": f"msg_{uuid.uuid4().hex}"})
-    # Tell the client which thread this turn belongs to. It's the only way it can
-    # learn the id of a thread the server just created, and it goes out before
-    # any text so the client still has it if the run fails midway.
-    yield sse_chunk({"type": THREAD_DATA_PART, "data": {"thread_id": thread_id}})
-    yield sse_chunk({"type": "text-start", "id": "t1"})
+    # First, so a client that started a new thread keeps its id if the run fails.
+    yield sse_chunk(ChatFrameThread(thread_id=thread_id))
+
+    # Last tool announced, so a streamed call's repeated argument fragments do
+    # not each re-send the same name.
+    status_tool = ""
+    # Set by either failure path, so there is one exit below rather than three.
+    error_message: str | None = None
 
     try:
         async with asyncio.timeout(STREAMING_TIMEOUT_S):
@@ -412,30 +515,39 @@ async def stream_chat_vercel(
                 thread_id,
                 settings.LANGSMITH_ASSISTANT_ID,
                 input={"messages": [{"role": "user", "content": message}]},
-                stream_mode="messages-tuple",
+                stream_mode=STREAM_MODE,
             ):
-                if chunk.event != "messages":
+                if stream_event_kind(getattr(chunk, "event", None)) != "messages":
                     continue
-                message_chunk, metadata = chunk.data
-                # Only forward the final answer node's tokens; skip intermediate
-                # reasoning/tool output so it doesn't bleed into the UI.
+                pair = message_tuple(getattr(chunk, "data", None))
+                if pair is None:
+                    continue
+                msg, metadata = pair
+
+                # A tool result is the agent working, not the agent speaking.
+                if is_tool_message(msg):
+                    continue
+
+                # Name the running step. With parallel calls the newest is the
+                # better label, and the indicator is one line.
+                names = tool_names_requested(msg)
+                if names and names[-1] != status_tool:
+                    status_tool = names[-1]
+                    yield sse_chunk(ChatFrameStatus(tool=status_tool))
+
                 if metadata.get("langgraph_node") != FINAL_ANSWER_NODE:
                     continue
-                token = message_chunk.get("content")
+                token = chunk_text(msg)
                 if token:
-                    yield sse_chunk(
-                        {"type": "text-delta", "id": "t1", "delta": token}
-                    )
-        yield sse_chunk({"type": "text-end", "id": "t1"})
-        yield sse_chunk({"type": "finish"})
+                    yield sse_chunk(ChatFrameText(delta=token))
     except TimeoutError:
-        yield sse_chunk({"type": "text-end", "id": "t1"})
-        yield sse_chunk({"type": "error", "errorText": "Upstream chat timeout"})
+        error_message = "Upstream chat timeout"
     except Exception as exc:
-        safe_detail = str(exc).replace("\n", " ")[:300]
-        yield sse_chunk({"type": "text-end", "id": "t1"})
-        yield sse_chunk(
-            {"type": "error", "errorText": f"Upstream error: {safe_detail}"}
-        )
+        error_message = f"Upstream error: {str(exc).replace(chr(10), ' ')[:300]}"
 
-    yield "data: [DONE]\n\n"
+    # Explicit rather than just ending the body, so the client can tell a
+    # finished run from a dropped connection.
+    if error_message is None:
+        yield sse_chunk(ChatFrameDone())
+    else:
+        yield sse_chunk(ChatFrameError(message=error_message))

@@ -8,7 +8,12 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from api.auth.deps import CurrentUser
 from api.chat import services
 from api.chat.deps import ChatClientDep, OwnedThreadDep
-from api.chat.models import ChatRequest, ChatThreadMessages, ChatThreadsPublic
+from api.chat.models import (
+    ChatFrameEnvelope,
+    ChatRequest,
+    ChatThreadMessages,
+    ChatThreadsPublic,
+)
 from core.deps import LangGraphDep
 
 router = APIRouter(prefix="/chat", tags=["Chat Endpoints"])
@@ -23,11 +28,33 @@ async def chat(
     return JSONResponse(result)
 
 
-@router.post("/stream")
+@router.post(
+    "/stream",
+    # Documentation only. Naming the union here is what puts the frame schemas
+    # into /docs and components.schemas; without it OpenAPI declares an empty
+    # schema. FastAPI mislabels the content type as application/json because it
+    # cannot express "text/event-stream of repeated instances" — accepted as the
+    # price of documenting the frames. Nothing reads this at runtime.
+    responses={
+        200: {
+            "model": ChatFrameEnvelope,
+            "description": (
+                "Server-sent events. Each `data:` line is one frame (see the "
+                "schema); the run ends with a `done` or an `error` frame. The "
+                "declared media type is inaccurate: the body is "
+                "text/event-stream, not application/json."
+            ),
+        }
+    },
+)
 async def chat_stream(
     req: ChatRequest, current_user: CurrentUser, client: LangGraphDep
 ) -> StreamingResponse:
-    """Streaming chat for the chat UI (Vercel AI SDK UI Message Stream protocol)."""
+    """Streaming chat for the chat UI.
+
+    The frames are this API's own; the client's chat transport maps them onto
+    the AI SDK protocol that useChat consumes.
+    """
     # Resolve the thread up front: once the SSE body starts, a failure can only
     # be an in-band error chunk on a 200, so the ownership check has to happen
     # while a 404 is still possible.
@@ -37,10 +64,9 @@ async def chat_stream(
         else await services.resolve_thread(req, client, str(current_user.id))
     )
     return StreamingResponse(
-        services.stream_chat_vercel(req, client, thread_id),
+        services.stream_chat(req, client, thread_id),
         media_type="text/event-stream",
         headers={
-            "x-vercel-ai-ui-message-stream": "v1",  # required by the AI SDK protocol
             "Cache-Control": "no-cache",
             "X-Accel-Buffering": "no",  # prevent proxy buffering of the stream
         },

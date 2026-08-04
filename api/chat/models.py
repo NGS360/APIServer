@@ -1,11 +1,23 @@
 """
 Models for the AI Assistant Chat API
+
+Two halves, marked by the section banners below:
+
+* REQUEST AND THREAD MODELS — the JSON bodies of the chat routes.
+* THE CHAT STREAM'S WIRE CONTRACT — one model per SSE frame of POST
+  /chat/stream. These are not a JSON body: they are the frames of a
+  text/event-stream, one per ``data:`` line.
 """
 
 import uuid
 from datetime import datetime
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, RootModel
+
+# ---------------------------------------------------------------------------
+# Request and thread models
+# ---------------------------------------------------------------------------
 
 
 class ChatContextEntity(BaseModel):
@@ -100,3 +112,69 @@ class ChatThreadMessages(BaseModel):
 
     thread_id: str
     messages: list[UIMessage] = []
+
+
+# ---------------------------------------------------------------------------
+# The chat stream's wire contract: one model per SSE frame
+# ---------------------------------------------------------------------------
+#
+# Our own shape, not the AI SDK's. The browser speaks that protocol, but the
+# translation belongs to the client, where the SDK is installed and the compiler
+# can check it (frontend-ui/src/lib/chat-transport.ts).
+#
+# Models rather than dict literals because they become the OpenAPI schema the
+# client generates its types from and binds its validator to — so renaming a
+# field here fails the frontend build instead of silently emitting frames the
+# browser discards.
+
+
+class ChatFrameThread(BaseModel):
+    """The thread this turn belongs to. Sent first, so a new thread's id
+    survives a run that then fails."""
+
+    type: Literal["thread"] = "thread"
+    thread_id: str
+
+
+class ChatFrameStatus(BaseModel):
+    """The running tool's name, never its args or output. Opaque — the client
+    derives a label, so an unknown tool still renders."""
+
+    type: Literal["status"] = "status"
+    tool: str
+
+
+class ChatFrameText(BaseModel):
+    """One token of the answer."""
+
+    type: Literal["text"] = "text"
+    delta: str
+
+
+class ChatFrameDone(BaseModel):
+    """The run finished cleanly, as opposed to the connection dropping."""
+
+    type: Literal["done"] = "done"
+
+
+class ChatFrameError(BaseModel):
+    """The run failed. Replaces ``done`` rather than preceding it."""
+
+    type: Literal["error"] = "error"
+    message: str
+
+
+# Discriminated, so a bad ``type`` is an error rather than a silent match.
+ChatFrame = Annotated[
+    ChatFrameThread
+    | ChatFrameStatus
+    | ChatFrameText
+    | ChatFrameDone
+    | ChatFrameError,
+    Field(discriminator="type"),
+]
+
+
+class ChatFrameEnvelope(RootModel[ChatFrame]):
+    """The union as a referenceable schema, for OpenAPI only. No route returns
+    it; it exists so the stream route can put the frames in /docs."""
