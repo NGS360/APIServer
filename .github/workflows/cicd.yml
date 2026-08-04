@@ -11,6 +11,42 @@ on:
       - synchronize
 
 jobs:
+  # requirements.txt is what Elastic Beanstalk installs in production, but the
+  # lint and test jobs below install from uv.lock (uv sync --locked) and never
+  # touch it. Without this job nothing validates the deployed dependency set:
+  # #366 shipped a requirements.txt whose pins could not co-resolve
+  # (websockets==17.0.1 against langgraph-sdk's websockets<16) and it was only
+  # caught when pip failed mid-deploy. This job makes that a PR failure.
+  requirements-sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.8.3"
+          enable-cache: true
+
+      - name: Verify uv.lock matches pyproject.toml
+        run: uv lock --check
+
+      # Regenerate in place and let git detect drift. uv records the -o argument
+      # verbatim in the file header, so exporting to a temp path and diffing
+      # would report a spurious mismatch on the header line alone.
+      - name: Verify requirements.txt is an exact export of uv.lock
+        run: |
+          uv export --frozen --no-dev --no-emit-project --no-hashes -o requirements.txt
+          if ! git diff --exit-code -- requirements.txt; then
+            echo "::error file=requirements.txt::requirements.txt does not match uv.lock."
+            echo "requirements.txt is a generated export and must not be edited by hand."
+            echo "Regenerate it with:"
+            echo "  uv export --frozen --no-dev --no-emit-project --no-hashes -o requirements.txt"
+            exit 1
+          fi
+          echo "requirements.txt matches uv.lock."
+
   lint:
     runs-on: ubuntu-latest
     steps:
