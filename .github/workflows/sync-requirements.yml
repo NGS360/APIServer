@@ -1,9 +1,17 @@
 name: Sync requirements.txt
-# requirements.txt is a generated export of pyproject.toml consumed by Elastic
-# Beanstalk at deploy time (pip install -r requirements.txt). Dependabot's "uv"
-# ecosystem updates pyproject.toml / uv.lock but does NOT touch requirements.txt,
-# so this workflow regenerates it on Dependabot branches and commits it back to
-# the PR, keeping the deployed dependency set consistent with the lock file.
+# requirements.txt is a generated export of uv.lock, consumed by Elastic
+# Beanstalk at deploy time (pip install -r requirements.txt). uv.lock is the
+# single source of truth: CI installs from it (uv sync --locked) and this export
+# is what deploys, so the two must never diverge.
+#
+# This workflow regenerates the export on Dependabot branches and commits it
+# back to the PR. It triggers on requirements.txt as well as the lock inputs,
+# so that a direct edit to a pin -- as in #366, where Dependabot bumped
+# websockets past the cap langgraph-sdk imposes on it and produced a file pip
+# refused to install -- is overwritten by a correct, fully-resolved export.
+#
+# Human-authored branches are not auto-committed to; the requirements-sync job
+# in cicd.yml fails their PR instead, so the regeneration stays reviewable.
 
 on:
   push:
@@ -12,6 +20,7 @@ on:
     paths:
       - "pyproject.toml"
       - "uv.lock"
+      - "requirements.txt"
 
 permissions:
   contents: write
@@ -28,8 +37,15 @@ jobs:
         with:
           version: "0.8.3"
 
-      - name: Regenerate requirements.txt
-        run: uv pip compile pyproject.toml -o requirements.txt
+      # Must be `uv export`, not `uv pip compile`. `uv pip compile pyproject.toml`
+      # performs a FRESH resolution from the pyproject constraints, picking
+      # whatever is newest at run time and ignoring uv.lock entirely -- which is
+      # how requirements.txt drifted 43 packages away from the lock, so that CI
+      # (uv sync --locked) and production tested different dependency sets.
+      # --frozen makes the export fail rather than silently re-lock if
+      # pyproject.toml and uv.lock disagree.
+      - name: Regenerate requirements.txt from uv.lock
+        run: uv export --frozen --no-dev --no-emit-project --no-hashes -o requirements.txt
 
       - name: Commit and push if changed
         run: |
