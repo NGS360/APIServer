@@ -1262,6 +1262,69 @@ def test_chat_stream_upstream_failure_before_any_text_terminates(
     assert types == ["thread", "error"]
 
 
+def test_chat_stream_reports_an_upstream_error_event_as_a_failure(
+    client, fake_langgraph
+):
+    """A failed run ends in an error frame, not done.
+
+    LangGraph reports a failed run as a terminal "error" stream event rather
+    than by raising, so runs.stream yields it like any other part. Without the
+    check the loop would end normally and the turn would claim success while
+    carrying no answer.
+    """
+    fake_langgraph(
+        FakeLangGraphClient(
+            script=[
+                SimpleNamespace(
+                    event="error",
+                    data={
+                        "error": "GraphRecursionError",
+                        "message": "Recursion limit of 25 reached",
+                    },
+                ),
+            ]
+        )
+    )
+
+    chunks = _stream_chunks(client, text="hi")
+
+    assert [c["type"] for c in chunks] == ["thread", "error"]
+    assert chunks[-1]["message"] == "Upstream error: Recursion limit of 25 reached"
+
+
+def test_chat_stream_stops_reading_after_an_upstream_error(client, fake_langgraph):
+    """The error is terminal: text already sent stays, nothing after it is read."""
+    fake_langgraph(
+        FakeLangGraphClient(
+            script=[
+                _message_event("Half an ans"),
+                SimpleNamespace(event="error", data={"message": "upstream exploded"}),
+                # Anything the graph emits after failing is not the answer.
+                _message_event("wer that never arrives"),
+            ]
+        )
+    )
+
+    chunks = _stream_chunks(client, text="hi")
+
+    assert [c["type"] for c in chunks] == ["thread", "text", "error"]
+    assert chunks[1]["delta"] == "Half an ans"
+    assert "never arrives" not in str(chunks)
+
+
+def test_chat_stream_error_event_without_a_usable_message_still_reports(
+    client, fake_langgraph
+):
+    """The payload shape is the graph's, so an unusable one still says something."""
+    fake_langgraph(
+        FakeLangGraphClient(script=[SimpleNamespace(event="error", data=None)])
+    )
+
+    chunks = _stream_chunks(client, text="hi")
+
+    assert chunks[-1] == {"type": "error", "message": "Upstream error"}
+
+
 def test_chat_stream_ignores_stream_events_it_does_not_understand(
     client, fake_langgraph
 ):

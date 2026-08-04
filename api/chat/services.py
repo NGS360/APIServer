@@ -149,6 +149,21 @@ def message_tuple(data: Any) -> tuple[dict[str, Any], dict[str, Any]] | None:
     return None
 
 
+def upstream_error_text(data: Any) -> str:
+    """The message from an ``error`` stream event, as an error frame's text.
+
+    The payload's shape is the graph's, so both keys it might use are tried and
+    an unusable one still yields something to show.
+    """
+    if isinstance(data, dict):
+        for key in ("message", "error"):
+            value = data.get(key)
+            if isinstance(value, str) and value.strip():
+                detail = value.strip().replace("\n", " ")[:300]
+                return f"Upstream error: {detail}"
+    return "Upstream error"
+
+
 def stream_event_kind(event: Any) -> str:
     """Which stream mode a LangGraph stream part came from.
 
@@ -517,7 +532,17 @@ async def stream_chat(
                 input={"messages": [{"role": "user", "content": message}]},
                 stream_mode=STREAM_MODE,
             ):
-                if stream_event_kind(getattr(chunk, "event", None)) != "messages":
+                kind = stream_event_kind(getattr(chunk, "event", None))
+                # A failed run is reported as a terminal event, not an
+                # exception: runs.stream yields it like any other part, so
+                # without this the loop would end normally and the turn would
+                # report success with no answer in it.
+                if kind == "error":
+                    error_message = upstream_error_text(
+                        getattr(chunk, "data", None)
+                    )
+                    break
+                if kind != "messages":
                     continue
                 pair = message_tuple(getattr(chunk, "data", None))
                 if pair is None:
