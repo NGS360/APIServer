@@ -138,7 +138,7 @@ markupsafe==3.0.3
     #   mako
 mdurl==0.1.2
     # via markdown-it-py
-opensearch-protobufs==1.6.0
+opensearch-protobufs==1.2.0
     # via opensearch-py
 opensearch-py==3.2.0
     # via ngs360-server
@@ -170,7 +170,7 @@ pydantic==2.13.4
     #   pydantic-extra-types
     #   pydantic-settings
     #   sqlmodel
-pydantic-core==2.47.0
+pydantic-core==2.46.4
     # via pydantic
 pydantic-extra-types==2.11.1
     # via fastapi
