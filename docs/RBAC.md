@@ -670,7 +670,7 @@ Phase 1 — closing the 73 remaining open routes — is the highest-value securi
 
 | Phase | Content | Breaking | Done when |
 |-------|---------|----------|-----------|
-| **0** | ~~Commit `.ebextensions/db-migrate.config`~~ (done: [#363](https://github.com/NGS360/APIServer/pull/363), [#371](https://github.com/NGS360/APIServer/pull/371); verified in dev, staging and prod 2026-08-04); add `ENVIRONMENT`; JSON logging + request-ID middleware; attach `OptionalUser` to all 73 open routes for identity logging only | No | 7 days of production logs exist and can answer "which open routes received anonymous traffic, from which user agents and IPs" |
+| **0** | ~~Commit `.ebextensions/db-migrate.config`~~ (done: [#363](https://github.com/NGS360/APIServer/pull/363), [#371](https://github.com/NGS360/APIServer/pull/371); verified in dev, staging and prod 2026-08-04); ~~add `ENVIRONMENT`~~; ~~JSON logging + request-ID middleware~~; ~~identity logging on the open routes~~ (all three done in [#372](https://github.com/NGS360/APIServer/pull/372)) | No | 7 days of production logs exist and can answer "which open routes received anonymous traffic, from which user agents and IPs" |
 | **1a** | Create service-account users and API keys; land and deploy consumer changes **while the endpoints are still open** | No | Logs show zero anonymous traffic from known consumers in all three tiers |
 | **1b** | Close destructive and configuration writes: every `DELETE` (`PUT /settings/{key}` already done in [#361](https://github.com/NGS360/APIServer/pull/361)) | **Yes** | Deployed to prod; no 401 spike from unknown callers |
 | **1c** | Close remaining writes; stop honouring client-supplied `created_by` | **Yes** | As above |
@@ -895,7 +895,7 @@ Budget for genuinely touching five to ten modules where tests relied on unauthen
 | Test | What it protects |
 |------|------------------|
 | **Permission-resolution matrix** | Table-driven over `(global_roles, project_roles, is_superuser, key_scope, permission, scope)`. Pure function, no HTTP. Highest value per line. |
-| **Route-coverage guard** | Walk `app.routes`, inspect `route.dependant.dependencies`, and assert every route is either in a hardcoded `PUBLIC_ROUTES` list or carries an authentication dependency. Fails CI the moment someone adds a route without deciding — this is what prevents drift back to 73 open routes. |
+| **Route-coverage guard** | Assert every route is either in a hardcoded `PUBLIC_ROUTES` list or carries an authentication dependency. Fails CI the moment someone adds a route without deciding — this is what prevents drift back to 73 open routes. **Do not walk `app.routes` naively:** this FastAPI version does not flatten included routers, so `app.routes` holds 18 `_IncludedRouter` wrappers and only 2 real `APIRoute` objects (`/` and `/api/health`). A guard written that way inspects two routes, passes, and protects nothing. Recurse via each wrapper's `effective_route_contexts()`, whose entries pair the inner route with its fully-qualified path — the same traversal `core/middleware.py` uses to resolve `route_name`. |
 | **Unauthenticated-closure regression** | Parametrized over every non-public route: `unauthenticated_client` must get **401**, not 200 and not 500. |
 | **Negative 403 tests** | Per permission family; assert status, that `detail` is a string, and that `required_permission` is present. |
 | **Cross-project isolation** | A member of P1 gets 403 or 404 on every project-scoped route for P2. |
@@ -910,9 +910,14 @@ Budget for genuinely touching five to ten modules where tests relied on unauthen
 
 ### Tier A — structured logs (Phase 0, mandatory, no schema)
 
-Replace the 12-line `basicConfig` in `core/logger.py` with a JSON formatter and add request-ID middleware to `main.py`, which currently registers only `CORSMiddleware`. Elastic Beanstalk already ships stdout to CloudWatch.
+Implemented in [#372](https://github.com/NGS360/APIServer/pull/372): `core/logger.py` emits one JSON object per line (`LOG_FORMAT=text` for local work) and `core/middleware.py` adds `RequestContextMiddleware`. Elastic Beanstalk already ships stdout to CloudWatch.
 
-Fields: `timestamp`, `request_id`, `principal`, `principal_id`, `auth_method`, `api_key_prefix`, `client_app`, `source_ip`, `method`, `path`, `route_name`, `status`, `duration_ms`, `rbac_mode`, `rbac_decision`, `required_permission`, `scope`.
+Fields emitted per request, all under `event: "http.request"`: `timestamp`, `level`, `logger`, `environment`, `request_id`, `method`, `path`, `route_name`, `status`, `duration_ms`, `client_ip`, `user_agent`, `client_app`, `principal`, `auth_method`, `auth_valid`. Phase 4 adds `rbac_mode`, `rbac_decision`, `required_permission` and `scope` to the same line.
+
+Two properties worth knowing before querying these logs:
+
+- **The principal is claimed, not validated.** It comes from the credential itself — a bearer JWT decoded locally for its `sub`, or an API key's non-secret prefix — with no database lookup, so the middleware adds no query to any request. A caller presenting an expired or revoked token still reports its subject, which is the more useful reading for an inventory whose purpose is finding consumers before endpoints close; `auth_valid` distinguishes the cases. Full key values are never logged.
+- **`route_name` is the path template, `path` is the concrete URL.** Aggregate on `route_name`, or every project id becomes its own bucket. `/api/health` is excluded entirely, since the load balancer polls it every few seconds.
 
 This is not only audit — it is the instrument that makes the rollout safe. Without it, Phase 0's blast-radius measurement and Phase 4's denial punch-list are both impossible.
 
@@ -1014,10 +1019,11 @@ Deliberately out of scope for v1:
 | `api/auth/routes.py` | `GET /auth/me` gains `roles` and `permissions`; new `GET /auth/me/permissions` |
 | `api/project/deps.py` | `ProjectDep` becomes a sub-dependency of `require_project_permission` |
 | `api/project/routes.py` | Membership endpoints; `ProjectDep` replaced by permission-carrying aliases |
-| `main.py` | Router registration with default authentication; `rbac_router` |
-| `core/config.py` | `ENVIRONMENT`, `RBAC_MODE`, `DEFAULT_USER_ROLE`, `BOOTSTRAP_ADMIN_USERNAMES`, `ORPHAN_PROJECT_OWNER` |
+| `main.py` | `RequestContextMiddleware` (done); router registration with default authentication; `rbac_router` |
+| `core/config.py` | `ENVIRONMENT`, `LOG_FORMAT` (both done); `RBAC_MODE`, `DEFAULT_USER_ROLE`, `BOOTSTRAP_ADMIN_USERNAMES`, `ORPHAN_PROJECT_OWNER` |
 | `core/lifespan.py` | `sync_rbac_catalog()` with an advisory lock and a fail-closed startup assertion |
-| `core/logger.py` | JSON formatter for structured audit logging |
+| `core/logger.py` | JSON formatter (`LOG_FORMAT=text` for local work); replaces the root handler so gunicorn/uvicorn do not duplicate lines |
+| `core/middleware.py` | `RequestContextMiddleware`: request id, principal resolution with no DB access, structured access log |
 | `alembic/env.py` | Import the new RBAC models |
 | `alembic/versions/rbac_0001_tables.py` | The four tables |
 | `alembic/versions/rbac_0002_user_shells.py` | Shell users for backfill targets |

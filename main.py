@@ -14,6 +14,7 @@ from sqlmodel import Session
 from core.lifespan import lifespan
 from core.config import get_settings
 from core.db import engine
+from core.middleware import RequestContextMiddleware
 
 from api.auth.routes import router as auth_router
 from api.auth.oauth_routes import router as oauth_router
@@ -114,6 +115,13 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Request id + structured access logging. Added AFTER CORSMiddleware, so it sits
+# OUTSIDE it: Starlette applies middleware in reverse registration order, so the
+# last added runs first. That is deliberate -- it means CORS preflight responses
+# and any error raised inside CORS handling are still logged, and every response
+# carries X-Request-ID.
+app.add_middleware(RequestContextMiddleware)
 
 
 # Create a simple health check endpoint
