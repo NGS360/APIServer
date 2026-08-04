@@ -61,7 +61,7 @@ email-validator==2.3.0
     #   pydantic
 events==0.5
     # via opensearch-py
-fastapi==0.140.7
+fastapi==0.141.1
     # via ngs360-server (pyproject.toml)
 fastapi-cli==0.0.32
     # via fastapi
