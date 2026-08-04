@@ -670,7 +670,7 @@ Phase 1 — closing the 73 remaining open routes — is the highest-value securi
 
 | Phase | Content | Breaking | Done when |
 |-------|---------|----------|-----------|
-| **0** | Commit `.ebextensions/db-migrate.config`; add `ENVIRONMENT`; JSON logging + request-ID middleware; attach `OptionalUser` to all 73 open routes for identity logging only | No | 7 days of production logs exist and can answer "which open routes received anonymous traffic, from which user agents and IPs" |
+| **0** | ~~Commit `.ebextensions/db-migrate.config`~~ ([#363](https://github.com/NGS360/APIServer/pull/363)); add `ENVIRONMENT`; JSON logging + request-ID middleware; attach `OptionalUser` to all 73 open routes for identity logging only | No | 7 days of production logs exist and can answer "which open routes received anonymous traffic, from which user agents and IPs" |
 | **1a** | Create service-account users and API keys; land and deploy consumer changes **while the endpoints are still open** | No | Logs show zero anonymous traffic from known consumers in all three tiers |
 | **1b** | Close destructive and configuration writes: every `DELETE` (`PUT /settings/{key}` already done in [#361](https://github.com/NGS360/APIServer/pull/361)) | **Yes** | Deployed to prod; no 401 spike from unknown callers |
 | **1c** | Close remaining writes; stop honouring client-supplied `created_by` | **Yes** | As above |
@@ -732,18 +732,16 @@ Dry-run necessarily lets a should-be-denied write succeed. That is acceptable fo
 
 ## Migration
 
-### Prerequisite: the untracked migration hook
+### Prerequisite: automatic migration on deploy
 
-`.ebextensions/db-migrate.config` runs `alembic upgrade head` on deploy — `leader_only`, from `/var/app/staging`, before the application is promoted to `/var/app/current`. **It is currently untracked in git.** Migrations have therefore been applied by hand, and the three databases (`ngs360_dev`, `ngs360_staging`, `ngs360`, all on one RDS instance) are likely at different revisions; the untracked `scripts/compare_schemas.py` suggests this drift is already suspected.
+`.ebextensions/db-migrate.config` runs `alembic upgrade head` on deploy — `leader_only`, from `/var/app/staging`, before the application is promoted to `/var/app/current`. It was untracked in git, so it had never shipped and migrations were applied by hand; it is committed in [#363](https://github.com/NGS360/APIServer/pull/363).
 
-Committing the file makes the *next* deploy silently apply whatever backlog exists to production, inside `container_commands`, before promotion, with no snapshot. Required sequence:
+**Drift was the risk, and it did not materialize.** `ngs360_dev`, `ngs360_staging`, and `ngs360` were all confirmed at head `d7e3f9a2b1c4` before #363 merged, so `upgrade head` is a no-op in every environment on the first deploy. That makes landing the hook a free exercise of the mechanism: it proves the `container_command` runs, sources `/opt/elasticbeanstalk/deployment/env`, and finds the platform venv's alembic, without changing any schema. Remaining verification is one step — confirm from `eb logs` that `01_db_migrate` executed and that `alembic current` still equals head.
 
-1. Query `alembic_version` in all three databases.
-2. Reconcile any drift manually.
-3. Open a pull request committing the file **plus one no-op revision**.
-4. Deploy to dev; confirm via `eb logs` that `01_db_migrate` ran and `alembic current` matches head.
-5. Deploy to staging.
-6. **Take an RDS snapshot**, then deploy to production.
+Two properties this establishes for every RBAC revision that follows:
+
+- **A failing migration fails the deploy.** `set -euo pipefail` plus a non-zero alembic exit aborts the container command, so Elastic Beanstalk will not promote that instance. This is the desired behaviour — better than serving new code against an old schema — but a bad revision blocks deploys until it is fixed forward.
+- **Backward compatibility is now structural, not conventional.** Migrations run pre-promotion on the leader only, with no blue/green, so old code always meets the new schema on the remaining instances. The additive-only rule in *Revision ordering* below is enforced by the deploy topology.
 
 ### Revision ordering
 
@@ -1017,7 +1015,7 @@ Deliberately out of scope for v1:
 | `alembic/versions/rbac_0002_user_shells.py` | Shell users for backfill targets |
 | `alembic/versions/rbac_0003_backfill_members.py` | Membership backfill and the unresolved report |
 | `alembic/versions/rbac_0004_constraints.py` | Constraints and indexes, one release later |
-| `.ebextensions/db-migrate.config` | Must be committed before any migration phase |
+| `.ebextensions/db-migrate.config` | Runs `alembic upgrade head` on deploy; committed in [#363](https://github.com/NGS360/APIServer/pull/363) |
 | `scripts/grant_role.py` | Break-glass role assignment CLI |
 | `tests/conftest.py` | Consolidated client fixtures, persisted users, `client_as()` factory |
 | `tests/api/test_rbac_resolution.py` | Permission-resolution matrix |
