@@ -14,6 +14,14 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+    ignore:
+      # websockets is a purely transitive dependency, capped by langgraph-sdk
+      # (0.4.2 requires "websockets<16,>=14"). Dependabot bumped the pin to
+      # 17.0.1 in #366 without re-resolving, producing a requirements.txt that
+      # pip refuses to install and which broke the dev deploy. No forward
+      # resolution exists while the cap stands -- 0.4.2 is the latest release.
+      # Remove this ignore once langgraph-sdk lifts the constraint.
+      - dependency-name: "websockets"
     groups:
       # Collapse routine minor/patch bumps into a single PR to reduce noise.
       python-minor-patch:
