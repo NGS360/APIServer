@@ -304,7 +304,7 @@ Roles are database rows so that administrators can compose custom ones. The **bu
 | `member` | Default for every authenticated user | `action:read`, `platform:read`, `vendor:read`, `workflow:read`, `pipeline:read`, `run:read`, `job:read`, `job:submit`, `setting:read`, `search:query`, `chat:use`, `user:read`, `project:create`, plus the transitional global reads: `project:read`, `sample:read`, `qcrecord:read`, `file:read`, `file:download` |
 | `lab_manager` | Sequencing core — registers runs, demultiplexes, ingests vendor deliveries | `member` + `run:create`, `run:update`, `run:associate`, `run:demux`, `manifest:read`, `manifest:upload`, `manifest:validate`, `file:browse`, `file:create`, `file:update`, `sample:create`, `sample:update`, `qcrecord:create`, `project:ingest`, `job:read_all` |
 | `platform_admin` | Owns the executable catalog and platform configuration | `member` + `platform:create`, `vendor:create`, `vendor:update`, `vendor:delete`, `workflow:create`, `workflow:update`, `workflow:delete`, `workflow:deploy`, `pipeline:create`, `pipeline:update`, `action:validate`, `setting:update`, `system:reindex`, `job:read_all`, `job:update` |
-| `service_account` | Machine writeback — pipelines, the Batch status poller, MCP | `project:read`, `run:read`, `run:update`, `sample:read`, `sample:create`, `qcrecord:create`, `file:create`, `file:update`, `job:read_all`, `job:update` |
+| `service_account` | Machine writeback — pipeline results and Batch job-status updates only (**not** MCP, which acts as the invoking user) | `project:read`, `run:read`, `run:update`, `sample:read`, `sample:create`, `qcrecord:create`, `file:create`, `file:update`, `job:read_all`, `job:update` |
 | `auditor` | Compliance, QA, read-only agents | Every `*:read` permission, plus `file:download`, `search:query`, `role:read` |
 | `admin` | Platform administrator | `ALL_PERMISSIONS`, recomputed at each sync so new permissions are picked up automatically |
 
@@ -680,18 +680,38 @@ Phase 1 — closing the 73 remaining open routes — is the highest-value securi
 | **4** | `require_permission` wired onto routes with `RBAC_MODE=dry_run` | No | 14 days in production dry-run, with every distinct `(principal, permission, route)` denial either resolved by a grant or explicitly accepted |
 | **5** | `RBAC_MODE=enforce`, dev → staging → prod | **Yes** | 30 days in production enforce with no rollback |
 | **6** | Row-level read filtering and pagination | **Yes** | Pagination tests pass; list totals reflect membership |
-| **7** | Frontend permission gating, MCP hardening, access reporting | No | — |
+| **7** | Frontend permission gating, MCP 403 handling, access reporting | No | — |
 
 **Phase 0 is not optional.** There is no request-logging middleware today, and therefore no inventory of who calls the 73 remaining open routes. Skipping it means discovering consumers from a production outage. It uses `optional_current_user` (already present at `api/auth/deps.py:163`), which returns `None` rather than raising — zero behaviour change, but the caller's identity becomes available for logging.
 
 Each breaking wave deploys dev → soak → staging → soak → prod.
+
+### First production inventory, 2026-08-05
+
+Two hours of prod traffic once log streaming was enabled, then twelve. This is the measurement the phase exists to produce, and it narrows phase 1 considerably:
+
+| Caller | User agent | Requests / 12h | Routes |
+|---|---|---|---|
+| `10.189.4.23`, `10.189.0.126`, `10.189.0.12` | `python-requests/2.31-2.32` | 1,330 each | `GET /api/v1/projects`, `GET /api/v1/samples/search` |
+| `172.25.134.87` | `python-requests/2.33.1` | 197 | `GET /api/v1/jobs/{job_id}` |
+| two browsers (`172.30.x`) | Mozilla | 9 and 7 | incl. `GET /api/v1/files/download` |
+
+Observations that change the plan:
+
+- **Anonymous traffic is concentrated, not diffuse.** The design assumed consumer discovery across 73 open routes; in practice four routes carry all of it and every other open endpoint saw zero anonymous requests. Phase 1d is a much smaller problem than budgeted.
+- **The three `10.189.x` hosts are one system**, not three clients — identical request counts and routes, differing only in `requests` minor version, and on a different subnet from everything else.
+- **`172.25.134.87` polls job status from inside the application subnet**, so it is most likely a Batch job or Lambda. It did not appear in the first two-hour sample, which is the concrete argument for the seven-day window: periodic callers are invisible in short ones.
+- **Two browsers made anonymous calls**, including `files/download`. That is a frontend gap rather than a missing service account, and needs a different fix from the rest.
+- Authenticated traffic in the same window was **4,442 requests by API key** and, at that hour, no JWT traffic at all — the SPA is human-driven, so sampling outside working hours says nothing about it.
+
+Host attribution is deferred; owners still need identifying before phase 1b can close anything they touch.
 
 ### Verified Phase 1 blockers
 
 Two consumers call the API with no credential whatsoever. Both are confirmed in source and both must be fixed in Phase 1a:
 
 - **`GA4GH-WES-API-Service/src/wes_service/services/workflow_submission_service.py:174`** — `await client.get(f"{api_url}/api/v1/workflows/{workflow_id}")` with no headers. Recommended fix: forward the caller's bearer token, which WES has already validated, rather than a service key. This preserves per-user authorization for free.
-- **`NGS360-ETL/load_json_to_db.py:989-992`** — four bare `requests.post()` calls to `/projects/search`, `/runs/search`, `/samples/search`, and `/qcmetrics/search`.
+- ~~**`NGS360-ETL/load_json_to_db.py:989-992`**~~ — four bare `requests.post()` calls to the reindex endpoints. **No longer a blocker:** the ETL was a one-off load and is not running.
 
 The same WES service validates every bearer token against `GET /api/v1/auth/me` and caches the token-to-username mapping (`src/wes_service/core/security.py`). Two consequences: `/auth/me`'s `username` field is a load-bearing contract, and role revocation is **not** immediate for WES. Bound that cache to five minutes or less and document the delay.
 
@@ -815,33 +835,34 @@ The username-deduplication loop is a pre-existing bug — two identities for one
 
 | Consumer | Required change | Owner | Blocking |
 |----------|-----------------|-------|----------|
-| **MCP server** | Dedicated service account + least-privilege role; key-level scope narrowing; non-retryable structured 403 handling | `NGS360/mcp-server` | 1a, 5 |
+| **MCP server** | Not yet deployed. Carries the calling user's own token, so no service account is needed. Still needs non-retryable structured 403 handling | `NGS360/mcp-server` | 5 |
 | **Frontend SPA** | Route-loader error boundaries; permission-based gating; regenerate the API client | `NGS360/frontend-ui` | 5 (UX only) |
 | **GA4GH WES** | Forward the caller's bearer token on `GET /workflows/{id}`; bound the `/auth/me` token cache to ≤5 min | `GA4GH-WES-API-Service` | **1c/1d** |
-| **NGS360-ETL** | Service-account key on the four reindex posts | `NGS360-ETL` | **1c** |
-| **NGS360-Agent** | Inherits the MCP decision | `NGS360-Agent` | 5 |
+| ~~**NGS360-ETL**~~ | Retired — a one-off load, no longer running. No action, no credential | — | — |
+| **NGS360-Agent** | Inherits the MCP decision: acts as the invoking user, not a service identity | `NGS360-Agent` | 5 |
 | **`APIServer/scripts/*`** | Admin-only; add an `--operator` argument writing one audit row per run | this repo | 3 |
 
-### MCP server: one API key for all traffic
+### MCP server: per-user tokens, decided
 
-`ngs360_mcp_server/server.py` constructs a single `NGS360Client` at server start from `NGS360_API_TOKEN`, shared by all 82 tools, running `stateless_http`. One key means one user means one role for every agent request.
+**The MCP server is not deployed, and it will carry the calling user's own auth token rather than a shared credential.** That is the right answer and it is now settled, so the trade-off analysis an earlier revision of this document carried — weighing a shared service account against per-user passthrough — no longer applies.
 
-| Option | Effort | Attribution | Verdict |
-|--------|--------|-------------|---------|
-| Dedicated service account with an explicit least-privilege role | Low | None — all traffic is the service identity | **v1** |
-| Key-level scope narrowing (`api_keys.scope_permissions`, intersection only) | Low | n/a | **v1** |
-| Per-user token passthrough (MCP OAuth) | High — requires threading a per-request identity through 82 tools | Full | Deferred, not foreclosed |
+The reasoning that pointed the other way was migration burden: `ngs360_mcp_server/server.py` constructs a single `NGS360Client` at server start from `NGS360_API_TOKEN`, shared by all 82 tools, so threading a per-request identity through them looked expensive relative to issuing one service-account key. With nothing deployed there is no migration to weigh, and building it per-user from the start avoids the problems a shared key would have created:
 
-v1 requires both of the first two. Create `svc-ngs360-mcp` holding exactly `service_account` — or `auditor`, if the deployment turns out to be read-only, which should be confirmed before granting write permissions — and add key scoping so a key can never exceed its owner's role even if that account is later mis-flagged. Scoped keys are the right primitive regardless of which identity model eventually wins, so building them now is not wasted work.
+- **No identity collapse.** A shared key makes every agent request the same principal, so project-scoped permissions would have meant nothing for MCP traffic — the single largest hole a shared credential would have punched in this design.
+- **No confused deputy.** Authorization is evaluated against the human who invoked the tool, not against a service identity acting on their behalf.
+- **No attribution compromise.** The `on_behalf_of` audit-context field an earlier revision proposed is unnecessary: the acting user *is* the principal, so the audit trail is accurate rather than approximate.
+- **No API-key scoping needed for this case.** Key-level permission narrowing was recommended largely to bound a shared MCP key. Without one, it reverts to a genuine v2 item (see *Non-Goals*).
 
-Two notes that will otherwise cost someone an afternoon:
+Consequences for the rest of this design: MCP needs no service account, so `service_account` is justified only by the remaining machine writeback paths — pipeline results and Batch job-status updates — and should not be granted to anything else without a specific reason.
+
+**Still required, and independent of the identity model:** the MCP client calls `raise_for_status()` with no handling anywhere in the package. A 403 surfaces as an `httpx.HTTPStatusError` traceback inside a tool result, and a model will retry it. Map 401 and 403 to a structured, explicitly **non-retryable** tool error — *"Permission denied: {detail}. Not retryable — ask the user to request access to {scope}."* An agent looping on denied writes is a real and expensive failure mode. Per-user tokens make this *more* likely to fire, not less, since different users will legitimately get different answers from the same tool.
+
+### Service accounts
+
+Two notes that will otherwise cost someone an afternoon, for whichever machine identities do end up existing:
 
 - A service-account user must be created with **both** `is_active` and `is_verified` true, or its API key fails on every route using `get_current_active_user`.
 - `authenticate_api_key` writes `last_used_at` and **commits on every request** (`api/auth/deps.py:57`). That is write amplification independent of RBAC and deserves its own ticket — throttle to once per N minutes.
-
-On attribution: rather than an impersonation header, which widens access if mis-implemented, record the end-user identity as **audit context only** in an `on_behalf_of` field, with authorization still evaluated against the service account. State that trade-off plainly rather than implying the agent enforces per-user access, because it does not.
-
-**Required regardless of identity model:** the MCP client calls `raise_for_status()` with no handling anywhere in the package. A 403 surfaces as an `httpx.HTTPStatusError` traceback inside a tool result, and a model will retry it. Map 401 and 403 to a structured, explicitly **non-retryable** tool error — *"Permission denied: {detail}. Not retryable — ask the user to request access to {scope}."* An agent looping on denied writes is a real and expensive failure mode.
 
 ### Frontend
 
@@ -965,7 +986,9 @@ This is not only audit — it is the instrument that makes the rollout safe. Wit
 
 ### Tier B — durable `audit_log` table (Phase 3/4)
 
-Mutations and grants only, never every request. Columns: `id`, `occurred_at`, `request_id`, `actor_user_id`, `actor_username`, `on_behalf_of`, `auth_method`, `api_key_id`, `action`, `object_type`, `object_id`, `project_id`, `outcome`, `reason`, `source_ip`, `client_app`, `changes` (JSON, changed fields only).
+Mutations and grants only, never every request. Columns: `id`, `occurred_at`, `request_id`, `actor_user_id`, `actor_username`, `auth_method`, `api_key_id`, `action`, `object_type`, `object_id`, `project_id`, `outcome`, `reason`, `source_ip`, `client_app`, `changes` (JSON, changed fields only).
+
+An earlier revision included an `on_behalf_of` column. It existed only to record the human behind a shared MCP credential; with MCP acting as the invoking user the actor *is* that human, so the column would never be populated and is dropped. Add it back only if genuine delegation is ever introduced.
 
 Minimum event set:
 
@@ -999,7 +1022,7 @@ Both are audited. A read-only script wrapper provides break-glass when the API i
 
 - CloudWatch metric filter on `event=rbac.decision decision=deny`, dimensioned by `route_name` and `principal`; alarm on rate spikes after each cutover.
 - A dashboard of the top 20 `(principal, permission, route)` denial tuples over 24 hours. During Phase 4 this *is* the punch list.
-- **Any denial for `svc-ngs360-mcp`, `svc-wes`, or `svc-etl` should be zero.** Alarm on the first one — it is a misconfiguration, not user error.
+- **Any denial for a service account should be zero.** Alarm on the first one — it is a misconfiguration, not user error. Note this does not cover MCP traffic, which authenticates as the invoking user and will legitimately see denials.
 - 401 rate on newly closed routes after each Phase 1 wave: the "consumer we forgot" signal.
 - A gauge of users holding zero roles. It should trend to zero; anything else means new users are landing without access.
 
@@ -1039,7 +1062,7 @@ Deliberately out of scope for v1:
 | SSO-claim-driven roles, JWT scope claims | The token stays `{sub, exp, iat, type}`. `get_current_user` reloads the user per request, so database roles need no token change and revocation is immediate. |
 | Full RBAC change history | v1 records current state (`granted_by`, `granted_at`) only. **Known gap: revocations leave no trace** until the Tier B audit table lands. |
 | Cross-request permission caching | Needs explicit invalidation across Elastic Beanstalk instances |
-| API-key permission scopes beyond the MCP case | Intersection-only narrowing ships for service accounts; general key scoping is v2 |
+| API-key permission scopes | Was proposed mainly to bound a shared MCP key; with MCP on per-user tokens there is no such key, so this is a plain v2 item. Semantics if revisited: intersection only, never expansion |
 | Project-scoping the S3 passthrough endpoints | Requires a URI-to-project resolver |
 | Run-scoped or vendor-scoped roles | The two-table schema is deliberately not polymorphic; a third scope means a third table |
 | Admin UI for role management | API only in v1 |
