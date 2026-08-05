@@ -110,6 +110,41 @@ class Settings(BaseSettings):
         """Get application log level from env or secrets (defaults to INFO)"""
         return self._get_config_value("LOG_LEVEL", default="INFO")
 
+    @computed_field
+    @property
+    def ENVIRONMENT(self) -> str:
+        """
+        Deployment tier: "dev", "staging", or "prod".
+
+        Set as an Elastic Beanstalk application environment property, one per
+        environment. Nothing else distinguishes the tiers at runtime -- they are
+        otherwise told apart only by which EB environment was deployed to, which
+        means behaviour cannot be varied per tier without this value.
+
+        Unrecognised values fall back to "dev", the least privileged tier: a
+        typo must never cause a non-production setting to be treated as
+        production, or vice versa.
+        """
+        value = self._get_config_value("ENVIRONMENT", default="dev").strip().lower()
+        if value not in ("dev", "staging", "prod"):
+            return "dev"
+        return value
+
+    @computed_field
+    @property
+    def LOG_FORMAT(self) -> str:
+        """
+        Log output format: "json" or "text".
+
+        JSON is the default so deployed logs are queryable in CloudWatch Logs
+        Insights. Text is easier to read when running locally; the Docker
+        entrypoint and local .env files can set LOG_FORMAT=text.
+        """
+        value = self._get_config_value("LOG_FORMAT", default="json").strip().lower()
+        if value not in ("json", "text"):
+            return "json"
+        return value
+
     # AI Assistant Chat - deployed NGS360 LLM Agent on the LangGraph Platform
     @computed_field
     @property
