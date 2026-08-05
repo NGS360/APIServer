@@ -835,12 +835,12 @@ The username-deduplication loop is a pre-existing bug — two identities for one
 
 | Consumer | Required change | Owner | Blocking |
 |----------|-----------------|-------|----------|
-| **MCP server** | Not yet deployed. Carries the calling user's own token, so no service account is needed. Still needs non-retryable structured 403 handling | `NGS360/mcp-server` | 5 |
-| **Frontend SPA** | Route-loader error boundaries; permission-based gating; regenerate the API client | `NGS360/frontend-ui` | 5 (UX only) |
 | **GA4GH WES** | Forward the caller's bearer token on `GET /workflows/{id}`; bound the `/auth/me` token cache to ≤5 min | `GA4GH-WES-API-Service` | **1c/1d** |
-| ~~**NGS360-ETL**~~ | Retired — a one-off load, no longer running. No action, no credential | — | — |
-| **NGS360-Agent** | Inherits the MCP decision: acts as the invoking user, not a service identity | `NGS360-Agent` | 5 |
+| **Unidentified callers** | Four routes, six source addresses — see *First production inventory*. Each needs an owner and a credential before the route it uses can close | tracing in progress | **1b–1d** |
+| **Frontend SPA** | Route-loader error boundaries; permission-based gating; regenerate the API client. Also two browsers observed calling open routes anonymously, including `files/download` | `NGS360/frontend-ui` | 5 (UX only) |
 | **`APIServer/scripts/*`** | Admin-only; add an `--operator` argument writing one audit row per run | this repo | 3 |
+
+**Not consumers of this rollout.** The NGS360-ETL was a one-off load script and no longer runs — nothing to migrate, no credential to issue. The MCP server and NGS360-Agent are **downstream of RBAC, not blockers on it**: they are deliberately not deployed until the model below is finished, and will be built against it rather than migrated onto it. The dependency runs the other way round from every row in the table above.
 
 ### MCP server: per-user tokens, decided
 
