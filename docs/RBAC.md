@@ -670,7 +670,7 @@ Phase 1 — closing the 73 remaining open routes — is the highest-value securi
 
 | Phase | Content | Breaking | Done when |
 |-------|---------|----------|-----------|
-| **0** | ~~Commit `.ebextensions/db-migrate.config`~~ (done: [#363](https://github.com/NGS360/APIServer/pull/363), [#371](https://github.com/NGS360/APIServer/pull/371); verified in dev, staging and prod 2026-08-04); ~~add `ENVIRONMENT`~~; ~~JSON logging + request-ID middleware~~; ~~identity logging on the open routes~~ (all three done in [#372](https://github.com/NGS360/APIServer/pull/372)) | No | 7 days of production logs exist and can answer "which open routes received anonymous traffic, from which user agents and IPs" |
+| **0** | ~~Commit `.ebextensions/db-migrate.config`~~ ([#363](https://github.com/NGS360/APIServer/pull/363), [#371](https://github.com/NGS360/APIServer/pull/371); verified in all three tiers 2026-08-04); ~~add `ENVIRONMENT`~~; ~~JSON logging + request-ID middleware~~; ~~identity logging on the open routes~~ ([#372](https://github.com/NGS360/APIServer/pull/372)); ~~enable CloudWatch log streaming~~ (`StreamLogs`, per environment — see *Tier A*) | No | 7 days of production logs exist and can answer "which open routes received anonymous traffic, from which user agents and IPs" |
 | **1a** | Create service-account users and API keys; land and deploy consumer changes **while the endpoints are still open** | No | Logs show zero anonymous traffic from known consumers in all three tiers |
 | **1b** | Close destructive and configuration writes: every `DELETE` (`PUT /settings/{key}` already done in [#361](https://github.com/NGS360/APIServer/pull/361)) | **Yes** | Deployed to prod; no 401 spike from unknown callers |
 | **1c** | Close remaining writes; stop honouring client-supplied `created_by` | **Yes** | As above |
@@ -910,14 +910,56 @@ Budget for genuinely touching five to ten modules where tests relied on unauthen
 
 ### Tier A — structured logs (Phase 0, mandatory, no schema)
 
-Implemented in [#372](https://github.com/NGS360/APIServer/pull/372): `core/logger.py` emits one JSON object per line (`LOG_FORMAT=text` for local work) and `core/middleware.py` adds `RequestContextMiddleware`. Elastic Beanstalk already ships stdout to CloudWatch.
+Implemented in [#372](https://github.com/NGS360/APIServer/pull/372): `core/logger.py` emits one JSON object per line (`LOG_FORMAT=text` for local work) and `core/middleware.py` adds `RequestContextMiddleware`.
 
 Fields emitted per request, all under `event: "http.request"`: `timestamp`, `level`, `logger`, `environment`, `request_id`, `method`, `path`, `route_name`, `status`, `duration_ms`, `client_ip`, `user_agent`, `client_app`, `principal`, `auth_method`, `auth_valid`. Phase 4 adds `rbac_mode`, `rbac_decision`, `required_permission` and `scope` to the same line.
 
-Two properties worth knowing before querying these logs:
+**Log streaming is opt-in and must be enabled per environment.** Elastic Beanstalk does *not* ship instance stdout to CloudWatch by default — an earlier revision of this document claimed it does, and that was wrong. Without it these lines sit in `/var/log/web.stdout.log` on the instance, are rotated away, and are lost when an instance is replaced, so the inventory below cannot be built at all. Enable it in `NGS360-APIServer.yaml` on each `AWS::ElasticBeanstalk::Environment` resource:
+
+```yaml
+- Namespace: aws:elasticbeanstalk:cloudwatch:logs
+  OptionName: StreamLogs
+  Value: true
+- Namespace: aws:elasticbeanstalk:cloudwatch:logs
+  OptionName: DeleteOnTerminate    # false: logs must outlive the instance
+  Value: false
+- Namespace: aws:elasticbeanstalk:cloudwatch:logs
+  OptionName: RetentionInDays      # 7 is the floor for the inventory
+  Value: 30
+```
+
+Put this on the environment resources rather than the shared `SharedALBConfigTemplate`, for two reasons: it allows a staged rollout (dev first), and Elastic Beanstalk applies a configuration template at environment *creation*, so editing the template afterwards does not reliably reconfigure environments that already exist. No IAM change is needed — the instance role's `AWSElasticBeanstalkWebTier` grants `CreateLogStream`/`PutLogEvents`, and the service role's `AWSElasticBeanstalkService` grants `CreateLogGroup`/`PutRetentionPolicy`.
+
+The log group is `/aws/elasticbeanstalk/<environment-name>/var/log/web.stdout.log`.
+
+Three properties worth knowing before querying these logs:
+
+- **Messages are syslog-prefixed, so JSON field discovery does not work.** Elastic Beanstalk ships stdout through syslog, which prepends a header:
+
+  ```
+  Aug  5 03:05:04 ip-172-25-131-11 web[12047]: {"timestamp": "...", "event": "http.request", ...}
+  ```
+
+  CloudWatch Logs Insights auto-extracts JSON fields only when the *entire* message is JSON, so `filter event = "http.request"` matches nothing. Extract fields with `parse` instead. This query is verified working:
+
+  ```
+  filter @message like /"event": "http.request"/
+  | parse @message '"route_name": "*"' as route_name
+  | parse @message '"auth_method": "*"' as auth_method
+  | parse @message '"status": *,' as status
+  | stats count() as requests by route_name, auth_method, status
+  | sort requests desc
+  ```
+
+  Add `| filter auth_method = "none"` to isolate the anonymous traffic that gates phase 1.
 
 - **The principal is claimed, not validated.** It comes from the credential itself — a bearer JWT decoded locally for its `sub`, or an API key's non-secret prefix — with no database lookup, so the middleware adds no query to any request. A caller presenting an expired or revoked token still reports its subject, which is the more useful reading for an inventory whose purpose is finding consumers before endpoints close; `auth_valid` distinguishes the cases. Full key values are never logged.
+
 - **`route_name` is the path template, `path` is the concrete URL.** Aggregate on `route_name`, or every project id becomes its own bucket. `/api/health` is excluded entirely, since the load balancer polls it every few seconds.
+
+One caveat when reading the results: `GET /` and other non-API paths are served by nginx from `static/`, and never reach the application, so they do not appear here at all. Only `/api/`, `/docs`, `/redoc` and `/openapi.json` are proxied to the app (see `.platform/nginx/conf.d/elasticbeanstalk/`). An endpoint's absence from this log means it was not called *through the application* — not necessarily that nobody requested that URL.
+
+Interpreting `auth_method` is the point of the exercise. A currently-open route showing `auth_method: jwt` is being called with credentials the server does not yet require, so closing it is low risk. A route showing `auth_method: none` needs its caller identified first — that is the phase 1a work.
 
 This is not only audit — it is the instrument that makes the rollout safe. Without it, Phase 0's blast-radius measurement and Phase 4's denial punch-list are both impossible.
 
