@@ -692,7 +692,7 @@ Two hours of prod traffic once log streaming was enabled, then twelve. This is t
 
 | Caller | User agent | Requests / 12h | Routes |
 |---|---|---|---|
-| `10.189.4.23`, `10.189.0.126`, `10.189.0.12` | `python-requests/2.31-2.32` | 1,330 each | `GET /api/v1/projects`, `GET /api/v1/samples/search` |
+| Airflow prod / dev / UAT — `10.189.4.23`, `10.189.0.126`, `10.189.0.12` | `python-requests/2.31-2.32` | 1,330 each | `GET /api/v1/projects`, `GET /api/v1/samples/search` |
 | `172.25.134.87` | `python-requests/2.33.1` | 197 | `GET /api/v1/jobs/{job_id}` |
 | two browsers (`172.30.x`) | Mozilla | 9 and 7 | incl. `GET /api/v1/files/download` |
 
@@ -704,7 +704,19 @@ Observations that change the plan:
 - **Two browsers made anonymous calls**, including `files/download`. That is a frontend gap rather than a missing service account, and needs a different fix from the rest.
 - Authenticated traffic in the same window was **4,442 requests by API key** and, at that hour, no JWT traffic at all — the SPA is human-driven, so sampling outside working hours says nothing about it.
 
-Host attribution is deferred; owners still need identifying before phase 1b can close anything they touch.
+#### The Airflow callers, identified
+
+The three `10.189.x` hosts are **Airflow servers — one each for dev, UAT and prod — and all three call the *production* NGS360 API.** Worth confirming that is intentional: it means non-production Airflow environments read production project data.
+
+Each issues **exactly 221 requests per hour, every hour, indefinitely**. That is a complete pagination of the project list: 11,040 projects at `per_page=50` is 221 pages. Three environments therefore generate ~663 requests/hour, roughly 15,900 a day, entirely to re-read a dataset that changes slowly.
+
+Consequences for this design:
+
+- **They are GET-only, so they block phase 1d, not 1b or 1c.** Closing writes does not touch them.
+- **They need read credentials in the production tier specifically** — all three, including the dev and UAT instances. Under the model below, `auditor` fits (every call is a read), or a narrower custom role holding just `project:read` and `sample:read`.
+- Because the volume is a fixed hourly scan rather than user-driven traffic, a single denied hour is unmistakable in the logs: the count drops from 221 to 0. That makes them the easiest consumer to verify after cutover.
+
+**A separate efficiency gap, worth fixing regardless of RBAC.** `Project.last_modified` is maintained on every update, but `GET /api/v1/projects` accepts only `page`, `per_page`, `sort_by` and `sort_order` — there is no `modified_after` filter, so a full scan is the only option the API offers. Exposing one would reduce this from 221 requests an hour to approximately one, and would remove most of the load that closing this route has to keep working.
 
 ### Verified Phase 1 blockers
 
@@ -836,7 +848,7 @@ The username-deduplication loop is a pre-existing bug — two identities for one
 | Consumer | Required change | Owner | Blocking |
 |----------|-----------------|-------|----------|
 | **GA4GH WES** | Forward the caller's bearer token on `GET /workflows/{id}`; bound the `/auth/me` token cache to ≤5 min | `GA4GH-WES-API-Service` | **1c/1d** |
-| **Unidentified callers** | Four routes, six source addresses — see *First production inventory*. Each needs an owner and a credential before the route it uses can close | tracing in progress | **1b–1d** |
+| **Airflow (dev, UAT, prod)** | Read credentials in the **production** tier for all three; `auditor` or a `project:read`/`sample:read` role. GET-only, so writes are unaffected | Airflow owners | **1d** |
 | **Frontend SPA** | Route-loader error boundaries; permission-based gating; regenerate the API client. Also two browsers observed calling open routes anonymously, including `files/download` | `NGS360/frontend-ui` | 5 (UX only) |
 | **`APIServer/scripts/*`** | Admin-only; add an `--operator` argument writing one audit row per run | this repo | 3 |
 
