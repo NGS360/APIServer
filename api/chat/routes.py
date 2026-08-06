@@ -7,7 +7,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 from api.auth.deps import CurrentUser
 from api.chat import services
-from api.chat.deps import ChatClientDep, OwnedThreadDep
+from api.chat.deps import ChatClientDep, OwnedThreadDep, RawUserToken
 from api.chat.models import (
     ChatFrameEnvelope,
     ChatRequest,
@@ -21,7 +21,10 @@ router = APIRouter(prefix="/chat", tags=["Chat Endpoints"])
 
 @router.post("")
 async def chat(
-    req: ChatRequest, current_user: CurrentUser, client: ChatClientDep
+    req: ChatRequest,
+    current_user: CurrentUser,
+    client: ChatClientDep,
+    user_token: RawUserToken,
 ) -> JSONResponse:
     """Non-streaming JSON chat for simple clients and tests."""
     # One expression for the caller: thread ownership and the agent's caller
@@ -29,7 +32,9 @@ async def chat(
     # disagree.
     user_id = str(current_user.id)
     run_context = services.build_run_context(req.context, current_user)
-    result = await services.run_chat(req, client, user_id, run_context=run_context)
+    result = await services.run_chat(
+        req, client, user_id, run_context=run_context, user_token=user_token
+    )
     return JSONResponse(result)
 
 
@@ -53,7 +58,10 @@ async def chat(
     },
 )
 async def chat_stream(
-    req: ChatRequest, current_user: CurrentUser, client: LangGraphDep
+    req: ChatRequest,
+    current_user: CurrentUser,
+    client: LangGraphDep,
+    user_token: RawUserToken,
 ) -> StreamingResponse:
     """Streaming chat for the chat UI.
 
@@ -72,7 +80,9 @@ async def chat_stream(
     # authenticated user and nowhere else.
     run_context = services.build_run_context(req.context, current_user)
     return StreamingResponse(
-        services.stream_chat(req, client, thread_id, run_context=run_context),
+        services.stream_chat(
+            req, client, thread_id, run_context=run_context, user_token=user_token
+        ),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
