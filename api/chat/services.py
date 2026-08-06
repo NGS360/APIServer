@@ -44,6 +44,34 @@ from core.config import get_settings
 NON_STREAMING_TIMEOUT_S = 60
 STREAMING_TIMEOUT_S = 120
 
+# Run-config key carrying the caller's own credential to the agent, so its NGS360
+# API tools act as this user and that API's per-user permissions apply. The agent
+# reads exactly this name (NGS360-Agent: agents/ngs360_agent/mcp_user_auth.py);
+# both sides must change together.
+#
+# The `__` prefix and the word "token" are both load-bearing on the agent side:
+# LangGraph copies scalar `configurable` values into persisted checkpoint
+# metadata, skipping only keys starting with `__`, and separately drops keys
+# containing token/key/secret/auth from LangSmith trace metadata. Renaming this
+# can start persisting user credentials.
+USER_TOKEN_CONFIG_KEY = "__ngs360_user_token"
+
+
+def user_run_config(user_token: str | None) -> dict[str, Any] | None:
+    """The run config that makes the agent act as this user.
+
+    None when there is no credential to forward, so the agent falls back to its
+    read-only posture rather than being handed an empty string to treat as one.
+
+    The token reaches LangGraph Platform and is stored on the run row, which is
+    inside that platform's at-rest encryption set. Access tokens are short-lived
+    and a run is capped at STREAMING_TIMEOUT_S, so mid-run expiry is not a
+    practical concern.
+    """
+    if not user_token:
+        return None
+    return {"configurable": {USER_TOKEN_CONFIG_KEY: user_token}}
+
 
 # ---------------------------------------------------------------------------
 # 1. Reading the agent graph's messages
@@ -461,9 +489,17 @@ def build_run_context(context: ChatContext | None, user: User) -> dict[str, Any]
 
 
 async def run_chat(
-    req: ChatRequest, client, user_id: str, run_context: dict[str, Any] | None = None
+    req: ChatRequest,
+    client,
+    user_id: str,
+    run_context: dict[str, Any] | None = None,
+    user_token: str | None = None,
 ) -> dict[str, Any]:
-    """Non-streaming chat: invoke the agent and return the final assistant reply."""
+    """Non-streaming chat: invoke the agent and return the final assistant reply.
+
+    ``user_token`` is the caller's own credential, forwarded so the agent's NGS360
+    API tools act as this user. Omitted, the agent runs read-only.
+    """
     message = latest_user_text(req)
     if not message:
         raise HTTPException(status_code=400, detail="No user message provided")
@@ -479,6 +515,7 @@ async def run_chat(
                 settings.LANGSMITH_ASSISTANT_ID,
                 input={"messages": [{"role": "user", "content": message}]},
                 context=run_context,
+                config=user_run_config(user_token),
                 stream_mode="values",
             ):
                 last_state = chunk.data
@@ -525,6 +562,7 @@ async def stream_chat(
     client,
     thread_id: str | None,
     run_context: dict[str, Any] | None = None,
+    user_token: str | None = None,
 ) -> AsyncGenerator[str, None]:
     """Stream the agent's reply as this API's own SSE frames.
 
@@ -538,6 +576,9 @@ async def stream_chat(
     ``run_context`` is likewise assembled by the route, the only place holding
     the authenticated user: this generator never sees ``CurrentUser``, so it
     cannot build a caller identity out of anything else.
+
+    ``user_token`` is the caller's own credential, forwarded so the agent's NGS360
+    API tools act as this user. Omitted, the agent runs read-only.
     """
     if client is None or thread_id is None:
         yield sse_chunk(ChatFrameError(message="Chat agent is not configured"))
@@ -566,6 +607,7 @@ async def stream_chat(
                 settings.LANGSMITH_ASSISTANT_ID,
                 input={"messages": [{"role": "user", "content": message}]},
                 context=run_context,
+                config=user_run_config(user_token),
                 stream_mode=STREAM_MODE,
             ):
                 kind = stream_event_kind(getattr(chunk, "event", None))

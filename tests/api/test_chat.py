@@ -44,6 +44,9 @@ class FakeRuns:
         # Every runtime context the route sent, likewise. None is recorded as
         # passed: "sent nothing" differs from "sent an empty context".
         self.contexts = []
+        # Every run config the route passed, so a test can assert the caller's
+        # own credential is what the agent runs with.
+        self.configs = []
 
     @property
     def stream_mode(self):
@@ -55,6 +58,11 @@ class FakeRuns:
         """The runtime context the last run was given."""
         return self.contexts[-1] if self.contexts else None
 
+    @property
+    def config(self):
+        """The run config of the last run started."""
+        return self.configs[-1] if self.configs else None
+
     def _default_script(self):
         """Today's behaviour: an intermediate token, then the answer."""
         return [
@@ -63,9 +71,12 @@ class FakeRuns:
             *[_message_event(token) for token in self.tokens],
         ]
 
-    async def stream(self, thread_id, assistant_id, input, stream_mode, context=None):
+    async def stream(
+        self, thread_id, assistant_id, input, stream_mode, context=None, config=None
+    ):
         self.stream_modes.append(stream_mode)
         self.contexts.append(context)
+        self.configs.append(config)
         if self.raise_exc is not None:
             raise self.raise_exc
         modes = stream_mode if isinstance(stream_mode, list) else [stream_mode]
@@ -808,6 +819,128 @@ def test_chat_stream_reports_upstream_error(client, fake_langgraph):
     assert response.status_code == 200
     chunks = _sse_data_chunks(response.text)
     assert any(c["type"] == "error" for c in chunks)
+
+
+# --- The agent runs as the caller, not as a service account ------------------
+#
+# The agent's NGS360 API tools inherit the caller's own permissions, which only
+# works if the caller's raw credential reaches the run. It travels on the run
+# config under a key whose exact name is load-bearing: LangGraph keeps `__`-
+# prefixed configurable keys out of checkpoint metadata, and keys containing
+# "token" out of LangSmith traces. Renaming it would start persisting user
+# credentials, so the name is asserted literally here rather than imported.
+
+
+USER_TOKEN_KEY = "__ngs360_user_token"
+BEARER = "a-user-jwt"
+
+
+def _auth():
+    return {"Authorization": f"Bearer {BEARER}"}
+
+
+def test_chat_json_runs_as_the_calling_user(client, fake_langgraph):
+    """The caller's own bearer token is what the agent's API tools act with."""
+    fake = fake_langgraph(FakeLangGraphClient())
+
+    response = client.post(
+        "/api/v1/chat", json=_envelope("How many projects?"), headers=_auth()
+    )
+
+    assert response.status_code == 200
+    assert fake.runs.config == {"configurable": {USER_TOKEN_KEY: BEARER}}
+
+
+def test_chat_stream_runs_as_the_calling_user(client, fake_langgraph):
+    """The streaming route forwards the credential too, not just the JSON one."""
+    fake = fake_langgraph(FakeLangGraphClient())
+
+    response = client.post(
+        "/api/v1/chat/stream", json=_envelope("hi"), headers=_auth()
+    )
+
+    assert response.status_code == 200
+    _sse_data_chunks(response.text)  # drain the body so the run completes
+    assert fake.runs.config == {"configurable": {USER_TOKEN_KEY: BEARER}}
+
+
+def test_an_api_key_is_forwarded_verbatim(client, fake_langgraph):
+    """An ngs360_ API key is a credential the NGS360 API accepts, so replay it as-is.
+
+    Nothing here inspects or rewrites the credential — CurrentUser on the same
+    route has already rejected the request if it is not good.
+    """
+    fake = fake_langgraph(FakeLangGraphClient())
+
+    client.post(
+        "/api/v1/chat",
+        json=_envelope("hi"),
+        headers={"Authorization": "Bearer ngs360_abc123"},
+    )
+
+    assert fake.runs.config["configurable"][USER_TOKEN_KEY] == "ngs360_abc123"
+
+
+@pytest.mark.parametrize("path", ["/api/v1/chat", "/api/v1/chat/stream"])
+def test_no_credential_means_no_config_at_all(client, fake_langgraph, path):
+    """With nothing to forward, the agent gets no config and stays read-only.
+
+    Not an empty string: the agent treats a present-but-empty token as no token
+    anyway, and passing one would make the run config claim a user it cannot name.
+    """
+    fake = fake_langgraph(FakeLangGraphClient())
+
+    response = client.post(path, json=_envelope("hi"))
+
+    assert response.status_code == 200
+    if path.endswith("/stream"):
+        _sse_data_chunks(response.text)
+    assert fake.runs.config is None
+
+
+@pytest.mark.parametrize("credential", [None, ""])
+def test_user_run_config_treats_an_absent_credential_as_no_config(credential):
+    """Directly, so the empty-string case is pinned and not only implied."""
+    from api.chat.services import user_run_config
+
+    assert user_run_config(credential) is None
+
+
+def test_the_token_travels_only_on_the_run_config(client, fake_langgraph):
+    """It must not reach thread metadata, which is persisted unencrypted.
+
+    The run config is in LangGraph Platform's at-rest encryption set; thread
+    metadata is not, and it is what the ownership check reads back on every turn.
+    """
+    fake = fake_langgraph(FakeLangGraphClient())
+
+    client.post("/api/v1/chat", json=_envelope("hi"), headers=_auth())
+
+    assert BEARER not in json.dumps(fake.threads.threads)
+
+
+@pytest.mark.parametrize("path", ["/api/v1/chat", "/api/v1/chat/stream"])
+def test_the_credential_and_the_context_reach_one_run_together(
+    client, fake_langgraph, path
+):
+    """Two independent channels on the same call: neither displaces the other.
+
+    The credential rides `config`; the caller identity and attached context ride
+    `context`. Both must arrive on every run.
+
+    The credential must not appear in `context`: it authorizes the agent's API
+    calls and is not part of describing who is asking.
+    """
+    fake = fake_langgraph(FakeLangGraphClient())
+
+    response = client.post(path, json=_envelope("hi"), headers=_auth())
+
+    assert response.status_code == 200
+    if path.endswith("/stream"):
+        _sse_data_chunks(response.text)
+    assert fake.runs.config == {"configurable": {USER_TOKEN_KEY: BEARER}}
+    assert fake.runs.context["caller"]["username"] == "testuser"
+    assert BEARER not in json.dumps(fake.runs.context)
 
 
 # --- The agent's tool work is invisible, except for the names ----------------
