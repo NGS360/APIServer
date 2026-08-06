@@ -692,15 +692,15 @@ Two hours of prod traffic once log streaming was enabled, then twelve. This is t
 
 | Caller | User agent | Requests / 12h | Routes |
 |---|---|---|---|
-| Airflow prod / dev / UAT — `10.189.4.23`, `10.189.0.126`, `10.189.0.12` | `python-requests/2.31-2.32` | 1,330 each | `GET /api/v1/projects`, `GET /api/v1/samples/search` |
-| `172.25.134.87` | `python-requests/2.33.1` | 197 | `GET /api/v1/jobs/{job_id}` |
-| two browsers (`172.30.x`) | Mozilla | 9 and 7 | incl. `GET /api/v1/files/download` |
+| Airflow, three environments | `python-requests/2.31-2.32` | 1,330 each | `GET /api/v1/projects`, `GET /api/v1/samples/search` |
+| Batch event Lambda | `python-requests/2.33.1` | 197 | `PUT /api/v1/jobs/{job_id}` |
+| two browsers | Mozilla | 9 and 7 | incl. `GET /api/v1/files/download` |
 
 Observations that change the plan:
 
 - **Anonymous traffic is concentrated, not diffuse.** The design assumed consumer discovery across 73 open routes; in practice four routes carry all of it and every other open endpoint saw zero anonymous requests. Phase 1d is a much smaller problem than budgeted.
-- **The three `10.189.x` hosts are one system**, not three clients — identical request counts and routes, differing only in `requests` minor version, and on a different subnet from everything else.
-- **`172.25.134.87` polls job status from inside the application subnet**, so it is most likely a Batch job or Lambda. It did not appear in the first two-hour sample, which is the concrete argument for the seven-day window: periodic callers are invisible in short ones.
+- **The three Airflow hosts behave identically** — the same request counts and routes, differing only in `requests` minor version — so they are one integration deployed three times rather than three separate clients.
+- **The Batch event Lambda writes job status**, and its traffic did not appear in the first two-hour sample at all. That is the concrete argument for the seven-day window: periodic callers are invisible in short ones.
 - **Two browsers made anonymous calls**, including `files/download`. That is a frontend gap rather than a missing service account, and needs a different fix from the rest.
 - Authenticated traffic in the same window was **4,442 requests by API key** and, at that hour, no JWT traffic at all — the SPA is human-driven, so sampling outside working hours says nothing about it.
 
@@ -768,7 +768,7 @@ Dry-run necessarily lets a should-be-denied write succeed. That is acceptable fo
 
 `.ebextensions/db-migrate.config` runs `alembic upgrade head` on deploy — `leader_only`, from `/var/app/staging`, before the application is promoted to `/var/app/current`. It was untracked in git, so it had never shipped and migrations were applied by hand; it is committed in [#363](https://github.com/NGS360/APIServer/pull/363) and repaired in [#371](https://github.com/NGS360/APIServer/pull/371).
 
-**Verified in all three tiers on 2026-08-04.** `ngs360_dev`, `ngs360_staging`, and `ngs360` were all at head `d7e3f9a2b1c4` beforehand, so `upgrade head` was a no-op everywhere — which made landing the hook a free exercise of the mechanism, proving the `container_command` runs, loads the deployment environment, resolves `SQLALCHEMY_DATABASE_URI` through Secrets Manager, and reaches the database, without changing any schema. Each run took roughly 4 seconds and logged `d7e3f9a2b1c4 (head)` on both sides of the upgrade with no `Running upgrade` line. This is the mechanism every RBAC revision below will ride on, and it is now known to work rather than assumed to.
+**Verified in all three tiers on 2026-08-04.** All three tier databases were at head `d7e3f9a2b1c4` beforehand, so `upgrade head` was a no-op everywhere — which made landing the hook a free exercise of the mechanism, proving the `container_command` runs, loads the deployment environment, resolves `SQLALCHEMY_DATABASE_URI` through Secrets Manager, and reaches the database, without changing any schema. Each run took roughly 4 seconds and logged `d7e3f9a2b1c4 (head)` on both sides of the upgrade with no `Running upgrade` line. This is the mechanism every RBAC revision below will ride on, and it is now known to work rather than assumed to.
 
 Three properties it establishes:
 
