@@ -14,6 +14,7 @@ import httpx
 import pytest
 from langgraph_sdk.errors import InternalServerError, NotFoundError
 
+from api.chat.models import MAX_CONTEXT_REFERENCES
 from core.deps import get_langgraph_client
 from main import app
 
@@ -40,11 +41,19 @@ class FakeRuns:
         self.hang_s = hang_s
         # Every stream_mode the route asked for, so a test can assert on it.
         self.stream_modes = []
+        # Every runtime context the route sent, likewise. None is recorded as
+        # passed: "sent nothing" differs from "sent an empty context".
+        self.contexts = []
 
     @property
     def stream_mode(self):
         """The single mode the streaming route asked for."""
         return self.stream_modes[-1] if self.stream_modes else None
+
+    @property
+    def context(self):
+        """The runtime context the last run was given."""
+        return self.contexts[-1] if self.contexts else None
 
     def _default_script(self):
         """Today's behaviour: an intermediate token, then the answer."""
@@ -54,8 +63,9 @@ class FakeRuns:
             *[_message_event(token) for token in self.tokens],
         ]
 
-    async def stream(self, thread_id, assistant_id, input, stream_mode):
+    async def stream(self, thread_id, assistant_id, input, stream_mode, context=None):
         self.stream_modes.append(stream_mode)
+        self.contexts.append(context)
         if self.raise_exc is not None:
             raise self.raise_exc
         modes = stream_mode if isinstance(stream_mode, list) else [stream_mode]
@@ -305,11 +315,12 @@ def _sse_data_chunks(text):
     return chunks
 
 
-def _envelope(text="What is NGS360?", thread_id=None, chat_id="chat-1"):
+def _envelope(text="What is NGS360?", thread_id=None, chat_id="chat-1", context=None):
     """Build the Vercel AI SDK useChat request body the frontend sends.
 
     ``id`` is the SDK's own conversation id and is not the thread. ``thread_id``
-    is ours, attached via sendMessage's ``body``; omitting it starts a new thread.
+    and ``context`` are ours, attached via sendMessage's ``body``; omitting the
+    thread id starts a new thread.
     """
     body = {
         "id": chat_id,
@@ -320,6 +331,8 @@ def _envelope(text="What is NGS360?", thread_id=None, chat_id="chat-1"):
     }
     if thread_id is not None:
         body["thread_id"] = str(thread_id)
+    if context is not None:
+        body["context"] = context
     return body
 
 
@@ -1386,6 +1399,157 @@ def test_chat_requires_auth(unauthenticated_client, fake_langgraph):
 def test_chat_rejects_missing_messages(client, fake_langgraph):
     """An envelope with no messages is rejected by schema validation (422)."""
     response = client.post("/api/v1/chat", json={"id": "chat-1", "messages": []})
+    assert response.status_code == 422
+
+
+# --- The runtime context sent with every run --------------------------------
+#
+# What the user attached travels as LangGraph runtime context: per-run, not in
+# the message text and not in graph state. Two origins meet here, and these
+# tests keep them apart — page and references are whatever the browser sent,
+# the caller must be unforgeable from the body.
+#
+# The failure mode they guard against: an agent that does not declare a
+# context_schema drops an unknown context silently, so a wrong key name errors
+# nowhere. Only a test can tell us the payload still has the shape it reads.
+
+
+def test_chat_sends_the_attached_context_to_the_agent(client, fake_langgraph):
+    fake = fake_langgraph(FakeLangGraphClient())
+
+    client.post(
+        "/api/v1/chat",
+        json=_envelope(
+            "how many samples?",
+            context={
+                "page": {"type": "project", "id": "P-20230314-0004"},
+                "references": [{"type": "run", "id": "R-2"}],
+            },
+        ),
+    )
+
+    context = fake.runs.context
+    assert context["page"] == {"type": "project", "id": "P-20230314-0004"}
+    assert context["references"] == [{"type": "run", "id": "R-2"}]
+
+
+def test_chat_stream_sends_the_attached_context_to_the_agent(client, fake_langgraph):
+    """Both routes, because the streaming one is the only one the UI uses."""
+    fake = fake_langgraph(FakeLangGraphClient())
+
+    _stream_chunks(
+        client,
+        text="how many samples?",
+        context={"page": {"type": "project", "id": "P-20230314-0004"}},
+    )
+
+    assert fake.runs.context["page"] == {"type": "project", "id": "P-20230314-0004"}
+
+
+def test_chat_names_the_authenticated_caller(client, fake_langgraph, chat_user):
+    """Who is asking is added server-side, on every run."""
+    fake = fake_langgraph(FakeLangGraphClient())
+
+    client.post("/api/v1/chat", json=_envelope("how many projects?"))
+
+    assert fake.runs.context["caller"] == {
+        "user_id": str(TEST_USER_ID),
+        "username": "testuser",
+    }
+
+
+def test_chat_sends_the_caller_even_with_nothing_attached(client, fake_langgraph):
+    """No chips is not the same as no context — "my projects" still needs the user."""
+    fake = fake_langgraph(FakeLangGraphClient())
+
+    client.post("/api/v1/chat", json=_envelope("how many projects?"))
+
+    assert fake.runs.context is not None
+    assert "caller" in fake.runs.context
+    assert "page" not in fake.runs.context
+    assert "references" not in fake.runs.context
+
+
+def test_chat_ignores_a_caller_supplied_in_the_body(client, fake_langgraph, chat_user):
+    """The decisive one: a body-supplied caller would let any authenticated user
+    claim to be anyone else, which is worse than sending no identity at all."""
+    fake = fake_langgraph(FakeLangGraphClient())
+
+    client.post(
+        "/api/v1/chat",
+        json=_envelope(
+            "how many projects?",
+            context={
+                "caller": {"user_id": str(OTHER_USER_ID), "username": "someone-else"},
+                "page": {"type": "project", "id": "P-20230314-0004"},
+            },
+        ),
+    )
+
+    assert fake.runs.context["caller"] == {
+        "user_id": str(TEST_USER_ID),
+        "username": "testuser",
+    }
+
+
+def test_caller_matches_the_thread_owner(client, fake_langgraph, chat_user):
+    """One truth, two homes: thread metadata records the owner, context the
+    asker. Both come from the same user in the same request, so a disagreement
+    between them is a bug rather than a state to tolerate."""
+    fake = fake_langgraph(FakeLangGraphClient())
+
+    response = client.post("/api/v1/chat", json=_envelope("how many projects?"))
+
+    thread_id = response.json()["thread_id"]
+    owner = fake.threads.threads[thread_id]["ngs360_user_id"]
+    assert fake.runs.context["caller"]["user_id"] == owner
+
+
+def test_chat_forwards_a_samples_project(client, fake_langgraph):
+    """A sample id is unique only within a project, so it travels with one."""
+    fake = fake_langgraph(FakeLangGraphClient())
+
+    client.post(
+        "/api/v1/chat",
+        json=_envelope(
+            "tell me about it",
+            context={
+                "references": [
+                    {"type": "sample", "id": "S-9", "project_id": "P-20230314-0004"}
+                ]
+            },
+        ),
+    )
+
+    assert fake.runs.context["references"] == [
+        {"type": "sample", "id": "S-9", "project_id": "P-20230314-0004"}
+    ]
+
+
+def test_chat_rejects_an_unknown_entity_type(client, fake_langgraph):
+    """An unknown kind is a 422 here rather than a surprise at the agent."""
+    response = client.post(
+        "/api/v1/chat",
+        json=_envelope(context={"page": {"type": "database", "id": "ngs360"}}),
+    )
+
+    assert response.status_code == 422
+
+
+def test_chat_rejects_more_references_than_the_cap(client, fake_langgraph):
+    """Rejected, not truncated: silently dropping context is the bug being fixed."""
+    response = client.post(
+        "/api/v1/chat",
+        json=_envelope(
+            context={
+                "references": [
+                    {"type": "project", "id": f"P-{n:04d}"}
+                    for n in range(MAX_CONTEXT_REFERENCES + 1)
+                ]
+            }
+        ),
+    )
+
     assert response.status_code == 422
 
 

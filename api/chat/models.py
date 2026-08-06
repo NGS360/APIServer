@@ -20,21 +20,41 @@ from pydantic import BaseModel, ConfigDict, Field, RootModel
 # ---------------------------------------------------------------------------
 
 
-class ChatContextEntity(BaseModel):
-    """An entity attached to a chat message: type ("project", "run", "sample",
-    "user", ...) and its id."""
+# Define accepted chat entity types
+ChatEntityType = Literal["project", "run", "sample", "job", "user"]
 
-    type: str
+# Limits the number of context references that can be pushed
+MAX_CONTEXT_REFERENCES = 20
+
+
+class ChatContextEntity(BaseModel):
+    """An entity attached to a chat message: its kind and its id.
+
+    Ids are business keys (``project.project_id``, ``users.username``, ...), not
+    the uuid primary keys, which the public API does not expose.
+
+    ``project_id`` scopes a sample, whose id is unique only within a project (i.e. sample).
+    Ignored for every other kind.
+    """
+
+    type: ChatEntityType
     id: str
+    project_id: str | None = None
 
 
 class ChatContext(BaseModel):
     """Context the user attached when sending a message: the page they're on
     and any entities they referenced via "@/#", so the assistant can scope its
-    answer."""
+    answer.
+
+    All user-controlled: it comes from the request body. Who is asking is not
+    part of it — ``services.build_run_context`` adds that from the session.
+    """
 
     page: ChatContextEntity | None = None
-    references: list[ChatContextEntity] = []
+    references: list[ChatContextEntity] = Field(
+        default=[], max_length=MAX_CONTEXT_REFERENCES
+    )
 
 
 class UIMessagePart(BaseModel):

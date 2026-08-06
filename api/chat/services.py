@@ -27,7 +27,9 @@ from typing import Any, AsyncGenerator
 from fastapi import HTTPException
 from langgraph_sdk.errors import NotFoundError
 
+from api.auth.models import User
 from api.chat.models import (
+    ChatContext,
     ChatFrame,
     ChatFrameDone,
     ChatFrameError,
@@ -435,7 +437,32 @@ def latest_user_text(req: ChatRequest) -> str:
     return ""
 
 
-async def run_chat(req: ChatRequest, client, user_id: str) -> dict[str, Any]:
+def build_run_context(context: ChatContext | None, user: User) -> dict[str, Any]:
+    """Assemble the runtime context handed to the agent for one run.
+
+    The split between origins is the point: ``page`` and ``references`` are
+    whatever the browser sent, while ``caller`` comes from the authenticated
+    session and is never read from the body — a body-supplied identity would let
+    a crafted request claim to be anyone.
+    """
+    payload: dict[str, Any] = {
+        "caller": {"user_id": str(user.id), "username": user.username},
+    }
+    if context is None:
+        return payload
+
+    if context.page is not None:
+        payload["page"] = context.page.model_dump(exclude_none=True)
+    if context.references:
+        payload["references"] = [
+            reference.model_dump(exclude_none=True) for reference in context.references
+        ]
+    return payload
+
+
+async def run_chat(
+    req: ChatRequest, client, user_id: str, run_context: dict[str, Any] | None = None
+) -> dict[str, Any]:
     """Non-streaming chat: invoke the agent and return the final assistant reply."""
     message = latest_user_text(req)
     if not message:
@@ -451,6 +478,7 @@ async def run_chat(req: ChatRequest, client, user_id: str) -> dict[str, Any]:
                 thread_id,
                 settings.LANGSMITH_ASSISTANT_ID,
                 input={"messages": [{"role": "user", "content": message}]},
+                context=run_context,
                 stream_mode="values",
             ):
                 last_state = chunk.data
@@ -493,7 +521,10 @@ def sse_chunk(frame: ChatFrame) -> str:
 
 
 async def stream_chat(
-    req: ChatRequest, client, thread_id: str | None
+    req: ChatRequest,
+    client,
+    thread_id: str | None,
+    run_context: dict[str, Any] | None = None,
 ) -> AsyncGenerator[str, None]:
     """Stream the agent's reply as this API's own SSE frames.
 
@@ -503,6 +534,10 @@ async def stream_chat(
     ``thread_id`` is resolved by the route so an ownership failure can be a real
     HTTP status — once the body has started, every error has to be an in-band
     error frame on a 200. It is None only when chat is unconfigured.
+
+    ``run_context`` is likewise assembled by the route, the only place holding
+    the authenticated user: this generator never sees ``CurrentUser``, so it
+    cannot build a caller identity out of anything else.
     """
     if client is None or thread_id is None:
         yield sse_chunk(ChatFrameError(message="Chat agent is not configured"))
@@ -530,6 +565,7 @@ async def stream_chat(
                 thread_id,
                 settings.LANGSMITH_ASSISTANT_ID,
                 input={"messages": [{"role": "user", "content": message}]},
+                context=run_context,
                 stream_mode=STREAM_MODE,
             ):
                 kind = stream_event_kind(getattr(chunk, "event", None))
