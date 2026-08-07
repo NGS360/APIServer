@@ -706,7 +706,7 @@ Observations that change the plan:
 
 #### The Airflow callers, identified
 
-The three `10.189.x` hosts are **Airflow servers — one each for dev, UAT and prod — and all three call the *production* NGS360 API.** Worth confirming that is intentional: it means non-production Airflow environments read production project data.
+The three anonymous `python-requests` callers are **Airflow servers — one each for dev, UAT and prod — and all three call the *production* NGS360 API.** Worth confirming that is intentional: it means non-production Airflow environments read production project data.
 
 Each issues **exactly 221 requests per hour, every hour, indefinitely**. That is a complete pagination of the project list: 11,040 projects at `per_page=50` is 221 pages. Three environments therefore generate ~663 requests/hour, roughly 15,900 a day, entirely to re-read a dataset that changes slowly.
 
