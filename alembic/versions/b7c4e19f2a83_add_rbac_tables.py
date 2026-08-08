@@ -118,18 +118,23 @@ def downgrade() -> None:
     only authorization data, which the seeding step recreates on next startup.
     Grants themselves are lost, which is why the operational rollback for RBAC is
     the RBAC_MODE flag rather than a downgrade.
+
+    Deliberately no drop_index() calls, though autogenerate would emit them.
+
+    They are unnecessary: DROP TABLE removes the table's indexes with it. On MySQL
+    they are also illegal. InnoDB requires an index on a foreign key's referencing
+    column and uses that index to enforce the constraint, so dropping it while the
+    FK exists fails with:
+
+        (1553, "Cannot drop index 'ix_project_member_user_id':
+                needed in a foreign key constraint")
+
+    Every index here except ix_role_name and ix_role_scope sits on an FK column,
+    so this applies to almost all of them. Note SQLite does not reproduce it -- it
+    neither requires an index to enforce a foreign key nor refuses the drop -- so
+    a SQLite round-trip passes and gives false confidence. Verified against MySQL.
     """
-    op.drop_index(op.f('ix_project_member_user_id'), table_name='project_member')
-    op.drop_index(op.f('ix_project_member_project_id'), table_name='project_member')
     op.drop_table('project_member')
-
-    op.drop_index(op.f('ix_user_role_user_id'), table_name='user_role')
-    op.drop_index(op.f('ix_user_role_role_id'), table_name='user_role')
     op.drop_table('user_role')
-
-    op.drop_index(op.f('ix_role_permission_role_id'), table_name='role_permission')
     op.drop_table('role_permission')
-
-    op.drop_index(op.f('ix_role_scope'), table_name='role')
-    op.drop_index(op.f('ix_role_name'), table_name='role')
     op.drop_table('role')
