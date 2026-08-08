@@ -670,7 +670,7 @@ Phase 1 — closing the 73 remaining open routes — is the highest-value securi
 
 | Phase | Content | Breaking | Done when |
 |-------|---------|----------|-----------|
-| **0** | ~~Commit `.ebextensions/db-migrate.config`~~ ([#363](https://github.com/NGS360/APIServer/pull/363), [#371](https://github.com/NGS360/APIServer/pull/371); verified in all three tiers 2026-08-04); ~~add `ENVIRONMENT`~~; ~~JSON logging + request-ID middleware~~; ~~identity logging on the open routes~~ ([#372](https://github.com/NGS360/APIServer/pull/372)); ~~enable CloudWatch log streaming~~ (`StreamLogs`, per environment — see *Tier A*) | No | 7 days of production logs exist and can answer "which open routes received anonymous traffic, from which user agents and IPs" |
+| **0** | ~~Automatic migration on deploy~~ — **withdrawn**; migrations are applied out of band, see *Prerequisite: applying migrations*; ~~add `ENVIRONMENT`~~; ~~JSON logging + request-ID middleware~~; ~~identity logging on the open routes~~ ([#372](https://github.com/NGS360/APIServer/pull/372)); ~~enable CloudWatch log streaming~~ (`StreamLogs`, per environment — see *Tier A*) | No | 7 days of production logs exist and can answer "which open routes received anonymous traffic, from which user agents and IPs" |
 | **1a** | Create service-account users and API keys; land and deploy consumer changes **while the endpoints are still open** | No | Logs show zero anonymous traffic from known consumers in all three tiers |
 | **1b** | Close destructive and configuration writes: every `DELETE` (`PUT /settings/{key}` already done in [#361](https://github.com/NGS360/APIServer/pull/361)) | **Yes** | Deployed to prod; no 401 spike from unknown callers |
 | **1c** | Close remaining writes; stop honouring client-supplied `created_by` | **Yes** | As above |
@@ -764,24 +764,53 @@ Dry-run necessarily lets a should-be-denied write succeed. That is acceptable fo
 
 ## Migration
 
-### Prerequisite: automatic migration on deploy
+### Prerequisite: applying migrations
 
-`.ebextensions/db-migrate.config` runs `alembic upgrade head` on deploy — `leader_only`, from `/var/app/staging`, before the application is promoted to `/var/app/current`. It was untracked in git, so it had never shipped and migrations were applied by hand; it is committed in [#363](https://github.com/NGS360/APIServer/pull/363) and repaired in [#371](https://github.com/NGS360/APIServer/pull/371).
+**Migrations are applied out of band, by an operator with a privileged credential.** They are deliberately *not* run by the deploy.
 
-**Verified in all three tiers on 2026-08-04.** All three tier databases were at head `d7e3f9a2b1c4` beforehand, so `upgrade head` was a no-op everywhere — which made landing the hook a free exercise of the mechanism, proving the `container_command` runs, loads the deployment environment, resolves `SQLALCHEMY_DATABASE_URI` through Secrets Manager, and reaches the database, without changing any schema. Each run took roughly 4 seconds and logged `d7e3f9a2b1c4 (head)` on both sides of the upgrade with no `Running upgrade` line. This is the mechanism every RBAC revision below will ride on, and it is now known to work rather than assumed to.
+The `.ebextensions` hook added in [#363](https://github.com/NGS360/APIServer/pull/363) and repaired in [#371](https://github.com/NGS360/APIServer/pull/371) has been removed, because it could never have worked for a revision that changes the schema. Alembic takes its URL from `SQLALCHEMY_DATABASE_URI`, which is the application's own credential, and that user is granted `SELECT, INSERT, UPDATE, DELETE` only. Any DDL fails:
 
-Three properties it establishes:
+```
+(1142, "CREATE command denied to user ... for table 'role'")
+```
 
-- **A failing migration fails the deploy.** `set -eo pipefail` plus a non-zero alembic exit aborts the container command, so Elastic Beanstalk will not promote that instance. This is the desired behaviour — better than serving new code against an old schema — but a bad revision blocks deploys until it is fixed forward. Demonstrated three times over while getting the hook working.
-- **Backward compatibility is structural, not conventional.** Migrations run pre-promotion on the leader only, with no blue/green, so old code always meets the new schema on the remaining instances. The additive-only rule in *Revision ordering* below is enforced by the deploy topology, not by discipline.
-- **Failures are legible.** The hook logs its working directory, the count of environment properties loaded, the selected virtualenv, and `alembic current` before and after. Command output lands in `/var/log/cfn-init-cmd.log`; `/var/log/cfn-init.log` records only pass/fail, which is worth knowing before debugging a failed revision.
+That privilege split is correct and worth keeping: the application runtime should not hold `DROP TABLE`. The hook was simply built on the wrong credential. Rather than granting the runtime DDL rights — on a project whose premise is least privilege — migrations move to an explicit operator step.
 
-Two hazards found while getting this working, both relevant to anyone editing the hook:
+**Why this was not caught earlier, and it matters for how claims here are read.** The hook was verified in all three tiers, but every run was a no-op: `upgrade head` with nothing to apply. That exercised connectivity, environment parsing, virtualenv resolution and Secrets Manager, and never once executed DDL. An earlier revision of this document said the mechanism was "now known to work rather than assumed to". It was known to *connect*, not to *migrate*. A no-op migration cannot validate a migration path.
 
-- **`/opt/elasticbeanstalk/deployment/env` must be parsed, not sourced.** It is a plain `KEY=VALUE` list with unquoted values, so sourcing executes them: a property whose value is `Bristol-Myers Squibb` is read as an assignment plus a command and exits 127, and a value containing `$(...)` would be executed outright. This defeated the hook on its first two real deploys.
-- **Do not select the virtualenv with `ls -d /var/app/venv/*/ | head -n 1`.** A stale venv from an earlier deploy can sort first and win. The hook picks the newest directory that actually contains `bin/alembic`.
+#### The procedure
 
-Separately, the dependency set that deploys is now derived from `uv.lock` and enforced by a CI drift check ([#370](https://github.com/NGS360/APIServer/pull/370)). Before that, `requirements.txt` had drifted 43 packages from the lock, so production ran dependencies CI never exercised — worth knowing because the RBAC phases below assume that what passes CI is what deploys.
+Per tier, **before** deploying code that depends on the new schema:
+
+```bash
+# With a credential holding CREATE/ALTER/DROP/INDEX/REFERENCES on the schema
+SQLALCHEMY_DATABASE_URI=<privileged-uri> alembic upgrade head
+SQLALCHEMY_DATABASE_URI=<privileged-uri> alembic current   # confirm
+```
+
+Then deploy. The ordering matters in one direction only: because every revision is additive, old code runs happily against the new schema, so migrating first is always safe. Deploying first is not.
+
+#### The safety this gives up, and what replaces it
+
+Automation guaranteed the schema and the code moved together. Removing it means nothing structurally prevents deploying code that expects a table the database does not have.
+
+`core/schema_version.py` makes that visible instead of preventing it. At startup the applied revision is compared with the newest revision in `alembic/versions`, and a mismatch is logged at ERROR:
+
+```
+SCHEMA MISMATCH: database is at revision <applied> but this code expects <expected>.
+Endpoints touching newly added tables or columns will fail.
+```
+
+Logged rather than fatal, deliberately: refusing to start would turn a forgotten migration into a full outage, whereas the real failure mode is partial — most endpoints keep working and the ones touching new tables return 500s. A CloudWatch alarm on that message closes the loop, and is cheap given the structured logging from phase 0.
+
+The check also reports a diverged migration history (multiple alembic heads), which has no single expected schema.
+
+#### Properties that still hold for every RBAC revision
+
+- **Additive-only revisions remain mandatory.** Old code now meets the new schema by construction, since migrating precedes deploying.
+- **MySQL DDL is not transactional.** A revision failing halfway leaves partial state with no rollback, which is why the RBAC revisions are split into independent units rather than one.
+- **`alembic downgrade` is not the rollback plan.** See *Rollback* below.
+- **`drop_index` before `drop_table` does not work on MySQL.** InnoDB requires an index on a foreign key's referencing column and refuses to drop it while the constraint exists (error 1553). `DROP TABLE` removes the indexes anyway, so the calls are both unnecessary and illegal. SQLite reproduces neither behaviour, so a SQLite round-trip passes while proving nothing — see [#379](https://github.com/NGS360/APIServer/issues/379).
 
 ### Revision ordering
 
@@ -1106,7 +1135,7 @@ Deliberately out of scope for v1:
 | `alembic/versions/rbac_0002_user_shells.py` | Shell users for backfill targets |
 | `alembic/versions/rbac_0003_backfill_members.py` | Membership backfill and the unresolved report |
 | `alembic/versions/rbac_0004_constraints.py` | Constraints and indexes, one release later |
-| `.ebextensions/db-migrate.config` | Runs `alembic upgrade head` on deploy, `leader_only`, pre-promotion; [#363](https://github.com/NGS360/APIServer/pull/363) + [#371](https://github.com/NGS360/APIServer/pull/371). Verified in all three tiers |
+| `core/schema_version.py` | Startup comparison of applied vs expected alembic revision; logs a mismatch loudly, since migrations are applied out of band |
 | `scripts/grant_role.py` | Break-glass role assignment CLI |
 | `tests/conftest.py` | Consolidated client fixtures, persisted users, `client_as()` factory |
 | `tests/api/test_rbac_resolution.py` | Permission-resolution matrix |
