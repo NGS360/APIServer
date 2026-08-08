@@ -10,6 +10,7 @@ from core.config import get_settings
 from core.db import engine
 
 from core.opensearch import get_opensearch_client, init_indexes
+from core.schema_version import check_schema_version
 from core.langgraph import get_langgraph_client
 from core.logger import logger
 
@@ -112,6 +113,14 @@ async def lifespan(app: FastAPI):
         logger.info("Environment variables synced successfully")
     except Exception as e:
         logger.warning(f"Failed to sync environment variables: {e}")
+
+    # Is the schema at the revision this code expects?
+    #
+    # Migrations are applied out of band by an operator with DDL privileges --
+    # the application's database user holds DML grants only. That decouples
+    # deploying code from migrating the schema, so this logs loudly when the two
+    # have drifted rather than letting the mismatch surface as scattered 500s.
+    check_schema_version(engine)
 
     # Reconcile the builtin RBAC roles with api/rbac/roles.py.
     #
