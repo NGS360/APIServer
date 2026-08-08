@@ -31,6 +31,7 @@ from api.jobs.models import BatchJob
 from api.qcmetrics.models import (
     QCRecord, QCRecordMetadata, QCMetric, QCMetricValue, QCMetricSample,
 )
+from api.rbac.models import Role, RolePermission, UserRole, ProjectMember
 
 # Import Base from your SQLModel setup
 #from core.db import Base
