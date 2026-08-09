@@ -31,7 +31,7 @@ at 5.4%. project.created_by resolves to a user for only 24.4% of projects, versu
 ~48% for the owner attributes, which is why attributes are preferred.
 
 Idempotent: every insert is guarded by NOT EXISTS, and rows are tagged
-source='migration' so the downgrade can remove exactly what this added.
+source='MIGRATION' so the downgrade can remove exactly what this added.
 
 Revision ID: c3a81d47e56f
 Revises: b7c4e19f2a83
@@ -53,6 +53,15 @@ depends_on: Union[str, Sequence[str], None] = None
 OWNER_KEYS = ("'businessowner'", "'business owner'", "'dataowner'", "'data owner'")
 ANALYST_KEYS = ("'ngsanalyst'", "'ngs analyst'", "'tbioanalyst'", "'tbio analyst'",
                 "'createby'", "'createdby'")
+
+# project_member.source is written as 'MIGRATION', not 'migration'.
+#
+# GrantSource.MIGRATION has the value "migration", but SQLAlchemy's Enum stores
+# the member *name*, so the column is enum('MANUAL','BOOTSTRAP','MIGRATION',
+# 'DIRECTORY') and every row the ORM writes holds the uppercase form. Lowercase
+# happens to work today only because the column collation is case-insensitive;
+# on a binary collation the INSERT would fail and the downgrade would silently
+# match nothing, leaving these rows behind.
 
 
 def _role_id(conn, name: str):
@@ -93,7 +102,7 @@ def upgrade() -> None:
     # additional named owners are added as contributors in step 2.
     conn.execute(sa.text(f"""
         INSERT INTO project_member (id, project_id, user_id, role_id, source, granted_at)
-        SELECT REPLACE(UUID(), '-', ''), t.project_id, t.user_id, :role, 'migration', NOW()
+        SELECT REPLACE(UUID(), '-', ''), t.project_id, t.user_id, :role, 'MIGRATION', NOW()
         FROM (
             SELECT pa.project_id, MIN(u.id) AS user_id
             FROM projectattribute pa
@@ -111,7 +120,7 @@ def upgrade() -> None:
     #    and are not already a member.
     conn.execute(sa.text(f"""
         INSERT INTO project_member (id, project_id, user_id, role_id, source, granted_at)
-        SELECT REPLACE(UUID(), '-', ''), t.project_id, t.user_id, :role, 'migration', NOW()
+        SELECT REPLACE(UUID(), '-', ''), t.project_id, t.user_id, :role, 'MIGRATION', NOW()
         FROM (
             SELECT DISTINCT pa.project_id, u.id AS user_id
             FROM projectattribute pa
@@ -127,7 +136,7 @@ def upgrade() -> None:
     # 3. project.created_by, for projects that still have no owner.
     conn.execute(sa.text("""
         INSERT INTO project_member (id, project_id, user_id, role_id, source, granted_at)
-        SELECT REPLACE(UUID(), '-', ''), t.id, t.user_id, :role, 'migration', NOW()
+        SELECT REPLACE(UUID(), '-', ''), t.id, t.user_id, :role, 'MIGRATION', NOW()
         FROM (
             SELECT p.id, u.id AS user_id
             FROM project p
@@ -178,7 +187,7 @@ def upgrade() -> None:
     #     so an insert here would be skipped and the project left ownerless.
     conn.execute(sa.text("""
         UPDATE project_member pm
-        SET pm.role_id = :role, pm.source = 'migration', pm.granted_at = NOW()
+        SET pm.role_id = :role, pm.source = 'MIGRATION', pm.granted_at = NOW()
         WHERE pm.user_id = :uid
           AND pm.role_id <> :role
           AND NOT EXISTS (
@@ -191,7 +200,7 @@ def upgrade() -> None:
     #     project has someone who can administer it.
     conn.execute(sa.text("""
         INSERT INTO project_member (id, project_id, user_id, role_id, source, granted_at)
-        SELECT REPLACE(UUID(), '-', ''), p.id, :uid, :role, 'migration', NOW()
+        SELECT REPLACE(UUID(), '-', ''), p.id, :uid, :role, 'MIGRATION', NOW()
         FROM project p
         WHERE NOT EXISTS (
             SELECT 1 FROM project_member pm
@@ -205,7 +214,7 @@ def upgrade() -> None:
 
     adopted = conn.execute(sa.text("""
         SELECT COUNT(*) FROM project_member pm
-        WHERE pm.user_id = :uid AND pm.role_id = :role AND pm.source = 'migration'
+        WHERE pm.user_id = :uid AND pm.role_id = :role AND pm.source = 'MIGRATION'
     """), {"uid": fallback_id, "role": owner_role}).scalar()
     print(f"  {adopted} project(s) adopted by {fallback_username!r} "
           f"(first user in this database)")
@@ -222,8 +231,8 @@ def downgrade() -> None:
     """
     Remove only what this migration added.
 
-    Scoped to source='migration' so grants made by hand afterwards survive.
+    Scoped to source='MIGRATION' so grants made by hand afterwards survive.
     """
     op.get_bind().execute(
-        sa.text("DELETE FROM project_member WHERE source = 'migration'")
+        sa.text("DELETE FROM project_member WHERE source = 'MIGRATION'")
     )
