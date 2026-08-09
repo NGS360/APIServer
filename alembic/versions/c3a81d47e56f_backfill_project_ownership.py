@@ -2,7 +2,8 @@
 
 Every project ends up with exactly one owner. Owners are derived from the data
 already in projectattribute where that resolves to a real user; everything else
-falls back to a designated account so no project is left unadministrable.
+is adopted by the first user in the database, so no project is left
+unadministrable.
 
 Why a fallback rather than leaving projects ownerless: a project with no owner
 cannot have its membership changed by anyone short of a superuser, and with the
@@ -49,9 +50,6 @@ branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
 
-# Account that adopts projects whose owner cannot be resolved.
-FALLBACK_OWNER = 'golharr'
-
 OWNER_KEYS = ("'businessowner'", "'business owner'", "'dataowner'", "'data owner'")
 ANALYST_KEYS = ("'ngsanalyst'", "'ngs analyst'", "'tbioanalyst'", "'tbio analyst'",
                 "'createby'", "'createdby'")
@@ -69,21 +67,21 @@ def _role_id(conn, name: str):
     return row[0]
 
 
+def _ownerless_count(conn, owner_role) -> int:
+    return conn.execute(sa.text("""
+        SELECT COUNT(*) FROM project p
+        WHERE NOT EXISTS (
+            SELECT 1 FROM project_member pm
+            WHERE pm.project_id = p.id AND pm.role_id = :role
+        )
+    """), {"role": owner_role}).scalar()
+
+
 def upgrade() -> None:
     conn = op.get_bind()
 
     owner_role = _role_id(conn, 'project_owner')
     contributor_role = _role_id(conn, 'project_contributor')
-
-    fallback = conn.execute(
-        sa.text("SELECT id FROM users WHERE LOWER(username) = :u"),
-        {"u": FALLBACK_OWNER},
-    ).fetchone()
-    if fallback is None:
-        raise RuntimeError(
-            f"fallback owner {FALLBACK_OWNER!r} does not exist in this database"
-        )
-    fallback_id = fallback[0]
 
     owner_keys = ", ".join(OWNER_KEYS)
     analyst_keys = ", ".join(ANALYST_KEYS)
@@ -146,6 +144,33 @@ def upgrade() -> None:
         )
     """), {"role": owner_role})
 
+    # 4. Whatever steps 1-3 could not resolve is adopted by the first user in the
+    #    database. Under the original "first user registered wins" bootstrap that
+    #    is the account holding superuser, so the adopter is both a real person
+    #    and one who can already administer anything. Resolved at run time rather
+    #    than hardcoded, so each tier adopts its own first user and no username is
+    #    baked into the migration history.
+    #
+    #    id is the tiebreak, so the choice stays deterministic if two accounts
+    #    share a created_at and a re-run cannot land on someone different.
+    #
+    #    Looked up only once there is something to adopt: on a fresh database
+    #    -- CI, a new tier, a local container -- there are no projects and no
+    #    users, and that must migrate cleanly rather than fail for want of an
+    #    adopter nobody needs.
+    if not _ownerless_count(conn, owner_role):
+        return
+
+    fallback = conn.execute(sa.text("""
+        SELECT id, username FROM users ORDER BY created_at ASC, id ASC LIMIT 1
+    """)).fetchone()
+    if fallback is None:
+        raise RuntimeError(
+            "some projects could not be assigned an owner and there are no users "
+            "in this database to adopt them"
+        )
+    fallback_id, fallback_username = fallback
+
     # 4a. Where the fallback account is already a member of an ownerless project
     #     -- it appears in some analyst attributes, so step 2 will have added it
     #     as a contributor -- promote that row instead of inserting a second one.
@@ -178,14 +203,15 @@ def upgrade() -> None:
         )
     """), {"uid": fallback_id, "role": owner_role})
 
+    adopted = conn.execute(sa.text("""
+        SELECT COUNT(*) FROM project_member pm
+        WHERE pm.user_id = :uid AND pm.role_id = :role AND pm.source = 'migration'
+    """), {"uid": fallback_id, "role": owner_role}).scalar()
+    print(f"  {adopted} project(s) adopted by {fallback_username!r} "
+          f"(first user in this database)")
+
     # Fail rather than leave a partially-owned estate behind.
-    ownerless = conn.execute(sa.text("""
-        SELECT COUNT(*) FROM project p
-        WHERE NOT EXISTS (
-            SELECT 1 FROM project_member pm
-            WHERE pm.project_id = p.id AND pm.role_id = :role
-        )
-    """), {"role": owner_role}).scalar()
+    ownerless = _ownerless_count(conn, owner_role)
     if ownerless:
         raise RuntimeError(
             f"{ownerless} project(s) still have no owner after the backfill"
