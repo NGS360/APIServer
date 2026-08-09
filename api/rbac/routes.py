@@ -14,7 +14,16 @@ from fastapi import APIRouter, HTTPException, status
 from sqlmodel import select
 
 from api.auth.deps import CurrentActiveUser, CurrentSuperuser
-from api.rbac.models import PermissionPublic, Role, RolePermission, RolePublic
+from api.rbac import services
+from api.rbac.models import (
+    GrantRoleRequest,
+    PermissionPublic,
+    Role,
+    RoleCreate,
+    RolePermission,
+    RolePermissionsUpdate,
+    RolePublic,
+)
 from api.rbac.permissions import CATALOG
 from api.rbac.resolver import AuthzContext, global_role_names
 from core.deps import SessionDep
@@ -109,3 +118,107 @@ def get_my_access(session: SessionDep, current_user: CurrentActiveUser) -> dict:
         "global_roles": global_role_names(session, current_user.id),
         "global_permissions": authz.effective_permissions(),
     }
+
+
+# --- role mutations -------------------------------------------------------
+
+@router.post(
+    "/roles",
+    response_model=RolePublic,
+    status_code=status.HTTP_201_CREATED,
+    summary="Create a custom role (superuser only)",
+    responses={409: {"description": "A role with that name exists"}},
+)
+def create_role(
+    session: SessionDep, body: RoleCreate, current_user: CurrentSuperuser
+) -> RolePublic:
+    """
+    Custom roles are how "contributor without delete" and similar variants are
+    served, which is the reason roles are rows rather than code.
+    """
+    role = services.create_role(
+        session,
+        name=body.name,
+        display_name=body.display_name,
+        description=body.description,
+        scope=body.scope,
+        permissions=body.permissions,
+    )
+    return _role_public(session, role)
+
+
+@router.patch(
+    "/roles/{name}",
+    response_model=RolePublic,
+    summary="Replace a custom role's permissions (superuser only)",
+    responses={
+        404: {"description": "Role not found"},
+        409: {"description": "Builtin roles are code-defined"},
+    },
+)
+def update_role_permissions(
+    session: SessionDep, name: str, body: RolePermissionsUpdate,
+    current_user: CurrentSuperuser,
+) -> RolePublic:
+    role = services.get_role_or_404(session, name)
+    role = services.set_role_permissions(session, role, body.permissions)
+    return _role_public(session, role)
+
+
+@router.delete(
+    "/roles/{name}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Delete a custom role (superuser only)",
+    responses={409: {"description": "Builtin, or still granted"}},
+)
+def delete_role(
+    session: SessionDep, name: str, current_user: CurrentSuperuser
+) -> None:
+    services.delete_role(session, services.get_role_or_404(session, name))
+
+
+# --- global grants --------------------------------------------------------
+
+@router.get(
+    "/users/{username}/roles",
+    response_model=list[str],
+    summary="A user's global roles (superuser only)",
+)
+def list_user_roles(
+    session: SessionDep, username: str, current_user: CurrentSuperuser
+) -> list[str]:
+    user = services.get_user_or_404(session, username)
+    return global_role_names(session, user.id)
+
+
+@router.post(
+    "/users/{username}/roles",
+    response_model=list[str],
+    summary="Grant a global role (superuser only)",
+    responses={400: {"description": "That role is project-scoped"}},
+)
+def grant_user_role(
+    session: SessionDep, username: str, body: GrantRoleRequest,
+    current_user: CurrentSuperuser,
+) -> list[str]:
+    user = services.get_user_or_404(session, username)
+    role = services.get_role_or_404(session, body.role)
+    services.grant_global_role(session, user, role, granted_by=current_user.id)
+    return global_role_names(session, user.id)
+
+
+@router.delete(
+    "/users/{username}/roles/{role_name}",
+    response_model=list[str],
+    summary="Revoke a global role (superuser only)",
+    responses={409: {"description": "Would remove the last role manager"}},
+)
+def revoke_user_role(
+    session: SessionDep, username: str, role_name: str,
+    current_user: CurrentSuperuser,
+) -> list[str]:
+    user = services.get_user_or_404(session, username)
+    role = services.get_role_or_404(session, role_name)
+    services.revoke_global_role(session, user, role,
+                                acting_user_id=current_user.id)
+    return global_role_names(session, user.id)

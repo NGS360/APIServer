@@ -178,3 +178,41 @@ class RolePublic(SQLModel):
     scope: RoleScope
     is_builtin: bool
     permissions: list[str]
+
+
+class RoleCreate(SQLModel):
+    """Request body for creating a custom role."""
+
+    name: str = Field(max_length=64)
+    display_name: str = Field(max_length=128)
+    description: str | None = Field(default=None, max_length=512)
+    scope: RoleScope
+    permissions: list[str] = []
+
+
+class RolePermissionsUpdate(SQLModel):
+    """Replace a role's permission set."""
+
+    permissions: list[str]
+
+
+class GrantRoleRequest(SQLModel):
+    """Grant a global role to a user."""
+
+    role: str
+
+
+class ProjectMemberRequest(SQLModel):
+    """Add or change a project member."""
+
+    username: str
+    role: str
+
+
+class ProjectMemberPublic(SQLModel):
+    """A project membership, as returned by the members endpoints."""
+
+    username: str
+    role: str
+    granted_at: datetime
+    source: str

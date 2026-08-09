@@ -4,8 +4,12 @@ Routes/endpoints for the Project API
 
 from typing import Literal, List as TypingList
 from fastapi import APIRouter, HTTPException, Query, UploadFile, status
+from sqlmodel import select
 from core.deps import SessionDep, OpenSearchDep, S3ClientDep
 from api.auth.deps import CurrentUser, CurrentSuperuser
+from api.auth.models import User
+from api.rbac import services as rbac_services
+from api.rbac.models import ProjectMember, ProjectMemberPublic, ProjectMemberRequest, Role
 from api.jobs.models import BatchJobPublic
 from api.project.deps import ProjectDep
 from api.project.models import (
@@ -539,3 +543,78 @@ def ingest_vendor_data(
         s3_client=s3_client
     )
     return BatchJobPublic.model_validate(batch_job)
+
+
+###############################################################################
+# Project membership /api/v1/projects/{project_id}/members
+#
+# Guarded by CurrentSuperuser for now, like the rest of the RBAC admin surface:
+# gating membership on project:manage_members would be a chicken-and-egg while
+# nothing enforces permissions yet. Phase 4 swaps these onto
+# require_project_permission(Permission.PROJECT_MANAGE_MEMBERS).
+###############################################################################
+
+@router.get(
+    "/{project_id}/members",
+    response_model=list[ProjectMemberPublic],
+    tags=["Project Endpoints"],
+)
+def list_project_members(
+    session: SessionDep,
+    project: ProjectDep,
+    current_user: CurrentSuperuser,
+) -> list[ProjectMemberPublic]:
+    """Who has a role on this project, and which."""
+    rows = session.exec(
+        select(User.username, Role.name, ProjectMember.granted_at,
+               ProjectMember.source)
+        .join(ProjectMember, ProjectMember.user_id == User.id)
+        .join(Role, Role.id == ProjectMember.role_id)
+        .where(ProjectMember.project_id == project.id)
+        .order_by(User.username)
+    ).all()
+    return [
+        ProjectMemberPublic(username=u, role=r, granted_at=g, source=str(s.value))
+        for u, r, g, s in rows
+    ]
+
+
+@router.post(
+    "/{project_id}/members",
+    response_model=list[ProjectMemberPublic],
+    tags=["Project Endpoints"],
+    responses={
+        400: {"description": "That role is global, not project-scoped"},
+        409: {"description": "Would leave the project without an owner"},
+    },
+)
+def add_project_member(
+    session: SessionDep,
+    project: ProjectDep,
+    body: ProjectMemberRequest,
+    current_user: CurrentSuperuser,
+) -> list[ProjectMemberPublic]:
+    """Add a member, or change an existing member's role."""
+    user = rbac_services.get_user_or_404(session, body.username)
+    role = rbac_services.get_role_or_404(session, body.role)
+    rbac_services.set_project_member(
+        session, project.id, user, role, granted_by=current_user.id
+    )
+    return list_project_members(session, project, current_user)
+
+
+@router.delete(
+    "/{project_id}/members/{username}",
+    response_model=list[ProjectMemberPublic],
+    tags=["Project Endpoints"],
+    responses={409: {"description": "Would leave the project without an owner"}},
+)
+def remove_project_member(
+    session: SessionDep,
+    project: ProjectDep,
+    username: str,
+    current_user: CurrentSuperuser,
+) -> list[ProjectMemberPublic]:
+    user = rbac_services.get_user_or_404(session, username)
+    rbac_services.remove_project_member(session, project.id, user)
+    return list_project_members(session, project, current_user)
