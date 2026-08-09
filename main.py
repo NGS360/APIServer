@@ -34,6 +34,7 @@ from api.workflow.routes import router as workflow_router
 from api.pipeline.routes import router as pipeline_router
 from api.platforms.routes import router as platforms_router
 from api.users.routes import router as users_router
+from api.rbac.routes import router as rbac_router
 
 logger = logging.getLogger(__name__)
 
@@ -175,6 +176,7 @@ app.include_router(workflow_router, prefix=API_PREFIX)
 app.include_router(pipeline_router, prefix=API_PREFIX)
 app.include_router(platforms_router, prefix=API_PREFIX)
 app.include_router(users_router, prefix=API_PREFIX)
+app.include_router(rbac_router, prefix=API_PREFIX)
 
 
 if __name__ == "__main__":
