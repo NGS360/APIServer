@@ -152,6 +152,34 @@ def _route_name(request: Request) -> str | None:
     return _ROUTE_PATHS.get(id(route)) or getattr(route, "path", None)
 
 
+def _authz_summary(request: Request) -> dict[str, Any]:
+    """
+    Flatten this request's permission checks onto the access-log line.
+
+    Kept flat rather than nested so CloudWatch Logs Insights can filter on
+    `rbac_decision` directly; Insights cannot filter inside an array.
+
+    A route can carry more than one check. The worst decision wins, so one line
+    answers "was anything refused here" without needing the individual records
+    -- deny beats would_deny beats allow. Requests that ran no check at all
+    contribute nothing, keeping the field absent rather than misleadingly
+    "allow".
+    """
+    decisions = getattr(request.state, "rbac_decisions", None)
+    if not decisions:
+        return {}
+
+    ranked = {"deny": 3, "would_deny": 2, "allow": 1, "skipped": 0}
+    worst = max(decisions, key=lambda d: ranked.get(d["rbac_decision"], 0))
+    return {
+        "rbac_mode": worst["rbac_mode"],
+        "rbac_decision": worst["rbac_decision"],
+        "required_permission": worst["required_permission"],
+        "scope": worst["scope"],
+        "rbac_checks": len(decisions),
+    }
+
+
 class RequestContextMiddleware(BaseHTTPMiddleware):
     """Assign a request id, then log one line per request."""
 
@@ -210,6 +238,7 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
                     "user_agent": request.headers.get("user-agent"),
                     "client_app": request.headers.get(CLIENT_APP_HEADER),
                     **principal,
+                    **_authz_summary(request),
                 },
             )
 

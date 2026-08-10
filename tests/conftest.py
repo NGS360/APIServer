@@ -551,6 +551,12 @@ def isolate_test_environment():
     os.environ["RESULTS_BUCKET_URI"] = "s3://test-results-bucket"
     os.environ["DEMUX_WORKFLOW_CONFIGS_BUCKET_URI"] = "s3://test-tool-configs-bucket"
 
+    # Tests run under full enforcement, never the deployed default of dry_run.
+    # No route carries a guard yet, so this is inert today -- it is set now so
+    # that the first route to be wired cannot pass merely because the suite was
+    # running in a mode that allows every refusal through.
+    os.environ["RBAC_MODE"] = "enforce"
+
     # Remove AWS credentials to prevent real AWS calls
     os.environ.pop("AWS_ACCESS_KEY_ID", None)
     os.environ.pop("AWS_SECRET_ACCESS_KEY", None)

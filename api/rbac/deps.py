@@ -9,6 +9,7 @@ change -- the token stays {sub, exp, iat, type} and revocation is immediate.
 Nothing here is attached to a route yet. Phase 4 does that, behind a mode flag.
 """
 
+import logging
 import uuid
 from typing import Annotated, Literal
 
@@ -18,9 +19,12 @@ from api.auth.deps import get_current_active_user
 from api.auth.models import User
 from api.project.deps import ProjectDep
 from api.project.models import Project
+from api.rbac.mode import RBACMode, effective_mode
 from api.rbac.permissions import Permission
 from api.rbac.resolver import AuthzContext
 from core.deps import SessionDep
+
+logger = logging.getLogger(__name__)
 
 
 def load_authz(
@@ -65,6 +69,66 @@ def _denied(permissions: tuple[Permission, ...], scope: str | None = None) -> HT
     )
 
 
+def _decide(
+    request: Request,
+    granted: bool,
+    permissions: tuple[Permission, ...],
+    scope: str | None,
+) -> None:
+    """
+    Apply the enforcement mode to one check's result, and record it.
+
+    Every check emits a decision, allow or deny, because the point of the
+    dry-run window is a complete picture of who calls what -- knowing only the
+    refusals tells you nothing about which principals a permission would newly
+    let through.
+
+    Refusals log at WARNING so a dry-run deny is findable without trawling; in
+    dry-run the decision is reported as `would_deny` and the request proceeds.
+    """
+    rbac_mode = effective_mode(permissions)
+
+    if granted:
+        decision = "allow"
+    elif rbac_mode is RBACMode.ENFORCE:
+        decision = "deny"
+    elif rbac_mode is RBACMode.OFF:
+        decision = "skipped"
+    else:
+        decision = "would_deny"
+
+    record = {
+        "rbac_mode": str(rbac_mode),
+        "rbac_decision": decision,
+        "required_permission": ",".join(str(p) for p in permissions),
+        "scope": scope,
+    }
+    # The access-log line in RequestContextMiddleware picks these up, so a
+    # single CloudWatch query can join a decision to the request that caused it.
+    decisions = getattr(request.state, "rbac_decisions", None)
+    if decisions is None:
+        decisions = []
+        request.state.rbac_decisions = decisions
+    decisions.append(record)
+
+    if decision in ("deny", "would_deny"):
+        logger.warning(
+            "rbac %s: %s", decision, record["required_permission"],
+            extra={
+                "event": "rbac.decision",
+                "principal": getattr(request.state, "principal", None),
+                "auth_method": getattr(request.state, "auth_method", None),
+                "request_id": getattr(request.state, "request_id", None),
+                "method": request.method,
+                "path": request.url.path,
+                **record,
+            },
+        )
+
+    if decision == "deny":
+        raise _denied(permissions, scope=scope)
+
+
 def require_permission(
     *permissions: Permission, mode: Literal["all", "any"] = "all"
 ):
@@ -77,10 +141,10 @@ def require_permission(
     if not permissions:
         raise ValueError("require_permission needs at least one permission")
 
-    def dependency(authz: AuthzDep) -> AuthzContext:
+    def dependency(request: Request, authz: AuthzDep) -> AuthzContext:
         check = all if mode == "all" else any
-        if not check(authz.has(p) for p in permissions):
-            raise _denied(permissions)
+        _decide(request, check(authz.has(p) for p in permissions), permissions,
+                scope=None)
         return authz
 
     return dependency
@@ -107,10 +171,16 @@ def require_project_permission(
             f"{[str(p) for p in unscopable]}"
         )
 
-    def dependency(project: ProjectDep, authz: AuthzDep) -> Project:
+    def dependency(
+        request: Request, project: ProjectDep, authz: AuthzDep
+    ) -> Project:
         check = all if mode == "all" else any
-        if not check(authz.has_in_project(p, project.id) for p in permissions):
-            raise _denied(permissions, scope=f"project {project.project_id}")
+        _decide(
+            request,
+            check(authz.has_in_project(p, project.id) for p in permissions),
+            permissions,
+            scope=f"project {project.project_id}",
+        )
         return project
 
     return dependency
