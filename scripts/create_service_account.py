@@ -35,7 +35,7 @@ import argparse
 import sys
 
 
-from sqlmodel import Session, select
+from sqlmodel import Session, func, select
 
 sys.path.insert(0, ".")
 
@@ -56,6 +56,35 @@ def create_or_get_user(session: Session, username: str, email: str | None,
     user = session.exec(select(User).where(User.username == username)).first()
     if user:
         return user, False
+
+    # Refuse to reuse an address that already belongs to somebody.
+    #
+    # users.email is unique, so this would fail anyway -- but as a raw
+    # IntegrityError that reads like a bug in the script rather than the thing
+    # it actually is. And the constraint is not the real protection: if it were
+    # ever relaxed, find_or_create_oauth_user matches on email ALONE, so a
+    # service account holding a person's address would capture that person's
+    # next SSO sign-in. They would either land on the service account -- with
+    # its API-key-backed grants -- or be deduplicated to `username1` and lose
+    # everything they had. Both are silent.
+    if email:
+        clash = session.exec(
+            select(User).where(func.lower(User.email) == email.lower())
+        ).first()
+        if clash:
+            raise SystemExit(
+                f"error: {email} already belongs to user {clash.username!r}"
+                f"{' (' + clash.full_name + ')' if clash.full_name else ''}.\n"
+                f"\n"
+                f"A service account must not share an address with a person. "
+                f"find_or_create_oauth_user matches on email alone, so that "
+                f"person's next SSO login would resolve to this service "
+                f"account.\n"
+                f"\n"
+                f"Give the account its own address -- {username}@ngs360.invalid "
+                f"is fine, it never needs to receive mail -- and record the "
+                f"human owner in --description instead."
+            )
 
     # is_verified=True is the whole point: without it every request using this
     # account's key fails on get_current_active_user with "Email not verified".
@@ -119,15 +148,33 @@ def main() -> int:
     print(f"database: {_mask_uri(settings.SQLALCHEMY_DATABASE_URI)}")
     print()
 
-    if args.dry_run:
-        print("dry run: nothing written")
-        return 0
-
     with Session(engine) as session:
+        # --dry-run still runs every check, and rolls back instead of
+        # committing. A dry run that skipped straight to "nothing written"
+        # would report success for a command that cannot possibly work, which
+        # is the opposite of what it is for.
         user, created = create_or_get_user(
             session, args.username, args.email, args.description
         )
         print(f"user:     {user.username} ({'created' if created else 'existing'})")
+
+        if args.dry_run:
+            if args.role:
+                role = session.exec(
+                    select(Role).where(Role.name == args.role)
+                ).first()
+                if role is None:
+                    raise SystemExit(
+                        f"error: role {args.role!r} does not exist in this "
+                        f"database. The catalog is seeded at application "
+                        f"startup -- start the API against it first."
+                    )
+                print(f"role:     {args.role} (exists, would be granted)")
+            print("key:      would mint one")
+            session.rollback()
+            print()
+            print("dry run: checks passed, nothing written")
+            return 0
 
         if not user.is_verified or not user.is_active:
             # An existing account could predate this script.
