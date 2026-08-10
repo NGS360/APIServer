@@ -848,6 +848,30 @@ def auth_headers_fixture():
     }
 
 
+@pytest.fixture(name="restricted_client")
+def restricted_client_fixture(
+    session: Session,
+    mock_opensearch_client: MockOpenSearchClient,
+    mock_s3_client: MockS3Client,
+    mock_lambda_client: MockLambdaClient,
+    monkeypatch,
+):
+    """
+    An authenticated user holding no roles at all.
+
+    The counterpart to `client`: it proves a guard actually refuses, where
+    `client` only proves it lets the legacy permission set through. Without
+    this, a guard wired to the wrong permission still passes every test.
+    """
+    from api.rbac.seed import sync_rbac_catalog
+
+    user = persist_user(session, "norole")
+    sync_rbac_catalog(session)
+    with _make_client(session, mock_opensearch_client, mock_s3_client,
+                      mock_lambda_client, monkeypatch, user=user) as client:
+        yield client
+
+
 @pytest.fixture(name="superuser_client")
 def superuser_client_fixture(
     session: Session,

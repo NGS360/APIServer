@@ -6,7 +6,9 @@ Covers Pipeline CRUD and Pipeline ↔ Workflow association.
 
 import uuid
 from typing import Literal
-from fastapi import APIRouter, Query, status
+from fastapi import APIRouter, Depends, Query, status
+from api.rbac.deps import require_permission
+from api.rbac.permissions import Permission
 from core.deps import SessionDep
 from api.auth.deps import CurrentUser
 
@@ -29,6 +31,7 @@ router = APIRouter(prefix="/pipelines", tags=["Pipeline Endpoints"])
     response_model=PipelinePublic,
     tags=["Pipeline Endpoints"],
     status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_permission(Permission.PIPELINE_CREATE))],
 )
 def create_pipeline(
     session: SessionDep,
@@ -91,6 +94,7 @@ def get_pipeline_by_id(
     "/{pipeline_id}/workflows",
     status_code=status.HTTP_201_CREATED,
     tags=["Pipeline Endpoints"],
+    dependencies=[Depends(require_permission(Permission.PIPELINE_UPDATE))],
 )
 def add_workflow_to_pipeline(
     session: SessionDep,

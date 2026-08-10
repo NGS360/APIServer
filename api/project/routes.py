@@ -3,7 +3,7 @@ Routes/endpoints for the Project API
 """
 
 from typing import Literal, List as TypingList
-from fastapi import APIRouter, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, status
 from sqlmodel import select
 from core.deps import SessionDep, OpenSearchDep, S3ClientDep
 from api.auth.deps import CurrentUser, CurrentSuperuser
@@ -12,6 +12,8 @@ from api.rbac import services as rbac_services
 from api.rbac.models import ProjectMember, ProjectMemberPublic, ProjectMemberRequest, Role
 from api.jobs.models import BatchJobPublic
 from api.project.deps import ProjectDep
+from api.rbac.deps import require_permission, require_project_permission
+from api.rbac.permissions import Permission
 from api.project.models import (
     ProjectCreate,
     ProjectUpdate,
@@ -43,6 +45,7 @@ router = APIRouter(prefix="/projects")
     tags=["Project Endpoints"],
     status_code=status.HTTP_201_CREATED,
     response_model=ProjectPublic,
+    dependencies=[Depends(require_permission(Permission.PROJECT_CREATE))],
 )
 def create_project(
     session: SessionDep,
@@ -243,6 +246,8 @@ def patch_project(
     tags=["Project Endpoints"],
     status_code=status.HTTP_201_CREATED,
     response_model=SamplePublic,
+    dependencies=[Depends(require_project_permission(
+        Permission.SAMPLE_CREATE))],
 )
 def add_sample_to_project(
     session: SessionDep,
@@ -280,6 +285,8 @@ def add_sample_to_project(
     tags=["Project Endpoints"],
     status_code=status.HTTP_201_CREATED,
     response_model=BulkSampleCreateResponse,
+    dependencies=[Depends(require_project_permission(
+        Permission.SAMPLE_CREATE))],
 )
 async def upload_samples_file(
     session: SessionDep,
@@ -327,6 +334,8 @@ async def upload_samples_file(
     tags=["Project Endpoints"],
     status_code=status.HTTP_201_CREATED,
     response_model=BulkSampleCreateResponse,
+    dependencies=[Depends(require_project_permission(
+        Permission.SAMPLE_CREATE))],
 )
 def bulk_create_samples(
     session: SessionDep,
@@ -405,6 +414,8 @@ def get_project_samples(
     "/{project_id}/samples/{sample_id}",
     tags=["Project Endpoints"],
     status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_project_permission(
+        Permission.SAMPLE_DELETE))],
 )
 def delete_sample_from_project(
     session: SessionDep,
@@ -459,6 +470,8 @@ def update_sample_in_project(
     tags=["Project Endpoints"],
     status_code=status.HTTP_201_CREATED,
     response_model=BatchJobPublic,
+    dependencies=[Depends(require_project_permission(
+        Permission.PROJECT_SUBMIT_ACTION))],
 )
 def submit_pipeline_job(
     project: ProjectDep,
@@ -515,6 +528,8 @@ def submit_pipeline_job(
     tags=["Project Endpoints"],
     status_code=status.HTTP_201_CREATED,
     response_model=BatchJobPublic,
+    dependencies=[Depends(require_project_permission(
+        Permission.PROJECT_INGEST))],
 )
 def ingest_vendor_data(
     session: SessionDep,
@@ -558,6 +573,8 @@ def ingest_vendor_data(
     "/{project_id}/members",
     response_model=list[ProjectMemberPublic],
     tags=["Project Endpoints"],
+    dependencies=[Depends(require_project_permission(
+        Permission.PROJECT_MANAGE_MEMBERS))],
 )
 def list_project_members(
     session: SessionDep,
@@ -587,6 +604,8 @@ def list_project_members(
         400: {"description": "That role is global, not project-scoped"},
         409: {"description": "Would leave the project without an owner"},
     },
+    dependencies=[Depends(require_project_permission(
+        Permission.PROJECT_MANAGE_MEMBERS))],
 )
 def add_project_member(
     session: SessionDep,
@@ -608,6 +627,8 @@ def add_project_member(
     response_model=list[ProjectMemberPublic],
     tags=["Project Endpoints"],
     responses={409: {"description": "Would leave the project without an owner"}},
+    dependencies=[Depends(require_project_permission(
+        Permission.PROJECT_MANAGE_MEMBERS))],
 )
 def remove_project_member(
     session: SessionDep,

@@ -30,6 +30,8 @@ from api.files.models import (
 )
 from api.files import services
 from api.auth.deps import CurrentSuperuser
+from api.rbac.deps import require_permission
+from api.rbac.permissions import Permission
 from core.deps import get_s3_client, SessionDep
 
 router = APIRouter(prefix="/files", tags=["File Endpoints"])
@@ -265,6 +267,7 @@ def download_file(
     "/{file_id}",
     response_model=FilePublic,
     summary="Update a file record (superuser only)",
+    dependencies=[Depends(require_permission(Permission.FILE_UPDATE))],
 )
 def update_file(
     file_id: uuid.UUID,
@@ -291,6 +294,7 @@ def update_file(
     "/{file_id}",
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Delete a file record (superuser only)",
+    dependencies=[Depends(require_permission(Permission.FILE_DELETE))],
 )
 def delete_file(
     file_id: uuid.UUID,

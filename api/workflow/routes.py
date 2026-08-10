@@ -6,7 +6,9 @@ and WorkflowDeployment endpoints.
 """
 
 from typing import List, Literal
-from fastapi import APIRouter, Query, status
+from fastapi import APIRouter, Depends, Query, status
+from api.rbac.deps import require_permission
+from api.rbac.permissions import Permission
 from core.deps import SessionDep
 from api.auth.deps import CurrentUser
 
@@ -37,6 +39,7 @@ router = APIRouter(
     response_model=WorkflowPublic,
     tags=["Workflow Endpoints"],
     status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_permission(Permission.WORKFLOW_CREATE))],
 )
 def create_workflow(
     session: SessionDep,
@@ -107,6 +110,7 @@ def get_workflow_by_id(
     response_model=WorkflowVersionPublic,
     tags=["Workflow Endpoints"],
     status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_permission(Permission.WORKFLOW_CREATE))],
 )
 def create_workflow_version(
     session: SessionDep,
@@ -167,6 +171,7 @@ def get_workflow_version(
     "/{workflow_id}/aliases/{alias}",
     response_model=WorkflowVersionAliasPublic,
     tags=["Workflow Endpoints"],
+    dependencies=[Depends(require_permission(Permission.WORKFLOW_UPDATE))],
 )
 def set_workflow_version_alias(
     session: SessionDep,
@@ -286,6 +291,7 @@ def get_workflow_deployments_for_workflow(
     response_model=WorkflowDeploymentPublic,
     tags=["Workflow Endpoints"],
     status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_permission(Permission.WORKFLOW_DEPLOY))],
 )
 def create_workflow_deployment(
     session: SessionDep,

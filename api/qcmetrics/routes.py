@@ -5,7 +5,7 @@ Provides endpoints for creating, searching, and deleting QC records.
 """
 
 from typing import Optional
-from fastapi import APIRouter, Query, status
+from fastapi import APIRouter, Depends, Query, status
 
 from api.qcmetrics.models import (
     QCRecordCreate,
@@ -16,6 +16,8 @@ from api.qcmetrics.models import (
 )
 from api.qcmetrics import services
 from api.auth.deps import CurrentActiveUser
+from api.rbac.deps import require_permission
+from api.rbac.permissions import Permission
 from core.deps import SessionDep
 
 router = APIRouter(prefix="/qcmetrics", tags=["QC Metrics"])
@@ -26,6 +28,7 @@ router = APIRouter(prefix="/qcmetrics", tags=["QC Metrics"])
     response_model=QCRecordCreated,
     status_code=status.HTTP_201_CREATED,
     summary="Create a new QC record",
+    dependencies=[Depends(require_permission(Permission.QCRECORD_CREATE))],
 )
 def create_qcrecord(
     session: SessionDep,
