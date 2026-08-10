@@ -362,7 +362,7 @@ Global role grant. Additive — a user may hold several.
 | `id` | UUID | auto | Primary key |
 | `user_id` | UUID | yes | FK → `users.id`, `ON DELETE CASCADE` |
 | `role_id` | UUID | yes | FK → `role.id`, `ON DELETE CASCADE` |
-| `source` | enum | auto | `manual`, `bootstrap`, `migration`, or `directory` |
+| `source` | enum | auto | Stored as the member name: `MANUAL`, `BOOTSTRAP`, `MIGRATION`, or `DIRECTORY` |
 | `granted_by` | UUID | no | FK → `users.id`; null for automated grants |
 | `granted_at` | datetime | auto | UTC |
 
@@ -378,7 +378,7 @@ Project-scoped role grant. Exactly one role per user per project.
 | `project_id` | UUID | yes | FK → `project.id`, `ON DELETE CASCADE` |
 | `user_id` | UUID | yes | FK → `users.id`, `ON DELETE CASCADE` |
 | `role_id` | UUID | yes | FK → `role.id`, `ON DELETE RESTRICT` — a role in use cannot be deleted |
-| `source` | enum | auto | `manual`, `bootstrap`, `migration`, or `directory` |
+| `source` | enum | auto | Stored as the member name: `MANUAL`, `BOOTSTRAP`, `MIGRATION`, or `DIRECTORY` |
 | `granted_by` | UUID | no | FK → `users.id` |
 | `granted_at` | datetime | auto | UTC |
 
@@ -611,7 +611,6 @@ New computed fields in `core/config.py`, following the established `_get_config_
 | `RBAC_MODE` | `dry_run`, then `enforce` | `off`, `dry_run`, or `enforce`. See below. |
 | `DEFAULT_USER_ROLE` | `member` | Role auto-granted at user creation; empty disables |
 | `BOOTSTRAP_ADMIN_USERNAMES` | *(empty)* | Comma-separated usernames granted `admin` + `is_superuser` at creation |
-| `ORPHAN_PROJECT_OWNER` | *(empty)* | Optional username to adopt projects whose owner cannot be resolved during backfill |
 
 ### Admin API
 
@@ -818,10 +817,12 @@ Four revisions, not one. MySQL DDL is not transactional, so a revision that fail
 
 | # | Revision | Contents | Downgrade |
 |---|----------|----------|-----------|
-| 1 | `rbac_0001_tables` | `role`, `role_permission`, `user_role`, `project_member`. Additive only. | Drop tables — safe |
-| 2 | `rbac_0002_user_shells` | Ensure a `users` row exists for every username the backfill references | Delete only rows tagged `source='migration'` |
-| 3 | `rbac_0003_backfill_members` | `INSERT ... SELECT` guarded by `NOT EXISTS`; idempotent; every row tagged `source='migration'` | Delete only `source='migration'` rows |
-| 4 | `rbac_0004_constraints` | Unique constraints and indexes. **Ship in a later release than 1–3.** | Drop them |
+| 1 | `b7c4e19f2a83` *(done)* | `role`, `role_permission`, `user_role`, `project_member`. Additive only. | Drop tables — safe |
+| 2 | `c3a81d47e56f` *(done)* | `INSERT ... SELECT` guarded by `NOT EXISTS`; idempotent; every row tagged `source='MIGRATION'` | Delete only `source='MIGRATION'` rows |
+| 3 | *(deferred)* | Shell users for backfill targets. Blocked on the duplicate-user hazard below; the first-user fallback removes the urgency. | Delete only rows tagged `source='MIGRATION'` |
+| 4 | *(deferred)* | Unique constraints and indexes. **Ship in a later release than the rest.** | Drop them |
+
+**`source` is written as `'MIGRATION'`, uppercase.** `GrantSource.MIGRATION` has the value `"migration"`, but SQLAlchemy's `Enum` persists the member *name*, so the column is `enum('MANUAL','BOOTSTRAP','MIGRATION','DIRECTORY')` and every row the ORM writes holds the uppercase form. Lowercase in raw SQL happens to work only because the column collation is case-insensitive; on a binary collation the `INSERT` would fail and the downgrade would silently match nothing, stranding the rows it was meant to remove.
 
 Because migrations run before promotion, `leader_only`, with no blue/green deployment, there is always a window in which **old code runs against the new schema on every instance**. Every revision must therefore be backward-compatible with the previous application version: additive only, no `NOT NULL` on existing tables, constraints deferred a release.
 
@@ -839,19 +840,33 @@ Three implementation requirements:
 
 `Project.created_by` is the obvious ownership source and the wrong one. It is a free-text username with no foreign key, and revision `49e7d06e7eb4` populated it from `projectattribute` keys `('createby','createdby','businessowner','Business Owner')` — where the `'Business Owner'` arm compares a literal containing a space and a capital against `LOWER(key)` and therefore **never matches** — falling back to the literal `'unknown'`.
 
-A sample of production data indicates the historical population is dominated by a handful of bulk loaders appearing as `created_by` on large numbers of projects they did not own, with the real owner recorded in a `businessowner` or `dataowner` attribute. Newer UI-created projects have the inverse problem: `created_by` is a good username, but the `Business Owner` attribute holds a display name rather than a username.
+An earlier draft of this document claimed that historical `created_by` is dominated by a handful of bulk loaders appearing on large numbers of projects they did not own. **Measurement against production does not support that.** The distribution is long-tailed: the single most frequent value accounts for 5.4% of projects, with no concentration at the head. The real problem with `created_by` is coverage, not skew — it resolves to an existing user for only **24.4%** of projects, against roughly **48%** for the owner attributes. That is why attributes are preferred, and the conclusion is unchanged even though the reasoning was wrong.
 
-> **Confirm before implementing.** Re-run the orphan and attribute-coverage queries against production and record the actual figures here. The backfill strategy depends on them, and the sample above was not independently verified.
+Production figures, measured 2026-08-09:
 
-Recommended precedence, applied per project:
+| Measure | Count |
+|---|---|
+| Projects | 11,043 |
+| Users | 216 |
+| Projects carrying a `businessowner` attribute | 10,798 |
+| Distinct owner values across the ownership attributes | 1,608 |
+| — of which resolve to an existing user | 131 |
+| — which would need a shell user created | 1,477 |
+
+Coverage is limited by the `users` table, not by attribute quality: users only exist after first login, so most recorded owners have no row to point at. Creating ~946 shell users for the username-shaped values was considered and deliberately deferred — see the duplicate-user hazard below, which makes shell creation actively unsafe until `find_or_create_oauth_user` can claim them.
+
+Precedence, applied per project (implemented in revision `c3a81d47e56f`):
 
 1. `projectattribute` where `LOWER(key)` ∈ {`businessowner`, `business owner`, `dataowner`, `data owner`} → `project_owner`
-2. `LOWER(key)` ∈ {`ngsanalyst`, `ngs analyst`, `tbioanalyst`, `tbio analyst`} → `project_contributor`
-3. `LOWER(key)` ∈ {`createby`, `createdby`} → `project_contributor`
-4. `project.created_by`, if it is not `'unknown'` and steps 1–3 produced nothing → `project_owner`
-5. Otherwise → **unresolved report**
+2. `LOWER(key)` ∈ {`ngsanalyst`, `ngs analyst`, `tbioanalyst`, `tbio analyst`, `createby`, `createdby`} → `project_contributor`
+3. `project.created_by`, if it is not `'unknown'` and steps 1–2 produced no owner → `project_owner`
+4. Otherwise → adopted by the **first user in the `users` table** by `created_at`
 
-Matching is `LOWER(TRIM(value))` against `LOWER(users.username)`. Values that are not usernames (display names, `"Unknown"`) fall to step 5 rather than being silently dropped. **A project with no member is a project nobody can edit** — the single most likely source of support tickets after the enforce cutover. `admin` holds global `project:manage_members` so an administrator can adopt orphans, and `ORPHAN_PROJECT_OWNER` can assign them in bulk.
+Matching is `LOWER(TRIM(value))` against `LOWER(users.username)`. Values that are not usernames (display names, `"Unknown"`) fall through to step 4 rather than being silently dropped. Where several owner attributes resolve, `MIN(user id)` picks one so a re-run cannot land on a different person; the others become contributors via step 2.
+
+**Step 4 adopts rather than reports, because a project with no owner is a project nobody can administer** — and on this data that would have been most of them, making it the single largest source of support tickets after the enforce cutover. Under the original "first user registered wins" bootstrap the first user is the account holding `is_superuser`, so the adopter is a real person who can already administer anything. Resolving it from the database rather than from configuration means each tier adopts its own first user and no username is baked into the migration history. It is looked up only if steps 1–3 leave something unowned, so a fresh database — CI, a new tier, a local container — migrates cleanly.
+
+`admin` holds global `project:manage_members`, so an administrator can reassign adopted projects afterwards.
 
 Also backfilled: every user with `is_superuser = 1` receives the global `admin` role; every other active user receives `DEFAULT_USER_ROLE`. `is_superuser` and `get_current_superuser` are retained for at least two releases as the break-glass path when RBAC data proves wrong.
 
@@ -964,7 +979,7 @@ Budget for genuinely touching five to ten modules where tests relied on unauthen
 | **Pagination under filtering** | Create 25 projects, make the user a member of 7, assert `total_items == 7`, page 1 returns 7 rows, `has_next is False`. Catches post-filtering directly. |
 | **Dry-run semantics** | A would-be-denied request returns 2xx and emits exactly one denial log line; an `ALWAYS_ENFORCE` route returns 403 even in dry-run. |
 | **Seeding idempotence** | Run `sync_rbac_catalog()` twice; row counts stable; a manually created role and a manual grant both survive. |
-| **Migration round-trip** | Upgrade, backfill, assert every project has a member or appears in the unresolved report, downgrade, upgrade. |
+| **Migration round-trip** | Upgrade, backfill, assert every project has an owner, downgrade, assert only `source='MIGRATION'` rows were removed, upgrade again and assert the same result. Requires MySQL — see issue #379. |
 | **Superuser break-glass** | Still bypasses every check. |
 | **`/auth/me` contract** | `username` present and a string — WES depends on it. |
 
@@ -1126,15 +1141,15 @@ Deliberately out of scope for v1:
 | `api/project/deps.py` | `ProjectDep` becomes a sub-dependency of `require_project_permission` |
 | `api/project/routes.py` | Membership endpoints; `ProjectDep` replaced by permission-carrying aliases |
 | `main.py` | `RequestContextMiddleware` (done); router registration with default authentication; `rbac_router` |
-| `core/config.py` | `ENVIRONMENT`, `LOG_FORMAT` (both done); `RBAC_MODE`, `DEFAULT_USER_ROLE`, `BOOTSTRAP_ADMIN_USERNAMES`, `ORPHAN_PROJECT_OWNER` |
+| `core/config.py` | `ENVIRONMENT`, `LOG_FORMAT` (both done); `RBAC_MODE`, `DEFAULT_USER_ROLE`, `BOOTSTRAP_ADMIN_USERNAMES` |
 | `core/lifespan.py` | `sync_rbac_catalog()` with an advisory lock and a fail-closed startup assertion |
 | `core/logger.py` | JSON formatter (`LOG_FORMAT=text` for local work); replaces the root handler so gunicorn/uvicorn do not duplicate lines |
 | `core/middleware.py` | `RequestContextMiddleware`: request id, principal resolution with no DB access, structured access log |
 | `alembic/env.py` | Import the new RBAC models |
-| `alembic/versions/rbac_0001_tables.py` | The four tables |
-| `alembic/versions/rbac_0002_user_shells.py` | Shell users for backfill targets |
-| `alembic/versions/rbac_0003_backfill_members.py` | Membership backfill and the unresolved report |
-| `alembic/versions/rbac_0004_constraints.py` | Constraints and indexes, one release later |
+| `alembic/versions/b7c4e19f2a83_add_rbac_tables.py` | The four tables (done) |
+| `alembic/versions/c3a81d47e56f_backfill_project_ownership.py` | Membership backfill, with the first user adopting what cannot be resolved (done) |
+| *(deferred)* | Shell users for backfill targets — blocked on the duplicate-user hazard |
+| *(deferred)* | Constraints and indexes, one release later |
 | `core/schema_version.py` | Startup comparison of applied vs expected alembic revision; logs a mismatch loudly, since migrations are applied out of band |
 | `scripts/grant_role.py` | Break-glass role assignment CLI |
 | `tests/conftest.py` | Consolidated client fixtures, persisted users, `client_as()` factory |
