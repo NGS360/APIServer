@@ -8,9 +8,11 @@ GET    /api/v1/settings/[key]       Retrieve info about a specific setting
 PUT    /api/v1/settings/[key]       Update info about a setting (superuser only)
 """
 
-from fastapi import APIRouter, Query, status
+from fastapi import APIRouter, Depends, Query, status
 from core.deps import SessionDep
 from api.auth.deps import CurrentSuperuser
+from api.rbac.deps import require_permission
+from api.rbac.permissions import Permission
 from api.settings.models import Setting, SettingUpdate
 from api.settings import services
 
@@ -58,6 +60,7 @@ def get_setting(session: SessionDep, key: str) -> Setting:
     status_code=status.HTTP_200_OK,
     tags=["Settings Endpoints"],
     summary="Update a setting (superuser only)",
+    dependencies=[Depends(require_permission(Permission.SETTING_UPDATE))],
 )
 def update_setting(
     session: SessionDep,

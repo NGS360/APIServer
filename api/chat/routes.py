@@ -2,18 +2,23 @@
 Routes/endpoints for the AI Assistant Chat API
 """
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from api.auth.deps import CurrentUser
 from api.chat import services
 from api.chat.models import ChatRequest
+from api.rbac.deps import require_permission
+from api.rbac.permissions import Permission
 from core.deps import LangGraphDep
 
 router = APIRouter(prefix="/chat", tags=["Chat Endpoints"])
 
+# Every chat endpoint is the same capability, so the guard is declared once.
+RequireChat = Depends(require_permission(Permission.CHAT_USE))
 
-@router.post("")
+
+@router.post("", dependencies=[RequireChat])
 async def chat(
     req: ChatRequest, current_user: CurrentUser, client: LangGraphDep
 ) -> JSONResponse:
@@ -22,7 +27,7 @@ async def chat(
     return JSONResponse(result)
 
 
-@router.post("/stream")
+@router.post("/stream", dependencies=[RequireChat])
 async def chat_stream(
     req: ChatRequest, current_user: CurrentUser, client: LangGraphDep
 ) -> StreamingResponse:
@@ -38,7 +43,7 @@ async def chat_stream(
     )
 
 
-@router.get("/threads/{thread_id}")
+@router.get("/threads/{thread_id}", dependencies=[RequireChat])
 async def get_thread(thread_id: str, current_user: CurrentUser, client: LangGraphDep):
     """Fetch a LangGraph thread's state for transcript reload / reconnect."""
     if client is None:

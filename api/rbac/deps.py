@@ -147,6 +147,12 @@ def require_permission(
                 scope=None)
         return authz
 
+    # Tag the closure so a route's requirements can be read back off the
+    # dependency graph. The route-coverage test uses this to prove no route is
+    # left unguarded by accident, and it is the obvious source for a future
+    # "what does this endpoint need" admin endpoint.
+    dependency.rbac_permissions = permissions
+    dependency.rbac_plane = "global"
     return dependency
 
 
@@ -183,6 +189,8 @@ def require_project_permission(
         )
         return project
 
+    dependency.rbac_permissions = permissions
+    dependency.rbac_plane = "project"
     return dependency
 
 

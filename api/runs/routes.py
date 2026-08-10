@@ -16,6 +16,8 @@ GET    /api/v1/runs/[id]/metrics       Retrieve demux metrics from Stat.json
 
 from typing import Literal
 from fastapi import HTTPException, APIRouter, Query, status, UploadFile, File, Depends
+from api.rbac.deps import require_permission
+from api.rbac.permissions import Permission
 from core.deps import SessionDep, OpenSearchDep, get_s3_client
 from api.auth.deps import CurrentUser
 from api.runs.models import (
@@ -175,6 +177,7 @@ def list_demultiplex_workflows(
     "/demultiplex",
     response_model=BatchJobPublic,
     tags=["Run Endpoints"],
+    dependencies=[Depends(require_permission(Permission.RUN_DEMUX))],
 )
 def submit_demultiplex_workflow_job(
     session: SessionDep,
@@ -323,6 +326,7 @@ def get_run_metrics(session: SessionDep, run_id: str) -> IlluminaMetricsResponse
     response_model=SampleSequencingRunPublic,
     status_code=status.HTTP_201_CREATED,
     tags=["Run Endpoints"],
+    dependencies=[Depends(require_permission(Permission.RUN_ASSOCIATE))],
 )
 def associate_sample_with_run(
     session: SessionDep,
@@ -366,6 +370,7 @@ def get_samples_for_run(
     response_model=RunSampleCleanupResponse,
     status_code=status.HTTP_200_OK,
     tags=["Run Endpoints"],
+    dependencies=[Depends(require_permission(Permission.RUN_ASSOCIATE))],
 )
 def clear_samples_for_run(
     session: SessionDep,

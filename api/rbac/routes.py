@@ -10,7 +10,7 @@ route.
 Mutations (create/edit roles, grant and revoke) are not here yet.
 """
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlmodel import select
 
 from api.auth.deps import CurrentActiveUser, CurrentSuperuser
@@ -24,7 +24,8 @@ from api.rbac.models import (
     RolePermissionsUpdate,
     RolePublic,
 )
-from api.rbac.permissions import CATALOG
+from api.rbac.deps import require_permission
+from api.rbac.permissions import CATALOG, Permission
 from api.rbac.resolver import AuthzContext, global_role_names
 from core.deps import SessionDep
 
@@ -50,6 +51,7 @@ def _role_public(session: SessionDep, role: Role) -> RolePublic:
     "/permissions",
     response_model=list[PermissionPublic],
     summary="The permission catalog (superuser only)",
+    dependencies=[Depends(require_permission(Permission.ROLE_READ))],
 )
 def list_permissions(current_user: CurrentSuperuser) -> list[PermissionPublic]:
     """
@@ -75,6 +77,7 @@ def list_permissions(current_user: CurrentSuperuser) -> list[PermissionPublic]:
     "/roles",
     response_model=list[RolePublic],
     summary="List roles (superuser only)",
+    dependencies=[Depends(require_permission(Permission.ROLE_READ))],
 )
 def list_roles(session: SessionDep, current_user: CurrentSuperuser) -> list[RolePublic]:
     roles = session.exec(select(Role).order_by(Role.scope, Role.name)).all()
@@ -86,6 +89,7 @@ def list_roles(session: SessionDep, current_user: CurrentSuperuser) -> list[Role
     response_model=RolePublic,
     summary="Get one role (superuser only)",
     responses={404: {"description": "Role not found"}},
+    dependencies=[Depends(require_permission(Permission.ROLE_READ))],
 )
 def get_role(
     session: SessionDep, name: str, current_user: CurrentSuperuser
@@ -128,6 +132,7 @@ def get_my_access(session: SessionDep, current_user: CurrentActiveUser) -> dict:
     status_code=status.HTTP_201_CREATED,
     summary="Create a custom role (superuser only)",
     responses={409: {"description": "A role with that name exists"}},
+    dependencies=[Depends(require_permission(Permission.ROLE_MANAGE))],
 )
 def create_role(
     session: SessionDep, body: RoleCreate, current_user: CurrentSuperuser
@@ -155,6 +160,7 @@ def create_role(
         404: {"description": "Role not found"},
         409: {"description": "Builtin roles are code-defined"},
     },
+    dependencies=[Depends(require_permission(Permission.ROLE_MANAGE))],
 )
 def update_role_permissions(
     session: SessionDep, name: str, body: RolePermissionsUpdate,
@@ -170,6 +176,7 @@ def update_role_permissions(
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Delete a custom role (superuser only)",
     responses={409: {"description": "Builtin, or still granted"}},
+    dependencies=[Depends(require_permission(Permission.ROLE_MANAGE))],
 )
 def delete_role(
     session: SessionDep, name: str, current_user: CurrentSuperuser
@@ -183,6 +190,7 @@ def delete_role(
     "/users/{username}/roles",
     response_model=list[str],
     summary="A user's global roles (superuser only)",
+    dependencies=[Depends(require_permission(Permission.ROLE_READ))],
 )
 def list_user_roles(
     session: SessionDep, username: str, current_user: CurrentSuperuser
@@ -196,6 +204,7 @@ def list_user_roles(
     response_model=list[str],
     summary="Grant a global role (superuser only)",
     responses={400: {"description": "That role is project-scoped"}},
+    dependencies=[Depends(require_permission(Permission.ROLE_MANAGE))],
 )
 def grant_user_role(
     session: SessionDep, username: str, body: GrantRoleRequest,
@@ -212,6 +221,7 @@ def grant_user_role(
     response_model=list[str],
     summary="Revoke a global role (superuser only)",
     responses={409: {"description": "Would remove the last role manager"}},
+    dependencies=[Depends(require_permission(Permission.ROLE_MANAGE))],
 )
 def revoke_user_role(
     session: SessionDep, username: str, role_name: str,

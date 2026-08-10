@@ -1,17 +1,20 @@
 """
 User search endpoints
 """
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, Query
 
 from core.deps import SessionDep
 from api.auth.deps import CurrentActiveUser
+from api.rbac.deps import require_permission
+from api.rbac.permissions import Permission
 from api.users.models import UserSearchResponse
 from api.users import services
 
 router = APIRouter(prefix="/users", tags=["Users"])
 
 
-@router.get("/search", response_model=UserSearchResponse)
+@router.get("/search", response_model=UserSearchResponse,
+            dependencies=[Depends(require_permission(Permission.USER_READ))])
 def search_users(
     session: SessionDep,
     current_user: CurrentActiveUser,
