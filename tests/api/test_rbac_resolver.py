@@ -9,6 +9,7 @@ from api.rbac.models import ProjectMember, Role, UserRole
 from api.rbac.permissions import ALL_PERMISSIONS, Permission
 from api.rbac.resolver import AuthzContext
 from api.rbac.seed import sync_rbac_catalog
+from tests.conftest import LEGACY_ROLE_NAME, legacy_permissions
 
 
 def _user(session: Session, username: str, superuser: bool = False) -> User:
@@ -206,8 +207,11 @@ class TestReadEndpoints:
         body = response.json()
         assert body["username"] == "testuser"
         assert body["is_superuser"] is False
-        assert body["global_roles"] == []
-        assert body["global_permissions"] == []
+        # The fixture user holds the pre-RBAC permission set, so this reports a
+        # real grant rather than an empty one -- which is the point of the
+        # endpoint. What matters is that it reports what the user actually has.
+        assert body["global_roles"] == [LEGACY_ROLE_NAME]
+        assert sorted(body["global_permissions"]) == legacy_permissions()
 
     def test_me_reports_everything_for_a_superuser(self, superuser_client, session):
         sync_rbac_catalog(session)

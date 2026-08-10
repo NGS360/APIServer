@@ -10,10 +10,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
 from sqlalchemy import text
-from sqlmodel import Session
 from core.lifespan import lifespan
 from core.config import get_settings
-from core.db import engine
+from core.deps import SessionDep
 from core.middleware import RequestContextMiddleware
 
 from api.auth.routes import router as auth_router
@@ -132,16 +131,23 @@ def root():
 
 
 @app.get("/api/health", tags=["health"])
-def health_check():
+def health_check(session: SessionDep):
     """Health check that also probes database connectivity.
 
     Returns 503 when the database is unreachable so the load balancer marks the
     target unhealthy instead of routing traffic to an instance that can't serve
     DB-backed requests (e.g. new instances that lack RDS security-group access).
+
+    Takes the session through the normal dependency rather than opening one on
+    the module-level engine. In production the two are the same object, so the
+    probe is unchanged; in tests they are not, and building the engine at import
+    time meant this endpoint dialled whichever deployed database .env happened
+    to name. `get_db` only constructs the Session -- the connection is made by
+    the execute below -- so an unreachable database still surfaces here as a
+    clean 503 rather than a 500 from dependency resolution.
     """
     try:
-        with Session(engine) as session:
-            session.execute(text("SELECT 1"))
+        session.execute(text("SELECT 1"))
     except Exception as e:
         logger.exception("Health check database probe failed: %s", e)
         return JSONResponse(
