@@ -19,6 +19,37 @@ def test_health_check(client: TestClient):
     assert response.json() == {"status": "ok", "message": "NGS360 API is running."}
 
 
+def test_health_check_uses_the_injected_session(client: TestClient):
+    """
+    The probe must go through get_db, not the module-level engine.
+
+    That engine is built at import time from whatever .env names, so a probe
+    opening its own session reached a *deployed* database from the test suite --
+    which is both wrong and why this test used to fail only when DNS happened
+    not to resolve. Overriding the dependency with a session that refuses to
+    execute proves the endpoint honours the override, and that an unreachable
+    database still degrades to a clean 503 rather than a 500.
+    """
+    from core.deps import get_db
+
+    class UnreachableSession:
+        def execute(self, *args, **kwargs):
+            raise OSError("database is unreachable")
+
+    previous = app.dependency_overrides.get(get_db)
+    app.dependency_overrides[get_db] = lambda: UnreachableSession()
+    try:
+        response = client.get("/api/health")
+    finally:
+        if previous is None:
+            del app.dependency_overrides[get_db]
+        else:
+            app.dependency_overrides[get_db] = previous
+
+    assert response.status_code == 503
+    assert response.json()["status"] == "error"
+
+
 def test_validation_error_with_bytes_body_returns_422(client: TestClient):
     """
     Regression test: when a request sends a JSON body without the proper
