@@ -824,11 +824,14 @@ def test_chat_stream_reports_upstream_error(client, fake_langgraph):
 # --- The agent runs as the caller, not as a service account ------------------
 #
 # The agent's NGS360 API tools inherit the caller's own permissions, which only
-# works if the caller's raw credential reaches the run. It travels on the run
-# config under a key whose exact name is load-bearing: LangGraph keeps `__`-
-# prefixed configurable keys out of checkpoint metadata, and keys containing
-# "token" out of LangSmith traces. Renaming it would start persisting user
-# credentials, so the name is asserted literally here rather than imported.
+# works if a credential for that user reaches the run. The route mints one rather
+# than replaying what the caller sent, so what is asserted here is that the minted
+# token *resolves to* the caller — not that it equals any particular string.
+#
+# It travels on the run config under a key whose exact name is load-bearing:
+# LangGraph keeps `__`-prefixed configurable keys out of checkpoint metadata and
+# out of trace metadata. Renaming it would start persisting credentials, so the
+# name is asserted literally here rather than imported.
 
 
 USER_TOKEN_KEY = "__ngs360_user_token"
@@ -839,8 +842,21 @@ def _auth():
     return {"Authorization": f"Bearer {BEARER}"}
 
 
-def test_chat_json_runs_as_the_calling_user(client, fake_langgraph):
-    """The caller's own bearer token is what the agent's API tools act with."""
+def _delegated_claims(fake):
+    """The decoded claims of the credential the last run was given."""
+    from core.security import decode_token
+
+    return decode_token(fake.runs.config["configurable"][USER_TOKEN_KEY])
+
+
+def test_chat_json_runs_as_the_calling_user(client, chat_user, fake_langgraph):
+    """Test that the JSON route sends a credential resolving to the caller.
+
+    That credential is what the agent's NGS360 tools act with, so its `sub` must
+    be the calling user and it must be marked as minted for the agent.
+    """
+    from api.chat.services import AGENT_ACTOR
+
     fake = fake_langgraph(FakeLangGraphClient())
 
     response = client.post(
@@ -848,11 +864,13 @@ def test_chat_json_runs_as_the_calling_user(client, fake_langgraph):
     )
 
     assert response.status_code == 200
-    assert fake.runs.config == {"configurable": {USER_TOKEN_KEY: BEARER}}
+    claims = _delegated_claims(fake)
+    assert claims["sub"] == str(chat_user)
+    assert claims["act"] == AGENT_ACTOR
 
 
-def test_chat_stream_runs_as_the_calling_user(client, fake_langgraph):
-    """The streaming route forwards the credential too, not just the JSON one."""
+def test_chat_stream_runs_as_the_calling_user(client, chat_user, fake_langgraph):
+    """Test that the streaming route sends a credential too, not just the JSON one."""
     fake = fake_langgraph(FakeLangGraphClient())
 
     response = client.post(
@@ -861,14 +879,57 @@ def test_chat_stream_runs_as_the_calling_user(client, fake_langgraph):
 
     assert response.status_code == 200
     _sse_data_chunks(response.text)  # drain the body so the run completes
-    assert fake.runs.config == {"configurable": {USER_TOKEN_KEY: BEARER}}
+    assert _delegated_claims(fake)["sub"] == str(chat_user)
 
 
-def test_an_api_key_is_forwarded_verbatim(client, fake_langgraph):
-    """An ngs360_ API key is a credential the NGS360 API accepts, so replay it as-is.
+def test_the_delegated_token_authenticates_as_the_caller(
+    client, chat_user, fake_langgraph
+):
+    """Test that the minted credential decodes to the caller on the ordinary path.
 
-    Nothing here inspects or rewrites the credential — CurrentUser on the same
-    route has already rejected the request if it is not good.
+    Minting is only equivalent to replaying if the result resolves to the caller.
+    The agent's tools call back into this same API, so the credential has to pass
+    that path — signature, expiry, and the user lookup keyed on ``sub``.
+    """
+    fake = fake_langgraph(FakeLangGraphClient())
+
+    client.post("/api/v1/chat", json=_envelope("hi"), headers=_auth())
+
+    claims = _delegated_claims(fake)
+    assert uuid.UUID(claims["sub"]) == chat_user
+    assert claims["type"] == "access"  # what get_current_user's decode path accepts
+
+
+def test_the_delegated_token_expires_in_minutes_not_the_session_lifetime(
+    client, fake_langgraph
+):
+    """Test that the token's lifetime is DELEGATED_TOKEN_TTL, well under a session's.
+
+    That lifetime is the bound on the copy stored upstream, so it is asserted. A
+    replayed session token would be good for ACCESS_TOKEN_EXPIRE_MINUTES, and a
+    replayed API key possibly forever, since APIKey.expires_at may be None.
+    """
+    from api.chat.services import DELEGATED_TOKEN_TTL
+    from core.config import get_settings
+
+    fake = fake_langgraph(FakeLangGraphClient())
+
+    client.post("/api/v1/chat", json=_envelope("hi"), headers=_auth())
+
+    claims = _delegated_claims(fake)
+    assert claims["exp"] - claims["iat"] == DELEGATED_TOKEN_TTL.total_seconds()
+    assert DELEGATED_TOKEN_TTL.total_seconds() < (
+        get_settings().ACCESS_TOKEN_EXPIRE_MINUTES * 60
+    )
+
+
+def test_an_api_key_never_leaves_the_process(client, fake_langgraph):
+    """Test that an ngs360_ API key is absent from everything sent to the run.
+
+    An API key authenticates the request as well as a JWT does, but it may have no
+    expiry at all (APIKey.expires_at defaults to None), so replaying one would put
+    a non-expiring credential on the run row. Minting is what avoids that; this is
+    what keeps it avoided.
     """
     fake = fake_langgraph(FakeLangGraphClient())
 
@@ -878,58 +939,50 @@ def test_an_api_key_is_forwarded_verbatim(client, fake_langgraph):
         headers={"Authorization": "Bearer ngs360_abc123"},
     )
 
-    assert fake.runs.config["configurable"][USER_TOKEN_KEY] == "ngs360_abc123"
-
-
-@pytest.mark.parametrize("path", ["/api/v1/chat", "/api/v1/chat/stream"])
-def test_no_credential_means_no_config_at_all(client, fake_langgraph, path):
-    """With nothing to forward, the agent gets no config and stays read-only.
-
-    Not an empty string: the agent treats a present-but-empty token as no token
-    anyway, and passing one would make the run config claim a user it cannot name.
-    """
-    fake = fake_langgraph(FakeLangGraphClient())
-
-    response = client.post(path, json=_envelope("hi"))
-
-    assert response.status_code == 200
-    if path.endswith("/stream"):
-        _sse_data_chunks(response.text)
-    assert fake.runs.config is None
+    assert "ngs360_abc123" not in json.dumps(fake.runs.config)
 
 
 @pytest.mark.parametrize("credential", [None, ""])
 def test_user_run_config_treats_an_absent_credential_as_no_config(credential):
-    """Directly, so the empty-string case is pinned and not only implied."""
+    """Test that a missing or empty credential yields no run config at all.
+
+    No credential means the agent keeps its read-only posture. Not an empty
+    string: passing one would make the run config claim a user it
+    cannot name. Asserted directly — an authenticated route always has a user to
+    mint from, so this state is unreachable through one.
+    """
     from api.chat.services import user_run_config
 
     assert user_run_config(credential) is None
 
 
 def test_the_token_travels_only_on_the_run_config(client, fake_langgraph):
-    """It must not reach thread metadata, which is persisted unencrypted.
+    """Test that the credential is absent from thread metadata, which is persisted.
 
-    The run config is in LangGraph Platform's at-rest encryption set; thread
+    Thread metadata is stored unencrypted. The run config is in LangGraph
+    Platform's at-rest encryption set; thread
     metadata is not, and it is what the ownership check reads back on every turn.
     """
     fake = fake_langgraph(FakeLangGraphClient())
 
     client.post("/api/v1/chat", json=_envelope("hi"), headers=_auth())
 
-    assert BEARER not in json.dumps(fake.threads.threads)
+    minted = fake.runs.config["configurable"][USER_TOKEN_KEY]
+    assert minted not in json.dumps(fake.threads.threads)
 
 
 @pytest.mark.parametrize("path", ["/api/v1/chat", "/api/v1/chat/stream"])
 def test_the_credential_and_the_context_reach_one_run_together(
-    client, fake_langgraph, path
+    client, chat_user, fake_langgraph, path
 ):
-    """Two independent channels on the same call: neither displaces the other.
+    """Test that one run carries both the credential and the caller's context.
 
-    The credential rides `config`; the caller identity and attached context ride
-    `context`. Both must arrive on every run.
+    Two independent channels on the same call: the credential rides `config`, the
+    caller identity and attached context ride `context`, and neither displaces the
+    other.
 
-    The credential must not appear in `context`: it authorizes the agent's API
-    calls and is not part of describing who is asking.
+    Also asserts the credential does not appear in `context`: it authorizes the
+    agent's API calls and is not part of describing who is asking.
     """
     fake = fake_langgraph(FakeLangGraphClient())
 
@@ -938,9 +991,10 @@ def test_the_credential_and_the_context_reach_one_run_together(
     assert response.status_code == 200
     if path.endswith("/stream"):
         _sse_data_chunks(response.text)
-    assert fake.runs.config == {"configurable": {USER_TOKEN_KEY: BEARER}}
+    minted = fake.runs.config["configurable"][USER_TOKEN_KEY]
+    assert _delegated_claims(fake)["sub"] == str(chat_user)
     assert fake.runs.context["caller"]["username"] == "testuser"
-    assert BEARER not in json.dumps(fake.runs.context)
+    assert minted not in json.dumps(fake.runs.context)
 
 
 # --- The agent's tool work is invisible, except for the names ----------------
