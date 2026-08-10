@@ -166,6 +166,31 @@ class Settings(BaseSettings):
 
     @computed_field
     @property
+    def DEFAULT_USER_ROLE(self) -> str:
+        """
+        Global role granted to every user at creation. "none" disables it.
+
+        Without this, a new user holds nothing, and under RBAC_MODE=enforce that
+        is a 403 on every endpoint from their first request -- one support ticket
+        per person who signs in, which is the most predictable way to make an
+        authorization rollout look like an outage.
+
+        "member" is deliberately a wide, read-heavy set rather than a minimal
+        one: it is what an authenticated caller could already do before RBAC, so
+        granting it changes nothing for anybody. Narrowing it later is a role
+        edit through the API, not a deploy -- which is the whole reason roles are
+        rows and permissions are code.
+
+        Disabling takes the literal string "none" rather than an empty value,
+        because _get_config_value treats empty as unset and falls through to the
+        default -- so DEFAULT_USER_ROLE= would silently still grant `member`.
+        Returned as "" so callers test one falsy condition either way.
+        """
+        value = self._get_config_value("DEFAULT_USER_ROLE", default="member").strip()
+        return "" if value.lower() == "none" else value
+
+    @computed_field
+    @property
     def LOG_FORMAT(self) -> str:
         """
         Log output format: "json" or "text".

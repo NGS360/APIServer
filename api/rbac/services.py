@@ -7,6 +7,7 @@ guardrails here exist to stop the two mistakes that are hard to undo: revoking
 your own ability to grant, and orphaning a project nobody can administer.
 """
 
+import logging
 import uuid
 from datetime import datetime, timezone
 
@@ -17,6 +18,9 @@ from api.auth.models import User
 from api.rbac.models import GrantSource, ProjectMember, Role, RolePermission, UserRole
 from api.rbac.permissions import ALL_PERMISSIONS, PROJECT_SCOPABLE, Permission
 from api.rbac.roles import RoleScope
+from core.config import get_settings
+
+logger = logging.getLogger(__name__)
 
 
 def _conflict(detail: str) -> HTTPException:
@@ -56,6 +60,58 @@ def validate_permissions(permissions: list[str], scope: RoleScope) -> set[str]:
                 ),
             )
     return set(permissions)
+
+
+def assign_default_roles(session: Session, user: User) -> list[str]:
+    """
+    Grant a newly created user their starting roles. Returns what was granted.
+
+    Called from both user-creation paths. Deliberately best-effort: it logs and
+    returns empty rather than raising if the role is missing. A user who ends up
+    with no role gets 403s, which is visible and fixable by an administrator; an
+    exception here would instead fail the registration or the SSO callback
+    outright, locking people out of the product because of an authorization
+    misconfiguration. The wrong failure to choose is the one that denies login.
+
+    Superusers additionally receive `admin`. That is inert today -- is_superuser
+    already short-circuits ahead of every role -- and exists so that dropping
+    the break-glass flag in a later release does not lock out the only accounts
+    able to grant roles back.
+
+    Does not commit: the caller owns the transaction, so the grant lands with
+    the user row or not at all.
+    """
+    granted: list[str] = []
+    wanted = []
+
+    default_role = get_settings().DEFAULT_USER_ROLE
+    if default_role:
+        wanted.append(default_role)
+    if user.is_superuser:
+        wanted.append("admin")
+
+    for name in wanted:
+        role = session.exec(select(Role).where(Role.name == name)).first()
+        if role is None:
+            logger.error(
+                "cannot grant %r to %s: no such role. The catalog is seeded at "
+                "startup, so this means seeding did not run or the name is "
+                "wrong. The user will hold no permissions until an "
+                "administrator grants one.",
+                name, user.username,
+            )
+            continue
+        already = session.exec(
+            select(UserRole).where(UserRole.user_id == user.id,
+                                   UserRole.role_id == role.id)
+        ).first()
+        if already:
+            continue
+        session.add(UserRole(user_id=user.id, role_id=role.id,
+                             source=GrantSource.BOOTSTRAP))
+        granted.append(name)
+
+    return granted
 
 
 def get_role_or_404(session: Session, name: str) -> Role:

@@ -18,6 +18,7 @@ from api.auth.models import (
     User, OAuthProvider, OAuthProviderName,
     OAuthProviderInfo, AvailableProvidersResponse
 )
+from api.rbac.services import assign_default_roles
 from core.config import get_settings
 from core.security import generate_secure_token
 
@@ -477,6 +478,12 @@ def find_or_create_oauth_user(
             is_superuser=is_admin
         )
         session.add(user)
+        session.flush()
+
+        # Same transaction as the user row: an SSO user who arrives without a
+        # role would get 403s on their very first page.
+        assign_default_roles(session, user)
+
         session.commit()
         session.refresh(user)
 
