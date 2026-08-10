@@ -54,8 +54,11 @@ STREAMING_TIMEOUT_S = 120
 # LangGraph copies scalar `configurable` values into persisted checkpoint metadata,
 # skipping only keys starting with `__`
 # (langgraph.checkpoint.base.get_checkpoint_metadata). For LangSmith traces there
-# are two filters: the top-level run excludes an exact-match `api_key` only
-# (langchain_core.runnables.config), while per-node runs drop any key containing
+# are two filters, because langgraph defines its own get_callback_manager_for_config
+# shadowing langchain-core's and each reaches a different one: the top-level run
+# (langgraph.pregel.main) goes through langchain-core's, which excludes an
+# exact-match `api_key` only, while per-node runs (langgraph._internal._runnable)
+# go through langgraph's, which drops any key containing
 # key/token/secret/password/auth (langgraph._internal._config._exclude_as_metadata).
 # So `__` is what holds everywhere, and "token" adds cover at the node layer.
 # Renaming this can start persisting credentials.
