@@ -217,7 +217,7 @@ def test_guard_count_is_recorded():
     Pins the size of the guarded surface so growth is visible in review rather
     than incidental.
     """
-    assert len(GUARDED) == 36
+    assert len(GUARDED) == 37
 
 
 def test_the_authentication_backlog_only_shrinks():

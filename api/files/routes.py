@@ -13,7 +13,8 @@ Endpoints:
 from typing import Optional
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status, Form, UploadFile
+from fastapi import (APIRouter, Depends, HTTPException, Query, Response, status,
+                     Form, UploadFile)
 from fastapi import File as FastAPIFile
 from fastapi.responses import RedirectResponse
 from pydantic import ValidationError
@@ -26,6 +27,7 @@ from api.files.models import (
     FileCreate,
     FileUpdate,
     FileBrowserData,
+    PresignedDownload,
     file_to_public,
 )
 from api.files import services
@@ -256,11 +258,63 @@ def download_file(
     Returns a 307 redirect to a time-limited presigned S3 URL.
     The client follows the redirect to download directly from S3,
     offloading bandwidth from the API server.
+
+    Deprecated in favour of GET /files/download-url, which returns the same URL
+    as JSON. This route cannot be given a permission guard: it is used by the UI
+    as a plain link, and a browser following a link cannot send an Authorization
+    header, so guarding it would 401 every download in the product. It closes
+    once browser traffic here reaches zero.
     """
     presigned_url = services.generate_presigned_url(
         s3_path=path, s3_client=s3_client
     )
     return RedirectResponse(url=presigned_url, status_code=307)
+
+
+# Kept explicit, and passed explicitly below, rather than relying on
+# generate_presigned_url's default: expires_in is a promise to the caller, and if
+# the service default were changed this response would quietly start lying about
+# when the URL stops working.
+DOWNLOAD_URL_TTL_SECONDS = 3600
+
+
+@router.get(
+    "/download-url",
+    response_model=PresignedDownload,
+    summary="Get a presigned URL for a file",
+    dependencies=[Depends(require_permission(Permission.FILE_DOWNLOAD))],
+)
+def get_download_url(
+    response: Response,
+    path: str = Query(
+        ...,
+        description="S3 URI of the file (e.g., s3://bucket/path/file.txt)"
+    ),
+    s3_client=Depends(get_s3_client),
+) -> PresignedDownload:
+    """
+    Return a time-limited URL for downloading a file directly from S3.
+
+    The authenticated counterpart to GET /files/download. A browser cannot put a
+    token on a link it navigates to, so the UI calls this with its token, reads
+    the URL from the response, and then navigates to S3 -- which is what the old
+    endpoint's redirect did anyway, minus the ability to check anything first.
+
+    Guarded on the global plane rather than per project, because the parameter is
+    an arbitrary S3 URI and nothing maps a URI back to a project. That is the
+    same reason file:browse is global-only; it is a known limitation recorded in
+    docs/RBAC.md, not an oversight. `member` holds file:download, so every
+    authenticated caller can use this today.
+    """
+    # A presigned URL is a bearer credential for the object. Caching it in a
+    # shared proxy would hand it to whoever asks next.
+    response.headers["Cache-Control"] = "no-store"
+
+    url = services.generate_presigned_url(
+        s3_path=path, s3_client=s3_client,
+        expiration=DOWNLOAD_URL_TTL_SECONDS,
+    )
+    return PresignedDownload(url=url, expires_in=DOWNLOAD_URL_TTL_SECONDS)
 
 
 @router.patch(

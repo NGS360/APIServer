@@ -548,6 +548,24 @@ class FilePublic(SQLModel):
     tags: List[TagPublic]
 
 
+class PresignedDownload(SQLModel):
+    """
+    A time-limited URL the caller can fetch the bytes from directly.
+
+    Exists so that authorization can be checked on a request a *browser* is able
+    to authenticate. GET /files/download answers with a 307 to S3, which means
+    the UI uses it as a plain link -- and a browser following a link cannot
+    attach an Authorization header, so that endpoint cannot be closed without
+    breaking every download in the product. Here the caller fetches the URL with
+    its token and then navigates to S3 itself.
+
+    No new exposure: the bytes already bypass the API today, because the redirect
+    sends the browser straight to the same presigned URL.
+    """
+    url: str
+    expires_in: int  # seconds from now
+
+
 class FileSummary(SQLModel):
     """
     Compact file representation for lists.
