@@ -12,10 +12,10 @@ from api.runs.models import SequencingRunPublic
 from api.samples.models import Sample
 from api.qcmetrics.models import QCRecord
 
-
-class Attribute(SQLModel):
-    key: str | None
-    value: str | None
+# Shared with samples and workflows: one definition keeps the generated OpenAPI
+# schema name stable. Re-exported here so `from api.project.models import
+# Attribute` keeps working.
+from core.models import Attribute
 
 
 class ProjectAttribute(SQLModel, table=True):
