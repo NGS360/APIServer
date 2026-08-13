@@ -8,14 +8,11 @@ from typing import List, TYPE_CHECKING
 from sqlmodel import SQLModel, Field, Relationship, UniqueConstraint
 from pydantic import ConfigDict, field_validator
 
+from core.models import Attribute
+
 if TYPE_CHECKING:
     from api.project.models import Project
     from api.files.models import FileSample
-
-
-class Attribute(SQLModel):
-    key: str | None
-    value: str | None
 
 
 class SampleAttribute(SQLModel, table=True):

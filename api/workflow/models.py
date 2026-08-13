@@ -14,15 +14,13 @@ from typing import List
 
 from sqlmodel import Field, Relationship, SQLModel, UniqueConstraint
 
-
 # ---------------------------------------------------------------------------
 # Shared helpers
 # ---------------------------------------------------------------------------
 
-class Attribute(SQLModel):
-    """Reusable key-value pair for request/response payloads."""
-    key: str | None
-    value: str | None
+# Shared with projects and samples. Re-exported here so the existing
+# `from api.workflow.models import Attribute` in pipeline/ keeps working.
+from core.models import Attribute
 
 
 # ---------------------------------------------------------------------------
