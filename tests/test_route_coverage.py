@@ -129,7 +129,6 @@ AWAITING_AUTHENTICATION = {
     "POST /api/v1/samples/reindex",
     "POST /api/v1/samples/search",
     "POST /api/v1/vendors",
-    "PUT /api/v1/jobs/{job_id}",
     "PUT /api/v1/projects/{project_id}",
     "PUT /api/v1/projects/{project_id}/samples/{sample_id}",
     "PUT /api/v1/runs/{run_id}",
@@ -217,7 +216,7 @@ def test_guard_count_is_recorded():
     Pins the size of the guarded surface so growth is visible in review rather
     than incidental.
     """
-    assert len(GUARDED) == 37
+    assert len(GUARDED) == 38
 
 
 def test_the_authentication_backlog_only_shrinks():
@@ -227,8 +226,11 @@ def test_the_authentication_backlog_only_shrinks():
     Lowering this is a breaking change for whoever calls the route anonymously,
     so it should only ever move down, deliberately, with the consumer migration
     that justifies it.
+
+    73 -> 72: PUT /jobs/{job_id} closed once the Omics event processor started
+    sending its API key, which left no anonymous caller on it in any tier.
     """
-    assert len(AWAITING_AUTHENTICATION) == 73
+    assert len(AWAITING_AUTHENTICATION) == 72
 
 
 @pytest.mark.parametrize("key", sorted(GUARDED))
