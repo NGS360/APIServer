@@ -47,7 +47,9 @@ undone (UPDATE api_keys SET is_active = 1, revoked_at = NULL) as long as somebod
 still holds the raw key.
 
 Which database is written is decided by SQLALCHEMY_DATABASE_URI, so run it once
-per tier. The tier is echoed back before anything is written.
+per tier. The tier and database are echoed back and have to be confirmed at the
+prompt before anything is written -- --yes skips that, and --dry-run never asks
+because it writes nothing.
 """
 
 import argparse
@@ -66,7 +68,7 @@ from api.auth.services import (  # noqa: E402
     revoke_user_api_key,
 )
 from api.rbac.models import GrantSource, Role, UserRole  # noqa: E402
-from core.config import get_settings  # noqa: E402
+from core.config import Settings, get_settings  # noqa: E402
 from core.db import engine  # noqa: E402
 from core.security import hash_api_key  # noqa: E402
 
@@ -74,6 +76,50 @@ from core.security import hash_api_key  # noqa: E402
 def _mask_uri(uri: str) -> str:
     import re
     return re.sub(r"://([^:@/]*):([^@]*)@", r"://\1:*****@", uri or "")
+
+
+def confirm_target(settings: Settings, action: str, assume_yes: bool) -> None:
+    """
+    Make the operator name the tier before anything is written.
+
+    Which database is written is decided entirely by SQLALCHEMY_DATABASE_URI --
+    there is no --tier flag to get wrong, so the only thing between minting a
+    prod key and minting a dev one is which environment the shell happened to
+    have loaded. A y/N prompt gets answered reflexively; typing the tier back
+    does not work unless the two lines above it were actually read.
+
+    Note that ENVIRONMENT is only a label: core.config falls back to "dev" for
+    any unrecognised value, so a run can print "dev" over a production URI. The
+    database line is the authority, which is why both are printed and why the
+    prompt tells the reader to check it.
+    """
+    if assume_yes:
+        print(f"confirm:  --yes given, proceeding to {action}")
+        print()
+        return
+
+    if not sys.stdin.isatty():
+        raise SystemExit(
+            "error: cannot confirm the tier -- stdin is not a terminal, and "
+            "nothing has been written. Re-run interactively, or pass --yes if "
+            "the tier and database above are certain to be the right ones."
+        )
+
+    prompt = (f"About to {action}.\n"
+              f"Check the database above, then type the tier name "
+              f"({settings.ENVIRONMENT}) to continue: ")
+    try:
+        answer = input(prompt).strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        print()
+        raise SystemExit("aborted, nothing written") from None
+
+    if answer != settings.ENVIRONMENT:
+        raise SystemExit(
+            f"aborted, nothing written: expected {settings.ENVIRONMENT!r}, "
+            f"got {answer!r}"
+        )
+    print()
 
 
 def create_or_get_user(session: Session, username: str, email: str | None,
@@ -315,6 +361,9 @@ def main() -> int:
                          "prefix, or the raw key. Repeatable. Requires "
                          "--revoke-key.")
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--yes", "-y", action="store_true",
+                    help="Skip the tier confirmation prompt. For non-interactive "
+                         "use only -- the tier and database are still printed.")
     args = ap.parse_args()
 
     # Reject the mint-flavoured arguments in revoke mode rather than accepting
@@ -338,6 +387,19 @@ def main() -> int:
     print(f"tier:     {settings.ENVIRONMENT}")
     print(f"database: {_mask_uri(settings.SQLALCHEMY_DATABASE_URI)}")
     print()
+
+    # Confirm with the user this is the correct tier / database to use.
+    #
+    # A dry run is exempt: it writes nothing, and doing one first is precisely
+    # how you check you are pointed where you think you are -- so making it the
+    # cheap, unprompted option is the behaviour worth encouraging.
+    if not args.dry_run:
+        confirm_target(
+            settings,
+            (f"revoke API keys for {args.username!r}" if args.revoke_keys
+             else f"mint an API key for {args.username!r}"),
+            args.yes,
+        )
 
     with Session(engine) as session:
         if args.revoke_keys:
