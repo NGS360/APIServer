@@ -5,10 +5,10 @@ description = "NGS360 API Server"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
-    "alembic>=1.19.0",
+    "alembic>=1.19.1",
     "authlib>=1.7.2",
     "bcrypt>=5.0.0,<6.0.0",
-    "boto3>=1.43.67",
+    "boto3>=1.43.72",
     "cryptography>=50.0.0",
     "email-validator>=2.3.0",
     "fastapi[standard]>=0.141.1",
@@ -28,7 +28,7 @@ dependencies = [
     "smart-open>=8.0.1",
     "ldap3>=2.9.1",
     "sqlmodel>=0.0.39",
-    "uvicorn>=0.52.0",
+    "uvicorn>=0.52.3",
 ]
 
 [project.optional-dependencies]
