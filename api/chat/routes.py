@@ -21,15 +21,17 @@ router = APIRouter(prefix="/chat", tags=["Chat Endpoints"])
 
 @router.post("")
 async def chat(
-    req: ChatRequest, current_user: CurrentUser, client: ChatClientDep
+    req: ChatRequest,
+    current_user: CurrentUser,
+    client: ChatClientDep,
 ) -> JSONResponse:
     """Non-streaming JSON chat for simple clients and tests."""
-    # One expression for the caller: thread ownership and the agent's caller
-    # identity are the same user, and nothing should be able to make them
-    # disagree.
     user_id = str(current_user.id)
     run_context = services.build_run_context(req.context, current_user)
-    result = await services.run_chat(req, client, user_id, run_context=run_context)
+    user_token = services.mint_delegated_token(current_user)
+    result = await services.run_chat(
+        req, client, user_id, run_context=run_context, user_token=user_token
+    )
     return JSONResponse(result)
 
 
@@ -53,14 +55,15 @@ async def chat(
     },
 )
 async def chat_stream(
-    req: ChatRequest, current_user: CurrentUser, client: LangGraphDep
+    req: ChatRequest,
+    current_user: CurrentUser,
+    client: LangGraphDep,
 ) -> StreamingResponse:
     """Streaming chat for the chat UI.
 
     The frames are this API's own; the client's chat transport maps them onto
     the AI SDK protocol that useChat consumes.
     """
-    # One expression for the caller, as in the non-streaming route above.
     user_id = str(current_user.id)
     # Resolve the thread up front: once the SSE body starts, a failure can only
     # be an in-band error chunk on a 200, so the ownership check has to happen
@@ -68,11 +71,15 @@ async def chat_stream(
     thread_id = (
         None if client is None else await services.resolve_thread(req, client, user_id)
     )
-    # Assembled here, not in stream_chat: the caller identity must come from the
-    # authenticated user and nowhere else.
+    # Both assembled here, not in stream_chat: the caller identity and the
+    # credential the agent acts with must come from the authenticated user and
+    # nowhere else.
     run_context = services.build_run_context(req.context, current_user)
+    user_token = services.mint_delegated_token(current_user)
     return StreamingResponse(
-        services.stream_chat(req, client, thread_id, run_context=run_context),
+        services.stream_chat(
+            req, client, thread_id, run_context=run_context, user_token=user_token
+        ),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
