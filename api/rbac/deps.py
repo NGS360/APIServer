@@ -69,7 +69,7 @@ def _denied(permissions: tuple[Permission, ...], scope: str | None = None) -> HT
     )
 
 
-def _decide(
+def decide(
     request: Request,
     granted: bool,
     permissions: tuple[Permission, ...],
@@ -77,6 +77,11 @@ def _decide(
 ) -> None:
     """
     Apply the enforcement mode to one check's result, and record it.
+
+    Public because a route whose requirement depends on its payload cannot use
+    the factories below -- it has to resolve the permission itself and then come
+    back here, so that a bespoke check is still subject to the mode flag and
+    still lands in the access log alongside every other decision.
 
     Every check emits a decision, allow or deny, because the point of the
     dry-run window is a complete picture of who calls what -- knowing only the
@@ -143,8 +148,8 @@ def require_permission(
 
     def dependency(request: Request, authz: AuthzDep) -> AuthzContext:
         check = all if mode == "all" else any
-        _decide(request, check(authz.has(p) for p in permissions), permissions,
-                scope=None)
+        decide(request, check(authz.has(p) for p in permissions), permissions,
+               scope=None)
         return authz
 
     # Tag the closure so a route's requirements can be read back off the
@@ -181,7 +186,7 @@ def require_project_permission(
         request: Request, project: ProjectDep, authz: AuthzDep
     ) -> Project:
         check = all if mode == "all" else any
-        _decide(
+        decide(
             request,
             check(authz.has_in_project(p, project.id) for p in permissions),
             permissions,

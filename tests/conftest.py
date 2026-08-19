@@ -1,5 +1,5 @@
 import os
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 
 import pytest
 
@@ -870,6 +870,63 @@ def restricted_client_fixture(
     with _make_client(session, mock_opensearch_client, mock_s3_client,
                       mock_lambda_client, monkeypatch, user=user) as client:
         yield client
+
+
+@pytest.fixture(name="client_with_permissions")
+def client_with_permissions_fixture(
+    session: Session,
+    mock_opensearch_client: MockOpenSearchClient,
+    mock_s3_client: MockS3Client,
+    mock_lambda_client: MockLambdaClient,
+    monkeypatch,
+):
+    """
+    Build a client holding exactly the permissions named, and nothing else.
+
+    `client` holds the whole legacy set and `restricted_client` holds none, so
+    between them they cannot express "holds job:read but not job:update" -- which
+    is the distinction any guard resolving its requirement from the payload turns
+    on. Without a fixture at this granularity such a guard passes its tests while
+    checking the wrong permission on one of its two branches.
+
+    One client per test: _make_client clears app.dependency_overrides on exit, so
+    building a second and tearing down the first would unauthenticate both.
+    """
+    stack = ExitStack()
+
+    def make(permissions, *, username="scoped"):
+        from api.rbac.models import GrantSource, Role, RolePermission, UserRole
+        from api.rbac.roles import RoleScope
+        from api.rbac.seed import sync_rbac_catalog
+
+        sync_rbac_catalog(session)
+        user = persist_user(session, username)
+        role = Role(
+            name=f"test_{username}",
+            display_name=f"Ad-hoc test role for {username}",
+            description="Created by client_with_permissions for a single test",
+            scope=RoleScope.GLOBAL,
+            is_builtin=False,
+        )
+        session.add(role)
+        session.flush()
+        for permission in permissions:
+            session.add(
+                RolePermission(role_id=role.id, permission=str(permission))
+            )
+        session.add(
+            UserRole(user_id=user.id, role_id=role.id, source=GrantSource.MANUAL)
+        )
+        session.commit()
+        return stack.enter_context(
+            _make_client(session, mock_opensearch_client, mock_s3_client,
+                         mock_lambda_client, monkeypatch, user=user)
+        )
+
+    try:
+        yield make
+    finally:
+        stack.close()
 
 
 @pytest.fixture(name="superuser_client")

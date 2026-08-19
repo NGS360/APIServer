@@ -26,6 +26,8 @@ The measurements below are the baseline this design is written against. Regenera
 | Distinct permissions today | 1 (`users.is_superuser`) |
 | Membership / role / permission tables | 0 |
 
+Progress against that baseline is tracked by `tests/test_route_coverage.py`, which asserts both numbers so a change to either is visible in review rather than incidental. **Currently 72 routes await closure and 38 carry a guard** — the closure is recorded under *Closing `PUT /jobs/{job_id}`*.
+
 Routers with **zero** authentication references: `actions` (5 routes), `jobs` (6), `manifest` (3), `platforms` (3), `samples` (3), `search` (1), `vendors` (5). Partially open: `runs` (13/16 open), `project` (9/16), `workflow` (9/13), `files` (7/9), `qcmetrics` (4/5), `pipeline` (3/5), `settings` (2/3).
 
 The four `is_superuser`-gated routes are `DELETE /projects/{project_id}/samples/{sample_id}` (`api/project/routes.py:400`), `PATCH /files/{file_id}` (`api/files/routes.py:264`), `DELETE /files/{file_id}` (`api/files/routes.py:290`), and `PUT /settings/{key}` (`api/settings/routes.py:55`).
@@ -204,10 +206,10 @@ These have no path to a project (see *Design Decisions*), so they are global-onl
 | `run:update` | G | medium | `PUT /runs/{id}`, `POST /runs/{id}/samplesheet` |
 | `run:associate` | G | medium | `POST /runs/{id}/samples`, `DELETE /runs/{id}/samples`, `DELETE /runs/{id}/samples/{sample_id}` |
 | `run:demux` | G | **high** | `POST /runs/demultiplex` — spends compute, deletes run-scoped QC records |
-| `job:read` | G | low | `GET /jobs` (filtered to own), `/jobs/{id}`, `/{id}/log`, `/{id}/log/paginated` |
+| `job:read` | G | low | `GET /jobs` (filtered to own), `/jobs/{id}`, `/{id}/log`, `/{id}/log/paginated`; also `PUT /jobs/{id}` when the payload sets only `viewed` |
 | `job:read_all` | G | medium | Removes the "own jobs" filter from `GET /jobs` |
 | `job:submit` | G | **high** | `POST /jobs` |
-| `job:update` | G | medium | `PUT /jobs/{id}` — status writeback; service accounts only |
+| `job:update` | G | medium | `PUT /jobs/{id}` when the payload sets `status` or `log_stream_name` — writeback; service accounts only |
 | `workflow:read` | G | low | All `GET /workflows/...` |
 | `workflow:create` | G | medium | `POST /workflows`, `POST /workflows/{id}/versions` |
 | `workflow:update` | G | **high** | `PUT /workflows/{id}/aliases/{alias}` — repointing `production` changes what executes |
@@ -546,6 +548,41 @@ for r in (actions_router, chat_router, files_router, jobs_router, manifest_route
 
 Router-level dependencies are additive and cannot be overridden per route, so only the weakest common requirement — authentication — belongs there; permission checks layer on per route. This closes all 73 remaining open routes in one change and makes "forgot to protect the new route" structurally impossible.
 
+### One route, two privileges: the requirement can come from the payload
+
+`PUT /jobs/{job_id}` is the case that forced this, and it is worth stating as a pattern because it will recur. The route carries two operations behind one method:
+
+- the Omics and Batch event Lambdas write `status` and `log_stream_name` back as a job progresses — machine writeback, `job:update`
+- the web UI sends `{"viewed": true}` when a user opens a job from the notifications dropdown — something every signed-in user does
+
+`member` holds `job:read` and `job:submit` but deliberately **not** `job:update`, which is the one permission no human role gets (§4). A single route-level guard on `job:update` would therefore have refused an ordinary click. Production traffic on the day the route was closed makes the scale concrete: 87 machine writebacks alongside 17 requests from 7 distinct users, all of them the UI marking a job viewed.
+
+So the guard resolves the permission from the request body, then hands the result to the same `decide()` the `require_permission` factories use:
+
+```python
+WRITEBACK_FIELDS = frozenset({"status", "log_stream_name"})
+
+def require_job_update(request: Request, authz: AuthzDep,
+                       job_update: BatchJobUpdate) -> AuthzContext:
+    supplied = set(job_update.model_dump(exclude_unset=True))
+    permission = (Permission.JOB_UPDATE if WRITEBACK_FIELDS & supplied
+                  else Permission.JOB_READ)
+    decide(request, authz.has(permission), (permission,), scope=None)
+    return authz
+
+require_job_update.rbac_permissions = (Permission.JOB_UPDATE, Permission.JOB_READ)
+require_job_update.rbac_plane = "global"
+```
+
+Four things make this safe rather than a special case that rots:
+
+- **A dependency may declare the same body model as the handler.** FastAPI parses it once, the handler still receives it, and the OpenAPI `requestBody` stays a `$ref` to `BatchJobUpdate` — so the generated frontend client does not move and no consumer has to change.
+- **The field set is matched against `model_dump(exclude_unset=True)`, which is exactly what `update_batch_job` persists.** The check cannot drift from the write, and naming a writeback field requires the permission even when the value sent is `null`.
+- **The stricter requirement wins on a mixed payload**, or adding `viewed` to a body becomes a way to downgrade the check.
+- **It goes through `decide()`.** A bespoke guard that enforced correctly but skipped the recorder would be invisible to the dry-run data and the deny-rate alarms — the instrument the whole rollout is steered by. Both permissions are tagged on the closure so route introspection sees both branches rather than whichever one was hardcoded.
+
+The alternative — splitting `viewed` onto its own route — is cleaner in isolation but needs a frontend change and a client regeneration to land before the API can enforce, which trades a self-contained change for a cross-repo sequencing dependency. Worth doing if a third operation ever appears on this route.
+
 ### List endpoints filter rows; they do not return 403
 
 `GET /projects`, `GET /projects/search`, `GET /qcmetrics/search`, `GET /files`, `GET /samples/search`, `GET /jobs`, and `GET /search` must return a *narrower list*, not a denial. This is expressed as a scope dependency yielding plain data, so the service layer keeps its existing convention of receiving primitives rather than `User` objects:
@@ -672,7 +709,7 @@ Phase 1 — closing the 73 remaining open routes — is the highest-value securi
 | **0** | ~~Automatic migration on deploy~~ — **withdrawn**; migrations are applied out of band, see *Prerequisite: applying migrations*; ~~add `ENVIRONMENT`~~; ~~JSON logging + request-ID middleware~~; ~~identity logging on the open routes~~ ([#372](https://github.com/NGS360/APIServer/pull/372)); ~~enable CloudWatch log streaming~~ (`StreamLogs`, per environment — see *Tier A*) | No | 7 days of production logs exist and can answer "which open routes received anonymous traffic, from which user agents and IPs" |
 | **1a** | Create service-account users and API keys; land and deploy consumer changes **while the endpoints are still open** | No | Logs show zero anonymous traffic from known consumers in all three tiers |
 | **1b** | Close destructive and configuration writes: every `DELETE` (`PUT /settings/{key}` already done in [#361](https://github.com/NGS360/APIServer/pull/361)) | **Yes** | Deployed to prod; no 401 spike from unknown callers |
-| **1c** | Close remaining writes; stop honouring client-supplied `created_by` | **Yes** | As above |
+| **1c** | Close remaining writes; stop honouring client-supplied `created_by`. **First closure landed: `PUT /jobs/{job_id}`** — see *Closing PUT /jobs/{job_id}* below | **Yes** | As above |
 | **1d** | Close reads | **Yes** | CI asserts every route not in `PUBLIC_ROUTES` returns 401 unauthenticated; 7 days with no anonymous non-public requests |
 | **2** | RBAC schema, catalog seeding, resolver, `/auth/me` permission fields. **No route behaviour change** | No | Catalog present in all three tiers; resolution-matrix test passes; the diff touches no route's authorization |
 | **3** | Membership backfill; admin API guarded by the existing `CurrentSuperuser` (no chicken-and-egg) | No | Admins can grant and revoke; the "projects with no member" report is empty or explicitly signed off |
@@ -722,6 +759,24 @@ Consequences for this design:
 - Because the volume is a fixed hourly scan rather than user-driven traffic, a single denied hour is unmistakable in the logs: the count drops from 221 to 0. That makes them the easiest consumer to verify after cutover.
 
 **A separate efficiency gap, worth fixing regardless of RBAC.** `Project.last_modified` is maintained on every update, but `GET /api/v1/projects` accepts only `page`, `per_page`, `sort_by` and `sort_order` — there is no `modified_after` filter, so a full scan is the only option the API offers. Exposing one would reduce this from 221 requests an hour to approximately one, and would remove most of the load that closing this route has to keep working.
+
+### Closing `PUT /jobs/{job_id}`, 2026-08-18
+
+The first route to leave the backlog, taking it from **73 to 72**. Worth recording in full because it is the template for every closure that follows.
+
+**What made it closable.** The route had exactly one anonymous caller left, the Omics run event processor, and that Lambda had been *able* to authenticate for months — its code read a `NGS360_API_TOKEN` and sent it as a header, but the token was never configured, so it sent nothing. Fixing the deploy tooling (see the Omics repository) put the key in place. Verified across all three tiers before touching the route:
+
+| Tier | Authenticated | Anonymous |
+|---|---|---|
+| dev | 185 + 184 by API key | 0 |
+| staging | 184 by API key | 0 |
+| prod | 87 by API key, 17 by JWT | 0 |
+
+Dev's last anonymous request landed 7 hours *before* the Omics stack update, so the cutover is a clean break rather than an intermittent caller happening to be quiet. Prod had seen none in the full 11 days of available logs.
+
+**The check that mattered.** A twenty-hour window is not evidence on its own — a caller that runs weekly is invisible in it, which is the lesson the Batch event Lambda already taught (it did not appear in the first two-hour sample at all). Both queries were re-run over the longest window the logs cover, and the gap left by the 08-17 log-streaming outage is stated rather than papered over.
+
+**What the closure exposed.** Guarding the route revealed that it serves the web UI as well as the Lambdas — see *One route, two privileges* above. This is the general shape of the risk in Phase 1c: a route whose anonymous traffic has gone to zero can still carry authenticated traffic from a principal that will fail the permission check. **Checking `auth_method = "none"` proves the route can be closed; it says nothing about whether the guard you are about to attach is the right one.** The second query — what authenticated callers use the route, and what permissions they hold — is a separate and equally necessary step.
 
 ### Verified Phase 1 blockers
 
