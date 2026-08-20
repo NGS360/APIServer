@@ -107,3 +107,129 @@ jobs:
           path: htmlcov
           include-hidden-files: true
 
+  # Nothing else here applies a migration, and the chain cannot run on SQLite:
+  # ebc60b8b4a17 uses ALTER COLUMN ... TYPE, which SQLite rejects, and six
+  # revisions contain MySQL-specific SQL. So MySQL is the only engine where
+  # migrations can be exercised at all.
+  #
+  # The defect class this exists to catch, from #378: a downgrade in the shape
+  # autogenerate produces -- drop_index() before drop_table() -- fails on MySQL
+  # with (1553, "Cannot drop index ...: needed in a foreign key constraint"),
+  # because InnoDB uses that index to enforce the constraint. SQLite neither
+  # requires an index to enforce a foreign key nor refuses to drop one, so a
+  # SQLite round-trip passes while proving nothing.
+  #
+  # Engine parity: the deployed databases are stock MySQL 8.0.45 and an Aurora
+  # MySQL 3.x (8.0-compatible) cluster. mysql:8.0 currently resolves to 8.0.46,
+  # so DDL semantics match the primary engine closely; Aurora is not identical
+  # and this job does not claim to cover it.
+  migrations:
+    runs-on: ubuntu-latest
+
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: ci
+          MYSQL_DATABASE: ngs360_ci
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -pci --silent"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+          --health-start-period=30s
+
+    env:
+      SQLALCHEMY_DATABASE_URI: mysql+pymysql://root:ci@127.0.0.1:3306/ngs360_ci
+      # Only a label, but it is printed by scripts and stamped on log lines;
+      # without it these runs identify themselves as prod.
+      ENVIRONMENT: dev
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version-file: "pyproject.toml"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.8.3"
+          enable-cache: true
+
+      - name: Install the project
+        run: uv sync --locked --all-extras --dev
+
+      # The service health check is necessary but not sufficient. MySQL's
+      # entrypoint starts a temporary server to initialise the data directory,
+      # answers pings on it, then restarts for real -- so "ping succeeded" and
+      # "usable" are different events, and alembic hit
+      # (2013, 'Lost connection to MySQL server during query') in the gap while
+      # this job was being developed. Gate on a query instead.
+      - name: Wait for a usable server
+        run: |
+          uv run python - <<'PY'
+          import sys, time
+          import pymysql
+          for attempt in range(60):
+              try:
+                  conn = pymysql.connect(host="127.0.0.1", port=3306, user="root",
+                                         password="ci", database="ngs360_ci",
+                                         connect_timeout=3)
+                  conn.cursor().execute("SELECT 1")
+                  conn.close()
+                  print(f"usable after ~{attempt}s")
+                  sys.exit(0)
+              except Exception as exc:
+                  last = exc
+                  time.sleep(1)
+          sys.exit(f"server never became usable: {last}")
+          PY
+
+      # `alembic upgrade head` on an empty database does NOT work, and that is a
+      # property of the chain rather than of CI. c3a81d47e56f and e5f92c1b7d34
+      # are data migrations that read the RBAC role catalog, but the catalog is
+      # reconciled at application startup by design (see docs/RBAC.md), so on a
+      # fresh database they fail with
+      #   RuntimeError: role 'project_owner' is missing.
+      # The three deployed tiers never hit this because the app had been running
+      # against them for months before those revisions landed. A new tier, a
+      # restored snapshot, or this job does hit it.
+      #
+      # So the seeding step is interleaved exactly where startup would have done
+      # it. b7c4e19f2a83 is the revision that creates the RBAC tables; if a new
+      # revision is ever inserted between it and the backfills, this job fails
+      # loudly, which is the correct outcome.
+      - name: Upgrade to the revision that creates the RBAC tables
+        run: uv run alembic upgrade b7c4e19f2a83
+
+      - name: Seed the RBAC role catalog
+        run: uv run python scripts/seed_rbac_catalog.py --yes
+
+      - name: Upgrade to head
+        run: uv run alembic upgrade head
+
+      # Proves the hand-written revisions actually match what SQLModel declares.
+      # A revision that drifts from the models leaves every environment one
+      # autogenerate away from a surprise.
+      - name: Assert the revisions match the models
+        run: uv run alembic check
+
+      # The #378 check: reverse the newest revision and re-apply it.
+      - name: Round-trip the newest revision
+        run: |
+          uv run alembic downgrade -1
+          uv run alembic upgrade head
+
+      # Stronger than the issue proposed, because it turned out to work: every
+      # downgrade in the chain reverses cleanly on MySQL. Kept last, since it
+      # empties the database -- re-upgrading from here would need the catalog
+      # seeded again, for the reason described above.
+      - name: Downgrade the whole chain to base
+        run: uv run alembic downgrade base
+

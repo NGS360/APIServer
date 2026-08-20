@@ -8,7 +8,9 @@ supporting workflow-level, single-sample, and multi-sample (paired) metrics.
 import uuid
 from datetime import datetime, timezone
 from typing import List, TYPE_CHECKING
-from sqlmodel import SQLModel, Field, Relationship, UniqueConstraint
+from sqlmodel import (
+    SQLModel, Field, Relationship, CheckConstraint, UniqueConstraint
+)
 from pydantic import BaseModel, ConfigDict, model_validator
 
 from api.files.models import (
@@ -200,6 +202,24 @@ class QCRecord(SQLModel, table=True):
 
     # Relationship back to sequencing run (nullable for project-scoped records)
     sequencing_run: "SequencingRun" = Relationship(back_populates="qcrecords")
+
+    # The constraint the docstring above describes. It has existed in the
+    # database since 0706aaf19b43 but was never declared here, so the models and
+    # the migrations disagreed: autogenerate saw a constraint nothing asked for
+    # and proposed dropping it. Nothing noticed until `alembic check` ran against
+    # MySQL in CI -- and only with alembic >= 1.19, which compares check
+    # constraints by name.
+    #
+    # The text must match what is deployed exactly, or `alembic check` reports a
+    # difference forever: MySQL normalises the expression it stores, and a
+    # rewrite here that means the same thing still compares unequal.
+    __table_args__ = (
+        CheckConstraint(
+            "(project_id IS NOT NULL AND sequencing_run_id IS NULL) OR "
+            "(project_id IS NULL AND sequencing_run_id IS NOT NULL)",
+            name="ck_qcrecord_scope",
+        ),
+    )
 
     model_config = ConfigDict(from_attributes=True)
 

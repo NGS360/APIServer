@@ -897,6 +897,35 @@ Three implementation requirements:
 - **Never `DELETE`.** Seeding upserts `role` and `role_permission` rows for `is_builtin` roles only. Admin-created roles and *all* grants are never touched. Removing a permission from the catalog in code marks it inactive; a delete would cascade grants away.
 - **Fail startup on seed failure when enforcing.** `sync_env_to_settings()` currently swallows exceptions with a warning; for RBAC that is wrong, because an empty catalog plus `enforce` is a site-wide 403. If `RBAC_MODE=enforce` and the catalog is empty, refuse to start — failing `/api/health` and letting the load balancer pull the instance is far better than serving an outage as 403s.
 
+#### The cost of that choice: the migration chain is not self-sufficient
+
+Seeding at startup has a consequence this document did not originally state. Two revisions are data migrations that resolve roles **by name**:
+
+| Revision | Needs |
+|---|---|
+| `b7c4e19f2a83` | — (creates `role`, `role_permission`) |
+| `c3a81d47e56f` | roles `project_owner`, `project_contributor` |
+| `e5f92c1b7d34` | roles `member`, `admin` |
+
+The catalog those names live in is written by the application, not by a migration. So on a database that has never had the API pointed at it, `alembic upgrade head` **fails partway**:
+
+```
+RuntimeError: role 'project_owner' is missing. The catalog is seeded at
+application startup -- start the API against this database before migrating.
+```
+
+The three deployed tiers never hit this, because the app had been running against them for months before those revisions landed. It bites anywhere the database starts empty: a new tier, a restored snapshot, or CI. The working order is an interleave:
+
+```bash
+alembic upgrade b7c4e19f2a83                  # up to the RBAC tables
+python3 scripts/seed_rbac_catalog.py --yes    # what startup would have done
+alembic upgrade head                          # the two backfills
+```
+
+`scripts/seed_rbac_catalog.py` exists for that middle step — it calls the same `sync_rbac_catalog()` the application does, so there is no second implementation to drift. Confirmed against MySQL 8.0: with the interleave the chain reaches head, `alembic check` reports no drift, and every revision downgrades cleanly to base.
+
+Two things follow. First, **provisioning a new environment is a documented three-step procedure, not `alembic upgrade head`** — worth knowing before someone stands up a fourth tier. Second, renaming a builtin role in `roles.py` without editing the revision that looks it up breaks every fresh database while leaving all three running tiers healthy; `tests/test_seed_rbac_catalog_script.py` asserts those four names still exist so the rename fails in the ordinary test suite rather than in CI's MySQL job.
+
 ### Membership backfill
 
 `Project.created_by` is the obvious ownership source and the wrong one. It is a free-text username with no foreign key, and revision `49e7d06e7eb4` populated it from `projectattribute` keys `('createby','createdby','businessowner','Business Owner')` — where the `'Business Owner'` arm compares a literal containing a space and a capital against `LOWER(key)` and therefore **never matches** — falling back to the literal `'unknown'`.
