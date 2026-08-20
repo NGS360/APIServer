@@ -297,6 +297,27 @@ class UserAccessPublic(SQLModel):
     project_memberships: list[ProjectMembershipPublic]
 
 
+class MyAccessPublic(SQLModel):
+    """
+    The calling user's own effective access, as returned by GET /rbac/me.
+
+    Declared as a schema rather than returned as a dict because this is the one
+    RBAC endpoint the SPA calls on every page load: it decides which controls to
+    render. Without a response model the generated client types it as an opaque
+    map, and every permission check in the UI becomes a cast -- which is exactly
+    the kind of place a silently renamed field should be a compile error.
+
+    Global permissions only, deliberately. Project-scoped permissions belong on
+    the project detail response: with a five-figure project count this payload
+    would otherwise be unbounded.
+    """
+
+    username: str
+    is_superuser: bool
+    global_roles: list[str]
+    global_permissions: list[str]
+
+
 class UserFlagsUpdate(SQLModel):
     """
     Request body for PATCH /users/{username}.

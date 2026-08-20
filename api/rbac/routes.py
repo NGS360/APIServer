@@ -27,6 +27,7 @@ from api.auth.deps import CurrentActiveUser, CurrentSuperuser
 from api.rbac import services
 from api.rbac.models import (
     GrantRoleRequest,
+    MyAccessPublic,
     PermissionPublic,
     Role,
     RoleCreate,
@@ -116,9 +117,12 @@ def get_role(
 
 @router.get(
     "/me",
+    response_model=MyAccessPublic,
     summary="The calling user's own effective access",
 )
-def get_my_access(session: SessionDep, current_user: CurrentActiveUser) -> dict:
+def get_my_access(
+    session: SessionDep, current_user: CurrentActiveUser
+) -> MyAccessPublic:
     """
     What the caller can do, so a UI can decide which controls to render rather
     than rendering everything and absorbing 403s.
@@ -128,12 +132,12 @@ def get_my_access(session: SessionDep, current_user: CurrentActiveUser) -> dict:
     they belong on the project detail response instead.
     """
     authz = AuthzContext.for_user(session, current_user)
-    return {
-        "username": current_user.username,
-        "is_superuser": authz.is_superuser,
-        "global_roles": global_role_names(session, current_user.id),
-        "global_permissions": authz.effective_permissions(),
-    }
+    return MyAccessPublic(
+        username=current_user.username,
+        is_superuser=authz.is_superuser,
+        global_roles=global_role_names(session, current_user.id),
+        global_permissions=authz.effective_permissions(),
+    )
 
 
 # --- role mutations -------------------------------------------------------
