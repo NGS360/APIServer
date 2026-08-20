@@ -624,9 +624,21 @@ New router `api/rbac/routes.py` at `/api/v1/rbac`:
 | GET | `/rbac/roles/{name}` | `role:read` |
 | PATCH | `/rbac/roles/{name}` | `role:manage` — permission set only; builtin roles reject rename and scope change |
 | DELETE | `/rbac/roles/{name}` | `role:manage` — `409` if builtin or if assignments exist |
+| GET | `/rbac/users` | `role:read` — the user roster: status flags and global roles, paginated, filterable on name, role and status |
 | GET | `/rbac/users/{username}/roles` | `role:read` |
 | POST | `/rbac/users/{username}/roles` | `role:manage` |
 | DELETE | `/rbac/users/{username}/roles/{role_name}` | `role:manage` |
+| GET | `/rbac/users/{username}/access` | `role:read` — both grant planes for one user, including project memberships |
+
+And on the user router, because it mutates the user rather than a grant:
+
+| Method | Path | Permission |
+|--------|------|------------|
+| PATCH | `/users/{username}` | `user:manage` **and** superuser — `is_active`, `is_verified`, `is_superuser`, each optional |
+
+`GET /rbac/users` exists rather than reusing `GET /users/search` because those are two different endpoints wearing the same name. Search backs the user *picker*: it may answer from LDAP, it requires a query of at least two characters, and it filters to `is_active`. All three are right for choosing somebody to grant a role to, and all three are wrong for administering accounts — the deactivated account is the one the administrator came to find.
+
+`PATCH /users/{username}` is what `user:manage` describes. Until it existed the permission was in the catalog and in the `admin` role while granting nothing. Note that both `is_active` and `is_verified` are required by `get_current_active_user`, so clearing either is an account lockout, and the two lockouts that cannot be undone through the API are refused: the last superuser who can still sign in, and the last non-superuser holder of `role:manage`. That second one matters because deactivation would otherwise be a trivial way around the guard on `DELETE /rbac/users/{username}/roles/{role_name}`.
 
 Project membership lives on the project router so that owners can self-serve:
 
@@ -1074,7 +1086,7 @@ Deferred: read auditing, an audit UI, tamper-evidence, and S3 archival.
 Both as first-class endpoints rather than ad-hoc SQL, so they stay correct as the model evolves:
 
 - `GET /api/v1/rbac/projects/{project_id}/access` → for each principal: user, role, `source` (`direct`, `global`, or `superuser`), `granted_by`, `granted_at`, effective permissions. **This must include the implicit paths** — global roles, superusers, service accounts — or the answer is wrong in the dangerous direction.
-- `GET /api/v1/rbac/users/{username}/access` → global roles, project memberships, effective permission set, active API keys and their scopes, last activity.
+- `GET /api/v1/rbac/users/{username}/access` → global roles, project memberships, effective permission set, active API keys and their scopes, last activity. **Built**, less the API keys and last activity, which are still outstanding.
 
 Both are audited. A read-only script wrapper provides break-glass when the API is itself the broken thing.
 
@@ -1127,7 +1139,7 @@ Deliberately out of scope for v1:
 | API-key permission scopes | Was proposed mainly to bound a shared MCP key; with MCP on per-user tokens there is no such key, so this is a plain v2 item. Semantics if revisited: intersection only, never expansion |
 | Project-scoping the S3 passthrough endpoints | Requires a URI-to-project resolver |
 | Run-scoped or vendor-scoped roles | The two-table schema is deliberately not polymorphic; a third scope means a third table |
-| Admin UI for role management | API only in v1 |
+| ~~Admin UI for role management~~ | **No longer a non-goal.** The admin UI is being built in `NGS360/frontend-ui` against this API: a user roster and per-user access page, a role editor over the permission catalog, and project membership on the project page. The API stays the enforcement point; the UI only decides what to render. |
 | Rate limiting, per-role quotas | Unrelated concern |
 
 ## Source Files
@@ -1136,10 +1148,10 @@ Deliberately out of scope for v1:
 |------|-------------|
 | `api/rbac/permissions.py` | `Permission` enum, `PermissionSpec`, `CATALOG`, `PROJECT_SCOPABLE`, `ALL_PERMISSIONS` |
 | `api/rbac/roles.py` | `ROLE_DEFINITIONS` — builtin global and project roles with their permission sets |
-| `api/rbac/models.py` | `Role`, `RolePermission`, `UserRole`, `ProjectMember`, `RoleScope`, `GrantSource` |
+| `api/rbac/models.py` | `Role`, `RolePermission`, `UserRole`, `ProjectMember`, `RoleScope`, `GrantSource`, and the administration read models |
 | `api/rbac/deps.py` | `AuthzContext`, `load_authz`, `require_permission()`, `require_project_permission()`, `project_scope()` |
-| `api/rbac/services.py` | The single resolver, `assign_default_roles()`, `sync_rbac_catalog()`, role and membership CRUD |
-| `api/rbac/routes.py` | `/rbac/permissions`, `/rbac/roles`, `/rbac/users/{u}/roles`, `/rbac/status`, access reporting |
+| `api/rbac/services.py` | The single resolver, `assign_default_roles()`, `sync_rbac_catalog()`, role and membership CRUD, `list_users()`, `get_user_access()`, `update_user_flags()` |
+| `api/rbac/routes.py` | `/rbac/permissions`, `/rbac/roles`, `/rbac/users`, `/rbac/users/{u}/roles`, `/rbac/users/{u}/access`, `/rbac/me` |
 | `api/auth/deps.py` | Unchanged; `load_authz` layers onto `get_current_active_user` |
 | `api/auth/services.py` | Remove the "first user wins" block; call `assign_default_roles()` |
 | `api/auth/oauth2_service.py` | Remove the duplicate bootstrap; claim unclaimed shell users by username |
