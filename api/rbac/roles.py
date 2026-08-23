@@ -68,10 +68,21 @@ _MEMBER = frozenset({
     Permission.SAMPLE_READ,
     Permission.QCRECORD_READ,
     Permission.FILE_READ,
-    Permission.FILE_DOWNLOAD,
+    # file:download is deliberately NOT here. Reads stay global; downloading is
+    # project-scoped, and while `member` held this globally the project check was
+    # vacuous -- has_in_project short-circuits on a global grant, so every
+    # authenticated user could download every file in the product. The project
+    # roles carry it instead, and api/files/scope.py resolves a URI to the
+    # projects whose membership applies.
 })
 
 _LAB_MANAGER = _MEMBER | {
+    # Restored explicitly after file:download left _MEMBER. The sequencing core
+    # works across flowcells, and the permissive run path still requires
+    # membership of *some* project the run touches -- which a core operator who
+    # is enrolled in no projects does not have. Without this they could browse
+    # and upload but not download, which is not a coherent role.
+    Permission.FILE_DOWNLOAD,
     Permission.RUN_CREATE,
     Permission.RUN_UPDATE,
     Permission.RUN_ASSOCIATE,

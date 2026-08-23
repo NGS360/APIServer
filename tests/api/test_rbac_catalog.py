@@ -161,9 +161,31 @@ class TestRoleDefinitions:
         and isolating reads stay separate, independently reversible steps."""
         member = ROLE_DEFINITIONS["member"].permissions
         for permission in (Permission.PROJECT_READ, Permission.SAMPLE_READ,
-                           Permission.QCRECORD_READ, Permission.FILE_READ,
-                           Permission.FILE_DOWNLOAD):
+                           Permission.QCRECORD_READ, Permission.FILE_READ):
             assert permission in member, permission
+
+    def test_member_does_not_hold_file_download(self):
+        """
+        Reads stay global; downloading does not. This is the one permission the
+        distinction rests on, so it is asserted separately from the four above.
+
+        While `member` held file:download globally, the project-scoped check on
+        GET /files/download-url was vacuous -- has_in_project short-circuits on a
+        global grant, so every authenticated user could download every file in the
+        product. Putting it back here silently re-opens that.
+        """
+        assert Permission.FILE_DOWNLOAD not in ROLE_DEFINITIONS["member"].permissions
+
+    def test_the_cross_project_download_roles_are_a_closed_set(self):
+        """
+        Global file:download defeats project scoping for whoever holds it, which
+        is correct for a cross-project operator and wrong for anyone else. The set
+        is small on purpose, so growing it is a reviewed decision.
+        """
+        holders = {n for n, r in ROLE_DEFINITIONS.items()
+                   if Permission.FILE_DOWNLOAD in r.permissions
+                   and r.scope == RoleScope.GLOBAL}
+        assert holders == {"lab_manager", "auditor", "admin"}
 
 
 class TestSeeding:
