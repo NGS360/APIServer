@@ -53,18 +53,26 @@ class TestAuthorization:
         assert r.status_code == 403
         assert "file:download" in r.json()["detail"]
 
-    def test_the_default_role_is_enough(self, client):
+    def test_the_default_role_is_no_longer_enough(self, client_with_permissions):
         """
-        `member` holds file:download, so every existing user can use this the
-        moment it ships -- no grants needed for the frontend to migrate onto it.
+        This asserted the opposite until downloads became project-scoped.
+
+        `member` deliberately no longer holds file:download: while it did, the
+        project check was vacuous, because has_in_project short-circuits on a
+        global grant. A caller now needs the permission through a project role on
+        the file's project, or globally through one of the cross-project roles.
+
+        Scoping behaviour itself lives in tests/api/test_file_download_scope.py;
+        this is only the "member alone does not open it" half.
         """
         from api.rbac.roles import DEFAULT_ROLE_NAME, ROLE_DEFINITIONS
 
-        assert any(
-            str(p) == "file:download"
-            for p in ROLE_DEFINITIONS[DEFAULT_ROLE_NAME].permissions
-        )
-        assert client.get(URL, params={"path": PATH}).status_code == 200
+        member = {str(p) for p in ROLE_DEFINITIONS[DEFAULT_ROLE_NAME].permissions}
+        assert "file:download" not in member
+        assert "file:read" in member, "reads stay global; only downloading moved"
+
+        api = client_with_permissions(sorted(member), username="plainmember")
+        assert api.get(URL, params={"path": PATH}).status_code == 403
 
     def test_an_anonymous_caller_is_refused(self, unauthenticated_client):
         assert unauthenticated_client.get(
