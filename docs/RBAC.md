@@ -707,10 +707,10 @@ Phase 1 — closing the 73 remaining open routes — is the highest-value securi
 | Phase | Content | Breaking | Done when |
 |-------|---------|----------|-----------|
 | **0** | ~~Automatic migration on deploy~~ — **withdrawn**; migrations are applied out of band, see *Prerequisite: applying migrations*; ~~add `ENVIRONMENT`~~; ~~JSON logging + request-ID middleware~~; ~~identity logging on the open routes~~ ([#372](https://github.com/NGS360/APIServer/pull/372)); ~~enable CloudWatch log streaming~~ (`StreamLogs`, per environment — see *Tier A*) | No | 7 days of production logs exist and can answer "which open routes received anonymous traffic, from which user agents and IPs" |
-| **1a** | Create service-account users and API keys; land and deploy consumer changes **while the endpoints are still open** | No | Logs show zero anonymous traffic from known consumers in all three tiers |
+| **1a** | Create service-account users and API keys; land and deploy consumer changes **while the endpoints are still open** | No | Every check in *The criterion for closing a route* passes, in all three tiers |
 | **1b** | Close destructive and configuration writes: every `DELETE` (`PUT /settings/{key}` already done in [#361](https://github.com/NGS360/APIServer/pull/361)) | **Yes** | Deployed to prod; no 401 spike from unknown callers |
 | **1c** | Close remaining writes; stop honouring client-supplied `created_by`. **First closure landed: `PUT /jobs/{job_id}`** — see *Closing PUT /jobs/{job_id}* below | **Yes** | As above |
-| **1d** | Close reads | **Yes** | CI asserts every route not in `PUBLIC_ROUTES` returns 401 unauthenticated; 7 days with no anonymous non-public requests |
+| **1d** | Close reads | **Yes** | CI asserts every route not in `PUBLIC_ROUTES` returns 401 unauthenticated; *The criterion for closing a route* passes over 7 days |
 | **2** | RBAC schema, catalog seeding, resolver, `/auth/me` permission fields. **No route behaviour change** | No | Catalog present in all three tiers; resolution-matrix test passes; the diff touches no route's authorization |
 | **3** | Membership backfill; admin API guarded by the existing `CurrentSuperuser` (no chicken-and-egg) | No | Admins can grant and revoke; the "projects with no member" report is empty or explicitly signed off |
 | **4** | `require_permission` wired onto routes with `RBAC_MODE=dry_run` | No | 14 days in production dry-run, with every distinct `(principal, permission, route)` denial either resolved by a grant or explicitly accepted |
@@ -760,6 +760,26 @@ Consequences for this design:
 
 **A separate efficiency gap, worth fixing regardless of RBAC.** `Project.last_modified` is maintained on every update, but `GET /api/v1/projects` accepts only `page`, `per_page`, `sort_by` and `sort_order` — there is no `modified_after` filter, so a full scan is the only option the API offers. Exposing one would reduce this from 221 requests an hour to approximately one, and would remove most of the load that closing this route has to keep working.
 
+### The criterion for closing a route
+
+Every closure so far has been justified by one query — *this route received no anonymous traffic*. That query is necessary and **not sufficient**, and each of the checks below was added because the previous version of this list let something through.
+
+Run all six. A route is closable only when every one passes.
+
+**1. `auth_method = "none"` is zero.** The original check. Note that **one request is not zero**: `GET /files/download` carried 323,785 authenticated requests against a single anonymous one, and that one was a live `python-requests` consumer sharing a host with another unmigrated caller, not noise.
+
+**2. The window has no log gaps.** Check `AWS/Logs` `IncomingLogEvents` for the log group across the window before trusting a zero. Production silently stopped shipping logs twice in August, once for ~108 hours, and an absent log looks exactly like an absent caller — see *Tier A*. This is what the log-ingestion alarms exist to prevent recurring.
+
+**3. `auth_valid = false` is zero.** A credential that is *present but invalid* succeeds today only because the route is open, and will 401 the moment it closes. This traffic is **invisible to check 1**, because `auth_method` reports the credential the caller offered, not whether it worked. Measured in one clean window, production carried over 9,000 such requests. `/auth/refresh` is the documented exception: the middleware decodes the bearer as an access token and fails, while the endpoint validates a refresh token, so `false` there is expected.
+
+**4. For API-key callers, validate the key out of band.** `auth_valid` is `null` for API keys by design — `_resolve_principal` deliberately does no database lookup — so on an open route the log proves only that a key was *presented*, never that it was *valid*. Resolve its `key_prefix` in that tier's database and confirm the row is active, unrevoked and unexpired. `key_prefix` is 12 characters (`ngs360_` plus five) while the log records eight past the prefix, so truncate before matching, and use `=` rather than `LIKE` because `_` is a wildcard.
+
+**5. Identify the authenticated principals and confirm they hold what the guard will require.** Zero anonymous traffic says nothing about whether the guard is the right one. `PUT /jobs/{job_id}` was fully authenticated and still would have refused every ordinary user, because the web UI uses it to mark a job viewed and `member` does not hold `job:update`. Check the permission against the roles the real callers actually have.
+
+**6. Know whether each caller can survive a 401.** A browser can: the SPA does 401 → single-flight refresh → retry (`src/lib/interceptors.ts`), so a momentarily expired access token is invisible to the user. A `python-requests` script cannot — it has no refresh path and simply fails. The same `auth_valid = false` count therefore means something different depending on the user agent, so break it down rather than totalling it.
+
+Checks 3 and 4 postdate the closures recorded below; both were reconstructed for those routes rather than applied prospectively.
+
 ### Closing `PUT /jobs/{job_id}`, 2026-08-18
 
 The first route to leave the backlog, taking it from **73 to 72**. Worth recording in full because it is the template for every closure that follows.
@@ -787,6 +807,8 @@ Airflow finished adopting its API key, which took the last anonymous caller off 
 | `GET /projects` | 61,938 | **0** | `project:read` |
 | `GET /projects/attributes` | 983 | **0** | `project:read` |
 | `GET /samples/search` | 12 | **0** | `sample:read` |
+
+The Airflow key was confirmed out of band per check 4: it belongs to `svc-rdc`, and the row is active, unrevoked and unexpired. `svc-rdc` holds `auditor`, which carries every read, so both permissions below are covered.
 
 All three take the **global** plane. None carries a project in its path, and `member` holds global `project:read` and `sample:read` specifically so the pre-RBAC "any authenticated user can read anything" behaviour survives the closure; narrowing *which* rows come back is Phase 6, and belongs in the SQL `WHERE` rather than in a guard that can only answer yes or no.
 
