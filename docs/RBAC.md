@@ -26,7 +26,7 @@ The measurements below are the baseline this design is written against. Regenera
 | Distinct permissions today | 1 (`users.is_superuser`) |
 | Membership / role / permission tables | 0 |
 
-Progress against that baseline is tracked by `tests/test_route_coverage.py`, which asserts both numbers so a change to either is visible in review rather than incidental. **Currently 72 routes await closure and 38 carry a guard** — the closure is recorded under *Closing `PUT /jobs/{job_id}`*.
+Progress against that baseline is tracked by `tests/test_route_coverage.py`, which asserts both numbers so a change to either is visible in review rather than incidental. **Currently 69 routes await closure and 41 carry a guard** — see *Closing `PUT /jobs/{job_id}`* and *Closing the migrated reads*.
 
 Routers with **zero** authentication references: `actions` (5 routes), `jobs` (6), `manifest` (3), `platforms` (3), `samples` (3), `search` (1), `vendors` (5). Partially open: `runs` (13/16 open), `project` (9/16), `workflow` (9/13), `files` (7/9), `qcmetrics` (4/5), `pipeline` (3/5), `settings` (2/3).
 
@@ -707,10 +707,10 @@ Phase 1 — closing the 73 remaining open routes — is the highest-value securi
 | Phase | Content | Breaking | Done when |
 |-------|---------|----------|-----------|
 | **0** | ~~Automatic migration on deploy~~ — **withdrawn**; migrations are applied out of band, see *Prerequisite: applying migrations*; ~~add `ENVIRONMENT`~~; ~~JSON logging + request-ID middleware~~; ~~identity logging on the open routes~~ ([#372](https://github.com/NGS360/APIServer/pull/372)); ~~enable CloudWatch log streaming~~ (`StreamLogs`, per environment — see *Tier A*) | No | 7 days of production logs exist and can answer "which open routes received anonymous traffic, from which user agents and IPs" |
-| **1a** | Create service-account users and API keys; land and deploy consumer changes **while the endpoints are still open** | No | Logs show zero anonymous traffic from known consumers in all three tiers |
+| **1a** | Create service-account users and API keys; land and deploy consumer changes **while the endpoints are still open** | No | Every check in *The criterion for closing a route* passes, in all three tiers |
 | **1b** | Close destructive and configuration writes: every `DELETE` (`PUT /settings/{key}` already done in [#361](https://github.com/NGS360/APIServer/pull/361)) | **Yes** | Deployed to prod; no 401 spike from unknown callers |
 | **1c** | Close remaining writes; stop honouring client-supplied `created_by`. **First closure landed: `PUT /jobs/{job_id}`** — see *Closing PUT /jobs/{job_id}* below | **Yes** | As above |
-| **1d** | Close reads | **Yes** | CI asserts every route not in `PUBLIC_ROUTES` returns 401 unauthenticated; 7 days with no anonymous non-public requests |
+| **1d** | Close reads | **Yes** | CI asserts every route not in `PUBLIC_ROUTES` returns 401 unauthenticated; *The criterion for closing a route* passes over 7 days |
 | **2** | RBAC schema, catalog seeding, resolver, `/auth/me` permission fields. **No route behaviour change** | No | Catalog present in all three tiers; resolution-matrix test passes; the diff touches no route's authorization |
 | **3** | Membership backfill; admin API guarded by the existing `CurrentSuperuser` (no chicken-and-egg) | No | Admins can grant and revoke; the "projects with no member" report is empty or explicitly signed off |
 | **4** | `require_permission` wired onto routes with `RBAC_MODE=dry_run` | No | 14 days in production dry-run, with every distinct `(principal, permission, route)` denial either resolved by a grant or explicitly accepted |
@@ -760,6 +760,26 @@ Consequences for this design:
 
 **A separate efficiency gap, worth fixing regardless of RBAC.** `Project.last_modified` is maintained on every update, but `GET /api/v1/projects` accepts only `page`, `per_page`, `sort_by` and `sort_order` — there is no `modified_after` filter, so a full scan is the only option the API offers. Exposing one would reduce this from 221 requests an hour to approximately one, and would remove most of the load that closing this route has to keep working.
 
+### The criterion for closing a route
+
+Every closure so far has been justified by one query — *this route received no anonymous traffic*. That query is necessary and **not sufficient**, and each of the checks below was added because the previous version of this list let something through.
+
+Run all six. A route is closable only when every one passes.
+
+**1. `auth_method = "none"` is zero.** The original check. Note that **one request is not zero**: `GET /files/download` carried 323,785 authenticated requests against a single anonymous one, and that one was a live `python-requests` consumer sharing a host with another unmigrated caller, not noise.
+
+**2. The window has no log gaps.** Check `AWS/Logs` `IncomingLogEvents` for the log group across the window before trusting a zero. Production silently stopped shipping logs twice in August, once for ~108 hours, and an absent log looks exactly like an absent caller — see *Tier A*. This is what the log-ingestion alarms exist to prevent recurring.
+
+**3. `auth_valid = false` is zero.** A credential that is *present but invalid* succeeds today only because the route is open, and will 401 the moment it closes. This traffic is **invisible to check 1**, because `auth_method` reports the credential the caller offered, not whether it worked. Measured in one clean window, production carried over 9,000 such requests. `/auth/refresh` is the documented exception: the middleware decodes the bearer as an access token and fails, while the endpoint validates a refresh token, so `false` there is expected.
+
+**4. For API-key callers, validate the key out of band.** `auth_valid` is `null` for API keys by design — `_resolve_principal` deliberately does no database lookup — so on an open route the log proves only that a key was *presented*, never that it was *valid*. Resolve its `key_prefix` in that tier's database and confirm the row is active, unrevoked and unexpired. `key_prefix` is 12 characters (`ngs360_` plus five) while the log records eight past the prefix, so truncate before matching, and use `=` rather than `LIKE` because `_` is a wildcard.
+
+**5. Identify the authenticated principals and confirm they hold what the guard will require.** Zero anonymous traffic says nothing about whether the guard is the right one. `PUT /jobs/{job_id}` was fully authenticated and still would have refused every ordinary user, because the web UI uses it to mark a job viewed and `member` does not hold `job:update`. Check the permission against the roles the real callers actually have.
+
+**6. Know whether each caller can survive a 401.** A browser can: the SPA does 401 → single-flight refresh → retry (`src/lib/interceptors.ts`), so a momentarily expired access token is invisible to the user. A `python-requests` script cannot — it has no refresh path and simply fails. The same `auth_valid = false` count therefore means something different depending on the user agent, so break it down rather than totalling it.
+
+Checks 3 and 4 postdate the closures recorded below; both were reconstructed for those routes rather than applied prospectively.
+
 ### Closing `PUT /jobs/{job_id}`, 2026-08-18
 
 The first route to leave the backlog, taking it from **73 to 72**. Worth recording in full because it is the template for every closure that follows.
@@ -777,6 +797,33 @@ Dev's last anonymous request landed 7 hours *before* the Omics stack update, so 
 **The check that mattered.** A twenty-hour window is not evidence on its own — a caller that runs weekly is invisible in it, which is the lesson the Batch event Lambda already taught (it did not appear in the first two-hour sample at all). Both queries were re-run over the longest window the logs cover, and the gap left by the 08-17 log-streaming outage is stated rather than papered over.
 
 **What the closure exposed.** Guarding the route revealed that it serves the web UI as well as the Lambdas — see *One route, two privileges* above. This is the general shape of the risk in Phase 1c: a route whose anonymous traffic has gone to zero can still carry authenticated traffic from a principal that will fail the permission check. **Checking `auth_method = "none"` proves the route can be closed; it says nothing about whether the guard you are about to attach is the right one.** The second query — what authenticated callers use the route, and what permissions they hold — is a separate and equally necessary step.
+
+### Closing the migrated reads, 2026-08-23
+
+Airflow finished adopting its API key, which took the last anonymous caller off the highest-volume read in the product. Three routes closed together, **72 to 69**. Measured over the clean log window:
+
+| Route | Authenticated | Anonymous | Guard |
+|---|---|---|---|
+| `GET /projects` | 61,938 | **0** | `project:read` |
+| `GET /projects/attributes` | 983 | **0** | `project:read` |
+| `GET /samples/search` | 12 | **0** | `sample:read` |
+
+The Airflow key was confirmed out of band per check 4: it belongs to `svc-rdc`, and the row is active, unrevoked and unexpired. `svc-rdc` holds `auditor`, which carries every read, so both permissions below are covered.
+
+All three take the **global** plane. None carries a project in its path, and `member` holds global `project:read` and `sample:read` specifically so the pre-RBAC "any authenticated user can read anything" behaviour survives the closure; narrowing *which* rows come back is Phase 6, and belongs in the SQL `WHERE` rather than in a guard that can only answer yes or no.
+
+**Two candidates were deliberately left open.** Both looked ready on a casual glance and were not:
+
+| Route | Anonymous | Caller |
+|---|---|---|
+| `GET /files/download` | **1** | `python-requests`, from the same host as the `GET /files/list` caller |
+| `GET /projects/search` | **9** | `python-requests`, unowned |
+
+`GET /files/download` is the instructive one. It carries 323,785 authenticated requests against a single anonymous one — 0.0003% — and it is tempting to read that as noise. It is not: it is a live consumer that would start receiving 401s, and it shares a host with the unmigrated `files/list` caller, so it is one script rather than a stray. **One request is not zero.** The same standard is what made the two closures above safe.
+
+Both remaining anonymous callers are `python-requests` from hosts nobody has claimed. Identifying their owners is now the whole of the Phase 1d discovery work.
+
+`POST /samples/search` shares a path with a closed route but stays open on purpose: it saw no traffic at all in the window, which makes it one of the zero-traffic routes rather than a migrated one. Those close on their own evidence, once a clean 30-day window exists.
 
 ### Verified Phase 1 blockers
 
@@ -984,9 +1031,36 @@ The username-deduplication loop is a pre-existing bug — two identities for one
 | **GA4GH WES** | Forward the caller's bearer token on `GET /workflows/{id}`; bound the `/auth/me` token cache to ≤5 min | `GA4GH-WES-API-Service` | **1c/1d** |
 | **Airflow (dev, UAT, prod)** | Read credentials in the **production** tier for all three; `auditor` or a `project:read`/`sample:read` role. GET-only, so writes are unaffected | Airflow owners | **1d** |
 | **Frontend SPA** | Route-loader error boundaries; permission-based gating; regenerate the API client. **Blocking: move downloads onto `GET /files/download-url`** (see below) | `NGS360/frontend-ui` | **1d** for downloads, 5 for the rest |
+| **File-download compute fleet** | Move off a personal API key onto a service account holding `file:download`, `file:browse`, `sample:read`. **The `file:browse` grant must land before `GET /files/list` closes**, not with it | fleet owner | **1d** |
 | **`APIServer/scripts/*`** | Admin-only; add an `--operator` argument writing one audit row per run | this repo | 3 |
 
 **Not consumers of this rollout.** The NGS360-ETL was a one-off load script and no longer runs — nothing to migrate, no credential to issue. The MCP server and NGS360-Agent are **downstream of RBAC, not blockers on it**: they are deliberately not deployed until the model below is finished, and will be built against it rather than migrated onto it. The dependency runs the other way round from every row in the table above.
+
+### Automations on a person's credentials
+
+The goal at the top of this document — service accounts "replacing the current practice of integrations borrowing a human's credentials" — has a largest instance worth stating concretely, because it shapes two of the remaining closures.
+
+**A compute fleet of roughly 25 hosts runs on one regular user's personal API key.** Its entire surface, over one clean log window:
+
+| Route | Requests |
+|---|---|
+| `GET /files/download` | 323,785 |
+| `GET /files/list` | 3,378 |
+| `GET /projects/{id}/samples` | ~5,000, across dozens of historical projects |
+
+All reads, all successful. Three things follow.
+
+**The account is a regular user, not a superuser, so RBAC does constrain it.** That is the good case: a personal *superuser* credential would short-circuit every permission check ahead of the resolver, and `enforce` would constrain the traffic not at all. But being constrained means the permissions have to actually line up, and one does not:
+
+> `member` holds `file:download` and `sample:read`. It does **not** hold `file:browse`, which only `lab_manager` and `admin` carry.
+
+Every user holds `member` from the bootstrap backfill and nothing more. So the moment `GET /files/list` is closed and guarded on `file:browse`, this fleet receives 403 on all 3,378 of those calls. **The grant has to land before that closure, not alongside it** — this is check 5 of *The criterion for closing a route*, and it is the first time that check has been applied before a closure rather than reconstructed after one.
+
+**The right role is a narrow custom one:** exactly `file:download`, `file:browse`, `sample:read`. The two off-the-shelf candidates are both wrong in instructive ways. `auditor` grants 18 permissions where 3 are needed, and includes `search:query`, which reaches ACL-unaware OpenSearch — the specific gap recorded under *OpenSearch-backed search is a known v1 limitation*. `lab_manager` is the obvious fit for `file:browse` and also carries `run:create`, `run:demux`, `sample:create` and `project:ingest`, none of which a download fleet has any use for.
+
+**Why a service account rather than leaving the person's key in place**, given RBAC now constrains it either way: revocation cannot be done independently of that person's own access, the fleet dies silently if they change roles or leave, and every one of those 327,000 requests is attributed to a human who did not make them — which makes the access log useless for exactly the question it exists to answer.
+
+A related consumer on an adjacent subnet was found sending an **expired JWT** on the same two file routes — 1,340 requests reported as `auth_method: jwt` while `auth_valid` was `false`, succeeding only because the routes are open. It is effectively anonymous on all of its traffic and invisible to a query that filters on `auth_method` alone. That discovery is what added check 3 to the closure criterion.
 
 ### MCP server: per-user tokens, decided
 

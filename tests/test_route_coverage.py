@@ -85,8 +85,6 @@ AWAITING_AUTHENTICATION = {
     "GET /api/v1/pipelines/{pipeline_id}",
     "GET /api/v1/platforms",
     "GET /api/v1/platforms/{name}",
-    "GET /api/v1/projects",
-    "GET /api/v1/projects/attributes",
     "GET /api/v1/projects/search",
     "GET /api/v1/projects/{project_id}",
     "GET /api/v1/projects/{project_id}/samples",
@@ -100,7 +98,6 @@ AWAITING_AUTHENTICATION = {
     "GET /api/v1/runs/{run_id}/metrics",
     "GET /api/v1/runs/{run_id}/samples",
     "GET /api/v1/runs/{run_id}/samplesheet",
-    "GET /api/v1/samples/search",
     "GET /api/v1/search",
     "GET /api/v1/settings",
     "GET /api/v1/settings/{key}",
@@ -216,7 +213,7 @@ def test_guard_count_is_recorded():
     Pins the size of the guarded surface so growth is visible in review rather
     than incidental.
     """
-    assert len(GUARDED) == 38
+    assert len(GUARDED) == 41
 
 
 def test_the_authentication_backlog_only_shrinks():
@@ -229,8 +226,16 @@ def test_the_authentication_backlog_only_shrinks():
 
     73 -> 72: PUT /jobs/{job_id} closed once the Omics event processor started
     sending its API key, which left no anonymous caller on it in any tier.
+
+    72 -> 69: GET /projects, GET /projects/attributes and GET /samples/search,
+    once Airflow finished adopting its key. Measured over the clean log window
+    they carried 61,938, 983 and 12 authenticated requests and zero anonymous
+    ones. GET /files/download and GET /projects/search were candidates in the
+    same pass and were deliberately left open -- each still has a live anonymous
+    python-requests caller, of one and nine requests respectively, and one
+    request is not zero.
     """
-    assert len(AWAITING_AUTHENTICATION) == 72
+    assert len(AWAITING_AUTHENTICATION) == 69
 
 
 @pytest.mark.parametrize("key", sorted(GUARDED))
