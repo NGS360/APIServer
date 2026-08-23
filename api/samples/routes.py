@@ -2,8 +2,10 @@
 Routes/endpoints for the Samples API
 """
 
-from fastapi import APIRouter, Request, Query, status
+from fastapi import APIRouter, Depends, Request, Query, status
 from core.deps import SessionDep, OpenSearchDep
+from api.rbac.deps import require_permission
+from api.rbac.permissions import Permission
 from api.samples.models import SamplesPublicSearchResponse, SampleSearchRequest
 import api.samples.services as services
 
@@ -20,6 +22,15 @@ router = APIRouter(prefix="/samples", tags=["Sample Endpoints"])
     response_model=SamplesPublicSearchResponse,
     status_code=status.HTTP_200_OK,
     tags=["Sample Endpoints"],
+    # Global plane: samples reach projects through `projectid` as a filter value,
+    # not through the path, so there is no project to check against here. Phase 6
+    # scopes the rows.
+    #
+    # The POST variant of this path stays open deliberately -- it saw no traffic
+    # at all in the measured window, which makes it one of the zero-traffic
+    # routes rather than a migrated one, and those close together on their own
+    # evidence.
+    dependencies=[Depends(require_permission(Permission.SAMPLE_READ))],
 )
 def search_samples_get(
     request: Request,

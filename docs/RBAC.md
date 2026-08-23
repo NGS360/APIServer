@@ -26,7 +26,7 @@ The measurements below are the baseline this design is written against. Regenera
 | Distinct permissions today | 1 (`users.is_superuser`) |
 | Membership / role / permission tables | 0 |
 
-Progress against that baseline is tracked by `tests/test_route_coverage.py`, which asserts both numbers so a change to either is visible in review rather than incidental. **Currently 72 routes await closure and 38 carry a guard** — the closure is recorded under *Closing `PUT /jobs/{job_id}`*.
+Progress against that baseline is tracked by `tests/test_route_coverage.py`, which asserts both numbers so a change to either is visible in review rather than incidental. **Currently 69 routes await closure and 41 carry a guard** — see *Closing `PUT /jobs/{job_id}`* and *Closing the migrated reads*.
 
 Routers with **zero** authentication references: `actions` (5 routes), `jobs` (6), `manifest` (3), `platforms` (3), `samples` (3), `search` (1), `vendors` (5). Partially open: `runs` (13/16 open), `project` (9/16), `workflow` (9/13), `files` (7/9), `qcmetrics` (4/5), `pipeline` (3/5), `settings` (2/3).
 
@@ -777,6 +777,31 @@ Dev's last anonymous request landed 7 hours *before* the Omics stack update, so 
 **The check that mattered.** A twenty-hour window is not evidence on its own — a caller that runs weekly is invisible in it, which is the lesson the Batch event Lambda already taught (it did not appear in the first two-hour sample at all). Both queries were re-run over the longest window the logs cover, and the gap left by the 08-17 log-streaming outage is stated rather than papered over.
 
 **What the closure exposed.** Guarding the route revealed that it serves the web UI as well as the Lambdas — see *One route, two privileges* above. This is the general shape of the risk in Phase 1c: a route whose anonymous traffic has gone to zero can still carry authenticated traffic from a principal that will fail the permission check. **Checking `auth_method = "none"` proves the route can be closed; it says nothing about whether the guard you are about to attach is the right one.** The second query — what authenticated callers use the route, and what permissions they hold — is a separate and equally necessary step.
+
+### Closing the migrated reads, 2026-08-23
+
+Airflow finished adopting its API key, which took the last anonymous caller off the highest-volume read in the product. Three routes closed together, **72 to 69**. Measured over the clean log window:
+
+| Route | Authenticated | Anonymous | Guard |
+|---|---|---|---|
+| `GET /projects` | 61,938 | **0** | `project:read` |
+| `GET /projects/attributes` | 983 | **0** | `project:read` |
+| `GET /samples/search` | 12 | **0** | `sample:read` |
+
+All three take the **global** plane. None carries a project in its path, and `member` holds global `project:read` and `sample:read` specifically so the pre-RBAC "any authenticated user can read anything" behaviour survives the closure; narrowing *which* rows come back is Phase 6, and belongs in the SQL `WHERE` rather than in a guard that can only answer yes or no.
+
+**Two candidates were deliberately left open.** Both looked ready on a casual glance and were not:
+
+| Route | Anonymous | Caller |
+|---|---|---|
+| `GET /files/download` | **1** | `python-requests`, from the same host as the `GET /files/list` caller |
+| `GET /projects/search` | **9** | `python-requests`, unowned |
+
+`GET /files/download` is the instructive one. It carries 323,785 authenticated requests against a single anonymous one — 0.0003% — and it is tempting to read that as noise. It is not: it is a live consumer that would start receiving 401s, and it shares a host with the unmigrated `files/list` caller, so it is one script rather than a stray. **One request is not zero.** The same standard is what made the two closures above safe.
+
+Both remaining anonymous callers are `python-requests` from hosts nobody has claimed. Identifying their owners is now the whole of the Phase 1d discovery work.
+
+`POST /samples/search` shares a path with a closed route but stays open on purpose: it saw no traffic at all in the window, which makes it one of the zero-traffic routes rather than a migrated one. Those close on their own evidence, once a clean 30-day window exists.
 
 ### Verified Phase 1 blockers
 
