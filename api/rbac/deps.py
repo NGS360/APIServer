@@ -105,7 +105,7 @@ def _denied(permissions: tuple[Permission, ...], scope: str | None = None) -> HT
     )
 
 
-def _decide(
+def decide(
     request: Request,
     granted: bool,
     permissions: tuple[Permission, ...],
@@ -113,6 +113,11 @@ def _decide(
 ) -> None:
     """
     Record one check's result, and raise if it failed.
+
+    Public because a route whose requirement depends on its payload cannot use
+    the factories below -- it has to resolve the permission itself and then come
+    back here, so that a bespoke check refuses on the same terms as every other
+    one and still lands in the access log alongside them.
 
     Every check emits a decision, allow as well as deny. Knowing only the
     refusals tells you nothing about which principals a permission actually lets
@@ -168,8 +173,8 @@ def require_permission(
 
     def dependency(request: Request, authz: AuthzDep) -> AuthzContext:
         check = all if mode == "all" else any
-        _decide(request, check(authz.has(p) for p in permissions), permissions,
-                scope=None)
+        decide(request, check(authz.has(p) for p in permissions), permissions,
+               scope=None)
         return authz
 
     # Tag the closure so a route's requirements can be read back off the
@@ -206,7 +211,7 @@ def require_project_permission(
         request: Request, project: ProjectDep, authz: AuthzDep
     ) -> Project:
         check = all if mode == "all" else any
-        _decide(
+        decide(
             request,
             check(authz.has_in_project(p, project.id) for p in permissions),
             permissions,

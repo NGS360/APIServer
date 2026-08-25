@@ -73,6 +73,13 @@ def create_project(
     status_code=status.HTTP_200_OK,
     tags=["Project Endpoints"],
     response_model=ProjectsPublic,
+    # Global plane, not project: this is a list endpoint with no project in the
+    # path, and `member` holds global project:read precisely so that today's
+    # read-everything behaviour survives. Narrowing which projects come back is
+    # Phase 6's row-level filtering, which belongs in the SQL WHERE rather than
+    # here -- a guard can only answer yes or no, and answering no to a list
+    # request is the wrong shape.
+    dependencies=[Depends(require_permission(Permission.PROJECT_READ))],
 )
 def get_projects(
     session: SessionDep,
@@ -104,6 +111,9 @@ def get_projects(
     status_code=status.HTTP_200_OK,
     tags=["Project Endpoints"],
     response_model=TypingList[str],
+    # Attribute *keys* across all projects, so there is nothing to scope to a
+    # single project even in Phase 6.
+    dependencies=[Depends(require_permission(Permission.PROJECT_READ))],
 )
 def get_project_attributes(session: SessionDep) -> TypingList[str]:
     """

@@ -1,10 +1,14 @@
 """
-Tests for scripts/create_service_account.py --revoke-key.
+Tests for scripts/create_service_account.py --revoke-key and the tier confirmation.
 
 The revoke path is the one that takes access away, and the one where a mistake is
 silent: a mistyped --except-key would revoke the very key it names, and a key
 missed by find_active_keys goes on authenticating after a run that reported
 success. Both are covered here.
+
+confirm_target is the guard in front of both paths -- it is what stands between
+"mint a key" and "mint a key in the wrong tier" -- so its refusals matter as much
+as its acceptance, and are covered too.
 """
 from datetime import datetime, timedelta, timezone
 
@@ -214,3 +218,70 @@ def test_recently_used_ignores_old_and_unused_keys(session, svc):
     session.commit()
 
     assert script.recently_used([stale, never]) == []
+
+
+class FakeSettings:
+    """confirm_target reads nothing but the tier off settings."""
+
+    def __init__(self, environment="prod"):
+        self.ENVIRONMENT = environment
+
+
+@pytest.fixture(name="tty")
+def tty_fixture(monkeypatch):
+    """Make the script believe it is attached to a terminal."""
+    monkeypatch.setattr(script.sys.stdin, "isatty", lambda: True, raising=False)
+
+
+def answer(monkeypatch, value):
+    """Answer the confirmation prompt with `value`, or raise it if it is an exception."""
+    def fake_input(_prompt=""):
+        if isinstance(value, type) and issubclass(value, BaseException):
+            raise value
+        return value
+    monkeypatch.setattr("builtins.input", fake_input)
+
+
+def test_confirm_accepts_the_tier_name(monkeypatch, tty):
+    answer(monkeypatch, "prod")
+    script.confirm_target(FakeSettings("prod"), "mint a key", assume_yes=False)
+
+
+@pytest.mark.parametrize("typed", [" prod ", "PROD", "Prod\n"])
+def test_confirm_ignores_case_and_surrounding_space(monkeypatch, tty, typed):
+    # The operator is copying a word off the screen, not entering a password.
+    answer(monkeypatch, typed)
+    script.confirm_target(FakeSettings("prod"), "mint a key", assume_yes=False)
+
+
+@pytest.mark.parametrize("typed", ["dev", "", "y", "yes"])
+def test_confirm_rejects_anything_else(monkeypatch, tty, typed):
+    # Notably "y"/"yes": the prompt is deliberately not a y/N, and reflexively
+    # answering it as one must not get through.
+    answer(monkeypatch, typed)
+    with pytest.raises(SystemExit) as excinfo:
+        script.confirm_target(FakeSettings("prod"), "mint a key", assume_yes=False)
+    assert "nothing written" in str(excinfo.value)
+
+
+@pytest.mark.parametrize("interruption", [EOFError, KeyboardInterrupt])
+def test_confirm_treats_interruption_as_refusal(monkeypatch, tty, interruption):
+    answer(monkeypatch, interruption)
+    with pytest.raises(SystemExit) as excinfo:
+        script.confirm_target(FakeSettings("prod"), "mint a key", assume_yes=False)
+    assert "aborted, nothing written" in str(excinfo.value)
+
+
+def test_confirm_aborts_when_there_is_no_terminal_to_ask(monkeypatch):
+    # Rather than blocking forever on a read that will never be answered, or
+    # -- worse -- proceeding unconfirmed under cron or a pipe.
+    monkeypatch.setattr(script.sys.stdin, "isatty", lambda: False, raising=False)
+    with pytest.raises(SystemExit) as excinfo:
+        script.confirm_target(FakeSettings("prod"), "mint a key", assume_yes=False)
+    assert "stdin is not a terminal" in str(excinfo.value)
+
+
+def test_yes_skips_the_prompt_entirely(monkeypatch):
+    monkeypatch.setattr(script.sys.stdin, "isatty", lambda: False, raising=False)
+    answer(monkeypatch, AssertionError)  # asking at all is the failure
+    script.confirm_target(FakeSettings("prod"), "mint a key", assume_yes=True)

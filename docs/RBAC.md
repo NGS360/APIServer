@@ -26,6 +26,8 @@ The measurements below are the baseline this design is written against. Regenera
 | Distinct permissions today | 1 (`users.is_superuser`) |
 | Membership / role / permission tables | 0 |
 
+Progress against that baseline is tracked by `tests/test_route_coverage.py`, which asserts both numbers so a change to either is visible in review rather than incidental. **Currently 69 routes await closure and 41 carry a guard** — see *Closing `PUT /jobs/{job_id}`* and *Closing the migrated reads*.
+
 Routers with **zero** authentication references: `actions` (5 routes), `jobs` (6), `manifest` (3), `platforms` (3), `samples` (3), `search` (1), `vendors` (5). Partially open: `runs` (13/16 open), `project` (9/16), `workflow` (9/13), `files` (7/9), `qcmetrics` (4/5), `pipeline` (3/5), `settings` (2/3).
 
 The four `is_superuser`-gated routes are `DELETE /projects/{project_id}/samples/{sample_id}` (`api/project/routes.py:400`), `PATCH /files/{file_id}` (`api/files/routes.py:264`), `DELETE /files/{file_id}` (`api/files/routes.py:290`), and `PUT /settings/{key}` (`api/settings/routes.py:55`).
@@ -139,7 +141,9 @@ Without a global escape hatch, either demultiplexing breaks or the service accou
 
 **Why does `member` ship able to read every project?**
 
-The default role holds *global* `project:read`, `sample:read`, `qcrecord:read`, `file:read`, and `file:download`. This deliberately preserves today's "any authenticated user can read anything" behaviour while writes become membership-gated.
+The default role holds *global* `project:read`, `sample:read`, `qcrecord:read` and `file:read`. This deliberately preserves today's "any authenticated user can read anything" behaviour while writes become membership-gated.
+
+`file:download` is **not** among them, and the distinction is load-bearing — see *Project-scoped downloads*. Reads stay global; downloading does not, because `has_in_project` short-circuits on a global grant, so a `member` holding global `file:download` made the project check on `GET /files/download-url` vacuous.
 
 The alternative — shipping read isolation and enforcement together — means one change that both rejects writes and empties every list view, with no way to separate the two if something goes wrong. Instead, tightening reads later is a **role edit through the admin API**: remove those five permissions from `member`. No deploy, no config flag, no second code path to test, and reversible in one API call. This is the primary reason the design allows global roles to carry project-scopable permissions.
 
@@ -188,7 +192,7 @@ Global roles compose meaningfully — `member` plus `service_account` is a legit
 | `qcrecord:create` | P | low | `POST /qcmetrics` |
 | `qcrecord:delete` | P | medium | `DELETE /qcmetrics/{id}` |
 | `file:read` | P | low | `GET /files`, `/files/{id}`, `/files/{id}/versions` |
-| `file:download` | P | medium | `GET /files/download-url`, `GET /files/download` (unguarded) |
+| `file:download` | P | medium | `GET /files/download-url` — checked against the projects the URI resolves to; `GET /files/download` (still unguarded, and therefore still a bypass) |
 | `file:create` | P | low | `POST /files`, `POST /files/upload` |
 | `file:update` | P | low | `PATCH /files/{id}` |
 | `file:delete` | P | high | `DELETE /files/{id}` |
@@ -204,10 +208,10 @@ These have no path to a project (see *Design Decisions*), so they are global-onl
 | `run:update` | G | medium | `PUT /runs/{id}`, `POST /runs/{id}/samplesheet` |
 | `run:associate` | G | medium | `POST /runs/{id}/samples`, `DELETE /runs/{id}/samples`, `DELETE /runs/{id}/samples/{sample_id}` |
 | `run:demux` | G | **high** | `POST /runs/demultiplex` — spends compute, deletes run-scoped QC records |
-| `job:read` | G | low | `GET /jobs` (filtered to own), `/jobs/{id}`, `/{id}/log`, `/{id}/log/paginated` |
+| `job:read` | G | low | `GET /jobs` (filtered to own), `/jobs/{id}`, `/{id}/log`, `/{id}/log/paginated`; also `PUT /jobs/{id}` when the payload sets only `viewed` |
 | `job:read_all` | G | medium | Removes the "own jobs" filter from `GET /jobs` |
 | `job:submit` | G | **high** | `POST /jobs` |
-| `job:update` | G | medium | `PUT /jobs/{id}` — status writeback; service accounts only |
+| `job:update` | G | medium | `PUT /jobs/{id}` when the payload sets `status` or `log_stream_name` — writeback; service accounts only |
 | `workflow:read` | G | low | All `GET /workflows/...` |
 | `workflow:create` | G | medium | `POST /workflows`, `POST /workflows/{id}/versions` |
 | `workflow:update` | G | **high** | `PUT /workflows/{id}/aliases/{alias}` — repointing `production` changes what executes |
@@ -301,7 +305,7 @@ Roles are database rows so that administrators can compose custom ones. The **bu
 
 | Role | Purpose | Permissions |
 |------|---------|-------------|
-| `member` | Default for every authenticated user | `action:read`, `platform:read`, `vendor:read`, `workflow:read`, `pipeline:read`, `run:read`, `job:read`, `job:submit`, `setting:read`, `search:query`, `chat:use`, `user:read`, `project:create`, plus the transitional global reads: `project:read`, `sample:read`, `qcrecord:read`, `file:read`, `file:download` |
+| `member` | Default for every authenticated user | `action:read`, `platform:read`, `vendor:read`, `workflow:read`, `pipeline:read`, `run:read`, `job:read`, `job:submit`, `setting:read`, `search:query`, `chat:use`, `user:read`, `project:create`, plus the transitional global reads: `project:read`, `sample:read`, `qcrecord:read`, `file:read`. **Not** `file:download` |
 | `lab_manager` | Sequencing core — registers runs, demultiplexes, ingests vendor deliveries | `member` + `run:create`, `run:update`, `run:associate`, `run:demux`, `manifest:read`, `manifest:upload`, `manifest:validate`, `file:browse`, `file:create`, `file:update`, `sample:create`, `sample:update`, `qcrecord:create`, `project:ingest`, `job:read_all` |
 | `platform_admin` | Owns the executable catalog and platform configuration | `member` + `platform:create`, `vendor:create`, `vendor:update`, `vendor:delete`, `workflow:create`, `workflow:update`, `workflow:delete`, `workflow:deploy`, `pipeline:create`, `pipeline:update`, `action:validate`, `setting:update`, `system:reindex`, `job:read_all`, `job:update` |
 | `service_account` | Machine writeback — pipeline results and Batch job-status updates only (**not** MCP, which acts as the invoking user) | `project:read`, `run:read`, `run:update`, `sample:read`, `sample:create`, `qcrecord:create`, `file:create`, `file:update`, `job:read_all`, `job:update` |
@@ -546,6 +550,70 @@ for r in (actions_router, chat_router, files_router, jobs_router, manifest_route
 
 Router-level dependencies are additive and cannot be overridden per route, so only the weakest common requirement — authentication — belongs there; permission checks layer on per route. This closes all 73 remaining open routes in one change and makes "forgot to protect the new route" structurally impossible.
 
+### One route, two privileges: the requirement can come from the payload
+
+`PUT /jobs/{job_id}` is the case that forced this, and it is worth stating as a pattern because it will recur. The route carries two operations behind one method:
+
+- the Omics and Batch event Lambdas write `status` and `log_stream_name` back as a job progresses — machine writeback, `job:update`
+- the web UI sends `{"viewed": true}` when a user opens a job from the notifications dropdown — something every signed-in user does
+
+`member` holds `job:read` and `job:submit` but deliberately **not** `job:update`, which is the one permission no human role gets (§4). A single route-level guard on `job:update` would therefore have refused an ordinary click. Production traffic on the day the route was closed makes the scale concrete: 87 machine writebacks alongside 17 requests from 7 distinct users, all of them the UI marking a job viewed.
+
+So the guard resolves the permission from the request body, then hands the result to the same `decide()` the `require_permission` factories use:
+
+```python
+WRITEBACK_FIELDS = frozenset({"status", "log_stream_name"})
+
+def require_job_update(request: Request, authz: AuthzDep,
+                       job_update: BatchJobUpdate) -> AuthzContext:
+    supplied = set(job_update.model_dump(exclude_unset=True))
+    permission = (Permission.JOB_UPDATE if WRITEBACK_FIELDS & supplied
+                  else Permission.JOB_READ)
+    decide(request, authz.has(permission), (permission,), scope=None)
+    return authz
+
+require_job_update.rbac_permissions = (Permission.JOB_UPDATE, Permission.JOB_READ)
+require_job_update.rbac_plane = "global"
+```
+
+Four things make this safe rather than a special case that rots:
+
+- **A dependency may declare the same body model as the handler.** FastAPI parses it once, the handler still receives it, and the OpenAPI `requestBody` stays a `$ref` to `BatchJobUpdate` — so the generated frontend client does not move and no consumer has to change.
+- **The field set is matched against `model_dump(exclude_unset=True)`, which is exactly what `update_batch_job` persists.** The check cannot drift from the write, and naming a writeback field requires the permission even when the value sent is `null`.
+- **The stricter requirement wins on a mixed payload**, or adding `viewed` to a body becomes a way to downgrade the check.
+- **It goes through `decide()`.** A bespoke guard that enforced correctly but skipped the recorder would be invisible to the access log and the deny-rate alarms — which is how a refusal gets noticed at all. Both permissions are tagged on the closure so route introspection sees both branches rather than whichever one was hardcoded.
+
+The alternative — splitting `viewed` onto its own route — is cleaner in isolation but needs a frontend change and a client regeneration to land before the API can enforce, which trades a self-contained change for a cross-repo sequencing dependency. Worth doing if a third operation ever appears on this route.
+
+### Project-scoped downloads
+
+The requirement: a caller with no permission on a project must not be able to download its files. That was **not** what the system did — `GET /files/download-url` was guarded on the global plane and `member` held `file:download`, so any authenticated user could download any file in the product by URI.
+
+Scoping it needs a URI resolved to a project, which an earlier revision of this document said was impossible. It was not: `fileproject`, `filesample` and `filesequencingrun` all exist. `api/files/scope.py` uses them.
+
+**Two strategies, and the order between them is the policy.**
+
+| Association | Resolves to | Why |
+|---|---|---|
+| `fileproject` | those projects | The file's own project. Strict — no widening |
+| `filesample` | the sample's project | A sample belongs to exactly one project |
+| `filesequencingrun` | **every** project the run touches | Permissive, by decision |
+
+Run files are permissive because a flowcell is a shared artifact: demux statistics and samplesheets belong to the run rather than to one of the projects on it, and requiring a separate grant would produce one request per person per flowcell. The reach is the run's projects, not everyone — a caller who is a member of no project on the run is still refused.
+
+**Direct associations are tried first, and that ordering is the policy rather than an implementation detail.** A file both in a project and on a run resolves *strictly*, through its project. Letting the run path widen it would silently convert the strict case into the permissive one, which is the specific regression `test_a_project_association_wins_over_the_run` exists to catch.
+
+**A URI resolving to nothing falls back to the global `file:download` permission.** "This file belongs to no project" is not evidence of permission, so `member` — which no longer holds it — is refused; `lab_manager`, `auditor`, `admin` and superusers do hold it, so cross-project operation over raw storage still works. `has_in_project` honours a global grant, which is why those roles are unaffected by any of the above. That set is small on purpose and asserted as a closed set in the tests.
+
+`lab_manager` needed `file:download` restored explicitly after it left `member`, since it derives from it. Without that, the sequencing core could browse and upload but not download, which is not a coherent role.
+
+**The control is incomplete while `GET /files/download` stays open.** That route answers the same question with no guard at all, so every refusal above is walkable around by changing the URL. It closes when the compute fleet on it migrates — until then this is defence in depth, not a boundary, and `TestTheOldRouteIsTheBypass` asserts the bypass so the dependency is visible in CI rather than only in review.
+
+Two consequences worth stating:
+
+- **The download fleet's service account will need *global* `file:download`**, not project memberships — it reads across dozens of projects. That deliberately exempts it from project scoping, which is the documented rationale for global roles carrying project-scopable permissions.
+- **Reads are unaffected.** `file:read`, `project:read`, `sample:read` and `qcrecord:read` stay global. A user can still *see* that a file exists in a project they are not on; they cannot fetch its bytes.
+
 ### List endpoints filter rows; they do not return 403
 
 `GET /projects`, `GET /projects/search`, `GET /qcmetrics/search`, `GET /files`, `GET /samples/search`, `GET /jobs`, and `GET /search` must return a *narrower list*, not a denial. This is expressed as a scope dependency yielding plain data, so the service layer keeps its existing convention of receiving primitives rather than `User` objects:
@@ -682,10 +750,10 @@ Phase 1 — closing the 73 remaining open routes — is the highest-value securi
 | Phase | Content | Breaking | Done when |
 |-------|---------|----------|-----------|
 | **0** | ~~Automatic migration on deploy~~ — **withdrawn**; migrations are applied out of band, see *Prerequisite: applying migrations*; ~~add `ENVIRONMENT`~~; ~~JSON logging + request-ID middleware~~; ~~identity logging on the open routes~~ ([#372](https://github.com/NGS360/APIServer/pull/372)); ~~enable CloudWatch log streaming~~ (`StreamLogs`, per environment — see *Tier A*) | No | 7 days of production logs exist and can answer "which open routes received anonymous traffic, from which user agents and IPs" |
-| **1a** | Create service-account users and API keys; land and deploy consumer changes **while the endpoints are still open** | No | Logs show zero anonymous traffic from known consumers in all three tiers |
+| **1a** | Create service-account users and API keys; land and deploy consumer changes **while the endpoints are still open** | No | Every check in *The criterion for closing a route* passes, in all three tiers |
 | **1b** | Close destructive and configuration writes: every `DELETE` (`PUT /settings/{key}` already done in [#361](https://github.com/NGS360/APIServer/pull/361)) | **Yes** | Deployed to prod; no 401 spike from unknown callers |
-| **1c** | Close remaining writes; stop honouring client-supplied `created_by` | **Yes** | As above |
-| **1d** | Close reads | **Yes** | CI asserts every route not in `PUBLIC_ROUTES` returns 401 unauthenticated; 7 days with no anonymous non-public requests |
+| **1c** | Close remaining writes; stop honouring client-supplied `created_by`. **First closure landed: `PUT /jobs/{job_id}`** — see *Closing PUT /jobs/{job_id}* below | **Yes** | As above |
+| **1d** | Close reads | **Yes** | CI asserts every route not in `PUBLIC_ROUTES` returns 401 unauthenticated; *The criterion for closing a route* passes over 7 days |
 | **2** | RBAC schema, catalog seeding, resolver, `/auth/me` permission fields. **No route behaviour change** | No | Catalog present in all three tiers; resolution-matrix test passes; the diff touches no route's authorization |
 | **3** | Membership backfill; admin API guarded by ~~the existing `CurrentSuperuser`~~ **its own permissions** (see *Access control is gated by permission, not by superuser* below) | No | Admins can grant and revoke; the "projects with no member" report is empty or explicitly signed off |
 | **4** | `require_permission` wired onto routes with `RBAC_MODE=dry_run` | No | 14 days in production dry-run, with every distinct `(principal, permission, route)` denial either resolved by a grant or explicitly accepted |
@@ -723,9 +791,9 @@ Observations that change the plan:
 
   `GET /files/download` answers with a **307 to a presigned S3 URL**, so the UI uses it as a plain link. A browser following a link cannot attach an `Authorization` header, which means the route cannot be given a permission guard without returning 401 to every download in the product -- and no authorization setting could have softened that, because authentication is resolved before any permission check.
 
-  The fix is `GET /files/download-url`, which returns the same URL as JSON and *is* guarded (`file:download`, global plane -- the parameter is an arbitrary S3 URI and nothing maps a URI to a project, the same limitation as `file:browse`). The frontend fetches it with its token, then navigates to S3 itself. No security property changes: the bytes already bypass the API today, because the redirect sends the browser to that same URL.
+  The fix is `GET /files/download-url`, which returns the same URL as JSON and *is* guarded. It was originally guarded on the global plane, on the grounds that the parameter is an arbitrary S3 URI and nothing maps a URI to a project. **That was wrong** — `fileproject`, `filesample` and `filesequencingrun` all exist, so the mapping was available all along; it is now used, and the guard is per project (see *Project-scoped downloads*). `file:browse` remains genuinely global-only, because a browse request names a prefix rather than a file. The frontend fetches it with its token, then navigates to S3 itself. No security property changes: the bytes already bypass the API today, because the redirect sends the browser to that same URL.
 
-  Sequencing: the new endpoint ships first and is additive. `GET /files/download` closes only once browser traffic on it reaches zero, which is checkable in the access log. `member` already holds `file:download`, so no grants are needed for the migration.
+  Sequencing: the new endpoint ships first and is additive. `GET /files/download` closes only once browser traffic on it reaches zero, which is checkable in the access log. `member` no longer holds `file:download`, so the migration does need project membership or one of the cross-project roles.
 - Authenticated traffic in the same window was **4,442 requests by API key** and, at that hour, no JWT traffic at all — the SPA is human-driven, so sampling outside working hours says nothing about it.
 
 #### The Airflow callers, identified
@@ -741,6 +809,71 @@ Consequences for this design:
 - Because the volume is a fixed hourly scan rather than user-driven traffic, a single denied hour is unmistakable in the logs: the count drops from 221 to 0. That makes them the easiest consumer to verify after cutover.
 
 **A separate efficiency gap, worth fixing regardless of RBAC.** `Project.last_modified` is maintained on every update, but `GET /api/v1/projects` accepts only `page`, `per_page`, `sort_by` and `sort_order` — there is no `modified_after` filter, so a full scan is the only option the API offers. Exposing one would reduce this from 221 requests an hour to approximately one, and would remove most of the load that closing this route has to keep working.
+
+### The criterion for closing a route
+
+Every closure so far has been justified by one query — *this route received no anonymous traffic*. That query is necessary and **not sufficient**, and each of the checks below was added because the previous version of this list let something through.
+
+Run all six. A route is closable only when every one passes.
+
+**1. `auth_method = "none"` is zero.** The original check. Note that **one request is not zero**: `GET /files/download` carried 323,785 authenticated requests against a single anonymous one, and that one was a live `python-requests` consumer sharing a host with another unmigrated caller, not noise.
+
+**2. The window has no log gaps.** Check `AWS/Logs` `IncomingLogEvents` for the log group across the window before trusting a zero. Production silently stopped shipping logs twice in August, once for ~108 hours, and an absent log looks exactly like an absent caller — see *Tier A*. This is what the log-ingestion alarms exist to prevent recurring.
+
+**3. `auth_valid = false` is zero.** A credential that is *present but invalid* succeeds today only because the route is open, and will 401 the moment it closes. This traffic is **invisible to check 1**, because `auth_method` reports the credential the caller offered, not whether it worked. Measured in one clean window, production carried over 9,000 such requests. `/auth/refresh` is the documented exception: the middleware decodes the bearer as an access token and fails, while the endpoint validates a refresh token, so `false` there is expected.
+
+**4. For API-key callers, validate the key out of band.** `auth_valid` is `null` for API keys by design — `_resolve_principal` deliberately does no database lookup — so on an open route the log proves only that a key was *presented*, never that it was *valid*. Resolve its `key_prefix` in that tier's database and confirm the row is active, unrevoked and unexpired. `key_prefix` is 12 characters (`ngs360_` plus five) while the log records eight past the prefix, so truncate before matching, and use `=` rather than `LIKE` because `_` is a wildcard.
+
+**5. Identify the authenticated principals and confirm they hold what the guard will require.** Zero anonymous traffic says nothing about whether the guard is the right one. `PUT /jobs/{job_id}` was fully authenticated and still would have refused every ordinary user, because the web UI uses it to mark a job viewed and `member` does not hold `job:update`. Check the permission against the roles the real callers actually have.
+
+**6. Know whether each caller can survive a 401.** A browser can: the SPA does 401 → single-flight refresh → retry (`src/lib/interceptors.ts`), so a momentarily expired access token is invisible to the user. A `python-requests` script cannot — it has no refresh path and simply fails. The same `auth_valid = false` count therefore means something different depending on the user agent, so break it down rather than totalling it.
+
+Checks 3 and 4 postdate the closures recorded below; both were reconstructed for those routes rather than applied prospectively.
+
+### Closing `PUT /jobs/{job_id}`, 2026-08-18
+
+The first route to leave the backlog, taking it from **73 to 72**. Worth recording in full because it is the template for every closure that follows.
+
+**What made it closable.** The route had exactly one anonymous caller left, the Omics run event processor, and that Lambda had been *able* to authenticate for months — its code read a `NGS360_API_TOKEN` and sent it as a header, but the token was never configured, so it sent nothing. Fixing the deploy tooling (see the Omics repository) put the key in place. Verified across all three tiers before touching the route:
+
+| Tier | Authenticated | Anonymous |
+|---|---|---|
+| dev | 185 + 184 by API key | 0 |
+| staging | 184 by API key | 0 |
+| prod | 87 by API key, 17 by JWT | 0 |
+
+Dev's last anonymous request landed 7 hours *before* the Omics stack update, so the cutover is a clean break rather than an intermittent caller happening to be quiet. Prod had seen none in the full 11 days of available logs.
+
+**The check that mattered.** A twenty-hour window is not evidence on its own — a caller that runs weekly is invisible in it, which is the lesson the Batch event Lambda already taught (it did not appear in the first two-hour sample at all). Both queries were re-run over the longest window the logs cover, and the gap left by the 08-17 log-streaming outage is stated rather than papered over.
+
+**What the closure exposed.** Guarding the route revealed that it serves the web UI as well as the Lambdas — see *One route, two privileges* above. This is the general shape of the risk in Phase 1c: a route whose anonymous traffic has gone to zero can still carry authenticated traffic from a principal that will fail the permission check. **Checking `auth_method = "none"` proves the route can be closed; it says nothing about whether the guard you are about to attach is the right one.** The second query — what authenticated callers use the route, and what permissions they hold — is a separate and equally necessary step.
+
+### Closing the migrated reads, 2026-08-23
+
+Airflow finished adopting its API key, which took the last anonymous caller off the highest-volume read in the product. Three routes closed together, **72 to 69**. Measured over the clean log window:
+
+| Route | Authenticated | Anonymous | Guard |
+|---|---|---|---|
+| `GET /projects` | 61,938 | **0** | `project:read` |
+| `GET /projects/attributes` | 983 | **0** | `project:read` |
+| `GET /samples/search` | 12 | **0** | `sample:read` |
+
+The Airflow key was confirmed out of band per check 4: it belongs to `svc-rdc`, and the row is active, unrevoked and unexpired. `svc-rdc` holds `auditor`, which carries every read, so both permissions below are covered.
+
+All three take the **global** plane. None carries a project in its path, and `member` holds global `project:read` and `sample:read` specifically so the pre-RBAC "any authenticated user can read anything" behaviour survives the closure; narrowing *which* rows come back is Phase 6, and belongs in the SQL `WHERE` rather than in a guard that can only answer yes or no.
+
+**Two candidates were deliberately left open.** Both looked ready on a casual glance and were not:
+
+| Route | Anonymous | Caller |
+|---|---|---|
+| `GET /files/download` | **1** | `python-requests`, from the same host as the `GET /files/list` caller |
+| `GET /projects/search` | **9** | `python-requests`, unowned |
+
+`GET /files/download` is the instructive one. It carries 323,785 authenticated requests against a single anonymous one — 0.0003% — and it is tempting to read that as noise. It is not: it is a live consumer that would start receiving 401s, and it shares a host with the unmigrated `files/list` caller, so it is one script rather than a stray. **One request is not zero.** The same standard is what made the two closures above safe.
+
+Both remaining anonymous callers are `python-requests` from hosts nobody has claimed. Identifying their owners is now the whole of the Phase 1d discovery work.
+
+`POST /samples/search` shares a path with a closed route but stays open on purpose: it saw no traffic at all in the window, which makes it one of the zero-traffic routes rather than a migrated one. Those close on their own evidence, once a clean 30-day window exists.
 
 ### Verified Phase 1 blockers
 
@@ -884,6 +1017,35 @@ Three implementation requirements:
 - **Never `DELETE`.** Seeding upserts `role` and `role_permission` rows for `is_builtin` roles only. Admin-created roles and *all* grants are never touched. Removing a permission from the catalog in code marks it inactive; a delete would cascade grants away.
 - ~~**Fail startup on seed failure when enforcing.**~~ **Done.** `core/lifespan.py` raises `RuntimeError` if `sync_rbac_catalog` fails, rather than logging and continuing. An empty catalog is now a site-wide 403 in every case — enforcement is unconditional — so failing `/api/health` and letting the load balancer pull the instance is strictly better than serving the outage.
 
+#### The cost of that choice: the migration chain is not self-sufficient
+
+Seeding at startup has a consequence this document did not originally state. Two revisions are data migrations that resolve roles **by name**:
+
+| Revision | Needs |
+|---|---|
+| `b7c4e19f2a83` | — (creates `role`, `role_permission`) |
+| `c3a81d47e56f` | roles `project_owner`, `project_contributor` |
+| `e5f92c1b7d34` | roles `member`, `admin` |
+
+The catalog those names live in is written by the application, not by a migration. So on a database that has never had the API pointed at it, `alembic upgrade head` **fails partway**:
+
+```
+RuntimeError: role 'project_owner' is missing. The catalog is seeded at
+application startup -- start the API against this database before migrating.
+```
+
+The three deployed tiers never hit this, because the app had been running against them for months before those revisions landed. It bites anywhere the database starts empty: a new tier, a restored snapshot, or CI. The working order is an interleave:
+
+```bash
+alembic upgrade b7c4e19f2a83                  # up to the RBAC tables
+python3 scripts/seed_rbac_catalog.py --yes    # what startup would have done
+alembic upgrade head                          # the two backfills
+```
+
+`scripts/seed_rbac_catalog.py` exists for that middle step — it calls the same `sync_rbac_catalog()` the application does, so there is no second implementation to drift. Confirmed against MySQL 8.0: with the interleave the chain reaches head, `alembic check` reports no drift, and every revision downgrades cleanly to base.
+
+Two things follow. First, **provisioning a new environment is a documented three-step procedure, not `alembic upgrade head`** — worth knowing before someone stands up a fourth tier. Second, renaming a builtin role in `roles.py` without editing the revision that looks it up breaks every fresh database while leaving all three running tiers healthy; `tests/test_seed_rbac_catalog_script.py` asserts those four names still exist so the rename fails in the ordinary test suite rather than in CI's MySQL job.
+
 ### Membership backfill
 
 `Project.created_by` is the obvious ownership source and the wrong one. It is a free-text username with no foreign key, and revision `49e7d06e7eb4` populated it from `projectattribute` keys `('createby','createdby','businessowner','Business Owner')` — where the `'Business Owner'` arm compares a literal containing a space and a capital against `LOWER(key)` and therefore **never matches** — falling back to the literal `'unknown'`.
@@ -942,9 +1104,36 @@ The username-deduplication loop is a pre-existing bug — two identities for one
 | **GA4GH WES** | Forward the caller's bearer token on `GET /workflows/{id}`; bound the `/auth/me` token cache to ≤5 min | `GA4GH-WES-API-Service` | **1c/1d** |
 | **Airflow (dev, UAT, prod)** | Read credentials in the **production** tier for all three; `auditor` or a `project:read`/`sample:read` role. GET-only, so writes are unaffected | Airflow owners | **1d** |
 | **Frontend SPA** | Route-loader error boundaries; permission-based gating; regenerate the API client. **Blocking: move downloads onto `GET /files/download-url`** (see below) | `NGS360/frontend-ui` | **1d** for downloads, 5 for the rest |
+| **File-download compute fleet** | Move off a personal API key onto a service account holding `file:download`, `file:browse`, `sample:read`. **The `file:browse` grant must land before `GET /files/list` closes**, not with it | fleet owner | **1d** |
 | **`APIServer/scripts/*`** | Admin-only; add an `--operator` argument writing one audit row per run | this repo | 3 |
 
 **Not consumers of this rollout.** The NGS360-ETL was a one-off load script and no longer runs — nothing to migrate, no credential to issue. The MCP server and NGS360-Agent are **downstream of RBAC, not blockers on it**: they are deliberately not deployed until the model below is finished, and will be built against it rather than migrated onto it. The dependency runs the other way round from every row in the table above.
+
+### Automations on a person's credentials
+
+The goal at the top of this document — service accounts "replacing the current practice of integrations borrowing a human's credentials" — has a largest instance worth stating concretely, because it shapes two of the remaining closures.
+
+**A compute fleet of roughly 25 hosts runs on one regular user's personal API key.** Its entire surface, over one clean log window:
+
+| Route | Requests |
+|---|---|
+| `GET /files/download` | 323,785 |
+| `GET /files/list` | 3,378 |
+| `GET /projects/{id}/samples` | ~5,000, across dozens of historical projects |
+
+All reads, all successful. Three things follow.
+
+**The account is a regular user, not a superuser, so RBAC does constrain it.** That is the good case: a personal *superuser* credential would short-circuit every permission check ahead of the resolver, and `enforce` would constrain the traffic not at all. But being constrained means the permissions have to actually line up, and one does not:
+
+> `member` holds `sample:read`. It does **not** hold `file:browse` (only `lab_manager` and `admin` carry it) and, since downloads became project-scoped, no longer holds `file:download` either.
+
+Every user holds `member` from the bootstrap backfill and nothing more. So the moment `GET /files/list` is closed and guarded on `file:browse`, this fleet receives 403 on all 3,378 of those calls. **The grant has to land before that closure, not alongside it** — this is check 5 of *The criterion for closing a route*, and it is the first time that check has been applied before a closure rather than reconstructed after one.
+
+**The right role is a narrow custom one:** exactly `file:download`, `file:browse`, `sample:read`. The two off-the-shelf candidates are both wrong in instructive ways. `auditor` grants 18 permissions where 3 are needed, and includes `search:query`, which reaches ACL-unaware OpenSearch — the specific gap recorded under *OpenSearch-backed search is a known v1 limitation*. `lab_manager` is the obvious fit for `file:browse` and also carries `run:create`, `run:demux`, `sample:create` and `project:ingest`, none of which a download fleet has any use for.
+
+**Why a service account rather than leaving the person's key in place**, given RBAC now constrains it either way: revocation cannot be done independently of that person's own access, the fleet dies silently if they change roles or leave, and every one of those 327,000 requests is attributed to a human who did not make them — which makes the access log useless for exactly the question it exists to answer.
+
+A related consumer on an adjacent subnet was found sending an **expired JWT** on the same two file routes — 1,340 requests reported as `auth_method: jwt` while `auth_valid` was `false`, succeeding only because the routes are open. It is effectively anonymous on all of its traffic and invisible to a query that filters on `auth_method` alone. That discovery is what added check 3 to the closure criterion.
 
 ### MCP server: per-user tokens, decided
 

@@ -13,8 +13,8 @@ Endpoints:
 from typing import Optional
 import uuid
 
-from fastapi import (APIRouter, Depends, HTTPException, Query, Response, status,
-                     Form, UploadFile)
+from fastapi import (APIRouter, Depends, Form, HTTPException, Query, Request,
+                     Response, UploadFile, status)
 from fastapi import File as FastAPIFile
 from fastapi.responses import RedirectResponse
 from pydantic import ValidationError
@@ -32,7 +32,8 @@ from api.files.models import (
 )
 from api.files import services
 from api.auth.deps import CurrentSuperuser
-from api.rbac.deps import require_permission
+from api.files.scope import scope_for_uri
+from api.rbac.deps import AuthzDep, decide, require_permission
 from api.rbac.permissions import Permission
 from core.deps import get_s3_client, SessionDep
 
@@ -278,11 +279,58 @@ def download_file(
 DOWNLOAD_URL_TTL_SECONDS = 3600
 
 
+def require_file_download(
+    request: Request,
+    authz: AuthzDep,
+    session: SessionDep,
+    path: str = Query(..., description="S3 URI of the file"),
+):
+    """
+    Project-scoped download: may this caller download *this* file?
+
+    The parameter is a URI rather than a project id, so the project has to be
+    resolved before it can be checked -- api/files/scope.py does that, preferring a
+    file's own project association and falling back to the projects its sequencing
+    run touches. Membership of any one of the resulting projects is enough: a file
+    genuinely belonging to two projects is downloadable by members of either.
+
+    When the URI resolves to no project at all -- unregistered, or registered with
+    no association -- the check falls back to the *global* file:download
+    permission. That is what keeps the behaviour coherent at both ends: `member`
+    does not hold it, so an ordinary user cannot download a file that belongs to
+    nothing; while lab_manager, auditor, admin and superusers do, so operating
+    across raw storage still works. Note has_in_project also honours a global
+    grant, which is why those roles are unaffected by the project scoping.
+
+    A dependency may take the same query parameter as its handler; both receive it
+    and the OpenAPI schema is unchanged.
+    """
+    scope = scope_for_uri(session, path)
+    if scope.resolved:
+        granted = any(
+            authz.has_in_project(Permission.FILE_DOWNLOAD, project_id)
+            for project_id in scope.project_ids
+        )
+    else:
+        granted = authz.has(Permission.FILE_DOWNLOAD)
+
+    # The origin is on the decision record so the mix of project-, sample- and
+    # run-resolved downloads is measurable, and so the unregistered surface can be
+    # sized before anyone proposes tightening the fallback above.
+    decide(request, granted, (Permission.FILE_DOWNLOAD,),
+           scope=f"file via {scope.origin}, {len(scope.project_ids)} project(s)")
+    return authz
+
+
+require_file_download.rbac_permissions = (Permission.FILE_DOWNLOAD,)
+require_file_download.rbac_plane = "project"
+
+
 @router.get(
     "/download-url",
     response_model=PresignedDownload,
     summary="Get a presigned URL for a file",
-    dependencies=[Depends(require_permission(Permission.FILE_DOWNLOAD))],
+    dependencies=[Depends(require_file_download)],
 )
 def get_download_url(
     response: Response,
