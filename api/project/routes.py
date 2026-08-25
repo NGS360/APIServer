@@ -12,7 +12,11 @@ from api.rbac import services as rbac_services
 from api.rbac.models import ProjectMember, ProjectMemberPublic, ProjectMemberRequest, Role
 from api.jobs.models import BatchJobPublic
 from api.project.deps import ProjectDep
-from api.rbac.deps import require_permission, require_project_permission
+from api.rbac.deps import (
+    OptionalAuthzDep,
+    require_permission,
+    require_project_permission,
+)
 from api.rbac.permissions import Permission
 from api.project.models import (
     ProjectCreate,
@@ -174,12 +178,24 @@ def reindex_projects(
     response_model=ProjectPublic,
     tags=["Project Endpoints"]
 )
-def get_project_by_project_id(session: SessionDep, project: ProjectDep) -> ProjectPublic:
+def get_project_by_project_id(
+    session: SessionDep, project: ProjectDep, authz: OptionalAuthzDep
+) -> ProjectPublic:
     """
     Returns a single project by its project_id.
     Note: This is different from its internal "id".
+
+    Carries `permissions`: what the calling user may do in this project. The
+    project plane is the only place that answer exists -- /rbac/me reports global
+    grants only -- so without it a UI has no way to gate a project control
+    except by making the request and handling the refusal.
     """
-    return services.get_project_by_project_id(session=session, project_id=project.project_id)
+    result = services.get_project_by_project_id(
+        session=session, project_id=project.project_id
+    )
+    if authz is not None:
+        result.permissions = authz.effective_project_permissions(project.id)
+    return result
 
 
 @router.put(

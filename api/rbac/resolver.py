@@ -27,7 +27,7 @@ from dataclasses import dataclass, field
 from sqlmodel import Session, select
 
 from api.rbac.models import ProjectMember, Role, RolePermission, UserRole
-from api.rbac.permissions import Permission
+from api.rbac.permissions import PROJECT_SCOPABLE, Permission
 
 
 def global_permissions(session: Session, user_id: uuid.UUID) -> frozenset[str]:
@@ -160,3 +160,26 @@ class AuthzContext:
         if self.is_superuser:
             return sorted(str(p) for p in Permission)
         return sorted(self.global_permissions)
+
+    def effective_project_permissions(self, project_id: uuid.UUID) -> list[str]:
+        """
+        What this caller may do *in one project*, for the project response.
+
+        The counterpart to effective_permissions, and it exists because the
+        global list cannot answer the question: /rbac/me carries the global
+        plane only, deliberately -- with a five-figure project count, inlining
+        every project's grants would make that payload unbounded.
+
+        Restricted to PROJECT_SCOPABLE because the rest are meaningless here: a
+        project role can never carry them, so reporting them per project would
+        invite a caller to read the absence of `setting:update` as something the
+        project had to say about it.
+
+        Goes through has_in_project rather than the membership rows, so a global
+        grant is included. Reporting only the project-role grants would show an
+        `admin` as holding nothing on the project, and hide every control from
+        the account that can use all of them.
+        """
+        return sorted(
+            str(p) for p in PROJECT_SCOPABLE if self.has_in_project(p, project_id)
+        )

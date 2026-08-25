@@ -18,7 +18,7 @@ from typing import Annotated, Literal
 
 from fastapi import Depends, HTTPException, Request, status
 
-from api.auth.deps import get_current_active_user
+from api.auth.deps import OptionalUser, get_current_active_user
 from api.auth.models import User
 from api.project.deps import ProjectDep
 from api.project.models import Project
@@ -53,6 +53,40 @@ def load_authz(
 
 
 AuthzDep = Annotated[AuthzContext, Depends(load_authz)]
+
+
+def load_authz_optional(
+    request: Request,
+    session: SessionDep,
+    user: OptionalUser,
+) -> AuthzContext | None:
+    """
+    The caller's access if there is a caller, None if the request is anonymous.
+
+    For routes that report what the caller may do without *requiring* a caller.
+    load_authz cannot be used there: it depends on get_current_active_user, so
+    adding it to a route that is still reachable anonymously turns those callers
+    into 401s -- which is a Phase 1 decision about closing authentication, not
+    something a reporting field should make on its own.
+
+    None and an empty list mean different things downstream. None is "not
+    evaluated, because nobody was asking"; an empty list is "evaluated, and this
+    caller holds nothing". Collapsing them would report an anonymous request as
+    a caller with no access, which is a different and more specific claim.
+    """
+    if user is None:
+        return None
+
+    cached: AuthzContext | None = getattr(request.state, "authz", None)
+    if cached is not None and cached.user_id == user.id:
+        return cached
+
+    context = AuthzContext.for_user(session, user)
+    request.state.authz = context
+    return context
+
+
+OptionalAuthzDep = Annotated[AuthzContext | None, Depends(load_authz_optional)]
 
 
 def _denied(permissions: tuple[Permission, ...], scope: str | None = None) -> HTTPException:
