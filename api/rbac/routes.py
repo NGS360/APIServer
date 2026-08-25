@@ -1,18 +1,15 @@
 """
 The RBAC administration API: roles, permissions, grants, and who holds what.
 
-Every route here carries both a require_permission guard and CurrentSuperuser,
-which reads like belt and braces and is not. RBAC_MODE defaults to dry_run,
-where a failed permission check is logged and then allowed through, so until the
-mode reaches enforce the superuser dependency is the only thing standing between
-this router and any authenticated caller. Since this router is where access is
-granted and where everybody's access can be read, that is not a gap to leave
-open for the length of a rollout. Removing the dependency is a Phase 5 change,
-made together with the mode.
+Every route here is guarded by require_permission alone. There is no additional
+CurrentSuperuser dependency, and that is deliberate: a router gated on being a
+superuser cannot serve the roles it exists to administer, so an `auditor` or a
+`platform_admin` who is not flagged as a superuser would be locked out of the
+panel their role is for.
 
-Note that role:manage is `critical` risk, so ALWAYS_ENFORCE already escalates
-the mutations to real enforcement even in dry-run; it is the reads that depend
-on the superuser dependency.
+role:read reads the whole roster -- emails, status flags, who is an
+administrator -- and role:manage is the grant plane itself, so a route added here
+needs one of them rather than something broader that happens to be convenient.
 
 Project membership is deliberately not here -- it lives on the project router so
 that project owners can self-serve. See docs/RBAC.md.
@@ -23,7 +20,7 @@ from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlmodel import select
 
-from api.auth.deps import CurrentActiveUser, CurrentSuperuser
+from api.auth.deps import CurrentActiveUser
 from api.rbac import services
 from api.rbac.models import (
     GrantRoleRequest,
@@ -63,10 +60,10 @@ def _role_public(session: SessionDep, role: Role) -> RolePublic:
 @router.get(
     "/permissions",
     response_model=list[PermissionPublic],
-    summary="The permission catalog (superuser only)",
+    summary="The permission catalog",
     dependencies=[Depends(require_permission(Permission.ROLE_READ))],
 )
-def list_permissions(current_user: CurrentSuperuser) -> list[PermissionPublic]:
+def list_permissions() -> list[PermissionPublic]:
     """
     Every permission the API recognises, with its risk and scopability.
 
@@ -89,10 +86,10 @@ def list_permissions(current_user: CurrentSuperuser) -> list[PermissionPublic]:
 @router.get(
     "/roles",
     response_model=list[RolePublic],
-    summary="List roles (superuser only)",
+    summary="List roles",
     dependencies=[Depends(require_permission(Permission.ROLE_READ))],
 )
-def list_roles(session: SessionDep, current_user: CurrentSuperuser) -> list[RolePublic]:
+def list_roles(session: SessionDep) -> list[RolePublic]:
     roles = session.exec(select(Role).order_by(Role.scope, Role.name)).all()
     return [_role_public(session, role) for role in roles]
 
@@ -100,13 +97,11 @@ def list_roles(session: SessionDep, current_user: CurrentSuperuser) -> list[Role
 @router.get(
     "/roles/{name}",
     response_model=RolePublic,
-    summary="Get one role (superuser only)",
+    summary="Get one role",
     responses={404: {"description": "Role not found"}},
     dependencies=[Depends(require_permission(Permission.ROLE_READ))],
 )
-def get_role(
-    session: SessionDep, name: str, current_user: CurrentSuperuser
-) -> RolePublic:
+def get_role(session: SessionDep, name: str) -> RolePublic:
     role = session.exec(select(Role).where(Role.name == name)).first()
     if role is None:
         raise HTTPException(
@@ -146,13 +141,11 @@ def get_my_access(
     "/roles",
     response_model=RolePublic,
     status_code=status.HTTP_201_CREATED,
-    summary="Create a custom role (superuser only)",
+    summary="Create a custom role",
     responses={409: {"description": "A role with that name exists"}},
     dependencies=[Depends(require_permission(Permission.ROLE_MANAGE))],
 )
-def create_role(
-    session: SessionDep, body: RoleCreate, current_user: CurrentSuperuser
-) -> RolePublic:
+def create_role(session: SessionDep, body: RoleCreate) -> RolePublic:
     """
     Custom roles are how "contributor without delete" and similar variants are
     served, which is the reason roles are rows rather than code.
@@ -171,7 +164,7 @@ def create_role(
 @router.patch(
     "/roles/{name}",
     response_model=RolePublic,
-    summary="Replace a custom role's permissions (superuser only)",
+    summary="Replace a custom role's permissions",
     responses={
         404: {"description": "Role not found"},
         409: {"description": "Builtin roles are code-defined"},
@@ -180,7 +173,6 @@ def create_role(
 )
 def update_role_permissions(
     session: SessionDep, name: str, body: RolePermissionsUpdate,
-    current_user: CurrentSuperuser,
 ) -> RolePublic:
     role = services.get_role_or_404(session, name)
     role = services.set_role_permissions(session, role, body.permissions)
@@ -190,13 +182,11 @@ def update_role_permissions(
 @router.delete(
     "/roles/{name}",
     status_code=status.HTTP_204_NO_CONTENT,
-    summary="Delete a custom role (superuser only)",
+    summary="Delete a custom role",
     responses={409: {"description": "Builtin, or still granted"}},
     dependencies=[Depends(require_permission(Permission.ROLE_MANAGE))],
 )
-def delete_role(
-    session: SessionDep, name: str, current_user: CurrentSuperuser
-) -> None:
+def delete_role(session: SessionDep, name: str) -> None:
     services.delete_role(session, services.get_role_or_404(session, name))
 
 
@@ -205,12 +195,10 @@ def delete_role(
 @router.get(
     "/users/{username}/roles",
     response_model=list[str],
-    summary="A user's global roles (superuser only)",
+    summary="A user's global roles",
     dependencies=[Depends(require_permission(Permission.ROLE_READ))],
 )
-def list_user_roles(
-    session: SessionDep, username: str, current_user: CurrentSuperuser
-) -> list[str]:
+def list_user_roles(session: SessionDep, username: str) -> list[str]:
     user = services.get_user_or_404(session, username)
     return global_role_names(session, user.id)
 
@@ -218,13 +206,13 @@ def list_user_roles(
 @router.post(
     "/users/{username}/roles",
     response_model=list[str],
-    summary="Grant a global role (superuser only)",
+    summary="Grant a global role",
     responses={400: {"description": "That role is project-scoped"}},
     dependencies=[Depends(require_permission(Permission.ROLE_MANAGE))],
 )
 def grant_user_role(
     session: SessionDep, username: str, body: GrantRoleRequest,
-    current_user: CurrentSuperuser,
+    current_user: CurrentActiveUser,
 ) -> list[str]:
     user = services.get_user_or_404(session, username)
     role = services.get_role_or_404(session, body.role)
@@ -235,13 +223,13 @@ def grant_user_role(
 @router.delete(
     "/users/{username}/roles/{role_name}",
     response_model=list[str],
-    summary="Revoke a global role (superuser only)",
+    summary="Revoke a global role",
     responses={409: {"description": "Would remove the last role manager"}},
     dependencies=[Depends(require_permission(Permission.ROLE_MANAGE))],
 )
 def revoke_user_role(
     session: SessionDep, username: str, role_name: str,
-    current_user: CurrentSuperuser,
+    current_user: CurrentActiveUser,
 ) -> list[str]:
     user = services.get_user_or_404(session, username)
     role = services.get_role_or_404(session, role_name)
@@ -252,23 +240,18 @@ def revoke_user_role(
 
 # --- user administration --------------------------------------------------
 #
-# Both of these are reads over other people's access, so they carry
-# CurrentSuperuser alongside the role:read guard for the same reason the role
-# endpoints above do: RBAC_MODE defaults to dry_run, where require_permission
-# logs a refusal and then allows the request through. Until the mode reaches
-# enforce, the superuser dependency is what actually keeps a roster of every
-# account -- emails, status flags, who is an administrator -- from being readable
-# by any authenticated caller. Dropping it is a Phase 5 change, not a cleanup.
+# Both of these are reads over other people's access, which is why they take
+# role:read rather than user:read -- the latter is the directory-search
+# permission every `member` holds, and it does not describe this.
 
 @router.get(
     "/users",
     response_model=UsersAdminPublic,
-    summary="The user roster (superuser only)",
+    summary="The user roster",
     dependencies=[Depends(require_permission(Permission.ROLE_READ))],
 )
 def list_users(
     session: SessionDep,
-    current_user: CurrentSuperuser,
     skip: int = Query(0, ge=0, description="Number of records to skip"),
     limit: int = Query(20, ge=1, le=100, description="Maximum records to return"),
     q: str | None = Query(
@@ -305,13 +288,11 @@ def list_users(
 @router.get(
     "/users/{username}/access",
     response_model=UserAccessPublic,
-    summary="One user's effective access (superuser only)",
+    summary="One user's effective access",
     responses={404: {"description": "User not found"}},
     dependencies=[Depends(require_permission(Permission.ROLE_READ))],
 )
-def get_user_access(
-    session: SessionDep, username: str, current_user: CurrentSuperuser
-) -> UserAccessPublic:
+def get_user_access(session: SessionDep, username: str) -> UserAccessPublic:
     """
     Both grant planes and the break-glass flag for one user.
 

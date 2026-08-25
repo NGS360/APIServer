@@ -554,10 +554,11 @@ def update_user_flags(
     locking_out = is_active is False or is_verified is False
 
     if is_superuser is not None and not acting_user.is_superuser:
-        # Redundant while the route requires CurrentSuperuser, and deliberately
-        # kept: the rule belongs to the mutation, so it stays true if the route
-        # ever moves onto user:manage alone. docs/RBAC.md is explicit that
-        # granting the break-glass flag takes user:manage AND superuser.
+        # Load-bearing: the route is guarded by user:manage alone now, so this
+        # is the only thing keeping the break-glass flag behind superuser.
+        # docs/RBAC.md is explicit that granting it takes user:manage AND
+        # superuser. It lives on the mutation rather than the route because the
+        # rule belongs to the change, not to one way of reaching it.
         raise HTTPException(
             status.HTTP_403_FORBIDDEN,
             detail="Setting is_superuser requires being a superuser, not only "

@@ -6,7 +6,10 @@ dependency overrides keep working untouched. Because get_current_user already
 reloads the User row on every request, roles live in the database with no JWT
 change -- the token stays {sub, exp, iat, type} and revocation is immediate.
 
-Nothing here is attached to a route yet. Phase 4 does that, behind a mode flag.
+A failed check is a 403. There is no mode flag: authorization either holds or it
+does not, and a switch that turns it off is a switch that can be left off. The
+dry-run window this rolled out behind lived on the release before this one, and
+went out with it -- see docs/RBAC.md.
 """
 
 import logging
@@ -19,7 +22,6 @@ from api.auth.deps import get_current_active_user
 from api.auth.models import User
 from api.project.deps import ProjectDep
 from api.project.models import Project
-from api.rbac.mode import RBACMode, effective_mode
 from api.rbac.permissions import Permission
 from api.rbac.resolver import AuthzContext
 from core.deps import SessionDep
@@ -76,29 +78,19 @@ def _decide(
     scope: str | None,
 ) -> None:
     """
-    Apply the enforcement mode to one check's result, and record it.
+    Record one check's result, and raise if it failed.
 
-    Every check emits a decision, allow or deny, because the point of the
-    dry-run window is a complete picture of who calls what -- knowing only the
-    refusals tells you nothing about which principals a permission would newly
-    let through.
+    Every check emits a decision, allow as well as deny. Knowing only the
+    refusals tells you nothing about which principals a permission actually lets
+    through, and that is the question an access review asks.
 
-    Refusals log at WARNING so a dry-run deny is findable without trawling; in
-    dry-run the decision is reported as `would_deny` and the request proceeds.
+    Refusals log at WARNING so they are findable without trawling. A 403 here is
+    ordinary -- it is what a permission is for -- so the line is a record, not an
+    alarm.
     """
-    rbac_mode = effective_mode(permissions)
-
-    if granted:
-        decision = "allow"
-    elif rbac_mode is RBACMode.ENFORCE:
-        decision = "deny"
-    elif rbac_mode is RBACMode.OFF:
-        decision = "skipped"
-    else:
-        decision = "would_deny"
+    decision = "allow" if granted else "deny"
 
     record = {
-        "rbac_mode": str(rbac_mode),
         "rbac_decision": decision,
         "required_permission": ",".join(str(p) for p in permissions),
         "scope": scope,
@@ -111,7 +103,7 @@ def _decide(
         request.state.rbac_decisions = decisions
     decisions.append(record)
 
-    if decision in ("deny", "would_deny"):
+    if not granted:
         logger.warning(
             "rbac %s: %s", decision, record["required_permission"],
             extra={
@@ -125,7 +117,6 @@ def _decide(
             },
         )
 
-    if decision == "deny":
         raise _denied(permissions, scope=scope)
 
 

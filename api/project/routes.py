@@ -6,7 +6,7 @@ from typing import Literal, List as TypingList
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, status
 from sqlmodel import select
 from core.deps import SessionDep, OpenSearchDep, S3ClientDep
-from api.auth.deps import CurrentUser, CurrentSuperuser
+from api.auth.deps import CurrentActiveUser, CurrentUser, CurrentSuperuser
 from api.auth.models import User
 from api.rbac import services as rbac_services
 from api.rbac.models import ProjectMember, ProjectMemberPublic, ProjectMemberRequest, Role
@@ -563,10 +563,15 @@ def ingest_vendor_data(
 ###############################################################################
 # Project membership /api/v1/projects/{project_id}/members
 #
-# Guarded by CurrentSuperuser for now, like the rest of the RBAC admin surface:
-# gating membership on project:manage_members would be a chicken-and-egg while
-# nothing enforces permissions yet. Phase 4 swaps these onto
-# require_project_permission(Permission.PROJECT_MANAGE_MEMBERS).
+# Guarded by require_project_permission(PROJECT_MANAGE_MEMBERS) alone, which is
+# the point of the project plane: an owner adds their own collaborators without
+# needing an administrator. There is no CurrentSuperuser dependency on top --
+# that would defeat the self-serve case entirely.
+#
+# The read carries the same permission as the writes, deliberately. Membership is
+# who can see the project, so it is not less sensitive than changing it, and it
+# lets a successful response stand as evidence the caller may edit -- which is
+# what the UI relies on, since project-scoped permissions are not on /rbac/me.
 ###############################################################################
 
 @router.get(
@@ -579,7 +584,6 @@ def ingest_vendor_data(
 def list_project_members(
     session: SessionDep,
     project: ProjectDep,
-    current_user: CurrentSuperuser,
 ) -> list[ProjectMemberPublic]:
     """Who has a role on this project, and which."""
     rows = session.exec(
@@ -611,7 +615,7 @@ def add_project_member(
     session: SessionDep,
     project: ProjectDep,
     body: ProjectMemberRequest,
-    current_user: CurrentSuperuser,
+    current_user: CurrentActiveUser,
 ) -> list[ProjectMemberPublic]:
     """Add a member, or change an existing member's role."""
     user = rbac_services.get_user_or_404(session, body.username)
@@ -619,7 +623,7 @@ def add_project_member(
     rbac_services.set_project_member(
         session, project.id, user, role, granted_by=current_user.id
     )
-    return list_project_members(session, project, current_user)
+    return list_project_members(session, project)
 
 
 @router.delete(
@@ -634,8 +638,7 @@ def remove_project_member(
     session: SessionDep,
     project: ProjectDep,
     username: str,
-    current_user: CurrentSuperuser,
 ) -> list[ProjectMemberPublic]:
     user = rbac_services.get_user_or_404(session, username)
     rbac_services.remove_project_member(session, project.id, user)
-    return list_project_members(session, project, current_user)
+    return list_project_members(session, project)

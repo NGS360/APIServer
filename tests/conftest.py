@@ -553,12 +553,6 @@ def isolate_test_environment():
     os.environ["RESULTS_BUCKET_URI"] = "s3://test-results-bucket"
     os.environ["DEMUX_WORKFLOW_CONFIGS_BUCKET_URI"] = "s3://test-tool-configs-bucket"
 
-    # Tests run under full enforcement, never the deployed default of dry_run.
-    # No route carries a guard yet, so this is inert today -- it is set now so
-    # that the first route to be wired cannot pass merely because the suite was
-    # running in a mode that allows every refusal through.
-    os.environ["RBAC_MODE"] = "enforce"
-
     # Remove AWS credentials to prevent real AWS calls
     os.environ.pop("AWS_ACCESS_KEY_ID", None)
     os.environ.pop("AWS_SECRET_ACCESS_KEY", None)
@@ -652,14 +646,20 @@ def mock_s3_client_fixture():
     return MockS3Client()
 
 
-# Permissions a superuser check guards today, and therefore the ones an
-# authenticated non-superuser could NOT reach before RBAC:
+# Permissions an authenticated non-superuser could NOT reach before RBAC, either
+# because a CurrentSuperuser check guarded the route or because the route did not
+# exist yet:
 #
 #   file:update, file:delete        api/files/routes.py -- CurrentSuperuser
-#   setting:update                  api/settings/routes.py -- CurrentSuperuser
 #   sample:delete                   delete_sample_from_project -- CurrentSuperuser
-#   project:manage_members          the membership endpoints -- CurrentSuperuser
-#   role:manage, role:read          all of api/rbac/routes.py -- CurrentSuperuser
+#   setting:update                  api/settings/routes.py, now setting:update
+#   project:manage_members          the membership endpoints, now the permission
+#   role:manage, role:read          all of api/rbac/routes.py, now the permission
+#   user:manage                     PATCH /users/{username}, a new route
+#
+# The last four no longer carry a CurrentSuperuser dependency -- require_permission
+# is the whole guard. They stay on this list because the point of the list is what
+# a *pre-RBAC* caller could do, and the answer is still "not this".
 #
 # Everything else in the catalog was reachable by any authenticated caller, and
 # most of it by an anonymous one. Keep this list in step with the routes: when a
@@ -667,7 +667,7 @@ def mock_s3_client_fixture():
 # belongs here is the question that decides if the change is breaking.
 LEGACY_SUPERUSER_ONLY = frozenset({
     "file:update", "file:delete", "setting:update", "sample:delete",
-    "project:manage_members", "role:manage", "role:read",
+    "project:manage_members", "role:manage", "role:read", "user:manage",
 })
 
 LEGACY_ROLE_NAME = "legacy_authenticated"
@@ -867,6 +867,86 @@ def restricted_client_fixture(
 
     user = persist_user(session, "norole")
     sync_rbac_catalog(session)
+    with _make_client(session, mock_opensearch_client, mock_s3_client,
+                      mock_lambda_client, monkeypatch, user=user) as client:
+        yield client
+
+
+def _grant_global_role(session: Session, user, role_name: str) -> None:
+    """Grant a builtin global role, seeding the catalog first if need be."""
+    from api.rbac.models import GrantSource, Role, UserRole
+    from api.rbac.seed import sync_rbac_catalog
+
+    sync_rbac_catalog(session)
+    role = session.exec(select(Role).where(Role.name == role_name)).one()
+    session.add(UserRole(user_id=user.id, role_id=role.id,
+                         source=GrantSource.MANUAL))
+    session.commit()
+
+
+@pytest.fixture(name="auditor_client")
+def auditor_client_fixture(
+    session: Session,
+    mock_opensearch_client: MockOpenSearchClient,
+    mock_s3_client: MockS3Client,
+    mock_lambda_client: MockLambdaClient,
+    monkeypatch,
+):
+    """
+    A non-superuser holding the builtin `auditor` role, which carries role:read.
+
+    The persona the CurrentSuperuser dependency used to lock out of the admin
+    panel: read-only across the platform, which is exactly what compliance and
+    read-only agents are given.
+    """
+    user = persist_user(session, "auditor_user")
+    _grant_global_role(session, user, "auditor")
+    with _make_client(session, mock_opensearch_client, mock_s3_client,
+                      mock_lambda_client, monkeypatch, user=user) as client:
+        yield client
+
+
+@pytest.fixture(name="other_project")
+def other_project_fixture(session):
+    """A second project, for proving a project-scoped grant does not generalise."""
+    from api.project.models import Project
+
+    project = Project(
+        project_id="P-19900109-0002",
+        name="Other Project",
+        created_by="someone_else",
+    )
+    session.add(project)
+    session.commit()
+    session.refresh(project)
+    return project
+
+
+@pytest.fixture(name="project_owner_client")
+def project_owner_client_fixture(
+    session: Session,
+    test_project,
+    mock_opensearch_client: MockOpenSearchClient,
+    mock_s3_client: MockS3Client,
+    mock_lambda_client: MockLambdaClient,
+    monkeypatch,
+):
+    """
+    A non-superuser who owns `test_project` and holds no global role.
+
+    Deliberately given nothing on the global plane, so anything this client can
+    reach it reached through the project grant alone. That is the self-serve
+    case the project plane exists for.
+    """
+    from api.rbac.models import GrantSource, ProjectMember, Role
+    from api.rbac.seed import sync_rbac_catalog
+
+    user = persist_user(session, "project_owner_user")
+    sync_rbac_catalog(session)
+    role = session.exec(select(Role).where(Role.name == "project_owner")).one()
+    session.add(ProjectMember(project_id=test_project.id, user_id=user.id,
+                              role_id=role.id, source=GrantSource.MANUAL))
+    session.commit()
     with _make_client(session, mock_opensearch_client, mock_s3_client,
                       mock_lambda_client, monkeypatch, user=user) as client:
         yield client

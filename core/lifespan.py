@@ -124,14 +124,14 @@ async def lifespan(app: FastAPI):
 
     # Reconcile the builtin RBAC roles with api/rbac/roles.py.
     #
-    # Unlike the settings sync above, a failure here is not merely logged. The
-    # roles are the input to every authorization decision, so once enforcement is
-    # switched on an empty or half-written catalog means every request is denied.
-    # Refusing to start lets the load balancer pull the instance, which is far
-    # better than serving a site-wide outage as 403s.
+    # Unlike the settings sync above, a failure here is fatal. The roles are the
+    # input to every authorization decision and enforcement is unconditional, so
+    # an empty or half-written catalog means every request is denied. Refusing to
+    # start lets the load balancer pull the instance, which is far better than
+    # serving a site-wide outage as 403s.
     #
-    # Nothing enforces yet -- phase 4 adds that -- so for now a failure is logged
-    # and startup continues. The assertion becomes fatal when RBAC_MODE arrives.
+    # This was a logged warning for as long as nothing enforced. It is not one
+    # now.
     logger.info("Syncing RBAC role catalog...")
     try:
         from api.rbac.seed import sync_rbac_catalog
@@ -140,6 +140,9 @@ async def lifespan(app: FastAPI):
             sync_rbac_catalog(session)
     except Exception as e:
         logger.error("Failed to sync RBAC catalog: %s", e)
+        raise RuntimeError(
+            f"Cannot start application: RBAC catalog sync failed - {e}"
+        ) from e
 
     # Initialize database (if not done already)
     # Database initialization is done via alembic hence not part of this code.

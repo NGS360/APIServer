@@ -4,7 +4,7 @@ User search endpoints
 from fastapi import APIRouter, Depends, Query
 
 from core.deps import SessionDep
-from api.auth.deps import CurrentActiveUser, CurrentSuperuser
+from api.auth.deps import CurrentActiveUser
 from api.rbac import services as rbac_services
 from api.rbac.deps import require_permission
 from api.rbac.models import UserAdminPublic, UserFlagsUpdate
@@ -38,7 +38,7 @@ def search_users(
 @router.patch(
     "/{username}",
     response_model=UserAdminPublic,
-    summary="Set a user's status flags (superuser only)",
+    summary="Set a user's status flags",
     responses={
         404: {"description": "User not found"},
         409: {"description": "Would lock out the last superuser or role manager"},
@@ -49,7 +49,7 @@ def update_user_flags(
     session: SessionDep,
     username: str,
     body: UserFlagsUpdate,
-    current_user: CurrentSuperuser,
+    current_user: CurrentActiveUser,
 ) -> UserAdminPublic:
     """
     Activate, verify, or set the superuser flag. Omitted fields are unchanged.
@@ -63,10 +63,14 @@ def update_user_flags(
     refuse the two lockouts that cannot be undone through the API, namely the
     last usable superuser and the last non-superuser role manager.
 
-    CurrentSuperuser is required in addition to user:manage, which is what
-    docs/RBAC.md asks for on the break-glass flag, and is also what actually
-    enforces this route while RBAC_MODE is dry_run -- user:manage is `high` risk
-    rather than `critical`, so it is not in the always-enforced set.
+    user:manage is the only route guard, rather than that plus CurrentSuperuser,
+    so the permission means what it says: an account holding it can deactivate a
+    departed colleague without also being break-glass.
+
+    Setting is_superuser is the exception, and it is checked in the service
+    rather than here -- docs/RBAC.md asks for user:manage AND superuser on the
+    break-glass flag, and that rule belongs to the mutation rather than to one
+    way of reaching it. current_user is the acting user for those guardrails.
     """
     user = rbac_services.get_user_or_404(session, username)
     user = rbac_services.update_user_flags(

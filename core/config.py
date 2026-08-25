@@ -132,48 +132,14 @@ class Settings(BaseSettings):
 
     @computed_field
     @property
-    def RBAC_MODE(self) -> str:
-        """
-        Authorization enforcement mode: "off", "dry_run", or "enforce".
-
-        Three properties, each deliberate:
-
-        Unrecognised values resolve to "enforce", not to the default. A typo
-        such as RBAC_MODE=enforced must never be read as "authorization is off"
-        -- the failure mode of a misspelling has to be a visible 403, not a
-        silent hole.
-
-        The default is "dry_run" for this release and tightens to "enforce" in
-        the Phase 5 release. Making the *default* move is what stops a
-        forgotten flag from leaving a tier unprotected indefinitely: the switch
-        decays toward safe rather than toward open.
-
-        "off" is clamped to "dry_run" in prod. It exists for local work, and a
-        production environment where authorization can be turned off entirely
-        by one `eb setenv` is a worse risk than any it mitigates. Rollback is a
-        forward fix -- grant the missing role -- per docs/RBAC.md.
-
-        Note this is read from the environment and Secrets Manager only, never
-        from the settings table: a PUT /settings/RBAC_MODE that switches
-        authorization off would be self-defeating.
-        """
-        value = self._get_config_value("RBAC_MODE", default="dry_run").strip().lower()
-        if value not in ("off", "dry_run", "enforce"):
-            return "enforce"
-        if value == "off" and self.ENVIRONMENT == "prod":
-            return "dry_run"
-        return value
-
-    @computed_field
-    @property
     def DEFAULT_USER_ROLE(self) -> str:
         """
         Global role granted to every user at creation. "none" disables it.
 
-        Without this, a new user holds nothing, and under RBAC_MODE=enforce that
-        is a 403 on every endpoint from their first request -- one support ticket
-        per person who signs in, which is the most predictable way to make an
-        authorization rollout look like an outage.
+        Without this, a new user holds nothing, and holding nothing is a 403 on
+        every endpoint from their first request -- one support ticket per person
+        who signs in, which is the most predictable way to make an authorization
+        rollout look like an outage.
 
         "member" is deliberately a wide, read-heavy set rather than a minimal
         one: it is what an authenticated caller could already do before RBAC, so

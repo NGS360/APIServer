@@ -150,7 +150,7 @@ class TestUserRoster:
         r = superuser_client.get("/api/v1/rbac/users?sort_by=hashed_password")
         assert r.status_code == 422
 
-    def test_requires_superuser(self, client, seeded):
+    def test_requires_role_read(self, client, seeded):
         assert client.get("/api/v1/rbac/users").status_code == 403
 
 
@@ -206,7 +206,7 @@ class TestUserAccess:
             "/api/v1/rbac/users/ghost/access"
         ).status_code == 404
 
-    def test_requires_superuser(self, client, seeded):
+    def test_requires_role_read(self, client, seeded):
         assert client.get(
             "/api/v1/rbac/users/testuser/access"
         ).status_code == 403
@@ -354,7 +354,8 @@ class TestUserFlags:
             "/api/v1/users/ghost", json={"is_active": False}
         ).status_code == 404
 
-    def test_requires_superuser(self, client, seeded):
+    def test_requires_user_manage(self, client, seeded):
+        """`client` holds the pre-RBAC set, which does not include user:manage."""
         assert client.patch(
             "/api/v1/users/testuser", json={"is_verified": True}
         ).status_code == 403
@@ -363,9 +364,9 @@ class TestUserFlags:
 class TestSuperuserFlagNeedsMoreThanUserManage:
     """
     docs/RBAC.md: setting is_superuser takes user:manage AND superuser, never
-    user:manage alone. The route's CurrentSuperuser dependency makes that true
-    today; the check is enforced in the service so it stays true if the route
-    ever moves onto the permission by itself.
+    user:manage alone. The route is guarded by user:manage by itself now, so the
+    check in the service is the only thing making this true -- which is why it
+    lives on the mutation rather than on the route.
     """
 
     def test_a_non_superuser_holder_cannot_set_the_flag(self, seeded):
