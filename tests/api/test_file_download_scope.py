@@ -24,7 +24,7 @@ The policy under test, decided deliberately:
   nothing; lab_manager, auditor, admin and superusers do, so operating over raw
   storage still works.
 
-RBAC_MODE is `enforce` in tests, so refusals are 403s.
+A failed permission check is a 403, here and in production.
 """
 from datetime import date
 

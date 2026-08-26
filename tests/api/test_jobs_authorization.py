@@ -14,9 +14,8 @@ job:update would refuse the second. These tests pin the split, in both direction
 -- a test that only proved the UI case still works would pass just as happily if
 the guard checked nothing at all.
 
-RBAC_MODE is `enforce` in the test environment (see isolate_test_environment), so
-a refusal here is a 403 rather than the `would_deny` it currently logs in
-production.
+A failed permission check is a 403. There is no enforcement mode any more, so
+what these assert is what production does.
 """
 
 import pytest
@@ -52,8 +51,8 @@ class TestTheRouteIsClosed:
 
         401 rather than 403: the guard depends on get_current_active_user, so
         authentication is resolved first and an anonymous caller never reaches a
-        permission check -- which is also why this could not be rolled out behind
-        the dry-run flag and had to wait for every caller to authenticate.
+        permission check -- which is also why no authorization setting could have
+        eased this in, and it had to wait for every caller to authenticate.
         """
         response = unauthenticated_client.put(
             f"/api/v1/jobs/{job.id}", json={"status": JobStatus.RUNNING}
@@ -151,8 +150,8 @@ class TestTheDecisionIsRecorded:
     ):
         """
         A bespoke guard that skipped `decide` would enforce correctly and be
-        invisible to the dry-run data and the deny-rate alarms -- the whole
-        instrument the rollout is steered by.
+        invisible to the access log and the deny-rate alarms -- which is how a
+        refusal gets noticed at all.
         """
         client = client_with_permissions([Permission.JOB_READ])
         response = client.put(

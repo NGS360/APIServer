@@ -27,7 +27,7 @@ halves differ:
   `GET /files/download-url` was vacuous. See
   tests/api/test_file_download_scope.py.
 
-RBAC_MODE is `enforce` in tests, so refusals here are 403s.
+A failed permission check is a 403, here and in production.
 """
 import pytest
 from sqlmodel import select
@@ -186,39 +186,34 @@ class TestTheProjectRolesAreOrdered:
         assert response.status_code == 403
         assert "project:manage_members" in response.json()["detail"]
 
-    def test_an_owner_is_still_refused_by_the_retained_superuser_gate(
+    def test_an_owner_can_manage_its_own_project(
         self, session, restricted_client, mine
     ):
         """
-        The one place a project role does *not* yet get what it grants.
+        The self-serve case the project plane exists for.
 
-        The membership routes carry the project guard **and** the original
-        `CurrentSuperuser` dependency. The guard allows -- the access log records
-        `rbac_decision: allow` with `scope: project <id>` -- and then the
-        superuser check refuses. So a project owner cannot see or manage their own
-        project's members.
+        This was the one place a project role did not get what it granted. The
+        membership routes carried the project guard **and** a `CurrentSuperuser`
+        dependency, so the guard allowed -- the access log recorded
+        `rbac_decision: allow` with `scope: project <id>` -- and the superuser
+        check then refused, leaving an owner unable to see their own members.
 
-        That is deliberate for now, and the reason is worth stating: while
-        RBAC_MODE is dry_run a guard only logs, so dropping `CurrentSuperuser`
-        today would not move the gate from one mechanism to the other, it would
-        remove it, and membership management would be open to every authenticated
-        user in production. The superuser check comes off at enforce, not before.
+        That was defensible only while a guard merely logged: dropping the
+        dependency then would have removed the gate rather than moved it, opening
+        membership to every authenticated caller. Enforcement is unconditional
+        now, so the guard *is* the gate and the dependency is gone -- a panel
+        gated on a flag cannot serve a role-based model. `restricted_client`
+        holds no global role whatsoever, so the project grant is doing all the
+        work here.
 
-        The two refusals are told apart by their message, which is what makes this
-        assertion meaningful rather than just "403": the guard says
-        "Missing permission: ...", the superuser dependency says
-        "Not enough permissions".
+        This test was written as the negative assertion with a note saying it
+        should become this one when the gate came off. It has.
         """
         grant_project_role(session, mine, "norole", "project_owner")
         response = restricted_client.get(
             f"/api/v1/projects/{mine.project_id}/members"
         )
-        assert response.status_code == 403
-        assert response.json()["detail"] == "Not enough permissions", (
-            "expected the retained superuser gate to be the thing refusing; if "
-            "this now reads 'Missing permission', the gate has been dropped and "
-            "this test should become the positive assertion it was written to be"
-        )
+        assert response.status_code == 200
 
     def test_a_superuser_can_manage_members(self, superuser_client, session):
         """The counterpart: the gate above is satisfiable, just not by a role."""

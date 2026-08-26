@@ -117,7 +117,7 @@ def downgrade() -> None:
     go first. Safe -- no other table references these, and dropping them removes
     only authorization data, which the seeding step recreates on next startup.
     Grants themselves are lost, which is why the operational rollback for RBAC is
-    the RBAC_MODE flag rather than a downgrade.
+    revoking the offending grant rather than a downgrade.
 
     Deliberately no drop_index() calls, though autogenerate would emit them.
 

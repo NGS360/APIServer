@@ -1,7 +1,7 @@
 """Backfill the default global role onto existing users
 
 Every user created from now on gets `member` at creation. Users who predate that
-hook hold nothing, and under RBAC_MODE=enforce holding nothing is a 403 on every
+hook hold nothing, and holding nothing is a 403 on every
 endpoint -- so without this the flip to enforce locks out effectively everyone.
 
 Measured before writing this:

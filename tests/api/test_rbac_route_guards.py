@@ -1,16 +1,4 @@
 """ Test cases for the permission guards now attached to routes """
-import pytest
-
-from core.config import get_settings
-
-
-@pytest.fixture
-def mode(monkeypatch):
-    def _set(value: str):
-        monkeypatch.setenv("RBAC_MODE", value)
-        monkeypatch.setenv("ENVIRONMENT", "dev")
-        get_settings.cache_clear()
-    return _set
 
 
 class TestGlobalPlaneGuards:
@@ -35,18 +23,6 @@ class TestGlobalPlaneGuards:
         before = len(session.exec(select(Project)).all())
         restricted_client.post("/api/v1/projects", json={"name": "Guarded 3"})
         assert len(session.exec(select(Project)).all()) == before
-
-    def test_dry_run_lets_a_non_holder_through(self, restricted_client, mode):
-        mode("dry_run")
-        r = restricted_client.post("/api/v1/projects",
-                                   json={"name": "Guarded 4"})
-        assert r.status_code == 201
-
-    def test_off_lets_a_non_holder_through(self, restricted_client, mode):
-        mode("off")
-        r = restricted_client.post("/api/v1/projects",
-                                   json={"name": "Guarded 5"})
-        assert r.status_code == 201
 
 
 class TestProjectPlaneGuards:
@@ -105,37 +81,86 @@ class TestProjectPlaneGuards:
         ).status_code == 404
 
 
-class TestRetainedSuperuserGates:
+class TestTheAccessControlSurfaceIsGuarded:
     """
-    The superuser-only routes keep CurrentSuperuser *and* gain a guard.
+    The administrative surface is gated by its permission, and by nothing else.
 
-    Dropping the existing gate in favour of the guard would have opened these
-    to everyone for the length of the dry-run window, since dry-run allows what
-    it would otherwise refuse. These tests pin that the gate is still there.
+    These routes used to carry CurrentSuperuser on top of their guard. It came
+    off because it made the panel unusable by the very roles it administers --
+    see TestTheAdminPanelWorksWithoutSuperuser below -- which leaves the
+    permission as the only gate. These tests are the other half of that trade:
+    the `client` fixture holds the pre-RBAC permission set, and must still be
+    refused everywhere.
     """
 
-    @pytest.mark.parametrize("mode_value", ["off", "dry_run", "enforce"])
-    def test_settings_update_still_requires_a_superuser(
-        self, client, mode, mode_value
-    ):
-        mode(mode_value)
+    def test_settings_update_refuses_a_non_holder(self, client):
         r = client.put("/api/v1/settings/DATA_BUCKET_URI",
                        json={"value": "s3://hijacked"})
-        assert r.status_code == 403, mode_value
+        assert r.status_code == 403
 
-    @pytest.mark.parametrize("mode_value", ["off", "dry_run", "enforce"])
-    def test_project_member_management_still_requires_a_superuser(
-        self, client, test_project, mode, mode_value
-    ):
-        mode(mode_value)
+    def test_membership_read_refuses_a_non_holder(self, client, test_project):
         assert client.get(
             f"/api/v1/projects/{test_project.project_id}/members"
-        ).status_code == 403, mode_value
+        ).status_code == 403
+
+    def test_the_roster_refuses_a_non_holder(self, client):
+        assert client.get("/api/v1/rbac/users").status_code == 403
+
+    def test_user_flags_refuse_a_non_holder(self, client):
+        assert client.patch(
+            "/api/v1/users/testuser", json={"is_verified": True}
+        ).status_code == 403
 
     def test_a_superuser_still_passes(self, superuser_client, test_project):
         assert superuser_client.get(
             f"/api/v1/projects/{test_project.project_id}/members"
         ).status_code == 200
+
+
+class TestTheAdminPanelWorksWithoutSuperuser:
+    """
+    The point of removing CurrentSuperuser: a role that carries the permission
+    is now sufficient.
+
+    Before this, an `auditor` -- read-only across the platform, and the role
+    compliance actually uses -- held role:read and was still refused by every
+    route it names, because the dependency ran first.
+    """
+
+    def test_an_auditor_can_read_the_catalog(self, auditor_client):
+        assert auditor_client.get("/api/v1/rbac/permissions").status_code == 200
+
+    def test_an_auditor_can_read_the_roster(self, auditor_client):
+        assert auditor_client.get("/api/v1/rbac/users").status_code == 200
+
+    def test_an_auditor_can_read_roles(self, auditor_client):
+        assert auditor_client.get("/api/v1/rbac/roles").status_code == 200
+
+    def test_an_auditor_cannot_grant(self, auditor_client):
+        """role:read is not role:manage, and the mutations are still refused."""
+        r = auditor_client.post("/api/v1/rbac/users/testuser/roles",
+                                json={"role": "lab_manager"})
+        assert r.status_code == 403
+
+    def test_a_project_owner_can_read_its_membership(
+        self, project_owner_client, test_project
+    ):
+        """
+        The self-serve case the project plane exists for: an owner who is not a
+        superuser and holds no global administrative role.
+        """
+        r = project_owner_client.get(
+            f"/api/v1/projects/{test_project.project_id}/members"
+        )
+        assert r.status_code == 200
+
+    def test_a_project_owner_cannot_read_another_project(
+        self, project_owner_client, other_project
+    ):
+        """The grant is per project, so it must not generalise."""
+        assert project_owner_client.get(
+            f"/api/v1/projects/{other_project.project_id}/members"
+        ).status_code == 403
 
 
 class TestSelfServiceIsUnguarded:

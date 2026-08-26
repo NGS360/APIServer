@@ -9,7 +9,7 @@ NGS360 today has authentication but effectively no authorization. RBAC provides:
 - **Least privilege**: A closed catalog of `resource:action` permissions, grouped into named roles, replacing the single `is_superuser` boolean
 - **Two grant scopes**: Global roles for platform resources (runs, workflows, vendors, settings) and per-project roles for project-owned data (samples, QC records, files)
 - **Auditable grants**: Every assignment records who granted it, when, and by what mechanism
-- **A safe rollout path**: A dry-run mode that logs denials without enforcing them, so the permission model can be validated against real production traffic before it starts rejecting requests
+- **A safe rollout path**: A dry-run mode that logs denials without enforcing them, so the permission model can be validated against real production traffic before it starts rejecting requests. *(Served its purpose and was removed — see* Enforcement mode *below.)*
 - **Machine identities**: First-class service accounts with narrowly scoped API keys, replacing the current practice of integrations borrowing a human's credentials
 
 ### Current state
@@ -581,7 +581,7 @@ Four things make this safe rather than a special case that rots:
 - **A dependency may declare the same body model as the handler.** FastAPI parses it once, the handler still receives it, and the OpenAPI `requestBody` stays a `$ref` to `BatchJobUpdate` — so the generated frontend client does not move and no consumer has to change.
 - **The field set is matched against `model_dump(exclude_unset=True)`, which is exactly what `update_batch_job` persists.** The check cannot drift from the write, and naming a writeback field requires the permission even when the value sent is `null`.
 - **The stricter requirement wins on a mixed payload**, or adding `viewed` to a body becomes a way to downgrade the check.
-- **It goes through `decide()`.** A bespoke guard that enforced correctly but skipped the recorder would be invisible to the dry-run data and the deny-rate alarms — the instrument the whole rollout is steered by. Both permissions are tagged on the closure so route introspection sees both branches rather than whichever one was hardcoded.
+- **It goes through `decide()`.** A bespoke guard that enforced correctly but skipped the recorder would be invisible to the access log and the deny-rate alarms — which is how a refusal gets noticed at all. Both permissions are tagged on the closure so route introspection sees both branches rather than whichever one was hardcoded.
 
 The alternative — splitting `viewed` onto its own route — is cleaner in isolation but needs a frontend change and a client regeneration to land before the API can enforce, which trades a self-contained change for a cross-repo sequencing dependency. Worth doing if a third operation ever appears on this route.
 
@@ -676,7 +676,7 @@ New computed fields in `core/config.py`, following the established `_get_config_
 | Setting | Default | Purpose |
 |---------|---------|---------|
 | `ENVIRONMENT` | `dev` | `dev`, `staging`, or `prod`. **Does not exist today** — tiers are currently distinguished only by which Elastic Beanstalk environment is deployed to. Nothing else here can be tier-gated until it exists. |
-| `RBAC_MODE` | `dry_run`, then `enforce` | `off`, `dry_run`, or `enforce`. See below. |
+| ~~`RBAC_MODE`~~ | — | **Removed.** Enforcement is unconditional; see *Enforcement mode* below. |
 | `DEFAULT_USER_ROLE` | `member` | Role auto-granted at user creation; empty disables |
 | `BOOTSTRAP_ADMIN_USERNAMES` | *(empty)* | Comma-separated usernames granted `admin` + `is_superuser` at creation |
 
@@ -692,9 +692,21 @@ New router `api/rbac/routes.py` at `/api/v1/rbac`:
 | GET | `/rbac/roles/{name}` | `role:read` |
 | PATCH | `/rbac/roles/{name}` | `role:manage` — permission set only; builtin roles reject rename and scope change |
 | DELETE | `/rbac/roles/{name}` | `role:manage` — `409` if builtin or if assignments exist |
+| GET | `/rbac/users` | `role:read` — the user roster: status flags and global roles, paginated, filterable on name, role and status |
 | GET | `/rbac/users/{username}/roles` | `role:read` |
 | POST | `/rbac/users/{username}/roles` | `role:manage` |
 | DELETE | `/rbac/users/{username}/roles/{role_name}` | `role:manage` |
+| GET | `/rbac/users/{username}/access` | `role:read` — both grant planes for one user, including project memberships |
+
+And on the user router, because it mutates the user rather than a grant:
+
+| Method | Path | Permission |
+|--------|------|------------|
+| PATCH | `/users/{username}` | `user:manage` **and** superuser — `is_active`, `is_verified`, `is_superuser`, each optional |
+
+`GET /rbac/users` exists rather than reusing `GET /users/search` because those are two different endpoints wearing the same name. Search backs the user *picker*: it may answer from LDAP, it requires a query of at least two characters, and it filters to `is_active`. All three are right for choosing somebody to grant a role to, and all three are wrong for administering accounts — the deactivated account is the one the administrator came to find.
+
+`PATCH /users/{username}` is what `user:manage` describes. Until it existed the permission was in the catalog and in the `admin` role while granting nothing. Note that both `is_active` and `is_verified` are required by `get_current_active_user`, so clearing either is an account lockout, and the two lockouts that cannot be undone through the API are refused: the last superuser who can still sign in, and the last non-superuser holder of `role:manage`. That second one matters because deactivation would otherwise be a trivial way around the guard on `DELETE /rbac/users/{username}/roles/{role_name}`.
 
 Project membership lives on the project router so that owners can self-serve:
 
@@ -743,11 +755,18 @@ Phase 1 — closing the 73 remaining open routes — is the highest-value securi
 | **1c** | Close remaining writes; stop honouring client-supplied `created_by`. **First closure landed: `PUT /jobs/{job_id}`** — see *Closing PUT /jobs/{job_id}* below | **Yes** | As above |
 | **1d** | Close reads | **Yes** | CI asserts every route not in `PUBLIC_ROUTES` returns 401 unauthenticated; *The criterion for closing a route* passes over 7 days |
 | **2** | RBAC schema, catalog seeding, resolver, `/auth/me` permission fields. **No route behaviour change** | No | Catalog present in all three tiers; resolution-matrix test passes; the diff touches no route's authorization |
-| **3** | Membership backfill; admin API guarded by the existing `CurrentSuperuser` (no chicken-and-egg) | No | Admins can grant and revoke; the "projects with no member" report is empty or explicitly signed off |
+| **3** | Membership backfill; admin API guarded by ~~the existing `CurrentSuperuser`~~ **its own permissions** (see *Access control is gated by permission, not by superuser* below) | No | Admins can grant and revoke; the "projects with no member" report is empty or explicitly signed off |
 | **4** | `require_permission` wired onto routes with `RBAC_MODE=dry_run` | No | 14 days in production dry-run, with every distinct `(principal, permission, route)` denial either resolved by a grant or explicitly accepted |
-| **5** | `RBAC_MODE=enforce`, dev → staging → prod | **Yes** | 30 days in production enforce with no rollback |
+| **4b** | ~~Flip the mode~~ **Delete the mode.** `api/rbac/mode.py` and `RBAC_MODE` removed; guards enforce unconditionally. Ships with the admin UI, after the Phase 4 window closed | **Yes** | Phase 4's denial punch list is empty; `tests/api/test_rbac_enforcement.py` passes |
+| ~~**5**~~ | ~~`RBAC_MODE=enforce`, dev → staging → prod~~ — **subsumed by 4b**; there is no mode to flip | **Yes** | 30 days in production with no rollback |
 | **6** | Row-level read filtering and pagination | **Yes** | Pagination tests pass; list totals reflect membership |
 | **7** | Frontend permission gating, MCP 403 handling, access reporting | No | — |
+
+**Access control is gated by permission, not by superuser.** The admin API, the project membership routes, `PATCH /users/{username}` and `PUT /settings/{key}` were originally given a `CurrentSuperuser` dependency *in addition to* their `require_permission` guard, on the reasoning that dry-run allows what it would otherwise refuse and the grant plane should not be open for the length of the rollout. That reasoning was right about the risk and wrong about the remedy: a panel gated on being a superuser cannot serve the roles it exists to administer, so an `auditor` (who holds `role:read`) or a `platform_admin` (who holds `setting:update`) was refused by every route their role names, and the frontend's permission-based gating offered them controls that answered 403.
+
+Both halves are now gone — the dependency *and* the dry-run window it was compensating for. `require_permission` is the whole guard, and it refuses unconditionally. The sequencing that made this possible is worth recording, because it is the reason no compensating mechanism was needed: the dry-run window ran on the release *before* this one, against the pre-existing routes that had real callers to discover. The admin API has no legacy callers at all, so it never needed observing — only enforcing. Merging it after the window closed means it could be enforced from its first request.
+
+The break-glass flag keeps its extra condition: setting `is_superuser` requires `user:manage` **and** being a superuser. That check lives on the mutation in `api/rbac/services.py`, not on the route, because the rule belongs to the change rather than to one way of reaching it. `TestSuperuserFlagNeedsMoreThanUserManage` pins it, and `user-flags-card.tsx` mirrors it in the UI so the switch is disabled rather than offered-and-refused.
 
 **Phase 0 is not optional.** There is no request-logging middleware today, and therefore no inventory of who calls the 73 remaining open routes. Skipping it means discovering consumers from a production outage. It uses `optional_current_user` (already present at `api/auth/deps.py:163`), which returns `None` rather than raising — zero behaviour change, but the caller's identity becomes available for logging.
 
@@ -770,7 +789,7 @@ Observations that change the plan:
 - **The Batch event Lambda writes job status**, and its traffic did not appear in the first two-hour sample at all. That is the concrete argument for the seven-day window: periodic callers are invisible in short ones.
 - **Browsers made anonymous calls**, concentrated on `files/download`. Measured over six days in production: 19 distinct browser IPs, all anonymous. That is not a missing service account and cannot be fixed by issuing one.
 
-  `GET /files/download` answers with a **307 to a presigned S3 URL**, so the UI uses it as a plain link. A browser following a link cannot attach an `Authorization` header, which means the route cannot be given a permission guard without returning 401 to every download in the product -- and `RBAC_MODE=dry_run` does not soften that, because authentication is resolved before any mode check.
+  `GET /files/download` answers with a **307 to a presigned S3 URL**, so the UI uses it as a plain link. A browser following a link cannot attach an `Authorization` header, which means the route cannot be given a permission guard without returning 401 to every download in the product -- and no authorization setting could have softened that, because authentication is resolved before any permission check.
 
   The fix is `GET /files/download-url`, which returns the same URL as JSON and *is* guarded. It was originally guarded on the global plane, on the grounds that the parameter is an arbitrary S3 URI and nothing maps a URI to a project. **That was wrong** — `fileproject`, `filesample` and `filesequencingrun` all exist, so the mapping was available all along; it is now used, and the guard is per project (see *Project-scoped downloads*). `file:browse` remains genuinely global-only, because a browse request names a prefix rather than a file. The frontend fetches it with its token, then navigates to S3 itself. No security property changes: the bytes already bypass the API today, because the redirect sends the browser to that same URL.
 
@@ -867,7 +886,30 @@ The same WES service validates every bearer token against `GET /api/v1/auth/me` 
 
 ### Enforcement mode
 
-`RBAC_MODE` gates *authorization* only:
+> **Superseded.** There is no enforcement mode. `RBAC_MODE`, `RBACMode`,
+> `effective_mode()` and `ALWAYS_ENFORCE` were all removed along with
+> `api/rbac/mode.py`; `require_permission` raises 403 on a failed check,
+> unconditionally. The reasoning that produced the mode is preserved below
+> because it explains the rollout that actually happened — phases 0 through 4
+> ran behind `dry_run` on the release *before* the admin UI, which is what the
+> dry-run window was for. By the time the permission model was settled the
+> switch had no remaining job, and a switch that can turn authorization off is a
+> switch that can be left off. See *Access control is gated by permission* in the
+> phase notes above.
+>
+> What survives of the design: decisions are still recorded on `request.state`
+> and folded onto the access-log line by `_authz_summary` in `core/middleware.py`,
+> refusals still log at WARNING under `event=rbac.decision`, and the 403 detail
+> is still a plain string because the frontend's `extractDetail` cannot parse a
+> dict. Those are pinned by `tests/api/test_rbac_enforcement.py`.
+>
+> **Rollback is a forward fix — grant the missing role.** It was never
+> `alembic downgrade`, and it is no longer `eb setenv` either. There is no
+> configuration change that restores pre-RBAC behaviour, by design.
+>
+> The historical design follows.
+
+`RBAC_MODE` gated *authorization* only:
 
 ```python
 @computed_field
@@ -896,9 +938,9 @@ Four properties matter:
 
 Dry-run necessarily lets a should-be-denied write succeed. That is acceptable for reads and ordinary writes, but a small `ALWAYS_ENFORCE` set hard-denies even in dry-run: `PUT /settings/{key}`, every `DELETE`, and all role-grant routes. These have near-zero legitimate traffic, so there is no discovery value in dry-running them and real damage potential in doing so.
 
-**Operational hygiene.** Log a startup banner at ERROR when `RBAC_MODE=dry_run` and `ENVIRONMENT=prod`. Alarm in CloudWatch if production still reports `dry_run` past the cutover date. Expose `GET /api/v1/rbac/status` (authenticated) returning `{environment, rbac_mode, permission_count, seeded_at}` so "is it actually on?" is a two-second question — and keep mode off the public `/api/health`.
+**Operational hygiene** *(historical — no mode exists to report)*. Log a startup banner at ERROR when `RBAC_MODE=dry_run` and `ENVIRONMENT=prod`. Alarm in CloudWatch if production still reports `dry_run` past the cutover date. Expose `GET /api/v1/rbac/status` (authenticated) returning `{environment, rbac_mode, permission_count, seeded_at}` so "is it actually on?" is a two-second question — and keep mode off the public `/api/health`.
 
-**Rollback is `eb setenv RBAC_MODE=dry_run`** — roughly one to three minutes, no deploy, no migration. Note that `get_settings()` is `lru_cache`d, so this takes effect via the worker restart that an Elastic Beanstalk environment-property change triggers; it is not a hot toggle. This, not `alembic downgrade`, is the rollback path.
+**Rollback was `eb setenv RBAC_MODE=dry_run`** *(historical — this is no longer the rollback path; grant the missing role instead)* — roughly one to three minutes, no deploy, no migration. Note that `get_settings()` is `lru_cache`d, so this takes effect via the worker restart that an Elastic Beanstalk environment-property change triggers; it is not a hot toggle. This, not `alembic downgrade`, is the rollback path.
 
 ## Migration
 
@@ -973,7 +1015,7 @@ Three implementation requirements:
 
 - **All four Gunicorn workers run lifespan.** `sync_env_to_settings()` is already racy but benign; catalog seeding is not. Take a MySQL advisory lock — `SELECT GET_LOCK('ngs360_rbac_seed', 10)` — around the seed.
 - **Never `DELETE`.** Seeding upserts `role` and `role_permission` rows for `is_builtin` roles only. Admin-created roles and *all* grants are never touched. Removing a permission from the catalog in code marks it inactive; a delete would cascade grants away.
-- **Fail startup on seed failure when enforcing.** `sync_env_to_settings()` currently swallows exceptions with a warning; for RBAC that is wrong, because an empty catalog plus `enforce` is a site-wide 403. If `RBAC_MODE=enforce` and the catalog is empty, refuse to start — failing `/api/health` and letting the load balancer pull the instance is far better than serving an outage as 403s.
+- ~~**Fail startup on seed failure when enforcing.**~~ **Done.** `core/lifespan.py` raises `RuntimeError` if `sync_rbac_catalog` fails, rather than logging and continuing. An empty catalog is now a site-wide 403 in every case — enforcement is unconditional — so failing `/api/health` and letting the load balancer pull the instance is strictly better than serving the outage.
 
 #### The cost of that choice: the migration chain is not self-sufficient
 
@@ -1051,7 +1093,7 @@ The username-deduplication loop is a pre-existing bug — two identities for one
 
 ### Rollback
 
-**`alembic downgrade` is not the rollback plan.** In-place deploys, no blue/green, and non-transactional MySQL DDL make downgrading a live production schema a data-loss risk. The rollback is `eb setenv RBAC_MODE=dry_run`, followed by a forward fix — granting the missing role — rather than a redeploy.
+**`alembic downgrade` is not the rollback plan.** In-place deploys, no blue/green, and non-transactional MySQL DDL make downgrading a live production schema a data-loss risk. The rollback is a **forward fix — grant the missing role.** There is no configuration switch to fall back to: `RBAC_MODE` was removed with `api/rbac/mode.py`, deliberately, because a switch that turns authorization off is a switch that can be left off.
 
 `downgrade()` must still be written and exercised in CI (`alembic upgrade head && alembic downgrade -1 && alembic upgrade head`) as a development convenience and as a correctness check on each revision.
 
@@ -1157,7 +1199,7 @@ Project-scoped permissions are **not** inlined into `/auth/me`; with a five-figu
 1. **Refactor first.** `client_fixture`, `superuser_client_fixture`, and `unauthenticated_client_fixture` are near-identical 40-line blocks. Collapse them onto one `_make_client(session, user=None)` helper *before* adding RBAC, or the duplication becomes eightfold.
 2. **Persist the fixture users.** Create real `User` rows in the `session` fixture and have the override close over the persisted instance, built once rather than per call. This is fixture-internal and requires no test-module edits.
 3. **Give the default `client` a legacy-equivalent role** whose permission set is exactly what the pre-RBAC API allowed an authenticated user to do. Existing tests then pass unchanged. This is both how the rewrite of 32 modules is avoided *and* a precise executable specification of the old behaviour.
-4. **Pin the mode.** Set `RBAC_MODE=enforce` in `isolate_test_environment` so tests always exercise the strict path. The existing `reset_settings_cache` fixture clears the `lru_cache` per test, so per-test `monkeypatch.setenv` still works for dry-run cases.
+4. ~~**Pin the mode.**~~ Not applicable — there is no mode. The suite exercises the only path there is. `reset_settings_cache` remains useful for other settings.
 5. Add a parametrizable `client_as(global_roles=..., project_roles=...)` factory rather than more fixture copies.
 
 Budget for genuinely touching five to ten modules where tests relied on unauthenticated access — `tests/api/test_settings.py` was the first such case and was already migrated to the `superuser_client` fixture in [#361](https://github.com/NGS360/APIServer/pull/361), which is a worked example of the pattern — not all 32.
@@ -1172,7 +1214,7 @@ Budget for genuinely touching five to ten modules where tests relied on unauthen
 | **Negative 403 tests** | Per permission family; assert status, that `detail` is a string, and that `required_permission` is present. |
 | **Cross-project isolation** | A member of P1 gets 403 or 404 on every project-scoped route for P2. |
 | **Pagination under filtering** | Create 25 projects, make the user a member of 7, assert `total_items == 7`, page 1 returns 7 rows, `has_next is False`. Catches post-filtering directly. |
-| **Dry-run semantics** | A would-be-denied request returns 2xx and emits exactly one denial log line; an `ALWAYS_ENFORCE` route returns 403 even in dry-run. |
+| **Refusal semantics** | A denied request returns 403 with a plain-string detail and emits exactly one `event=rbac.decision` line at WARNING; the decision is also folded onto the access-log line, for allows as well as denies. |
 | **Seeding idempotence** | Run `sync_rbac_catalog()` twice; row counts stable; a manually created role and a manual grant both survive. |
 | **Migration round-trip** | Upgrade, backfill, assert every project has an owner, downgrade, assert only `source='MIGRATION'` rows were removed, upgrade again and assert the same result. Requires MySQL — see issue #379. |
 | **Superuser break-glass** | Still bypasses every check. |
@@ -1263,7 +1305,7 @@ Deferred: read auditing, an audit UI, tamper-evidence, and S3 archival.
 Both as first-class endpoints rather than ad-hoc SQL, so they stay correct as the model evolves:
 
 - `GET /api/v1/rbac/projects/{project_id}/access` → for each principal: user, role, `source` (`direct`, `global`, or `superuser`), `granted_by`, `granted_at`, effective permissions. **This must include the implicit paths** — global roles, superusers, service accounts — or the answer is wrong in the dangerous direction.
-- `GET /api/v1/rbac/users/{username}/access` → global roles, project memberships, effective permission set, active API keys and their scopes, last activity.
+- `GET /api/v1/rbac/users/{username}/access` → global roles, project memberships, effective permission set, active API keys and their scopes, last activity. **Built**, less the API keys and last activity, which are still outstanding.
 
 Both are audited. A read-only script wrapper provides break-glass when the API is itself the broken thing.
 
@@ -1316,7 +1358,7 @@ Deliberately out of scope for v1:
 | API-key permission scopes | Was proposed mainly to bound a shared MCP key; with MCP on per-user tokens there is no such key, so this is a plain v2 item. Semantics if revisited: intersection only, never expansion |
 | Project-scoping the S3 passthrough endpoints | Requires a URI-to-project resolver |
 | Run-scoped or vendor-scoped roles | The two-table schema is deliberately not polymorphic; a third scope means a third table |
-| Admin UI for role management | API only in v1 |
+| ~~Admin UI for role management~~ | **No longer a non-goal.** The admin UI is being built in `NGS360/frontend-ui` against this API: a user roster and per-user access page, a role editor over the permission catalog, and project membership on the project page. The API stays the enforcement point; the UI only decides what to render. |
 | Rate limiting, per-role quotas | Unrelated concern |
 
 ## Source Files
@@ -1325,10 +1367,10 @@ Deliberately out of scope for v1:
 |------|-------------|
 | `api/rbac/permissions.py` | `Permission` enum, `PermissionSpec`, `CATALOG`, `PROJECT_SCOPABLE`, `ALL_PERMISSIONS` |
 | `api/rbac/roles.py` | `ROLE_DEFINITIONS` — builtin global and project roles with their permission sets |
-| `api/rbac/models.py` | `Role`, `RolePermission`, `UserRole`, `ProjectMember`, `RoleScope`, `GrantSource` |
+| `api/rbac/models.py` | `Role`, `RolePermission`, `UserRole`, `ProjectMember`, `RoleScope`, `GrantSource`, and the administration read models |
 | `api/rbac/deps.py` | `AuthzContext`, `load_authz`, `require_permission()`, `require_project_permission()`, `project_scope()` |
-| `api/rbac/services.py` | The single resolver, `assign_default_roles()`, `sync_rbac_catalog()`, role and membership CRUD |
-| `api/rbac/routes.py` | `/rbac/permissions`, `/rbac/roles`, `/rbac/users/{u}/roles`, `/rbac/status`, access reporting |
+| `api/rbac/services.py` | The single resolver, `assign_default_roles()`, `sync_rbac_catalog()`, role and membership CRUD, `list_users()`, `get_user_access()`, `update_user_flags()` |
+| `api/rbac/routes.py` | `/rbac/permissions`, `/rbac/roles`, `/rbac/users`, `/rbac/users/{u}/roles`, `/rbac/users/{u}/access`, `/rbac/me` |
 | `api/auth/deps.py` | Unchanged; `load_authz` layers onto `get_current_active_user` |
 | `api/auth/services.py` | Remove the "first user wins" block; call `assign_default_roles()` |
 | `api/auth/oauth2_service.py` | Remove the duplicate bootstrap; claim unclaimed shell users by username |
@@ -1336,7 +1378,7 @@ Deliberately out of scope for v1:
 | `api/project/deps.py` | `ProjectDep` becomes a sub-dependency of `require_project_permission` |
 | `api/project/routes.py` | Membership endpoints; `ProjectDep` replaced by permission-carrying aliases |
 | `main.py` | `RequestContextMiddleware` (done); router registration with default authentication; `rbac_router` |
-| `core/config.py` | `ENVIRONMENT`, `LOG_FORMAT` (both done); `RBAC_MODE`, `DEFAULT_USER_ROLE`, `BOOTSTRAP_ADMIN_USERNAMES` |
+| `core/config.py` | `ENVIRONMENT`, `LOG_FORMAT` (both done); `DEFAULT_USER_ROLE`, `BOOTSTRAP_ADMIN_USERNAMES` |
 | `core/lifespan.py` | `sync_rbac_catalog()` with an advisory lock and a fail-closed startup assertion |
 | `core/logger.py` | JSON formatter (`LOG_FORMAT=text` for local work); replaces the root handler so gunicorn/uvicorn do not duplicate lines |
 | `core/middleware.py` | `RequestContextMiddleware`: request id, principal resolution with no DB access, structured access log |
@@ -1349,5 +1391,5 @@ Deliberately out of scope for v1:
 | `scripts/grant_role.py` | Break-glass role assignment CLI |
 | `tests/conftest.py` | Consolidated client fixtures, persisted users, `client_as()` factory |
 | `tests/api/test_rbac_resolution.py` | Permission-resolution matrix |
-| `tests/api/test_rbac_enforcement.py` | Negative 403 tests, cross-project isolation, dry-run semantics |
+| `tests/api/test_rbac_enforcement.py` | Guard behaviour, 403 shape, and decision logging |
 | `tests/test_route_coverage.py` | Route-coverage guard and unauthenticated-closure regression |

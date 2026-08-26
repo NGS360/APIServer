@@ -74,6 +74,23 @@ class ProjectPublic(SQLModel):
     attributes: List[Attribute] | None
     sequencing_runs: List[SequencingRunPublic] | None = None
 
+    # What the *calling* user may do in this project, so a UI can decide which
+    # controls to render rather than rendering them all and absorbing 403s.
+    #
+    # Per-caller, unlike every other field here: two users get different values
+    # for the same project_id. This response must therefore never go into a
+    # shared or CDN cache.
+    #
+    # Populated on the detail route only, and left None by the list routes, the
+    # same way sequencing_runs is. Resolving it costs a membership lookup per
+    # project, which on a page of projects is an N+1 for something no list view
+    # needs -- there are no per-row actions to gate.
+    #
+    # None is not the same as []. None means nobody was asking (the detail route
+    # is still reachable anonymously) or the field was not populated; [] means
+    # this caller genuinely holds nothing here.
+    permissions: List[str] | None = None
+
     @field_validator("created_at", "last_modified", mode="before")
     @classmethod
     def _nullify_invalid_datetime(cls, value):

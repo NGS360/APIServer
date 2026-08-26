@@ -1,28 +1,38 @@
 """
-Read endpoints for roles and permissions.
+The RBAC administration API: roles, permissions, grants, and who holds what.
 
-Guarded by CurrentSuperuser rather than require_permission(ROLE_READ), and that
-is deliberate for now: nothing enforces permissions yet, and gating the role API
-on a role permission is a chicken-and-egg -- you would need a grant to make the
-first grant. They move onto require_permission in phase 4 alongside every other
-route.
+Every route here is guarded by require_permission alone. There is no additional
+CurrentSuperuser dependency, and that is deliberate: a router gated on being a
+superuser cannot serve the roles it exists to administer, so an `auditor` or a
+`platform_admin` who is not flagged as a superuser would be locked out of the
+panel their role is for.
 
-Mutations (create/edit roles, grant and revoke) are not here yet.
+role:read reads the whole roster -- emails, status flags, who is an
+administrator -- and role:manage is the grant plane itself, so a route added here
+needs one of them rather than something broader that happens to be convenient.
+
+Project membership is deliberately not here -- it lives on the project router so
+that project owners can self-serve. See docs/RBAC.md.
 """
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from typing import Literal
+
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlmodel import select
 
-from api.auth.deps import CurrentActiveUser, CurrentSuperuser
+from api.auth.deps import CurrentActiveUser
 from api.rbac import services
 from api.rbac.models import (
     GrantRoleRequest,
+    MyAccessPublic,
     PermissionPublic,
     Role,
     RoleCreate,
     RolePermission,
     RolePermissionsUpdate,
     RolePublic,
+    UserAccessPublic,
+    UsersAdminPublic,
 )
 from api.rbac.deps import require_permission
 from api.rbac.permissions import CATALOG, Permission
@@ -50,10 +60,10 @@ def _role_public(session: SessionDep, role: Role) -> RolePublic:
 @router.get(
     "/permissions",
     response_model=list[PermissionPublic],
-    summary="The permission catalog (superuser only)",
+    summary="The permission catalog",
     dependencies=[Depends(require_permission(Permission.ROLE_READ))],
 )
-def list_permissions(current_user: CurrentSuperuser) -> list[PermissionPublic]:
+def list_permissions() -> list[PermissionPublic]:
     """
     Every permission the API recognises, with its risk and scopability.
 
@@ -76,10 +86,10 @@ def list_permissions(current_user: CurrentSuperuser) -> list[PermissionPublic]:
 @router.get(
     "/roles",
     response_model=list[RolePublic],
-    summary="List roles (superuser only)",
+    summary="List roles",
     dependencies=[Depends(require_permission(Permission.ROLE_READ))],
 )
-def list_roles(session: SessionDep, current_user: CurrentSuperuser) -> list[RolePublic]:
+def list_roles(session: SessionDep) -> list[RolePublic]:
     roles = session.exec(select(Role).order_by(Role.scope, Role.name)).all()
     return [_role_public(session, role) for role in roles]
 
@@ -87,13 +97,11 @@ def list_roles(session: SessionDep, current_user: CurrentSuperuser) -> list[Role
 @router.get(
     "/roles/{name}",
     response_model=RolePublic,
-    summary="Get one role (superuser only)",
+    summary="Get one role",
     responses={404: {"description": "Role not found"}},
     dependencies=[Depends(require_permission(Permission.ROLE_READ))],
 )
-def get_role(
-    session: SessionDep, name: str, current_user: CurrentSuperuser
-) -> RolePublic:
+def get_role(session: SessionDep, name: str) -> RolePublic:
     role = session.exec(select(Role).where(Role.name == name)).first()
     if role is None:
         raise HTTPException(
@@ -104,9 +112,12 @@ def get_role(
 
 @router.get(
     "/me",
+    response_model=MyAccessPublic,
     summary="The calling user's own effective access",
 )
-def get_my_access(session: SessionDep, current_user: CurrentActiveUser) -> dict:
+def get_my_access(
+    session: SessionDep, current_user: CurrentActiveUser
+) -> MyAccessPublic:
     """
     What the caller can do, so a UI can decide which controls to render rather
     than rendering everything and absorbing 403s.
@@ -116,12 +127,12 @@ def get_my_access(session: SessionDep, current_user: CurrentActiveUser) -> dict:
     they belong on the project detail response instead.
     """
     authz = AuthzContext.for_user(session, current_user)
-    return {
-        "username": current_user.username,
-        "is_superuser": authz.is_superuser,
-        "global_roles": global_role_names(session, current_user.id),
-        "global_permissions": authz.effective_permissions(),
-    }
+    return MyAccessPublic(
+        username=current_user.username,
+        is_superuser=authz.is_superuser,
+        global_roles=global_role_names(session, current_user.id),
+        global_permissions=authz.effective_permissions(),
+    )
 
 
 # --- role mutations -------------------------------------------------------
@@ -130,13 +141,11 @@ def get_my_access(session: SessionDep, current_user: CurrentActiveUser) -> dict:
     "/roles",
     response_model=RolePublic,
     status_code=status.HTTP_201_CREATED,
-    summary="Create a custom role (superuser only)",
+    summary="Create a custom role",
     responses={409: {"description": "A role with that name exists"}},
     dependencies=[Depends(require_permission(Permission.ROLE_MANAGE))],
 )
-def create_role(
-    session: SessionDep, body: RoleCreate, current_user: CurrentSuperuser
-) -> RolePublic:
+def create_role(session: SessionDep, body: RoleCreate) -> RolePublic:
     """
     Custom roles are how "contributor without delete" and similar variants are
     served, which is the reason roles are rows rather than code.
@@ -155,7 +164,7 @@ def create_role(
 @router.patch(
     "/roles/{name}",
     response_model=RolePublic,
-    summary="Replace a custom role's permissions (superuser only)",
+    summary="Replace a custom role's permissions",
     responses={
         404: {"description": "Role not found"},
         409: {"description": "Builtin roles are code-defined"},
@@ -164,7 +173,6 @@ def create_role(
 )
 def update_role_permissions(
     session: SessionDep, name: str, body: RolePermissionsUpdate,
-    current_user: CurrentSuperuser,
 ) -> RolePublic:
     role = services.get_role_or_404(session, name)
     role = services.set_role_permissions(session, role, body.permissions)
@@ -174,13 +182,11 @@ def update_role_permissions(
 @router.delete(
     "/roles/{name}",
     status_code=status.HTTP_204_NO_CONTENT,
-    summary="Delete a custom role (superuser only)",
+    summary="Delete a custom role",
     responses={409: {"description": "Builtin, or still granted"}},
     dependencies=[Depends(require_permission(Permission.ROLE_MANAGE))],
 )
-def delete_role(
-    session: SessionDep, name: str, current_user: CurrentSuperuser
-) -> None:
+def delete_role(session: SessionDep, name: str) -> None:
     services.delete_role(session, services.get_role_or_404(session, name))
 
 
@@ -189,12 +195,10 @@ def delete_role(
 @router.get(
     "/users/{username}/roles",
     response_model=list[str],
-    summary="A user's global roles (superuser only)",
+    summary="A user's global roles",
     dependencies=[Depends(require_permission(Permission.ROLE_READ))],
 )
-def list_user_roles(
-    session: SessionDep, username: str, current_user: CurrentSuperuser
-) -> list[str]:
+def list_user_roles(session: SessionDep, username: str) -> list[str]:
     user = services.get_user_or_404(session, username)
     return global_role_names(session, user.id)
 
@@ -202,13 +206,13 @@ def list_user_roles(
 @router.post(
     "/users/{username}/roles",
     response_model=list[str],
-    summary="Grant a global role (superuser only)",
+    summary="Grant a global role",
     responses={400: {"description": "That role is project-scoped"}},
     dependencies=[Depends(require_permission(Permission.ROLE_MANAGE))],
 )
 def grant_user_role(
     session: SessionDep, username: str, body: GrantRoleRequest,
-    current_user: CurrentSuperuser,
+    current_user: CurrentActiveUser,
 ) -> list[str]:
     user = services.get_user_or_404(session, username)
     role = services.get_role_or_404(session, body.role)
@@ -219,16 +223,82 @@ def grant_user_role(
 @router.delete(
     "/users/{username}/roles/{role_name}",
     response_model=list[str],
-    summary="Revoke a global role (superuser only)",
+    summary="Revoke a global role",
     responses={409: {"description": "Would remove the last role manager"}},
     dependencies=[Depends(require_permission(Permission.ROLE_MANAGE))],
 )
 def revoke_user_role(
     session: SessionDep, username: str, role_name: str,
-    current_user: CurrentSuperuser,
+    current_user: CurrentActiveUser,
 ) -> list[str]:
     user = services.get_user_or_404(session, username)
     role = services.get_role_or_404(session, role_name)
     services.revoke_global_role(session, user, role,
                                 acting_user_id=current_user.id)
     return global_role_names(session, user.id)
+
+
+# --- user administration --------------------------------------------------
+#
+# Both of these are reads over other people's access, which is why they take
+# role:read rather than user:read -- the latter is the directory-search
+# permission every `member` holds, and it does not describe this.
+
+@router.get(
+    "/users",
+    response_model=UsersAdminPublic,
+    summary="The user roster",
+    dependencies=[Depends(require_permission(Permission.ROLE_READ))],
+)
+def list_users(
+    session: SessionDep,
+    skip: int = Query(0, ge=0, description="Number of records to skip"),
+    limit: int = Query(20, ge=1, le=100, description="Maximum records to return"),
+    q: str | None = Query(
+        None, description="Filter on username, email or full name"
+    ),
+    role: str | None = Query(
+        None, description="Only users holding this global role"
+    ),
+    is_active: bool | None = Query(
+        None, description="Filter on account status; omit for both"
+    ),
+    sort_by: Literal[
+        "username", "email", "full_name", "created_at", "last_login"
+    ] = Query("username"),
+    sort_order: Literal["asc", "desc"] = Query("asc"),
+) -> UsersAdminPublic:
+    """
+    Every local user account, with status flags and global roles.
+
+    GET /users/search is the wrong endpoint for an administrator: it is the
+    picker behind "grant a role to somebody", so it can answer from LDAP, it
+    demands a query string, and it hides deactivated accounts -- which are
+    exactly the accounts an administrator is looking for.
+
+    `q` is an optional filter here rather than a required query, because the
+    first thing this page has to do is show who exists.
+    """
+    return services.list_users(
+        session, skip=skip, limit=limit, q=q, role=role, is_active=is_active,
+        sort_by=sort_by, sort_order=sort_order,
+    )
+
+
+@router.get(
+    "/users/{username}/access",
+    response_model=UserAccessPublic,
+    summary="One user's effective access",
+    responses={404: {"description": "User not found"}},
+    dependencies=[Depends(require_permission(Permission.ROLE_READ))],
+)
+def get_user_access(session: SessionDep, username: str) -> UserAccessPublic:
+    """
+    Both grant planes and the break-glass flag for one user.
+
+    The project memberships are the part that cannot be assembled from anything
+    else: membership is otherwise only listable per project, so "which projects
+    is this person on" has no answer without scanning every project.
+    """
+    user = services.get_user_or_404(session, username)
+    return services.get_user_access(session, user)
