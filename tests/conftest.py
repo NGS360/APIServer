@@ -1,8 +1,10 @@
 import os
+from contextlib import ExitStack, contextmanager
+
 import pytest
 
 from fastapi.testclient import TestClient
-from sqlmodel import Session, create_engine, SQLModel
+from sqlmodel import Session, create_engine, select, SQLModel
 from sqlmodel.pool import StaticPool
 
 from core.config import get_settings
@@ -551,6 +553,12 @@ def isolate_test_environment():
     os.environ["RESULTS_BUCKET_URI"] = "s3://test-results-bucket"
     os.environ["DEMUX_WORKFLOW_CONFIGS_BUCKET_URI"] = "s3://test-tool-configs-bucket"
 
+    # Tests run under full enforcement, never the deployed default of dry_run.
+    # No route carries a guard yet, so this is inert today -- it is set now so
+    # that the first route to be wired cannot pass merely because the suite was
+    # running in a mode that allows every refusal through.
+    os.environ["RBAC_MODE"] = "enforce"
+
     # Remove AWS credentials to prevent real AWS calls
     os.environ.pop("AWS_ACCESS_KEY_ID", None)
     os.environ.pop("AWS_SECRET_ACCESS_KEY", None)
@@ -644,25 +652,127 @@ def mock_s3_client_fixture():
     return MockS3Client()
 
 
-@pytest.fixture(name="unauthenticated_client")
-def unauthenticated_client_fixture(
+# Permissions a superuser check guards today, and therefore the ones an
+# authenticated non-superuser could NOT reach before RBAC:
+#
+#   file:update, file:delete        api/files/routes.py -- CurrentSuperuser
+#   setting:update                  api/settings/routes.py -- CurrentSuperuser
+#   sample:delete                   delete_sample_from_project -- CurrentSuperuser
+#   project:manage_members          the membership endpoints -- CurrentSuperuser
+#   role:manage, role:read          all of api/rbac/routes.py -- CurrentSuperuser
+#
+# Everything else in the catalog was reachable by any authenticated caller, and
+# most of it by an anonymous one. Keep this list in step with the routes: when a
+# route moves onto require_permission in a later phase, whether its permission
+# belongs here is the question that decides if the change is breaking.
+LEGACY_SUPERUSER_ONLY = frozenset({
+    "file:update", "file:delete", "setting:update", "sample:delete",
+    "project:manage_members", "role:manage", "role:read",
+})
+
+LEGACY_ROLE_NAME = "legacy_authenticated"
+
+
+def legacy_permissions() -> list[str]:
+    """
+    What the pre-RBAC API allowed an authenticated user to do.
+
+    The default `client` fixture holds exactly this, which does two jobs. It
+    keeps ~32 existing test modules passing unchanged as routes gain guards --
+    they assert the old behaviour, and the old behaviour is what this grants --
+    and it makes that behaviour executable rather than described, so tightening
+    it later shows up as a specific failing test instead of a silent change.
+    """
+    from api.rbac.permissions import ALL_PERMISSIONS
+
+    return sorted(
+        str(p) for p in ALL_PERMISSIONS if str(p) not in LEGACY_SUPERUSER_ONLY
+    )
+
+
+def persist_user(session: Session, username: str, *, superuser: bool = False):
+    """
+    Create the fixture user as a real row, and return it.
+
+    This is the fix for the bug that would otherwise break every guarded route:
+    the old fixtures built `User(...)` fresh inside the dependency override, so
+    `user.id` was a new uuid4 on every request and matched no row in the
+    database. Grants are looked up by user id, so every permission check would
+    resolve to the empty set and 403 under enforce -- regardless of what the
+    test had granted.
+    """
+    from api.auth.models import User
+
+    user = session.exec(select(User).where(User.username == username)).first()
+    if user is None:
+        user = User(
+            username=username,
+            email=f"{username}@example.com",
+            is_active=True,
+            is_verified=True,
+            is_superuser=superuser,
+        )
+        session.add(user)
+        session.commit()
+        session.refresh(user)
+    return user
+
+
+def _grant_legacy_role(session: Session, user) -> None:
+    """Give `user` the pre-RBAC permission set, creating the role if needed."""
+    from api.rbac.models import GrantSource, Role, RolePermission, UserRole
+    from api.rbac.roles import RoleScope
+    from api.rbac.seed import sync_rbac_catalog
+
+    # The builtin catalog has to exist first: the project role rows are what
+    # project membership in tests points at.
+    sync_rbac_catalog(session)
+
+    role = session.exec(select(Role).where(Role.name == LEGACY_ROLE_NAME)).first()
+    if role is None:
+        role = Role(
+            name=LEGACY_ROLE_NAME,
+            display_name="Legacy authenticated user",
+            description="What an authenticated caller could do before RBAC",
+            scope=RoleScope.GLOBAL,
+            is_builtin=False,
+        )
+        session.add(role)
+        session.flush()
+        for permission in legacy_permissions():
+            session.add(RolePermission(role_id=role.id, permission=permission))
+        session.commit()
+
+    held = session.exec(
+        select(UserRole).where(UserRole.user_id == user.id,
+                               UserRole.role_id == role.id)
+    ).first()
+    if held is None:
+        session.add(UserRole(user_id=user.id, role_id=role.id,
+                             source=GrantSource.MANUAL))
+        session.commit()
+
+
+@contextmanager
+def _make_client(
     session: Session,
     mock_opensearch_client: MockOpenSearchClient,
     mock_s3_client: MockS3Client,
     mock_lambda_client: MockLambdaClient,
     monkeypatch,
+    user=None,
 ):
-    """Client that requires real authentication (no auth override)"""
+    """
+    Shared construction for every client fixture.
+
+    The three fixtures below differed only in which user the auth override
+    returned; everything else -- the database, OpenSearch, S3 and Lambda
+    overrides -- was copied three times, so a change to any of it had to be
+    made in triplicate or the fixtures would quietly diverge.
+
+    `user=None` means no auth override at all, i.e. real authentication.
+    """
     import boto3
-
-    def get_db_override():
-        return session
-
-    def get_opensearch_client_override():
-        return mock_opensearch_client
-
-    def get_s3_client_override():
-        return mock_s3_client
 
     original_boto3_client = boto3.client
 
@@ -673,14 +783,33 @@ def unauthenticated_client_fixture(
 
     monkeypatch.setattr(boto3, "client", mock_boto3_client)
 
-    # Override dependencies EXCEPT get_current_user
-    app.dependency_overrides[get_db] = get_db_override
-    app.dependency_overrides[get_opensearch_client] = get_opensearch_client_override
-    app.dependency_overrides[get_s3_client] = get_s3_client_override
+    app.dependency_overrides[get_db] = lambda: session
+    app.dependency_overrides[get_opensearch_client] = lambda: mock_opensearch_client
+    app.dependency_overrides[get_s3_client] = lambda: mock_s3_client
 
-    client = TestClient(app)
-    yield client
-    app.dependency_overrides.clear()
+    if user is not None:
+        from api.auth.deps import get_current_user
+
+        app.dependency_overrides[get_current_user] = lambda: user
+
+    try:
+        yield TestClient(app)
+    finally:
+        app.dependency_overrides.clear()
+
+
+@pytest.fixture(name="unauthenticated_client")
+def unauthenticated_client_fixture(
+    session: Session,
+    mock_opensearch_client: MockOpenSearchClient,
+    mock_s3_client: MockS3Client,
+    mock_lambda_client: MockLambdaClient,
+    monkeypatch,
+):
+    """Client that requires real authentication (no auth override)"""
+    with _make_client(session, mock_opensearch_client, mock_s3_client,
+                      mock_lambda_client, monkeypatch) as client:
+        yield client
 
 
 @pytest.fixture(name="client")
@@ -691,50 +820,17 @@ def client_fixture(
     mock_lambda_client: MockLambdaClient,
     monkeypatch,
 ):
-    """Provide a TestClient with dependencies overridden for testing"""
-    import boto3
-    from api.auth.models import User
+    """
+    An ordinary authenticated user, holding the pre-RBAC permission set.
 
-    def get_db_override():
-        return session
-
-    def get_opensearch_client_override():
-        return mock_opensearch_client
-
-    def get_s3_client_override():
-        return mock_s3_client
-
-    def get_current_user_override():
-        """Return a mock user for authentication"""
-        return User(
-            username="testuser",
-            email="test@example.com",
-            is_active=True,
-            is_verified=True,
-            is_superuser=False
-        )
-
-    # Patch boto3.client to return mock Lambda client for "lambda" service
-    original_boto3_client = boto3.client
-
-    def mock_boto3_client(service_name, **kwargs):
-        if service_name == "lambda":
-            return mock_lambda_client
-        return original_boto3_client(service_name, **kwargs)
-
-    monkeypatch.setattr(boto3, "client", mock_boto3_client)
-
-    # Import auth dependencies
-    from api.auth.deps import get_current_user
-
-    app.dependency_overrides[get_db] = get_db_override
-    app.dependency_overrides[get_opensearch_client] = get_opensearch_client_override
-    app.dependency_overrides[get_s3_client] = get_s3_client_override
-    app.dependency_overrides[get_current_user] = get_current_user_override
-
-    client = TestClient(app)
-    yield client
-    app.dependency_overrides.clear()
+    Persisted, and granted `legacy_authenticated`, so tests written against the
+    old behaviour keep asserting the old behaviour once routes carry guards.
+    """
+    user = persist_user(session, "testuser")
+    _grant_legacy_role(session, user)
+    with _make_client(session, mock_opensearch_client, mock_s3_client,
+                      mock_lambda_client, monkeypatch, user=user) as client:
+        yield client
 
 
 @pytest.fixture(name="auth_headers")
@@ -752,6 +848,87 @@ def auth_headers_fixture():
     }
 
 
+@pytest.fixture(name="restricted_client")
+def restricted_client_fixture(
+    session: Session,
+    mock_opensearch_client: MockOpenSearchClient,
+    mock_s3_client: MockS3Client,
+    mock_lambda_client: MockLambdaClient,
+    monkeypatch,
+):
+    """
+    An authenticated user holding no roles at all.
+
+    The counterpart to `client`: it proves a guard actually refuses, where
+    `client` only proves it lets the legacy permission set through. Without
+    this, a guard wired to the wrong permission still passes every test.
+    """
+    from api.rbac.seed import sync_rbac_catalog
+
+    user = persist_user(session, "norole")
+    sync_rbac_catalog(session)
+    with _make_client(session, mock_opensearch_client, mock_s3_client,
+                      mock_lambda_client, monkeypatch, user=user) as client:
+        yield client
+
+
+@pytest.fixture(name="client_with_permissions")
+def client_with_permissions_fixture(
+    session: Session,
+    mock_opensearch_client: MockOpenSearchClient,
+    mock_s3_client: MockS3Client,
+    mock_lambda_client: MockLambdaClient,
+    monkeypatch,
+):
+    """
+    Build a client holding exactly the permissions named, and nothing else.
+
+    `client` holds the whole legacy set and `restricted_client` holds none, so
+    between them they cannot express "holds job:read but not job:update" -- which
+    is the distinction any guard resolving its requirement from the payload turns
+    on. Without a fixture at this granularity such a guard passes its tests while
+    checking the wrong permission on one of its two branches.
+
+    One client per test: _make_client clears app.dependency_overrides on exit, so
+    building a second and tearing down the first would unauthenticate both.
+    """
+    stack = ExitStack()
+
+    def make(permissions, *, username="scoped"):
+        from api.rbac.models import GrantSource, Role, RolePermission, UserRole
+        from api.rbac.roles import RoleScope
+        from api.rbac.seed import sync_rbac_catalog
+
+        sync_rbac_catalog(session)
+        user = persist_user(session, username)
+        role = Role(
+            name=f"test_{username}",
+            display_name=f"Ad-hoc test role for {username}",
+            description="Created by client_with_permissions for a single test",
+            scope=RoleScope.GLOBAL,
+            is_builtin=False,
+        )
+        session.add(role)
+        session.flush()
+        for permission in permissions:
+            session.add(
+                RolePermission(role_id=role.id, permission=str(permission))
+            )
+        session.add(
+            UserRole(user_id=user.id, role_id=role.id, source=GrantSource.MANUAL)
+        )
+        session.commit()
+        return stack.enter_context(
+            _make_client(session, mock_opensearch_client, mock_s3_client,
+                         mock_lambda_client, monkeypatch, user=user)
+        )
+
+    try:
+        yield make
+    finally:
+        stack.close()
+
+
 @pytest.fixture(name="superuser_client")
 def superuser_client_fixture(
     session: Session,
@@ -760,48 +937,17 @@ def superuser_client_fixture(
     mock_lambda_client: MockLambdaClient,
     monkeypatch,
 ):
-    """Provide a TestClient authenticated as a superuser"""
-    import boto3
-    from api.auth.models import User
+    """
+    A superuser, which short-circuits ahead of roles and so holds no grant.
 
-    def get_db_override():
-        return session
-
-    def get_opensearch_client_override():
-        return mock_opensearch_client
-
-    def get_s3_client_override():
-        return mock_s3_client
-
-    def get_current_user_override():
-        """Return a mock superuser for authentication"""
-        return User(
-            username="admin",
-            email="admin@example.com",
-            is_active=True,
-            is_verified=True,
-            is_superuser=True,
-        )
-
-    original_boto3_client = boto3.client
-
-    def mock_boto3_client(service_name, **kwargs):
-        if service_name == "lambda":
-            return mock_lambda_client
-        return original_boto3_client(service_name, **kwargs)
-
-    monkeypatch.setattr(boto3, "client", mock_boto3_client)
-
-    from api.auth.deps import get_current_user
-
-    app.dependency_overrides[get_db] = get_db_override
-    app.dependency_overrides[get_opensearch_client] = get_opensearch_client_override
-    app.dependency_overrides[get_s3_client] = get_s3_client_override
-    app.dependency_overrides[get_current_user] = get_current_user_override
-
-    client = TestClient(app)
-    yield client
-    app.dependency_overrides.clear()
+    Persisted all the same: the RBAC admin endpoints record `granted_by` as an
+    FK to users.id, and a caller who is not a row makes every grant it issues a
+    dangling reference.
+    """
+    user = persist_user(session, "admin", superuser=True)
+    with _make_client(session, mock_opensearch_client, mock_s3_client,
+                      mock_lambda_client, monkeypatch, user=user) as client:
+        yield client
 
 
 @pytest.fixture(name="opensearch_client")

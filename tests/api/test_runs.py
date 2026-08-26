@@ -14,21 +14,22 @@ from sqlmodel import Session, select
 
 from core.security import hash_password
 from api.runs.models import SequencingRun, RunStatus
-from api.auth.models import User
+from tests.conftest import persist_user
 
 
 @pytest.fixture(name="test_user")
 def test_user_fixture(session: Session):
-    """Create a test user"""
-    user = User(
-        email="testuser@example.com",
-        username="testuser",
-        hashed_password=hash_password("TestPassword123"),
-        full_name="Test User",
-        is_active=True,
-        is_verified=True,
-        is_superuser=False
-    )
+    """
+    The authenticated fixture user, as a row.
+
+    conftest persists `testuser` for the `client` fixture, so this has to return
+    that same row rather than inserting a second one: username is unique, and a
+    duplicate would also mean the job under test was attributed to a user the
+    request was not actually made as.
+    """
+    user = persist_user(session, "testuser")
+    user.hashed_password = hash_password("TestPassword123")
+    user.full_name = "Test User"
     session.add(user)
     session.commit()
     session.refresh(user)

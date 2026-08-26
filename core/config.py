@@ -110,6 +110,100 @@ class Settings(BaseSettings):
         """Get application log level from env or secrets (defaults to INFO)"""
         return self._get_config_value("LOG_LEVEL", default="INFO")
 
+    @computed_field
+    @property
+    def ENVIRONMENT(self) -> str:
+        """
+        Deployment tier: "dev", "staging", or "prod".
+
+        Set as an Elastic Beanstalk application environment property, one per
+        environment. Nothing else distinguishes the tiers at runtime -- they are
+        otherwise told apart only by which EB environment was deployed to, which
+        means behaviour cannot be varied per tier without this value.
+
+        Unrecognised values fall back to "dev", the least privileged tier: a
+        typo must never cause a non-production setting to be treated as
+        production, or vice versa.
+        """
+        value = self._get_config_value("ENVIRONMENT", default="dev").strip().lower()
+        if value not in ("dev", "staging", "prod"):
+            return "dev"
+        return value
+
+    @computed_field
+    @property
+    def RBAC_MODE(self) -> str:
+        """
+        Authorization enforcement mode: "off", "dry_run", or "enforce".
+
+        Three properties, each deliberate:
+
+        Unrecognised values resolve to "enforce", not to the default. A typo
+        such as RBAC_MODE=enforced must never be read as "authorization is off"
+        -- the failure mode of a misspelling has to be a visible 403, not a
+        silent hole.
+
+        The default is "dry_run" for this release and tightens to "enforce" in
+        the Phase 5 release. Making the *default* move is what stops a
+        forgotten flag from leaving a tier unprotected indefinitely: the switch
+        decays toward safe rather than toward open.
+
+        "off" is clamped to "dry_run" in prod. It exists for local work, and a
+        production environment where authorization can be turned off entirely
+        by one `eb setenv` is a worse risk than any it mitigates. Rollback is a
+        forward fix -- grant the missing role -- per docs/RBAC.md.
+
+        Note this is read from the environment and Secrets Manager only, never
+        from the settings table: a PUT /settings/RBAC_MODE that switches
+        authorization off would be self-defeating.
+        """
+        value = self._get_config_value("RBAC_MODE", default="dry_run").strip().lower()
+        if value not in ("off", "dry_run", "enforce"):
+            return "enforce"
+        if value == "off" and self.ENVIRONMENT == "prod":
+            return "dry_run"
+        return value
+
+    @computed_field
+    @property
+    def DEFAULT_USER_ROLE(self) -> str:
+        """
+        Global role granted to every user at creation. "none" disables it.
+
+        Without this, a new user holds nothing, and under RBAC_MODE=enforce that
+        is a 403 on every endpoint from their first request -- one support ticket
+        per person who signs in, which is the most predictable way to make an
+        authorization rollout look like an outage.
+
+        "member" is deliberately a wide, read-heavy set rather than a minimal
+        one: it is what an authenticated caller could already do before RBAC, so
+        granting it changes nothing for anybody. Narrowing it later is a role
+        edit through the API, not a deploy -- which is the whole reason roles are
+        rows and permissions are code.
+
+        Disabling takes the literal string "none" rather than an empty value,
+        because _get_config_value treats empty as unset and falls through to the
+        default -- so DEFAULT_USER_ROLE= would silently still grant `member`.
+        Returned as "" so callers test one falsy condition either way.
+        """
+        value = self._get_config_value("DEFAULT_USER_ROLE", default="member").strip()
+        return "" if value.lower() == "none" else value
+
+    @computed_field
+    @property
+    def LOG_FORMAT(self) -> str:
+        """
+        Log output format: "json" or "text".
+
+        JSON is the default so deployed logs are queryable in CloudWatch Logs
+        Insights. Text is easier to read when running locally; the Docker
+        entrypoint and local .env files can set LOG_FORMAT=text.
+        """
+        value = self._get_config_value("LOG_FORMAT", default="json").strip().lower()
+        if value not in ("json", "text"):
+            return "json"
+        return value
+
     # AI Assistant Chat - deployed NGS360 LLM Agent on the LangGraph Platform
     @computed_field
     @property

@@ -2,7 +2,7 @@
 Routes/endpoints for the AI Assistant Chat API
 """
 
-from fastapi import APIRouter, HTTPException, Query, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from api.auth.deps import CurrentUser
@@ -14,12 +14,23 @@ from api.chat.models import (
     ChatThreadMessages,
     ChatThreadsPublic,
 )
+from api.rbac.deps import require_permission
+from api.rbac.permissions import Permission
 from core.deps import LangGraphDep
 
 router = APIRouter(prefix="/chat", tags=["Chat Endpoints"])
 
+# Every chat endpoint is the same capability, so the guard is declared once.
+#
+# chat:use is the whole authorization story for the read and write of *chat*;
+# it does not say whose threads. Ownership is enforced per thread by
+# require_owned_thread, and the two list/delete-all routes are scoped to the
+# caller's user id in the service, so holding chat:use never reaches another
+# user's conversation.
+RequireChat = Depends(require_permission(Permission.CHAT_USE))
 
-@router.post("")
+
+@router.post("", dependencies=[RequireChat])
 async def chat(
     req: ChatRequest,
     current_user: CurrentUser,
@@ -53,6 +64,7 @@ async def chat(
             ),
         }
     },
+    dependencies=[RequireChat],
 )
 async def chat_stream(
     req: ChatRequest,
@@ -88,7 +100,7 @@ async def chat_stream(
     )
 
 
-@router.get("/threads")
+@router.get("/threads", dependencies=[RequireChat])
 async def list_chat_threads(
     current_user: CurrentUser,
     client: ChatClientDep,
@@ -104,7 +116,7 @@ async def list_chat_threads(
     return ChatThreadsPublic(**result)
 
 
-@router.delete("/threads", status_code=204)
+@router.delete("/threads", status_code=204, dependencies=[RequireChat])
 async def delete_all_chat_threads(
     current_user: CurrentUser, client: ChatClientDep
 ) -> Response:
@@ -113,7 +125,7 @@ async def delete_all_chat_threads(
     return Response(status_code=204)
 
 
-@router.get("/threads/{thread_id}/messages")
+@router.get("/threads/{thread_id}/messages", dependencies=[RequireChat])
 async def get_chat_thread_messages(
     thread_id: str, thread: OwnedThreadDep, client: ChatClientDep
 ) -> ChatThreadMessages:
@@ -126,7 +138,7 @@ async def get_chat_thread_messages(
     return ChatThreadMessages(**result)
 
 
-@router.delete("/threads/{thread_id}", status_code=204)
+@router.delete("/threads/{thread_id}", status_code=204, dependencies=[RequireChat])
 async def delete_chat_thread(
     thread_id: str, thread: OwnedThreadDep, client: ChatClientDep
 ) -> Response:
@@ -135,7 +147,7 @@ async def delete_chat_thread(
     return Response(status_code=204)
 
 
-@router.get("/threads/{thread_id}")
+@router.get("/threads/{thread_id}", dependencies=[RequireChat])
 async def get_thread(
     thread_id: str, thread: OwnedThreadDep, client: ChatClientDep
 ):

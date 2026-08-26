@@ -11,6 +11,7 @@ from api.auth.models import (
     User, UserRegister, RefreshToken, PasswordResetToken,
     EmailVerificationToken, APIKey, APIKeyCreate
 )
+from api.rbac.services import assign_default_roles
 from core.security import (
     hash_password, verify_password, create_access_token,
     create_refresh_token, generate_secure_token, validate_password_strength,
@@ -148,6 +149,12 @@ def register_user(session: Session, user_data: UserRegister) -> User:
     )
 
     session.add(user)
+    session.flush()
+
+    # Grant the starting role in the same transaction as the user row, so a
+    # user can never exist without one.
+    assign_default_roles(session, user)
+
     session.commit()
     session.refresh(user)
 

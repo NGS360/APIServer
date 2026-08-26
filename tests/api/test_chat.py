@@ -288,28 +288,55 @@ def fake_langgraph_fixture():
 
 
 TEST_USER_ID = uuid.UUID("11111111-2222-3333-4444-555555555555")
+# Distinct from conftest's `testuser`: this fixture needs a *fixed* id for
+# thread-ownership assertions, and usernames are unique, so it cannot reuse
+# that row. Asserted against rather than a literal, so the two cannot drift.
+TEST_USERNAME = "chatuser"
 OTHER_USER_ID = uuid.UUID("99999999-8888-7777-6666-555555555555")
 
 
 @pytest.fixture(name="chat_user")
-def chat_user_fixture(client):
-    """Pin the authenticated user's id.
+def chat_user_fixture(client, session):
+    """Pin the authenticated user's id, as a *persisted* row.
 
-    The shared ``client`` fixture builds a fresh ``User`` per request, so its
-    ``uuid4`` id differs each call — which would make thread ownership fail
-    between turns of the same conversation. Not autouse: it depends on the
-    authenticated ``client``, so it must not reach the unauthenticated test.
+    Thread ownership is keyed on the caller's id, so it has to be stable between
+    turns of the same conversation — which is why this fixture exists.
+
+    It must be a real row, not a constructed ``User``. Grants are looked up by
+    user id, so an id matching no row resolves to the empty permission set and
+    every guarded route answers 403 regardless of what the test granted (see
+    ``persist_user`` in conftest, which exists for exactly this reason). The
+    chat routes are guarded now, so overriding auth with an in-memory User —
+    which is what this fixture used to do — fails all of them.
+
+    Not autouse: it depends on the authenticated ``client``, so it must not
+    reach the unauthenticated test.
     """
-    from api.auth.deps import get_current_user
-    from api.auth.models import User
+    from sqlmodel import select
 
-    app.dependency_overrides[get_current_user] = lambda: User(
-        id=TEST_USER_ID,
-        username="testuser",
-        email="test@example.com",
-        is_active=True,
-        is_verified=True,
-    )
+    from api.auth.deps import get_current_user, optional_current_user
+    from api.auth.models import User
+    from tests.conftest import _grant_legacy_role
+
+    user = session.exec(select(User).where(User.id == TEST_USER_ID)).first()
+    if user is None:
+        user = User(
+            id=TEST_USER_ID,
+            username=TEST_USERNAME,
+            email=f"{TEST_USERNAME}@example.com",
+            is_active=True,
+            is_verified=True,
+        )
+        session.add(user)
+        session.commit()
+        session.refresh(user)
+    # The pre-RBAC permission set, which carries chat:use.
+    _grant_legacy_role(session, user)
+
+    # Both entry points: optional_current_user resolves the token itself rather
+    # than delegating to get_current_user.
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[optional_current_user] = lambda: user
     yield TEST_USER_ID
 
 
@@ -993,7 +1020,7 @@ def test_the_credential_and_the_context_reach_one_run_together(
         _sse_data_chunks(response.text)
     minted = fake.runs.config["configurable"][USER_TOKEN_KEY]
     assert _delegated_claims(fake)["sub"] == str(chat_user)
-    assert fake.runs.context["caller"]["username"] == "testuser"
+    assert fake.runs.context["caller"]["username"] == TEST_USERNAME
     assert minted not in json.dumps(fake.runs.context)
 
 
@@ -1641,7 +1668,7 @@ def test_chat_names_the_authenticated_caller(client, fake_langgraph, chat_user):
 
     assert fake.runs.context["caller"] == {
         "user_id": str(TEST_USER_ID),
-        "username": "testuser",
+        "username": TEST_USERNAME,
     }
 
 
@@ -1675,7 +1702,7 @@ def test_chat_ignores_a_caller_supplied_in_the_body(client, fake_langgraph, chat
 
     assert fake.runs.context["caller"] == {
         "user_id": str(TEST_USER_ID),
-        "username": "testuser",
+        "username": TEST_USERNAME,
     }
 
 

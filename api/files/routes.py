@@ -13,7 +13,8 @@ Endpoints:
 from typing import Optional
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status, Form, UploadFile
+from fastapi import (APIRouter, Depends, Form, HTTPException, Query, Request,
+                     Response, UploadFile, status)
 from fastapi import File as FastAPIFile
 from fastapi.responses import RedirectResponse
 from pydantic import ValidationError
@@ -26,10 +27,14 @@ from api.files.models import (
     FileCreate,
     FileUpdate,
     FileBrowserData,
+    PresignedDownload,
     file_to_public,
 )
 from api.files import services
 from api.auth.deps import CurrentSuperuser
+from api.files.scope import scope_for_uri
+from api.rbac.deps import AuthzDep, decide, require_permission
+from api.rbac.permissions import Permission
 from core.deps import get_s3_client, SessionDep
 
 router = APIRouter(prefix="/files", tags=["File Endpoints"])
@@ -254,6 +259,12 @@ def download_file(
     Returns a 307 redirect to a time-limited presigned S3 URL.
     The client follows the redirect to download directly from S3,
     offloading bandwidth from the API server.
+
+    Deprecated in favour of GET /files/download-url, which returns the same URL
+    as JSON. This route cannot be given a permission guard: it is used by the UI
+    as a plain link, and a browser following a link cannot send an Authorization
+    header, so guarding it would 401 every download in the product. It closes
+    once browser traffic here reaches zero.
     """
     presigned_url = services.generate_presigned_url(
         s3_path=path, s3_client=s3_client
@@ -261,10 +272,104 @@ def download_file(
     return RedirectResponse(url=presigned_url, status_code=307)
 
 
+# Kept explicit, and passed explicitly below, rather than relying on
+# generate_presigned_url's default: expires_in is a promise to the caller, and if
+# the service default were changed this response would quietly start lying about
+# when the URL stops working.
+DOWNLOAD_URL_TTL_SECONDS = 3600
+
+
+def require_file_download(
+    request: Request,
+    authz: AuthzDep,
+    session: SessionDep,
+    path: str = Query(..., description="S3 URI of the file"),
+):
+    """
+    Project-scoped download: may this caller download *this* file?
+
+    The parameter is a URI rather than a project id, so the project has to be
+    resolved before it can be checked -- api/files/scope.py does that, preferring a
+    file's own project association and falling back to the projects its sequencing
+    run touches. Membership of any one of the resulting projects is enough: a file
+    genuinely belonging to two projects is downloadable by members of either.
+
+    When the URI resolves to no project at all -- unregistered, or registered with
+    no association -- the check falls back to the *global* file:download
+    permission. That is what keeps the behaviour coherent at both ends: `member`
+    does not hold it, so an ordinary user cannot download a file that belongs to
+    nothing; while lab_manager, auditor, admin and superusers do, so operating
+    across raw storage still works. Note has_in_project also honours a global
+    grant, which is why those roles are unaffected by the project scoping.
+
+    A dependency may take the same query parameter as its handler; both receive it
+    and the OpenAPI schema is unchanged.
+    """
+    scope = scope_for_uri(session, path)
+    if scope.resolved:
+        granted = any(
+            authz.has_in_project(Permission.FILE_DOWNLOAD, project_id)
+            for project_id in scope.project_ids
+        )
+    else:
+        granted = authz.has(Permission.FILE_DOWNLOAD)
+
+    # The origin is on the decision record so the mix of project-, sample- and
+    # run-resolved downloads is measurable, and so the unregistered surface can be
+    # sized before anyone proposes tightening the fallback above.
+    decide(request, granted, (Permission.FILE_DOWNLOAD,),
+           scope=f"file via {scope.origin}, {len(scope.project_ids)} project(s)")
+    return authz
+
+
+require_file_download.rbac_permissions = (Permission.FILE_DOWNLOAD,)
+require_file_download.rbac_plane = "project"
+
+
+@router.get(
+    "/download-url",
+    response_model=PresignedDownload,
+    summary="Get a presigned URL for a file",
+    dependencies=[Depends(require_file_download)],
+)
+def get_download_url(
+    response: Response,
+    path: str = Query(
+        ...,
+        description="S3 URI of the file (e.g., s3://bucket/path/file.txt)"
+    ),
+    s3_client=Depends(get_s3_client),
+) -> PresignedDownload:
+    """
+    Return a time-limited URL for downloading a file directly from S3.
+
+    The authenticated counterpart to GET /files/download. A browser cannot put a
+    token on a link it navigates to, so the UI calls this with its token, reads
+    the URL from the response, and then navigates to S3 -- which is what the old
+    endpoint's redirect did anyway, minus the ability to check anything first.
+
+    Guarded on the global plane rather than per project, because the parameter is
+    an arbitrary S3 URI and nothing maps a URI back to a project. That is the
+    same reason file:browse is global-only; it is a known limitation recorded in
+    docs/RBAC.md, not an oversight. `member` holds file:download, so every
+    authenticated caller can use this today.
+    """
+    # A presigned URL is a bearer credential for the object. Caching it in a
+    # shared proxy would hand it to whoever asks next.
+    response.headers["Cache-Control"] = "no-store"
+
+    url = services.generate_presigned_url(
+        s3_path=path, s3_client=s3_client,
+        expiration=DOWNLOAD_URL_TTL_SECONDS,
+    )
+    return PresignedDownload(url=url, expires_in=DOWNLOAD_URL_TTL_SECONDS)
+
+
 @router.patch(
     "/{file_id}",
     response_model=FilePublic,
     summary="Update a file record (superuser only)",
+    dependencies=[Depends(require_permission(Permission.FILE_UPDATE))],
 )
 def update_file(
     file_id: uuid.UUID,
@@ -291,6 +396,7 @@ def update_file(
     "/{file_id}",
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Delete a file record (superuser only)",
+    dependencies=[Depends(require_permission(Permission.FILE_DELETE))],
 )
 def delete_file(
     file_id: uuid.UUID,

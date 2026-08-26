@@ -3,11 +3,17 @@ Routes/endpoints for the Project API
 """
 
 from typing import Literal, List as TypingList
-from fastapi import APIRouter, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, status
+from sqlmodel import select
 from core.deps import SessionDep, OpenSearchDep, S3ClientDep
 from api.auth.deps import CurrentUser, CurrentSuperuser
+from api.auth.models import User
+from api.rbac import services as rbac_services
+from api.rbac.models import ProjectMember, ProjectMemberPublic, ProjectMemberRequest, Role
 from api.jobs.models import BatchJobPublic
 from api.project.deps import ProjectDep
+from api.rbac.deps import require_permission, require_project_permission
+from api.rbac.permissions import Permission
 from api.project.models import (
     ProjectCreate,
     ProjectUpdate,
@@ -39,6 +45,7 @@ router = APIRouter(prefix="/projects")
     tags=["Project Endpoints"],
     status_code=status.HTTP_201_CREATED,
     response_model=ProjectPublic,
+    dependencies=[Depends(require_permission(Permission.PROJECT_CREATE))],
 )
 def create_project(
     session: SessionDep,
@@ -62,6 +69,13 @@ def create_project(
     status_code=status.HTTP_200_OK,
     tags=["Project Endpoints"],
     response_model=ProjectsPublic,
+    # Global plane, not project: this is a list endpoint with no project in the
+    # path, and `member` holds global project:read precisely so that today's
+    # read-everything behaviour survives. Narrowing which projects come back is
+    # Phase 6's row-level filtering, which belongs in the SQL WHERE rather than
+    # here -- a guard can only answer yes or no, and answering no to a list
+    # request is the wrong shape.
+    dependencies=[Depends(require_permission(Permission.PROJECT_READ))],
 )
 def get_projects(
     session: SessionDep,
@@ -93,6 +107,9 @@ def get_projects(
     status_code=status.HTTP_200_OK,
     tags=["Project Endpoints"],
     response_model=TypingList[str],
+    # Attribute *keys* across all projects, so there is nothing to scope to a
+    # single project even in Phase 6.
+    dependencies=[Depends(require_permission(Permission.PROJECT_READ))],
 )
 def get_project_attributes(session: SessionDep) -> TypingList[str]:
     """
@@ -239,6 +256,8 @@ def patch_project(
     tags=["Project Endpoints"],
     status_code=status.HTTP_201_CREATED,
     response_model=SamplePublic,
+    dependencies=[Depends(require_project_permission(
+        Permission.SAMPLE_CREATE))],
 )
 def add_sample_to_project(
     session: SessionDep,
@@ -276,6 +295,8 @@ def add_sample_to_project(
     tags=["Project Endpoints"],
     status_code=status.HTTP_201_CREATED,
     response_model=BulkSampleCreateResponse,
+    dependencies=[Depends(require_project_permission(
+        Permission.SAMPLE_CREATE))],
 )
 async def upload_samples_file(
     session: SessionDep,
@@ -323,6 +344,8 @@ async def upload_samples_file(
     tags=["Project Endpoints"],
     status_code=status.HTTP_201_CREATED,
     response_model=BulkSampleCreateResponse,
+    dependencies=[Depends(require_project_permission(
+        Permission.SAMPLE_CREATE))],
 )
 def bulk_create_samples(
     session: SessionDep,
@@ -401,6 +424,8 @@ def get_project_samples(
     "/{project_id}/samples/{sample_id}",
     tags=["Project Endpoints"],
     status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_project_permission(
+        Permission.SAMPLE_DELETE))],
 )
 def delete_sample_from_project(
     session: SessionDep,
@@ -455,6 +480,8 @@ def update_sample_in_project(
     tags=["Project Endpoints"],
     status_code=status.HTTP_201_CREATED,
     response_model=BatchJobPublic,
+    dependencies=[Depends(require_project_permission(
+        Permission.PROJECT_SUBMIT_ACTION))],
 )
 def submit_pipeline_job(
     project: ProjectDep,
@@ -511,6 +538,8 @@ def submit_pipeline_job(
     tags=["Project Endpoints"],
     status_code=status.HTTP_201_CREATED,
     response_model=BatchJobPublic,
+    dependencies=[Depends(require_project_permission(
+        Permission.PROJECT_INGEST))],
 )
 def ingest_vendor_data(
     session: SessionDep,
@@ -539,3 +568,84 @@ def ingest_vendor_data(
         s3_client=s3_client
     )
     return BatchJobPublic.model_validate(batch_job)
+
+
+###############################################################################
+# Project membership /api/v1/projects/{project_id}/members
+#
+# Guarded by CurrentSuperuser for now, like the rest of the RBAC admin surface:
+# gating membership on project:manage_members would be a chicken-and-egg while
+# nothing enforces permissions yet. Phase 4 swaps these onto
+# require_project_permission(Permission.PROJECT_MANAGE_MEMBERS).
+###############################################################################
+
+@router.get(
+    "/{project_id}/members",
+    response_model=list[ProjectMemberPublic],
+    tags=["Project Endpoints"],
+    dependencies=[Depends(require_project_permission(
+        Permission.PROJECT_MANAGE_MEMBERS))],
+)
+def list_project_members(
+    session: SessionDep,
+    project: ProjectDep,
+    current_user: CurrentSuperuser,
+) -> list[ProjectMemberPublic]:
+    """Who has a role on this project, and which."""
+    rows = session.exec(
+        select(User.username, Role.name, ProjectMember.granted_at,
+               ProjectMember.source)
+        .join(ProjectMember, ProjectMember.user_id == User.id)
+        .join(Role, Role.id == ProjectMember.role_id)
+        .where(ProjectMember.project_id == project.id)
+        .order_by(User.username)
+    ).all()
+    return [
+        ProjectMemberPublic(username=u, role=r, granted_at=g, source=str(s.value))
+        for u, r, g, s in rows
+    ]
+
+
+@router.post(
+    "/{project_id}/members",
+    response_model=list[ProjectMemberPublic],
+    tags=["Project Endpoints"],
+    responses={
+        400: {"description": "That role is global, not project-scoped"},
+        409: {"description": "Would leave the project without an owner"},
+    },
+    dependencies=[Depends(require_project_permission(
+        Permission.PROJECT_MANAGE_MEMBERS))],
+)
+def add_project_member(
+    session: SessionDep,
+    project: ProjectDep,
+    body: ProjectMemberRequest,
+    current_user: CurrentSuperuser,
+) -> list[ProjectMemberPublic]:
+    """Add a member, or change an existing member's role."""
+    user = rbac_services.get_user_or_404(session, body.username)
+    role = rbac_services.get_role_or_404(session, body.role)
+    rbac_services.set_project_member(
+        session, project.id, user, role, granted_by=current_user.id
+    )
+    return list_project_members(session, project, current_user)
+
+
+@router.delete(
+    "/{project_id}/members/{username}",
+    response_model=list[ProjectMemberPublic],
+    tags=["Project Endpoints"],
+    responses={409: {"description": "Would leave the project without an owner"}},
+    dependencies=[Depends(require_project_permission(
+        Permission.PROJECT_MANAGE_MEMBERS))],
+)
+def remove_project_member(
+    session: SessionDep,
+    project: ProjectDep,
+    username: str,
+    current_user: CurrentSuperuser,
+) -> list[ProjectMemberPublic]:
+    user = rbac_services.get_user_or_404(session, username)
+    rbac_services.remove_project_member(session, project.id, user)
+    return list_project_members(session, project, current_user)

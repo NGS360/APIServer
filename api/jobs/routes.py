@@ -10,7 +10,7 @@ PUT    /api/v1/jobs/[id]    Update a batch job
 """
 
 from typing import Optional, Literal
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from core.deps import SessionDep
 from core.models import HTTPErrorResponse
 from api.jobs.models import (
@@ -22,8 +22,65 @@ from api.jobs.models import (
     LogResponse
 )
 from api.jobs import services
+from api.rbac.deps import AuthzDep, decide
+from api.rbac.permissions import Permission
+from api.rbac.resolver import AuthzContext
 
 router = APIRouter(prefix="/jobs", tags=["Job Endpoints"])
+
+
+# Fields on BatchJobUpdate that represent pipeline writeback rather than a user
+# action. `viewed` is deliberately not one of them -- see require_job_update.
+WRITEBACK_FIELDS = frozenset({"status", "log_stream_name"})
+
+
+def require_job_update(
+    request: Request, authz: AuthzDep, job_update: BatchJobUpdate
+) -> AuthzContext:
+    """
+    Guard PUT /jobs/{job_id}, taking the requirement from the payload.
+
+    This one route carries two operations with very different privilege:
+
+    * The Omics and Batch event Lambdas write `status` and `log_stream_name` back
+      as a job progresses. That is machine writeback -- `job:update`, held only by
+      service_account, platform_admin and admin.
+    * The web UI sends `{"viewed": true}` when someone opens a job from the
+      notifications dropdown (see useViewJob in frontend-ui). Every signed-in user
+      does that, so `member` has to be able to.
+
+    Guarding the whole route on `job:update` would therefore deny an ordinary
+    click: production carried 17 such requests from 7 users alongside 87 machine
+    writebacks in a single day, and `member` holds job:read and job:submit but not
+    job:update. So a payload touching only `viewed` is checked against `job:read`
+    instead -- if you may see the job, you may record that you saw it. Anything
+    reaching a writeback field needs `job:update`, including a payload that sets
+    both.
+
+    The field set is matched against `model_dump(exclude_unset=True)`, which is
+    exactly what update_batch_job persists, so the check cannot drift from the
+    write: naming a writeback field at all requires the permission, even if the
+    value sent is null.
+
+    Declaring the body model here as well as on the handler is deliberate and
+    supported -- FastAPI parses it once, the handler still receives it, and the
+    OpenAPI schema is unchanged, so the generated frontend client does not move.
+    """
+    supplied = set(job_update.model_dump(exclude_unset=True))
+    permission = (
+        Permission.JOB_UPDATE if WRITEBACK_FIELDS & supplied
+        else Permission.JOB_READ
+    )
+    decide(request, authz.has(permission), (permission,), scope=None)
+    return authz
+
+
+# Tagged like the require_permission factories so the route-coverage test and any
+# future "what does this endpoint need" introspection see both possibilities.
+require_job_update.rbac_permissions = (
+    Permission.JOB_UPDATE, Permission.JOB_READ,
+)
+require_job_update.rbac_plane = "global"
 
 
 ###############################################################################
@@ -157,6 +214,7 @@ def get_job(
     "/{job_id}",
     response_model=BatchJobPublic,
     tags=["Job Endpoints"],
+    dependencies=[Depends(require_job_update)],
     responses={
         404: {"model": HTTPErrorResponse, "description": "Job not found"}
     }

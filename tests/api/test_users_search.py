@@ -129,9 +129,12 @@ class TestUserSearchRoute:
 
         response = client.get("/api/v1/users/search", params={"q": "user"})
         assert response.status_code == 200
-        data = response.json()
-        assert data["count"] == 1
-        assert data["data"][0]["username"] == "active_user"
+        # Assert on membership rather than a total count: the authenticated
+        # fixture user is a real row now, and "testuser" also matches "user".
+        # What this test is about is the exclusion, not the size of the table.
+        usernames = [u["username"] for u in response.json()["data"]]
+        assert "active_user" in usernames
+        assert "inactive_user" not in usernames
 
     def test_search_respects_limit_parameter(
         self, client: TestClient, session: Session

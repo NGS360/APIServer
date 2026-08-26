@@ -10,6 +10,7 @@ from core.config import get_settings
 from core.db import engine
 
 from core.opensearch import get_opensearch_client, init_indexes
+from core.schema_version import check_schema_version
 from core.langgraph import get_langgraph_client
 from core.logger import logger
 
@@ -112,6 +113,33 @@ async def lifespan(app: FastAPI):
         logger.info("Environment variables synced successfully")
     except Exception as e:
         logger.warning(f"Failed to sync environment variables: {e}")
+
+    # Is the schema at the revision this code expects?
+    #
+    # Migrations are applied out of band by an operator with DDL privileges --
+    # the application's database user holds DML grants only. That decouples
+    # deploying code from migrating the schema, so this logs loudly when the two
+    # have drifted rather than letting the mismatch surface as scattered 500s.
+    check_schema_version(engine)
+
+    # Reconcile the builtin RBAC roles with api/rbac/roles.py.
+    #
+    # Unlike the settings sync above, a failure here is not merely logged. The
+    # roles are the input to every authorization decision, so once enforcement is
+    # switched on an empty or half-written catalog means every request is denied.
+    # Refusing to start lets the load balancer pull the instance, which is far
+    # better than serving a site-wide outage as 403s.
+    #
+    # Nothing enforces yet -- phase 4 adds that -- so for now a failure is logged
+    # and startup continues. The assertion becomes fatal when RBAC_MODE arrives.
+    logger.info("Syncing RBAC role catalog...")
+    try:
+        from api.rbac.seed import sync_rbac_catalog
+
+        with Session(engine) as session:
+            sync_rbac_catalog(session)
+    except Exception as e:
+        logger.error("Failed to sync RBAC catalog: %s", e)
 
     # Initialize database (if not done already)
     # Database initialization is done via alembic hence not part of this code.

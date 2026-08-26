@@ -131,6 +131,13 @@ These settings are controlled by environment variables and can be adjusted per e
 
 Additional documentation is available in the `docs/` directory:
 
+- [SETUP.md](docs/SETUP.md) - Environment setup instructions
 - [AUTHENTICATION.md](docs/AUTHENTICATION.md) - Authentication setup and configuration
 - [OAuth2_Authorization_Code_Grant_Flow.md](docs/OAuth2_Authorization_Code_Grant_Flow.md) - OAuth2 flow details
-- [SETUP.md](docs/SETUP.md) - Environment setup instructions
+- [RBAC.md](docs/RBAC.md) - Role-based access control: permission model, roles, and rollout plan
+- [ER_DIAGRAM.md](docs/ER_DIAGRAM.md) - Database entity-relationship diagram
+- [FILE_MODEL.md](docs/FILE_MODEL.md) - File model and entity associations
+- [SAMPLE_RUN_ASSOCIATIONS.md](docs/SAMPLE_RUN_ASSOCIATIONS.md) - Sample to sequencing run junction model
+- [SAMPLES_SEARCH.md](docs/SAMPLES_SEARCH.md) - Sample search endpoints
+- [QCMETRICS.md](docs/QCMETRICS.md) - QC metrics model and endpoints
+- [WORKFLOWS_AND_PIPELINES.md](docs/WORKFLOWS_AND_PIPELINES.md) - Workflow and pipeline model
