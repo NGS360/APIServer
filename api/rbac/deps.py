@@ -74,6 +74,7 @@ def decide(
     granted: bool,
     permissions: tuple[Permission, ...],
     scope: str | None,
+    subject: str | None = None,
 ) -> None:
     """
     Apply the enforcement mode to one check's result, and record it.
@@ -90,6 +91,17 @@ def decide(
 
     Refusals log at WARNING so a dry-run deny is findable without trawling; in
     dry-run the decision is reported as `would_deny` and the request proceeds.
+
+    `subject` is the thing being authorised, when that is not already obvious
+    from the route. It exists because it was not obvious enough: the file
+    download guard resolves an S3 URI to a set of projects, and 88% of the
+    refusals in the first clean production window reported "unregistered, 0
+    projects" -- with no way to tell from the log whether those files are
+    genuinely unregistered or whether the resolver's exact match on File.uri is
+    missing a URI form. The access log records request.url.path without the query
+    string, so the URI that produced the decision was invisible. That is the
+    difference between a data problem and a bug in the resolver, and it was not
+    answerable.
     """
     rbac_mode = effective_mode(permissions)
 
@@ -108,6 +120,12 @@ def decide(
         "required_permission": ",".join(str(p) for p in permissions),
         "scope": scope,
     }
+    # Kept out of `scope` deliberately: scope answers "over what authority", the
+    # subject answers "over which object", and Insights cannot filter on half a
+    # concatenated string. Omitted entirely when absent rather than logged as
+    # null, so `ispresent(rbac_subject)` selects exactly the checks that have one.
+    if subject is not None:
+        record["rbac_subject"] = subject
     # The access-log line in RequestContextMiddleware picks these up, so a
     # single CloudWatch query can join a decision to the request that caused it.
     decisions = getattr(request.state, "rbac_decisions", None)
