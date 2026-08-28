@@ -177,6 +177,10 @@ def _authz_summary(request: Request) -> dict[str, Any]:
         "required_permission": worst["required_permission"],
         "scope": worst["scope"],
         "rbac_checks": len(decisions),
+        # Only present when the check recorded one; absent rather than null so
+        # `filter ispresent(rbac_subject)` selects exactly those requests.
+        **({"rbac_subject": worst["rbac_subject"]}
+           if "rbac_subject" in worst else {}),
     }
 
 

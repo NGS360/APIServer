@@ -321,3 +321,76 @@ def test_the_resolver_is_not_confused_by_file_versioning(session):
     assert scope.project_ids == frozenset({project.id})
     assert scope.origin == "project"
     assert new.id != old.id and new.uri == old.uri
+
+
+class TestTheDecisionRecordsTheURI:
+    """
+    The URI has to reach the access log, or a refusal is not diagnosable.
+
+    In the first clean production window, 88% of would_deny on file:download read
+    "unregistered, 0 projects" -- and there was no way to tell whether those files
+    are genuinely unregistered or whether the resolver's exact match on File.uri
+    is missing a URI form that differs by prefix or encoding. The middleware logs
+    request.url.path without the query string, so the input that produced the
+    decision was invisible. That is the difference between "register these files"
+    and "fix this code".
+    """
+
+    def _decisions(self, client, path):
+        """Capture the decision records a request produced."""
+        captured = {}
+        from api.rbac import deps as rbac_deps
+
+        original = rbac_deps.decide
+
+        def spy(request, granted, permissions, scope, subject=None):
+            # try/finally, because under enforce a refusal raises out of decide()
+            # -- capturing after the call would miss exactly the records this
+            # test cares about.
+            try:
+                original(request, granted, permissions, scope, subject)
+            finally:
+                captured.setdefault("records", []).extend(
+                    getattr(request.state, "rbac_decisions", [])
+                )
+
+        import api.files.routes as file_routes
+        file_routes.decide = spy
+        try:
+            client.get(URL, params={"path": path})
+        finally:
+            file_routes.decide = original
+        return captured.get("records", [])
+
+    def test_the_requested_uri_is_on_the_record(self, session, scoped_client):
+        project = make_project(session, "0040")
+        f = make_file(session, "s3://bucket/p40/reads.fastq.gz")
+        session.add(FileProject(file_id=f.id, project_id=project.id))
+        session.commit()
+        enrol(session, project, "scoped")
+
+        records = self._decisions(scoped_client, f.uri)
+        assert records, "no decision was recorded at all"
+        assert records[-1]["rbac_subject"] == f.uri
+
+    def test_it_is_recorded_on_a_refusal_too(self, scoped_client):
+        """The refusal is the case that needs it; an allow rarely gets read."""
+        uri = "s3://bucket/nowhere/orphan.txt"
+        records = self._decisions(scoped_client, uri)
+        assert records[-1]["rbac_decision"] in ("deny", "would_deny")
+        assert records[-1]["rbac_subject"] == uri
+
+    def test_a_check_with_no_subject_omits_the_field(self, session):
+        """
+        Absent rather than null, so `ispresent(rbac_subject)` in Insights selects
+        exactly the checks that have one.
+        """
+        from unittest.mock import MagicMock
+
+        from api.rbac.deps import decide
+        from api.rbac.permissions import Permission
+
+        request = MagicMock()
+        request.state = type("S", (), {})()
+        decide(request, True, (Permission.PROJECT_READ,), scope=None)
+        assert "rbac_subject" not in request.state.rbac_decisions[0]

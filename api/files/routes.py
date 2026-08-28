@@ -317,8 +317,13 @@ def require_file_download(
     # The origin is on the decision record so the mix of project-, sample- and
     # run-resolved downloads is measurable, and so the unregistered surface can be
     # sized before anyone proposes tightening the fallback above.
+    # The URI goes on the record as the subject. Without it a refusal reading
+    # "unregistered, 0 projects" cannot be told apart from a resolver that failed
+    # to match a URI it should have -- which is the difference between "register
+    # these files" and "fix this code".
     decide(request, granted, (Permission.FILE_DOWNLOAD,),
-           scope=f"file via {scope.origin}, {len(scope.project_ids)} project(s)")
+           scope=f"file via {scope.origin}, {len(scope.project_ids)} project(s)",
+           subject=path)
     return authz
 
 
