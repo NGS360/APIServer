@@ -31,6 +31,12 @@ class BatchJob(SQLModel, table=True):
     log_stream_name: str | None = Field(default=None, max_length=255)
     status: JobStatus = Field(default=JobStatus.SUBMITTED)
     viewed: bool = Field(default=False)
+    # Business key of the owning project (Project.project_id, e.g. P-19900109-0001).
+    # Nullable and deliberately not a foreign key: flowcell-level jobs such as
+    # demultiplexing span many projects, and the unauthenticated POST /jobs
+    # endpoint accepts caller-supplied values that must not be able to 500 on a
+    # constraint violation.
+    project_id: str | None = Field(default=None, max_length=255)
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -52,6 +58,7 @@ class BatchJobPublic(SQLModel):
     log_stream_name: str | None
     status: JobStatus
     viewed: bool
+    project_id: str | None = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -80,6 +87,7 @@ class AwsBatchConfig(SQLModel):
 class BatchJobSubmit(AwsBatchConfig):
     """Schema for submitting a new batch job to AWS Batch (extends AwsBatchConfig)"""
     user: str
+    project_id: Optional[str] = None
 
 
 class BatchJobConfigInput(BaseModel):

@@ -1439,6 +1439,9 @@ def test_submit_pipeline_job_template_interpolation(
     assert project_type_env is not None
     assert project_type_env["value"] == "RNA-Seq"
 
+    # The job is attributed to the project it was submitted under
+    assert response.json()["project_id"] == test_project.project_id
+
 
 @patch("api.jobs.services.boto3.client")
 @patch("api.project.services.get_setting")
