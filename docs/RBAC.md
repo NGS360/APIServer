@@ -431,6 +431,12 @@ There is no precedence between the global and project planes because there are n
 
 **`POST /projects` grants the creator `project_owner` in the same transaction as the project insert.** Without this, a user creates a project they immediately cannot administer. This applies equally to project creation via MCP.
 
+> **This requirement went unimplemented until 2026-08-29, and the gap is worth recording.** `create_project` set `created_by` and inserted no membership row. Because the ownership backfill (`c3a81d47e56f`) covered every project that existed when it ran, only projects created *afterwards* were affected — and they had **no members at all**, not even their creator. Nothing failed, because nothing was being enforced.
+>
+> It surfaced in the first clean production dry-run window, as the largest single source of `would_deny` from a real user: somebody downloading FASTQs out of a project created two days earlier, refused because nobody was a member of it. `f7a2c9e14b60` backfills the gap.
+>
+> Two things generalise from it. **A documented requirement is not an implemented one** — the design said this plainly for weeks and the code never did it. And **dry-run found it, which is what dry-run is for**: under `enforce` this would have arrived as a user unable to reach their own data, and the population was growing with every project created.
+
 **`is_superuser` remains outside the role system.** It is break-glass: if a bad `role:manage` edit strips `role:manage` from `admin`, superusers are the way back in. It is set only via `BOOTSTRAP_ADMIN_USERNAMES` or an explicit `user:manage` operation, never used for routine access, and `GET /auth/me` surfaces both it and the user's roles so nobody has to wonder why a permission appears to work. Startup logs a warning if the superuser count exceeds a configured threshold.
 
 ## Enforcement
