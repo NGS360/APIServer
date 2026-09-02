@@ -92,6 +92,27 @@ def authenticate_user(
     return user
 
 
+def is_bootstrap_admin(username: str) -> bool:
+    """
+    Should this brand-new account be created with is_superuser?
+
+    Shared by both creation sites -- register_user and find_or_create_oauth_user
+    -- because the rule they previously each implemented separately was identical,
+    and a security decision duplicated in two files is a security decision that
+    will eventually differ between them.
+
+    Superuser short-circuits every permission check ahead of the resolver, so this
+    is the single most consequential boolean in account creation. It answers only
+    from configuration: see Settings.BOOTSTRAP_ADMIN_USERNAMES for why there is no
+    fallback to the old "first user to register wins" behaviour.
+    """
+    from core.config import get_settings
+
+    if not username:
+        return False
+    return username.strip().lower() in get_settings().BOOTSTRAP_ADMIN_USERNAMES
+
+
 def register_user(session: Session, user_data: UserRegister) -> User:
     """
     Register a new user
@@ -130,12 +151,14 @@ def register_user(session: Session, user_data: UserRegister) -> User:
             detail="Username already taken"
         )
 
-    # If this is the first user, make them admin
-    is_admin = False
-    statement = select(User)
-    if session.exec(statement).first() is None:
-        logger.info(f"First user registered, granting admin rights to {user_data.username}")
-        is_admin = True
+    # Superuser comes from configuration, never from being first. See
+    # is_bootstrap_admin and Settings.BOOTSTRAP_ADMIN_USERNAMES.
+    is_admin = is_bootstrap_admin(user_data.username)
+    if is_admin:
+        logger.warning(
+            "creating %s as a superuser: listed in BOOTSTRAP_ADMIN_USERNAMES",
+            user_data.username,
+        )
 
     # Create user
     user = User(
