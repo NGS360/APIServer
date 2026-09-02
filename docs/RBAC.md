@@ -676,7 +676,19 @@ user_filter = None if authz.has(Permission.JOB_READ_ALL) else authz.username
 
 ## Bootstrap and Administration
 
-### Replacing "first user registered wins"
+### Replacing "first user registered wins" *(done 2026-09-01)*
+
+Implemented as `BOOTSTRAP_ADMIN_USERNAMES`, with `scripts/promote_superuser.py` as the path for accounts that already exist.
+
+Three details are the design:
+
+- **Creation only.** Adding a username later does not promote an existing account on next login. A configuration change should not silently grant superuser to someone who already holds a session.
+- **Empty means nobody.** There is deliberately no fallback to first-user-wins, because a fallback that restores the unsafe behaviour whenever the variable is unset is the same bug with an extra step. The consequence is that a fresh deployment has no administrator until one is promoted — which is why the script exists.
+- **One function, both sites.** `register_user` and `find_or_create_oauth_user` each carried their own copy of the old rule. They now call `is_bootstrap_admin`; a security decision duplicated in two files is one that will eventually differ between them, which is how the old rule survived in two copies.
+
+`promote_superuser.py` refuses to remove the last superuser without `--force`, because nothing else can grant it back: the admin API is itself guarded by `CurrentSuperuser`, so a database with no superuser cannot produce one through the API. That script is also the only supported way to take the flag *off* someone, which matters for offboarding.
+
+
 
 The current bootstrap grants `is_superuser` to whoever registers first, and is duplicated at `api/auth/services.py:132-137` and `api/auth/oauth2_service.py:463-468`. It has three defects:
 

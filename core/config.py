@@ -191,6 +191,42 @@ class Settings(BaseSettings):
 
     @computed_field
     @property
+    def BOOTSTRAP_ADMIN_USERNAMES(self) -> frozenset[str]:
+        """
+        Usernames that receive `is_superuser` when their account is created.
+
+        This replaces "the first user to register becomes an administrator",
+        which was duplicated at both account-creation sites and is a privilege
+        escalation path on any database with no users yet: whoever registers
+        first gets superuser, and superuser short-circuits every permission check
+        ahead of the resolver. It is also a race, because two concurrent
+        registrations can both observe an empty table.
+
+        That was tolerable while empty databases were hypothetical. The CI work
+        established they are not -- a new tier, a restored snapshot, and the
+        migrations job all start from nothing.
+
+        Semantics, each chosen deliberately:
+
+        * **Creation only.** A username added here later does not promote an
+          existing account on next login. A configuration change should not
+          silently grant superuser to someone who already has a session; use
+          scripts/promote_superuser.py, which records who did it.
+        * **Empty means nobody.** No fallback to first-user-wins, because a
+          fallback that restores the unsafe behaviour whenever the variable is
+          unset is not a fix. A fresh deployment with this unset gets no
+          administrator, which is why the promote script exists and why startup
+          warns when the database has no superuser.
+        * **Compared case-insensitively and trimmed**, matching how the
+          ownership backfill resolves usernames.
+        """
+        raw = self._get_config_value("BOOTSTRAP_ADMIN_USERNAMES", default="")
+        return frozenset(
+            name.strip().lower() for name in raw.split(",") if name.strip()
+        )
+
+    @computed_field
+    @property
     def LOG_FORMAT(self) -> str:
         """
         Log output format: "json" or "text".
