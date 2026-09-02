@@ -609,7 +609,18 @@ Run files are permissive because a flowcell is a shared artifact: demux statisti
 
 **Direct associations are tried first, and that ordering is the policy rather than an implementation detail.** A file both in a project and on a run resolves *strictly*, through its project. Letting the run path widen it would silently convert the strict case into the permissive one, which is the specific regression `test_a_project_association_wins_over_the_run` exists to catch.
 
-**A URI resolving to nothing falls back to the global `file:download` permission.** "This file belongs to no project" is not evidence of permission, so `member` — which no longer holds it — is refused; `lab_manager`, `auditor`, `admin` and superusers do hold it, so cross-project operation over raw storage still works. `has_in_project` honours a global grant, which is why those roles are unaffected by any of the above. That set is small on purpose and asserted as a closed set in the tests.
+**A URI with no association, but under a project id in a bucket we own, is inferred to belong to that project.** Added after production measurement rather than designed in: of 75 unresolvable download attempts in one window, **63 were pipeline output** — zUMIs count matrices, multiqc reports, WES variant calls — written to `<results-bucket>/<project-id>/…` and never registered as `File` rows. Those are the scientific product. Refusing them refuses the most legitimate traffic the endpoint carries.
+
+Two constraints are what make this a fallback rather than a hole, and both are asserted by tests that fail if either is removed:
+
+- **Only `DATA_BUCKET_URI` and `RESULTS_BUCKET_URI` count.** The guard decides whether to mint a presigned URL against the API's own credentials, so inferring a project from *any* bucket would let a member of project X reach any object whose key contains that id, anywhere the API's role can read.
+- **A project id must be a whole path segment and must exist.** Otherwise anyone able to name a file could claim a project by embedding its id in the filename.
+
+Inference runs **after** every real association, so a registered file under another project's prefix still belongs to its registered project — the record is better evidence than the location. It is reported as its own origin, `path`, so the share of access granted by convention rather than by record stays visible and can be watched shrinking as pipelines start registering their outputs.
+
+The honest reading: this trades a measurable amount of rigour for not breaking scientists, and it is reversible — when pipeline outputs are registered, the `path` origin count goes to zero and the fallback can be removed.
+
+**A URI resolving to nothing even then falls back to the global `file:download` permission.** "This file belongs to no project" is not evidence of permission, so `member` — which no longer holds it — is refused; `lab_manager`, `auditor`, `admin` and superusers do hold it, so cross-project operation over raw storage still works. `has_in_project` honours a global grant, which is why those roles are unaffected by any of the above. That set is small on purpose and asserted as a closed set in the tests.
 
 `lab_manager` needed `file:download` restored explicitly after it left `member`, since it derives from it. Without that, the sequencing core could browse and upload but not download, which is not a coherent role.
 
