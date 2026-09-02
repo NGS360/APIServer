@@ -142,6 +142,25 @@ _AUDITOR = READ_PERMISSIONS | {
     Permission.ROLE_READ,
 }
 
+# Demultiplexing turned out to be done by eleven different people over one week,
+# with different jobs and no single team among them. The obvious answer -- give
+# them lab_manager -- was wrong: that role carries sixteen permissions beyond
+# member, including *global* file:download, and has_in_project short-circuits on a
+# global grant. Granting it would have exempted eleven people from the
+# project-scoped downloads shipped days earlier, as a side effect of a decision
+# about demux.
+#
+# So: exactly the permission that was refused, and nothing else. `member` already
+# provides run:read, job:submit and job:read, which is the rest of the demux flow,
+# so this role is one permission wide by design rather than by omission.
+#
+# It qualifies under the rule above -- run:demux is a write on a global resource --
+# and it is the shape to copy the next time a single capability needs granting to
+# people who share nothing else.
+_DEMUX_OPERATOR = frozenset({
+    Permission.RUN_DEMUX,
+})
+
 # --- Project roles --------------------------------------------------------
 # A total order: viewer subset of contributor subset of owner. That is why
 # project_member allows only one role per user per project -- stacking them would
@@ -185,6 +204,12 @@ ROLE_DEFINITIONS: dict[str, RoleDefinition] = {
         RoleScope.GLOBAL, "Lab Manager",
         "Sequencing core: registers runs, demultiplexes, ingests vendor deliveries.",
         frozenset(_LAB_MANAGER),
+    ),
+    "demux_operator": RoleDefinition(
+        RoleScope.GLOBAL, "Demux Operator",
+        "May run demultiplexing. Grants nothing else -- see the comment on "
+        "_DEMUX_OPERATOR for why this is not lab_manager.",
+        frozenset(_DEMUX_OPERATOR),
     ),
     "platform_admin": RoleDefinition(
         RoleScope.GLOBAL, "Platform Administrator",
