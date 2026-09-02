@@ -306,6 +306,7 @@ Roles are database rows so that administrators can compose custom ones. The **bu
 | Role | Purpose | Permissions |
 |------|---------|-------------|
 | `member` | Default for every authenticated user | `action:read`, `platform:read`, `vendor:read`, `workflow:read`, `pipeline:read`, `run:read`, `job:read`, `job:submit`, `setting:read`, `search:query`, `chat:use`, `user:read`, `project:create`, plus the transitional global reads: `project:read`, `sample:read`, `qcrecord:read`, `file:read`. **Not** `file:download` |
+| `demux_operator` | May run demultiplexing, and nothing else | `run:demux` only |
 | `lab_manager` | Sequencing core — registers runs, demultiplexes, ingests vendor deliveries | `member` + `run:create`, `run:update`, `run:associate`, `run:demux`, `manifest:read`, `manifest:upload`, `manifest:validate`, `file:browse`, `file:create`, `file:update`, `sample:create`, `sample:update`, `qcrecord:create`, `project:ingest`, `job:read_all` |
 | `platform_admin` | Owns the executable catalog and platform configuration | `member` + `platform:create`, `vendor:create`, `vendor:update`, `vendor:delete`, `workflow:create`, `workflow:update`, `workflow:delete`, `workflow:deploy`, `pipeline:create`, `pipeline:update`, `action:validate`, `setting:update`, `system:reindex`, `job:read_all`, `job:update` |
 | `service_account` | Machine writeback — pipeline results and Batch job-status updates only (**not** MCP, which acts as the invoking user) | `project:read`, `run:read`, `run:update`, `sample:read`, `sample:create`, `qcrecord:create`, `file:create`, `file:update`, `job:read_all`, `job:update` |
@@ -324,7 +325,17 @@ Roles are database rows so that administrators can compose custom ones. The **bu
 
 `member` plus `admin` alone would reproduce today's problem with extra steps: every run registration, workflow alias change, and settings edit funnelling through the same two people. `service_account` must be separate from any human role because it needs `job:update` — the ability to write another user's job status, which no human role should hold and which cannot be expressed as "the owner can update it", since the AWS Batch poller is not the owner.
 
-The rule for future requests: **a new global role is justified only if it adds a write permission on a global (non-project) resource.** Personas that differ only in *which projects* they touch — bioinformatician, PI, sequencing tech, external collaborator — are already expressed by project membership. Adding a global role per persona would re-implement project scoping in the global plane, which is exactly what this design avoids. Requests like "contributor without delete" are real, and they are served by custom roles, which is the reason roles are database rows.
+The rule for future requests: **a new global role is justified only if it adds a write permission on a global (non-project) resource.**
+
+**Worked example, 2026-09-03 — `demux_operator`.** Demultiplexing was being attempted by eleven people over one week, with different jobs and no single team among them. The obvious answer was `lab_manager`, whose description already says "demultiplexes". That was wrong, and why is worth keeping:
+
+> `lab_manager` carries **global** `file:download`, and `has_in_project` short-circuits on a global grant. Granting it would have exempted eleven people from project-scoped downloads — days after that scoping shipped — as a side effect of a decision about demux.
+
+So the role holds `run:demux` and nothing else. `member` already provides `run:read`, `job:submit` and `job:read`, which is the rest of the flow, so one permission is *sufficient* rather than merely minimal. It qualifies under the rule because `run:demux` is a write on a global resource, and it is a strict subset of `lab_manager`, so genuine sequencing-core staff still get demux from that role and nobody needs both.
+
+The general lesson: **check what else an off-the-shelf role carries before granting it for one capability.** A role's description tells you what it is *for*; only its permission set tells you what it *does*.
+
+**The roster is now pinned by a test.** Adding or removing a builtin role fails `test_the_role_roster_is_pinned`, and a global role that adds only reads fails `test_every_global_role_beyond_member_adds_a_write`. Neither guard existed until a role was added and nothing noticed — route counts had been pinned since Phase 4c, but the rule above was unenforced. Personas that differ only in *which projects* they touch — bioinformatician, PI, sequencing tech, external collaborator — are already expressed by project membership. Adding a global role per persona would re-implement project scoping in the global plane, which is exactly what this design avoids. Requests like "contributor without delete" are real, and they are served by custom roles, which is the reason roles are database rows.
 
 The three project roles are the minimum lattice separating *see*, *change*, and *control who sees and changes*. Fewer collapses two of those; more is site policy rather than platform policy.
 
