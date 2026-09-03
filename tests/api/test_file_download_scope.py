@@ -321,3 +321,198 @@ def test_the_resolver_is_not_confused_by_file_versioning(session):
     assert scope.project_ids == frozenset({project.id})
     assert scope.origin == "project"
     assert new.id != old.id and new.uri == old.uri
+
+
+class TestTheDecisionRecordsTheURI:
+    """
+    The URI has to reach the access log, or a refusal is not diagnosable.
+
+    In the first clean production window, 88% of would_deny on file:download read
+    "unregistered, 0 projects" -- and there was no way to tell whether those files
+    are genuinely unregistered or whether the resolver's exact match on File.uri
+    is missing a URI form that differs by prefix or encoding. The middleware logs
+    request.url.path without the query string, so the input that produced the
+    decision was invisible. That is the difference between "register these files"
+    and "fix this code".
+    """
+
+    def _decisions(self, client, path):
+        """Capture the decision records a request produced."""
+        captured = {}
+        from api.rbac import deps as rbac_deps
+
+        original = rbac_deps.decide
+
+        def spy(request, granted, permissions, scope, subject=None):
+            # try/finally, because under enforce a refusal raises out of decide()
+            # -- capturing after the call would miss exactly the records this
+            # test cares about.
+            try:
+                original(request, granted, permissions, scope, subject)
+            finally:
+                captured.setdefault("records", []).extend(
+                    getattr(request.state, "rbac_decisions", [])
+                )
+
+        import api.files.routes as file_routes
+        file_routes.decide = spy
+        try:
+            client.get(URL, params={"path": path})
+        finally:
+            file_routes.decide = original
+        return captured.get("records", [])
+
+    def test_the_requested_uri_is_on_the_record(self, session, scoped_client):
+        project = make_project(session, "0040")
+        f = make_file(session, "s3://bucket/p40/reads.fastq.gz")
+        session.add(FileProject(file_id=f.id, project_id=project.id))
+        session.commit()
+        enrol(session, project, "scoped")
+
+        records = self._decisions(scoped_client, f.uri)
+        assert records, "no decision was recorded at all"
+        assert records[-1]["rbac_subject"] == f.uri
+
+    def test_it_is_recorded_on_a_refusal_too(self, scoped_client):
+        """The refusal is the case that needs it; an allow rarely gets read."""
+        uri = "s3://bucket/nowhere/orphan.txt"
+        records = self._decisions(scoped_client, uri)
+        assert records[-1]["rbac_decision"] in ("deny", "would_deny")
+        assert records[-1]["rbac_subject"] == uri
+
+    def test_a_check_with_no_subject_omits_the_field(self, session):
+        """
+        Absent rather than null, so `ispresent(rbac_subject)` in Insights selects
+        exactly the checks that have one.
+        """
+        from unittest.mock import MagicMock
+
+        from api.rbac.deps import decide
+        from api.rbac.permissions import Permission
+
+        request = MagicMock()
+        request.state = type("S", (), {})()
+        decide(request, True, (Permission.PROJECT_READ,), scope=None)
+        assert "rbac_subject" not in request.state.rbac_decisions[0]
+
+
+class TestPathInferenceForUnregisteredFiles:
+    """
+    An unregistered file under a project id, in a bucket we own, belongs to that
+    project.
+
+    Added after production measurement: 63 of 75 unresolvable download attempts
+    were pipeline *output* -- zUMIs count matrices, multiqc reports, WES variant
+    calls -- written to <results-bucket>/<project-id>/... and never registered as
+    File rows. Those are the scientific product; refusing them refuses the most
+    legitimate traffic on the endpoint.
+
+    The tests that matter here are the negative ones. Inferring a project from a
+    path means the access decision rests on a naming convention, so the boundaries
+    of that convention are the security property, and each one below is a way the
+    fallback could have become a hole.
+    """
+
+    def test_a_member_can_download_unregistered_output_in_their_project(
+        self, session, scoped_client
+    ):
+        project = make_project(session, "0050")
+        enrol(session, project, "scoped")
+        uri = (f"s3://test-results-bucket/{project.project_id}"
+               "/scRNA-Seq/zUMIs/combined.dgecounts.rds")
+        assert scoped_client.get(URL, params={"path": uri}).status_code == 200
+
+    def test_a_non_member_cannot(self, session, scoped_client):
+        project = make_project(session, "0051")
+        uri = (f"s3://test-results-bucket/{project.project_id}"
+               "/scRNA-Seq/zUMIs/combined.dgecounts.rds")
+        assert scoped_client.get(URL, params={"path": uri}).status_code == 403
+
+    def test_the_data_bucket_counts_too(self, session, scoped_client):
+        project = make_project(session, "0052")
+        enrol(session, project, "scoped")
+        uri = f"s3://test-data-bucket/{project.project_id}/manifest.csv"
+        assert scoped_client.get(URL, params={"path": uri}).status_code == 200
+
+    def test_a_bucket_we_do_not_own_is_not_inferred(self, session, scoped_client):
+        """
+        The security boundary. The guard mints a presigned URL against the API's
+        own credentials, so inferring a project from an arbitrary bucket would let
+        a member of that project reach any object whose key contains its id --
+        anywhere the API's role can read.
+        """
+        project = make_project(session, "0053")
+        enrol(session, project, "scoped")
+        uri = f"s3://some-other-bucket/{project.project_id}/secret.txt"
+        assert scoped_client.get(URL, params={"path": uri}).status_code == 403
+
+    def test_a_project_id_that_does_not_exist_is_not_invented(
+        self, session, scoped_client
+    ):
+        uri = "s3://test-results-bucket/P-19000101-0001/anything.rds"
+        assert scoped_client.get(URL, params={"path": uri}).status_code == 403
+
+    def test_a_project_id_inside_a_filename_does_not_count(
+        self, session, scoped_client
+    ):
+        """
+        Only a whole path segment is a project id. Otherwise anyone able to name a
+        file could claim a project by embedding its id in the filename.
+        """
+        project = make_project(session, "0054")
+        enrol(session, project, "scoped")
+        uri = (f"s3://test-results-bucket/somewhere-else"
+               f"/summary-{project.project_id}-final.csv")
+        assert scoped_client.get(URL, params={"path": uri}).status_code == 403
+
+    def test_a_path_with_no_project_id_is_still_refused(
+        self, session, scoped_client
+    ):
+        """The run-level case: raw data laid out by instrument and run, not by
+        project. Those resolve through the run association or not at all."""
+        uri = ("s3://test-data-bucket/illumina/260828_A00267_0511_AHGG7FDRX7"
+               "/Reports/html/index.html")
+        assert scoped_client.get(URL, params={"path": uri}).status_code == 403
+
+    def test_a_registered_association_still_wins_over_the_path(
+        self, session, scoped_client
+    ):
+        """
+        Inference is last. A file registered to project A but sitting under
+        project B's prefix belongs to A -- the record is better evidence than the
+        location, and this is the case where they disagree.
+        """
+        owner = make_project(session, "0055")
+        elsewhere = make_project(session, "0056")
+        uri = f"s3://test-results-bucket/{elsewhere.project_id}/RNA-Seq/counts.txt"
+        f = make_file(session, uri)
+        session.add(FileProject(file_id=f.id, project_id=owner.id))
+        session.commit()
+
+        enrol(session, elsewhere, "scoped")   # member of the path's project only
+        assert scoped_client.get(URL, params={"path": uri}).status_code == 403
+
+    def test_the_origin_is_recorded_as_path(self, session):
+        """
+        Access granted by convention rather than by record has to be visible in
+        the log, so the proportion can be watched shrinking as pipelines start
+        registering their outputs.
+        """
+        from api.files.scope import scope_for_uri
+
+        project = make_project(session, "0057")
+        uri = f"s3://test-results-bucket/{project.project_id}/WES/calls.maf"
+        scope = scope_for_uri(session, uri)
+        assert scope.project_ids == frozenset({project.id})
+        assert scope.origin == "path"
+
+    def test_a_registered_file_with_no_associations_falls_through_to_the_path(
+        self, session, scoped_client
+    ):
+        """A File row with no associations says no more about ownership than no
+        File row at all."""
+        project = make_project(session, "0058")
+        enrol(session, project, "scoped")
+        uri = f"s3://test-results-bucket/{project.project_id}/gRNA/counts.txt"
+        make_file(session, uri)   # registered, but associated with nothing
+        assert scoped_client.get(URL, params={"path": uri}).status_code == 200

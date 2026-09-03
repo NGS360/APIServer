@@ -78,6 +78,67 @@ def generate_project_id(*, session: Session) -> str:
     return f"{prefix}{suffix:04d}"
 
 
+def _enrol_creator_as_owner(
+    session: Session, project: "Project", username: str
+) -> None:
+    """
+    Give the creator project_owner, in the same transaction as the project insert.
+
+    docs/RBAC.md has required this since the design was written; it was never
+    implemented, and the omission is invisible until permissions are enforced.
+    The ownership backfill covered projects that already existed, so every project
+    created after it has **no members at all** -- not even the person who made it.
+    Found in the production dry-run log: the largest single source of would_deny
+    from a real user was someone downloading FASTQs from a project created two days
+    earlier, refused because nobody was a member of it.
+
+    Deliberately not routed through rbac.services.set_project_member, which
+    commits. The membership has to land in the same transaction as the project, or
+    a failure between the two leaves a project nobody can administer -- which is
+    the state this fixes.
+
+    Best-effort by design. A missing role row or an unresolvable username must not
+    fail project creation: refusing to create the project is a worse outcome than
+    creating one that needs a grant, and the dry-run log already surfaces the
+    latter. Both cases are logged at ERROR because both mean someone will be
+    refused later.
+    """
+    from api.auth.models import User
+    from api.rbac.models import GrantSource, ProjectMember, Role
+
+    user = session.exec(
+        select(User).where(User.username == username)
+    ).first()
+    if user is None:
+        # Service accounts and API-key callers resolve fine; this is the
+        # unexpected case, e.g. a username changed underneath a live session.
+        logger.error(
+            "project %s created by %r, who is not a user row: no owner enrolled",
+            project.project_id, username,
+        )
+        return
+
+    role = session.exec(
+        select(Role).where(Role.name == "project_owner")
+    ).first()
+    if role is None:
+        # The catalog is seeded at startup; if it is absent something is wrong
+        # with this deployment, not with this request.
+        logger.error(
+            "role project_owner is missing; %s created with no owner",
+            project.project_id,
+        )
+        return
+
+    session.add(ProjectMember(
+        project_id=project.id,
+        user_id=user.id,
+        role_id=role.id,
+        granted_by=user.id,
+        source=GrantSource.MANUAL,
+    ))
+
+
 def create_project(
     session: Session,
     project_in: ProjectCreate,
@@ -111,6 +172,8 @@ def create_project(
 
         # Update database with attribute links
         session.add_all(project_attributes)
+
+    _enrol_creator_as_owner(session, project, current_user)
 
     # With orm_mode=True, attributes will be eagerly loaded
     # and mapped to ProjectPublic via response model

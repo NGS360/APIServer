@@ -306,6 +306,7 @@ Roles are database rows so that administrators can compose custom ones. The **bu
 | Role | Purpose | Permissions |
 |------|---------|-------------|
 | `member` | Default for every authenticated user | `action:read`, `platform:read`, `vendor:read`, `workflow:read`, `pipeline:read`, `run:read`, `job:read`, `job:submit`, `setting:read`, `search:query`, `chat:use`, `user:read`, `project:create`, plus the transitional global reads: `project:read`, `sample:read`, `qcrecord:read`, `file:read`. **Not** `file:download` |
+| `demux_operator` | May run demultiplexing, and nothing else | `run:demux` only |
 | `lab_manager` | Sequencing core — registers runs, demultiplexes, ingests vendor deliveries | `member` + `run:create`, `run:update`, `run:associate`, `run:demux`, `manifest:read`, `manifest:upload`, `manifest:validate`, `file:browse`, `file:create`, `file:update`, `sample:create`, `sample:update`, `qcrecord:create`, `project:ingest`, `job:read_all` |
 | `platform_admin` | Owns the executable catalog and platform configuration | `member` + `platform:create`, `vendor:create`, `vendor:update`, `vendor:delete`, `workflow:create`, `workflow:update`, `workflow:delete`, `workflow:deploy`, `pipeline:create`, `pipeline:update`, `action:validate`, `setting:update`, `system:reindex`, `job:read_all`, `job:update` |
 | `service_account` | Machine writeback — pipeline results and Batch job-status updates only (**not** MCP, which acts as the invoking user) | `project:read`, `run:read`, `run:update`, `sample:read`, `sample:create`, `qcrecord:create`, `file:create`, `file:update`, `job:read_all`, `job:update` |
@@ -324,7 +325,17 @@ Roles are database rows so that administrators can compose custom ones. The **bu
 
 `member` plus `admin` alone would reproduce today's problem with extra steps: every run registration, workflow alias change, and settings edit funnelling through the same two people. `service_account` must be separate from any human role because it needs `job:update` — the ability to write another user's job status, which no human role should hold and which cannot be expressed as "the owner can update it", since the AWS Batch poller is not the owner.
 
-The rule for future requests: **a new global role is justified only if it adds a write permission on a global (non-project) resource.** Personas that differ only in *which projects* they touch — bioinformatician, PI, sequencing tech, external collaborator — are already expressed by project membership. Adding a global role per persona would re-implement project scoping in the global plane, which is exactly what this design avoids. Requests like "contributor without delete" are real, and they are served by custom roles, which is the reason roles are database rows.
+The rule for future requests: **a new global role is justified only if it adds a write permission on a global (non-project) resource.**
+
+**Worked example, 2026-09-03 — `demux_operator`.** Demultiplexing was being attempted by eleven people over one week, with different jobs and no single team among them. The obvious answer was `lab_manager`, whose description already says "demultiplexes". That was wrong, and why is worth keeping:
+
+> `lab_manager` carries **global** `file:download`, and `has_in_project` short-circuits on a global grant. Granting it would have exempted eleven people from project-scoped downloads — days after that scoping shipped — as a side effect of a decision about demux.
+
+So the role holds `run:demux` and nothing else. `member` already provides `run:read`, `job:submit` and `job:read`, which is the rest of the flow, so one permission is *sufficient* rather than merely minimal. It qualifies under the rule because `run:demux` is a write on a global resource, and it is a strict subset of `lab_manager`, so genuine sequencing-core staff still get demux from that role and nobody needs both.
+
+The general lesson: **check what else an off-the-shelf role carries before granting it for one capability.** A role's description tells you what it is *for*; only its permission set tells you what it *does*.
+
+**The roster is now pinned by a test.** Adding or removing a builtin role fails `test_the_role_roster_is_pinned`, and a global role that adds only reads fails `test_every_global_role_beyond_member_adds_a_write`. Neither guard existed until a role was added and nothing noticed — route counts had been pinned since Phase 4c, but the rule above was unenforced. Personas that differ only in *which projects* they touch — bioinformatician, PI, sequencing tech, external collaborator — are already expressed by project membership. Adding a global role per persona would re-implement project scoping in the global plane, which is exactly what this design avoids. Requests like "contributor without delete" are real, and they are served by custom roles, which is the reason roles are database rows.
 
 The three project roles are the minimum lattice separating *see*, *change*, and *control who sees and changes*. Fewer collapses two of those; more is site policy rather than platform policy.
 
@@ -430,6 +441,12 @@ There is no precedence between the global and project planes because there are n
 **New users are auto-granted `member`.** A brand-new corporate-SSO user landing on a wall of 403s generates one support ticket per user. The grant happens at both creation sites — `register_user` (`api/auth/services.py`) and `find_or_create_oauth_user` (`api/auth/oauth2_service.py`) — through a single shared `assign_default_roles()`, with the role name read from `DEFAULT_USER_ROLE` (default `member`; empty string disables). `member` is deliberately harmless: it can read catalogs and create its own projects.
 
 **`POST /projects` grants the creator `project_owner` in the same transaction as the project insert.** Without this, a user creates a project they immediately cannot administer. This applies equally to project creation via MCP.
+
+> **This requirement went unimplemented until 2026-08-29, and the gap is worth recording.** `create_project` set `created_by` and inserted no membership row. Because the ownership backfill (`c3a81d47e56f`) covered every project that existed when it ran, only projects created *afterwards* were affected — and they had **no members at all**, not even their creator. Nothing failed, because nothing was being enforced.
+>
+> It surfaced in the first clean production dry-run window, as the largest single source of `would_deny` from a real user: somebody downloading FASTQs out of a project created two days earlier, refused because nobody was a member of it. `f7a2c9e14b60` backfills the gap.
+>
+> Two things generalise from it. **A documented requirement is not an implemented one** — the design said this plainly for weeks and the code never did it. And **dry-run found it, which is what dry-run is for**: under `enforce` this would have arrived as a user unable to reach their own data, and the population was growing with every project created.
 
 **`is_superuser` remains outside the role system.** It is break-glass: if a bad `role:manage` edit strips `role:manage` from `admin`, superusers are the way back in. It is set only via `BOOTSTRAP_ADMIN_USERNAMES` or an explicit `user:manage` operation, never used for routine access, and `GET /auth/me` surfaces both it and the user's roles so nobody has to wonder why a permission appears to work. Startup logs a warning if the superuser count exceeds a configured threshold.
 
@@ -603,7 +620,18 @@ Run files are permissive because a flowcell is a shared artifact: demux statisti
 
 **Direct associations are tried first, and that ordering is the policy rather than an implementation detail.** A file both in a project and on a run resolves *strictly*, through its project. Letting the run path widen it would silently convert the strict case into the permissive one, which is the specific regression `test_a_project_association_wins_over_the_run` exists to catch.
 
-**A URI resolving to nothing falls back to the global `file:download` permission.** "This file belongs to no project" is not evidence of permission, so `member` — which no longer holds it — is refused; `lab_manager`, `auditor`, `admin` and superusers do hold it, so cross-project operation over raw storage still works. `has_in_project` honours a global grant, which is why those roles are unaffected by any of the above. That set is small on purpose and asserted as a closed set in the tests.
+**A URI with no association, but under a project id in a bucket we own, is inferred to belong to that project.** Added after production measurement rather than designed in: of 75 unresolvable download attempts in one window, **63 were pipeline output** — zUMIs count matrices, multiqc reports, WES variant calls — written to `<results-bucket>/<project-id>/…` and never registered as `File` rows. Those are the scientific product. Refusing them refuses the most legitimate traffic the endpoint carries.
+
+Two constraints are what make this a fallback rather than a hole, and both are asserted by tests that fail if either is removed:
+
+- **Only `DATA_BUCKET_URI` and `RESULTS_BUCKET_URI` count.** The guard decides whether to mint a presigned URL against the API's own credentials, so inferring a project from *any* bucket would let a member of project X reach any object whose key contains that id, anywhere the API's role can read.
+- **A project id must be a whole path segment and must exist.** Otherwise anyone able to name a file could claim a project by embedding its id in the filename.
+
+Inference runs **after** every real association, so a registered file under another project's prefix still belongs to its registered project — the record is better evidence than the location. It is reported as its own origin, `path`, so the share of access granted by convention rather than by record stays visible and can be watched shrinking as pipelines start registering their outputs.
+
+The honest reading: this trades a measurable amount of rigour for not breaking scientists, and it is reversible — when pipeline outputs are registered, the `path` origin count goes to zero and the fallback can be removed.
+
+**A URI resolving to nothing even then falls back to the global `file:download` permission.** "This file belongs to no project" is not evidence of permission, so `member` — which no longer holds it — is refused; `lab_manager`, `auditor`, `admin` and superusers do hold it, so cross-project operation over raw storage still works. `has_in_project` honours a global grant, which is why those roles are unaffected by any of the above. That set is small on purpose and asserted as a closed set in the tests.
 
 `lab_manager` needed `file:download` restored explicitly after it left `member`, since it derives from it. Without that, the sequencing core could browse and upload but not download, which is not a coherent role.
 
@@ -659,7 +687,19 @@ user_filter = None if authz.has(Permission.JOB_READ_ALL) else authz.username
 
 ## Bootstrap and Administration
 
-### Replacing "first user registered wins"
+### Replacing "first user registered wins" *(done 2026-09-01)*
+
+Implemented as `BOOTSTRAP_ADMIN_USERNAMES`, with `scripts/promote_superuser.py` as the path for accounts that already exist.
+
+Three details are the design:
+
+- **Creation only.** Adding a username later does not promote an existing account on next login. A configuration change should not silently grant superuser to someone who already holds a session.
+- **Empty means nobody.** There is deliberately no fallback to first-user-wins, because a fallback that restores the unsafe behaviour whenever the variable is unset is the same bug with an extra step. The consequence is that a fresh deployment has no administrator until one is promoted — which is why the script exists.
+- **One function, both sites.** `register_user` and `find_or_create_oauth_user` each carried their own copy of the old rule. They now call `is_bootstrap_admin`; a security decision duplicated in two files is one that will eventually differ between them, which is how the old rule survived in two copies.
+
+`promote_superuser.py` refuses to remove the last superuser without `--force`, because nothing else can grant it back: the admin API is itself guarded by `CurrentSuperuser`, so a database with no superuser cannot produce one through the API. That script is also the only supported way to take the flag *off* someone, which matters for offboarding.
+
+
 
 The current bootstrap grants `is_superuser` to whoever registers first, and is duplicated at `api/auth/services.py:132-137` and `api/auth/oauth2_service.py:463-468`. It has three defects:
 

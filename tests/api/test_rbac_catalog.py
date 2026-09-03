@@ -105,6 +105,52 @@ class TestCatalogMatchesTheDesign:
 
 class TestRoleDefinitions:
 
+    def test_the_role_roster_is_pinned(self):
+        """
+        The exact set of builtin roles, so adding or removing one is a visible,
+        deliberate change in review rather than an incidental one.
+
+        This guard was missing until a role was added and no test noticed --
+        while route counts have been pinned since Phase 4c. docs/RBAC.md carries
+        a rule for when a new global role is justified ("only if it adds a write
+        permission on a global resource"), and a rule with nothing asserting it
+        is a suggestion.
+
+        If you are here because this failed: the question to answer in the PR is
+        whether the persona differs by *which projects* it touches, in which case
+        it is project membership and not a global role.
+        """
+        assert set(ROLE_DEFINITIONS) == {
+            # global
+            "member", "demux_operator", "lab_manager", "platform_admin",
+            "service_account", "auditor", "admin",
+            # project
+            "project_viewer", "project_contributor", "project_owner",
+        }
+
+    def test_every_global_role_beyond_member_adds_a_write(self):
+        """
+        The justification rule, as an assertion. A global role that adds only
+        reads is re-implementing project scoping in the global plane, which is
+        what this design exists to avoid. `auditor` is the documented exception:
+        read-everything is its entire purpose.
+        """
+        member = ROLE_DEFINITIONS["member"].permissions
+        reads_only = set()
+        for name, role in ROLE_DEFINITIONS.items():
+            if role.scope is not RoleScope.GLOBAL or name in ("member", "auditor"):
+                continue
+            added = {str(p) for p in role.permissions - member}
+            if added and all(
+                p.endswith((":read", ":read_all", ":query")) for p in added
+            ):
+                reads_only.add(name)
+        assert reads_only == set(), (
+            f"{sorted(reads_only)} add only read permissions beyond member. "
+            f"If the persona differs by which projects it touches, that is "
+            f"project membership, not a global role."
+        )
+
     def test_all_referenced_permissions_exist(self):
         for name, role in ROLE_DEFINITIONS.items():
             assert role.permissions <= ALL_PERMISSIONS, name

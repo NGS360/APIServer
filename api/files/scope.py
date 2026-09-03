@@ -25,13 +25,36 @@ and on a run resolves *strictly*, through its project. Widening it through the r
 would quietly turn the strict case into the permissive one, which is the mistake
 this ordering exists to prevent.
 
-A URI that resolves to nothing is not downloadable. That is deliberate: the
-requirement is that a caller without permission on a project cannot download its
-files, and "this file belongs to no project" is not evidence of permission. It is
-reported distinctly from a denial so the unresolvable surface can be measured
-rather than guessed at.
+**Path inference, as a last resort.** A URI with no association at all, but which
+sits under a project id inside the configured data or results bucket, is treated
+as belonging to that project. This was added deliberately after production
+measurement: 63 of 75 unresolvable download attempts were pipeline *output* --
+zUMIs count matrices, multiqc reports, WES variant calls -- written to
+`<results-bucket>/<project-id>/...` and never registered as File rows. Those are
+the scientific product, they plainly belong to the project whose id is in the
+path, and refusing them would refuse the most legitimate traffic on the endpoint.
+
+Two constraints make this safe rather than a hole, and both matter:
+
+* **Only the configured DATA_BUCKET_URI and RESULTS_BUCKET_URI count.** The guard
+  decides whether to mint a presigned URL against our own S3 credentials, so
+  inferring a project from *any* bucket would let a member of project X reach any
+  object whose key happens to contain that project id, anywhere the API's role can
+  read. Restricting to the two buckets the platform itself writes keeps the
+  inference inside data NGS360 already owns.
+* **The project must exist.** A path naming a project that is not in the database
+  resolves to nothing; it does not invent a scope.
+
+Inference runs last, after every real association, and is reported as its own
+origin so the proportion of access granted by convention rather than by record
+stays visible -- and can be watched shrinking as pipelines start registering their
+outputs.
+
+A URI that resolves to nothing even then is not downloadable. "This file belongs
+to no project" is not evidence of permission.
 """
 
+import re
 import uuid
 from dataclasses import dataclass
 from typing import Literal
@@ -42,9 +65,20 @@ from api.files.models import File, FileProject, FileSample, FileSequencingRun
 from api.project.models import Project
 from api.runs.models import SampleSequencingRun
 from api.samples.models import Sample
+from api.settings.services import get_setting_value
 
-#: How a URI was resolved. Recorded on the access log so the mix is measurable.
-Origin = Literal["project", "sample", "run", "unregistered", "unassociated"]
+#: Project ids are generated as P-YYYYMMDD-NNNN by generate_project_id. Anchored to
+#: a path segment so a substring inside a filename cannot be mistaken for one.
+_PROJECT_ID = re.compile(r"(?:^|/)(P-\d{8}-\d{4})(?:/|$)")
+
+#: The settings naming the buckets the platform writes. Inference is confined to
+#: these; see the module docstring for why that is the security boundary.
+_OWNED_BUCKET_SETTINGS = ("DATA_BUCKET_URI", "RESULTS_BUCKET_URI")
+
+#: How a URI was resolved. Recorded on the access log so the mix is measurable --
+#: in particular "path", which is access granted by naming convention rather than
+#: by a registered association and should trend towards zero.
+Origin = Literal["project", "sample", "run", "path", "unregistered", "unassociated"]
 
 
 @dataclass(frozen=True)
@@ -111,6 +145,47 @@ def _projects_via_run(session: Session, file_ids: list[uuid.UUID]) -> set[uuid.U
     ).all())
 
 
+def _normalise(uri: str) -> str:
+    """Strip a trailing slash so bucket prefixes compare cleanly."""
+    return (uri or "").rstrip("/")
+
+
+def _project_from_path(session: Session, uri: str) -> set[uuid.UUID]:
+    """
+    The project whose id appears in this URI, if the URI is in a bucket we own.
+
+    Returns an empty set unless *all* of the following hold: the URI sits under
+    DATA_BUCKET_URI or RESULTS_BUCKET_URI, a path segment matches the project-id
+    format, and a project with that id exists. Anything less resolves to nothing
+    rather than to a guess.
+    """
+    target = _normalise(uri)
+
+    # Unset settings must not become an empty prefix that matches everything --
+    # that would extend inference to every bucket the API can read.
+    prefixes = [
+        b for b in (_normalise(get_setting_value(session, key))
+                    for key in _OWNED_BUCKET_SETTINGS) if b
+    ]
+    # Longest match, so a results bucket nested inside a data bucket strips the
+    # more specific prefix rather than leaving "results/" in the path.
+    matched = max(
+        (p for p in prefixes if target.startswith(p + "/")),
+        key=len, default=None,
+    )
+    if matched is None:
+        return set()
+
+    match = _PROJECT_ID.search(target[len(matched):])
+    if not match:
+        return set()
+
+    project_id = session.exec(
+        select(Project.id).where(Project.project_id == match.group(1))
+    ).first()
+    return {project_id} if project_id else set()
+
+
 def scope_for_uri(session: Session, uri: str) -> FileScope:
     """
     Which projects govern this URI. See the module docstring for the policy.
@@ -120,6 +195,9 @@ def scope_for_uri(session: Session, uri: str) -> FileScope:
     """
     file_ids = _file_ids(session, uri)
     if not file_ids:
+        inferred = _project_from_path(session, uri)
+        if inferred:
+            return FileScope(frozenset(inferred), "path")
         return FileScope(frozenset(), "unregistered")
 
     direct = _projects_direct(session, file_ids)
@@ -132,5 +210,12 @@ def scope_for_uri(session: Session, uri: str) -> FileScope:
     via_run = _projects_via_run(session, file_ids)
     if via_run:
         return FileScope(frozenset(via_run), "run")
+
+    # Registered but associated with nothing: fall through to the path, same as
+    # an unregistered URI. A File row with no associations tells us no more about
+    # ownership than no File row at all.
+    inferred = _project_from_path(session, uri)
+    if inferred:
+        return FileScope(frozenset(inferred), "path")
 
     return FileScope(frozenset(), "unassociated")
