@@ -38,6 +38,7 @@ def get_batch_jobs(
     user: str | None = None,
     status_filter: JobStatus | None = None,
     project_id: str | None = None,
+    sequencing_run_id: str | None = None,
     sort_by: str = "submitted_on",
     sort_order: Literal["asc", "desc"] = "desc"
 ) -> tuple[List[BatchJob], int]:
@@ -51,6 +52,7 @@ def get_batch_jobs(
         user: Optional user filter
         status_filter: Optional status filter
         project_id: Optional project filter (Project.project_id business key)
+        sequencing_run_id: Optional run filter (SequencingRun.run_id business key)
         sort_by: Field to sort by (defaults to 'submitted_on')
         sort_order: Sort order 'asc' or 'desc' (defaults to 'desc')
 
@@ -65,6 +67,8 @@ def get_batch_jobs(
         query = query.where(BatchJob.status == status_filter)
     if project_id:
         query = query.where(BatchJob.project_id == project_id)
+    if sequencing_run_id:
+        query = query.where(BatchJob.sequencing_run_id == sequencing_run_id)
 
     # Get total count
     count_query = select(func.count()).select_from(query.subquery())
@@ -118,7 +122,8 @@ def submit_batch_job(
     job_def: str,
     job_queue: str,
     user: str,
-    project_id: str | None = None
+    project_id: str | None = None,
+    sequencing_run_id: str | None = None
 ) -> BatchJob:
     """
     Submit a job to AWS Batch and create a database record for tracking.
@@ -133,6 +138,10 @@ def submit_batch_job(
         project_id: Owning project's business key, when the submission has a
             project in scope. Left None for project-agnostic work such as
             flowcell demultiplexing.
+        sequencing_run_id: Business key of the sequencing run the job was
+            submitted against, when there is one. Set independently of
+            project_id: demultiplexing has a run and no project, and a
+            project-scoped pipeline job may carry both.
 
     Returns:
         BatchJob: The created database record with AWS job information
@@ -174,7 +183,8 @@ def submit_batch_job(
         command=command,
         user=user,
         status=JobStatus.SUBMITTED,
-        project_id=project_id
+        project_id=project_id,
+        sequencing_run_id=sequencing_run_id
     )
     session.add(job)
     session.commit()

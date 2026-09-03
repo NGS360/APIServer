@@ -325,6 +325,89 @@ class TestJobsAPI:
         response = client.get("/api/v1/jobs?project_id=P-00000000-0000")
         assert response.json()["count"] == 0
 
+    def test_get_jobs_filtered_by_sequencing_run(self, client: TestClient, session: Session):
+        """Test filtering jobs by the sequencing run they were submitted against"""
+        session.add(BatchJob(
+            id="job-r1",
+            name="bcl2fastq-260506_VH01208_93_222FCGLNX",
+            command="echo hello",
+            user="user1",
+            status=JobStatus.SUBMITTED,
+            sequencing_run_id="260506_VH01208_93_222FCGLNX",
+        ))
+        session.add(BatchJob(
+            id="job-r2",
+            name="bcl2fastq-260507_VH01122_74_AAHMVYTM5",
+            command="echo hello",
+            user="user1",
+            status=JobStatus.SUBMITTED,
+            sequencing_run_id="260507_VH01122_74_AAHMVYTM5",
+        ))
+        # A job can belong to a run *and* a project; the run filter must find it
+        session.add(BatchJob(
+            id="job-r1-project",
+            name="pipeline-260506_VH01208_93_222FCGLNX",
+            command="echo hello",
+            user="user1",
+            status=JobStatus.SUBMITTED,
+            project_id="P-19900109-0001",
+            sequencing_run_id="260506_VH01208_93_222FCGLNX",
+        ))
+        # Work with no run at all must never leak into a run's table
+        session.add(BatchJob(
+            id="job-no-run",
+            name="create-project-P-19900109-0001",
+            command="echo hello",
+            user="user1",
+            status=JobStatus.SUBMITTED,
+            project_id="P-19900109-0001",
+        ))
+        session.commit()
+
+        response = client.get("/api/v1/jobs?sequencing_run_id=260506_VH01208_93_222FCGLNX")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["count"] == 2
+        assert {job["id"] for job in data["data"]} == {"job-r1", "job-r1-project"}
+
+        response = client.get("/api/v1/jobs?sequencing_run_id=260507_VH01122_74_AAHMVYTM5")
+        assert response.json()["count"] == 1
+
+        response = client.get("/api/v1/jobs?sequencing_run_id=000000_NOSUCHRUN_0_X")
+        assert response.json()["count"] == 0
+
+    def test_run_and_project_filters_are_independent(
+        self, client: TestClient, session: Session
+    ):
+        """The two filters narrow on different axes and compose with each other"""
+        session.add(BatchJob(
+            id="job-both",
+            name="pipeline-260506_VH01208_93_222FCGLNX",
+            command="echo hello",
+            user="user1",
+            status=JobStatus.SUBMITTED,
+            project_id="P-19900109-0001",
+            sequencing_run_id="260506_VH01208_93_222FCGLNX",
+        ))
+        session.add(BatchJob(
+            id="job-run-only",
+            name="bcl2fastq-260506_VH01208_93_222FCGLNX",
+            command="echo hello",
+            user="user1",
+            status=JobStatus.SUBMITTED,
+            sequencing_run_id="260506_VH01208_93_222FCGLNX",
+        ))
+        session.commit()
+
+        response = client.get(
+            "/api/v1/jobs?sequencing_run_id=260506_VH01208_93_222FCGLNX"
+            "&project_id=P-19900109-0001"
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["count"] == 1
+        assert data["data"][0]["id"] == "job-both"
+
     @patch("api.jobs.services.boto3.client")
     def test_get_job_by_id(self, mock_boto_client, client: TestClient):
         """Test getting a specific job by ID"""
@@ -642,6 +725,33 @@ class TestJobsServices:
         jobs, count = get_batch_jobs(session, project_id="P-19900109-0002")
         assert count == 0
 
+    def test_get_batch_jobs_sequencing_run_filter(self, session: Session):
+        """Test the sequencing_run_id filter composes with the other filters"""
+        from api.jobs.services import get_batch_jobs
+
+        run = "260506_VH01208_93_222FCGLNX"
+        for i in range(4):
+            session.add(BatchJob(
+                id=str(uuid.uuid4()),
+                name=f"job-{i}",
+                command=f"echo {i}",
+                user="user1" if i < 2 else "user2",
+                status=JobStatus.SUBMITTED,
+                sequencing_run_id=run if i < 3 else None,
+            ))
+        session.commit()
+
+        jobs, count = get_batch_jobs(session, sequencing_run_id=run)
+        assert count == 3
+        assert all(job.sequencing_run_id == run for job in jobs)
+
+        jobs, count = get_batch_jobs(session, user="user1", sequencing_run_id=run)
+        assert count == 2
+
+        # A null sequencing_run_id must never match a filtered query
+        jobs, count = get_batch_jobs(session, sequencing_run_id="000000_NOSUCHRUN_0_X")
+        assert count == 0
+
     def test_update_batch_job(self, session: Session):
         """Test updating a batch job"""
         from api.jobs.services import update_batch_job
@@ -731,6 +841,39 @@ class TestJobsServices:
         # Attribution must survive the round trip to the database
         session.expire_all()
         assert session.get(BatchJob, "aws-job-456").project_id == "P-19900109-0001"
+
+    @patch("api.jobs.services.boto3.client")
+    def test_submit_batch_job_persists_sequencing_run_id(
+        self, mock_boto_client, session: Session
+    ):
+        """Test submit_batch_job records the run a job was submitted against"""
+        from api.jobs.services import submit_batch_job
+
+        mock_batch = MagicMock()
+        mock_batch.submit_job.return_value = {
+            "jobId": "aws-job-789",
+            "jobName": "bcl2fastq-260506_VH01208_93_222FCGLNX",
+        }
+        mock_boto_client.return_value = mock_batch
+
+        job = submit_batch_job(
+            session=session,
+            job_name="bcl2fastq-260506_VH01208_93_222FCGLNX",
+            container_overrides={"command": ["echo", "hello"]},
+            job_def="test-def:1",
+            job_queue="test-queue",
+            user="testuser",
+            sequencing_run_id="260506_VH01208_93_222FCGLNX",
+        )
+
+        assert job.sequencing_run_id == "260506_VH01208_93_222FCGLNX"
+        # A run-scoped submission carries no project: demultiplexing a flowcell
+        # spans every project with samples on it.
+        assert job.project_id is None
+
+        session.expire_all()
+        persisted = session.get(BatchJob, "aws-job-789")
+        assert persisted.sequencing_run_id == "260506_VH01208_93_222FCGLNX"
 
     @patch("api.jobs.services.boto3.client")
     def test_submit_batch_job_aws_error(self, mock_boto_client, session: Session):
