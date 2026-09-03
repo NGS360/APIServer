@@ -127,6 +127,7 @@ def submit_job(
         job_def=job_in.job_definition,
         job_queue=job_in.job_queue,
         user=job_in.user,
+        project_id=job_in.project_id,
     )
     return BatchJobPublic.model_validate(job)
 
@@ -142,6 +143,9 @@ def get_jobs(
     limit: int = Query(100, ge=1, le=1000),
     user: Optional[str] = Query(None, description="Filter by user"),
     status_filter: Optional[JobStatus] = Query(None, description="Filter by status"),
+    project_id: Optional[str] = Query(
+        None, description="Filter by owning project (Project.project_id, e.g. P-19900109-0001)"
+    ),
     sort_by: str = Query("submitted_on", description="Field to sort by"),
     sort_order: Literal["asc", "desc"] = Query("desc", description="Sort order (asc or desc)"),
 ) -> BatchJobsPublic:
@@ -154,6 +158,7 @@ def get_jobs(
         limit: Maximum number of records to return
         user: Optional user filter
         status_filter: Optional status filter
+        project_id: Optional project filter
         sort_by: Field to sort by (defaults to 'submitted_on')
         sort_order: Sort order 'asc' or 'desc' (defaults to 'desc')
 
@@ -166,6 +171,7 @@ def get_jobs(
         limit=limit,
         user=user,
         status_filter=status_filter,
+        project_id=project_id,
         sort_by=sort_by,
         sort_order=sort_order,
     )

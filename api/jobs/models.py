@@ -4,6 +4,7 @@ Models for the Jobs API
 from typing import Any, Optional
 from datetime import datetime, timezone
 from enum import Enum
+from sqlalchemy import Index
 from sqlmodel import SQLModel, Field
 from pydantic import BaseModel, ConfigDict
 
@@ -31,6 +32,19 @@ class BatchJob(SQLModel, table=True):
     log_stream_name: str | None = Field(default=None, max_length=255)
     status: JobStatus = Field(default=JobStatus.SUBMITTED)
     viewed: bool = Field(default=False)
+    # Business key of the owning project (Project.project_id, e.g. P-19900109-0001).
+    # Nullable and deliberately not a foreign key: flowcell-level jobs such as
+    # demultiplexing span many projects, and the unauthenticated POST /jobs
+    # endpoint accepts caller-supplied values that must not be able to 500 on a
+    # constraint violation.
+    project_id: str | None = Field(default=None, max_length=255)
+
+    # Composite rather than an index on project_id alone: every read is "jobs
+    # for project X, newest first", and covering the sort avoids a filesort
+    # over the wide command column.
+    __table_args__ = (
+        Index("ix_batchjob_project_id_submitted_on", "project_id", "submitted_on"),
+    )
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -52,6 +66,7 @@ class BatchJobPublic(SQLModel):
     log_stream_name: str | None
     status: JobStatus
     viewed: bool
+    project_id: str | None = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -80,6 +95,7 @@ class AwsBatchConfig(SQLModel):
 class BatchJobSubmit(AwsBatchConfig):
     """Schema for submitting a new batch job to AWS Batch (extends AwsBatchConfig)"""
     user: str
+    project_id: Optional[str] = None
 
 
 class BatchJobConfigInput(BaseModel):

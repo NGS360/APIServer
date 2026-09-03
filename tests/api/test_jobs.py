@@ -283,6 +283,48 @@ class TestJobsAPI:
         assert data["count"] == 1
         assert data["data"][0]["user"] == "user1"
 
+    def test_get_jobs_filtered_by_project(self, client: TestClient, session: Session):
+        """Test filtering jobs by owning project"""
+        session.add(BatchJob(
+            id="job-p1",
+            name="create-project-P-19900109-0001",
+            command="echo hello",
+            user="user1",
+            status=JobStatus.SUBMITTED,
+            project_id="P-19900109-0001",
+        ))
+        session.add(BatchJob(
+            id="job-p2",
+            name="create-project-P-19900109-0002",
+            command="echo hello",
+            user="user1",
+            status=JobStatus.SUBMITTED,
+            project_id="P-19900109-0002",
+        ))
+        # Flowcell-level work is not attributable to a single project
+        session.add(BatchJob(
+            id="job-demux",
+            name="bcl2fastq-run",
+            command="echo hello",
+            user="user1",
+            status=JobStatus.SUBMITTED,
+        ))
+        session.commit()
+
+        response = client.get("/api/v1/jobs?project_id=P-19900109-0001")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["count"] == 1
+        assert data["data"][0]["id"] == "job-p1"
+        assert data["data"][0]["project_id"] == "P-19900109-0001"
+
+        # Unattributed jobs are excluded rather than leaking into every project
+        response = client.get("/api/v1/jobs")
+        assert response.json()["count"] == 3
+
+        response = client.get("/api/v1/jobs?project_id=P-00000000-0000")
+        assert response.json()["count"] == 0
+
     @patch("api.jobs.services.boto3.client")
     def test_get_job_by_id(self, mock_boto_client, client: TestClient):
         """Test getting a specific job by ID"""
@@ -572,6 +614,34 @@ class TestJobsServices:
         )
         assert count == 2
 
+    def test_get_batch_jobs_project_filter(self, session: Session):
+        """Test the project_id filter composes with the other filters"""
+        from api.jobs.services import get_batch_jobs
+
+        for i in range(4):
+            session.add(BatchJob(
+                id=str(uuid.uuid4()),
+                name=f"job-{i}",
+                command=f"echo {i}",
+                user="user1" if i < 2 else "user2",
+                status=JobStatus.SUBMITTED,
+                project_id="P-19900109-0001" if i < 3 else None,
+            ))
+        session.commit()
+
+        jobs, count = get_batch_jobs(session, project_id="P-19900109-0001")
+        assert count == 3
+        assert all(job.project_id == "P-19900109-0001" for job in jobs)
+
+        jobs, count = get_batch_jobs(
+            session, user="user1", project_id="P-19900109-0001"
+        )
+        assert count == 2
+
+        # A null project_id must never match a filtered query
+        jobs, count = get_batch_jobs(session, project_id="P-19900109-0002")
+        assert count == 0
+
     def test_update_batch_job(self, session: Session):
         """Test updating a batch job"""
         from api.jobs.services import update_batch_job
@@ -631,6 +701,36 @@ class TestJobsServices:
         assert job.status == JobStatus.SUBMITTED
         assert job.user == "testuser"
         assert "echo hello" in job.command
+        # Project-agnostic submissions stay unattributed
+        assert job.project_id is None
+
+    @patch("api.jobs.services.boto3.client")
+    def test_submit_batch_job_persists_project_id(self, mock_boto_client, session: Session):
+        """Test submit_batch_job records the owning project when one is in scope"""
+        from api.jobs.services import submit_batch_job
+
+        mock_batch = MagicMock()
+        mock_batch.submit_job.return_value = {
+            "jobId": "aws-job-456",
+            "jobName": "create-project-P-19900109-0001",
+        }
+        mock_boto_client.return_value = mock_batch
+
+        job = submit_batch_job(
+            session=session,
+            job_name="create-project-P-19900109-0001",
+            container_overrides={"command": ["echo", "hello"]},
+            job_def="test-def:1",
+            job_queue="test-queue",
+            user="testuser",
+            project_id="P-19900109-0001",
+        )
+
+        assert job.project_id == "P-19900109-0001"
+
+        # Attribution must survive the round trip to the database
+        session.expire_all()
+        assert session.get(BatchJob, "aws-job-456").project_id == "P-19900109-0001"
 
     @patch("api.jobs.services.boto3.client")
     def test_submit_batch_job_aws_error(self, mock_boto_client, session: Session):
