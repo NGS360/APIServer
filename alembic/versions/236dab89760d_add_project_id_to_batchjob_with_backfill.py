@@ -1,7 +1,7 @@
 """add project_id to batchjob with backfill
 
 Revision ID: 236dab89760d
-Revises: e5f92c1b7d34
+Revises: f7a2c9e14b60
 Create Date: 2026-08-28 17:40:36.188055
 
 """
@@ -14,7 +14,7 @@ import sqlmodel
 
 # revision identifiers, used by Alembic.
 revision: str = '236dab89760d'
-down_revision: Union[str, Sequence[str], None] = 'e5f92c1b7d34'
+down_revision: Union[str, Sequence[str], None] = 'f7a2c9e14b60'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
