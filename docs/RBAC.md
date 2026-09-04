@@ -169,6 +169,32 @@ Global roles compose meaningfully — `member` plus `service_account` is a legit
 
 **A note on naming.** The schema already uses `role` as a column name with an unrelated meaning: `FileProject.role` holds values like `"samplesheet"`, and `FileSample.role` holds `"tumor"` / `"normal"`. Throughout this design, an RBAC role is always the `role` table or a `role_id` column. The existing columns are untouched.
 
+### Provenance: `created_by` is a claim, `submitted_by` is a fact
+
+`file.created_by` is client-supplied. Known Gap 2 called that actor-field spoofing and prescribed the obvious fix: once the route is authenticated, overwrite the field from the principal. A branch doing exactly that was opened as [#417](https://github.com/NGS360/APIServer/pull/417) and closed unmerged, because the production data says the premise is wrong.
+
+| | |
+|---|---|
+| `file` rows | 634,353 |
+| rows carrying a `created_by` | 39,459 |
+| claims that resolve to a real account | 39,459 — **none bogus** |
+| distinct people named | 42 |
+| of those 42, holding an API key | **2** |
+| `source` on every attributed row | `NGS360_demux` |
+
+The field is not being abused. It is being used correctly, as an *on behalf of* channel: one demux pipeline, running on one credential, registers files for the scientist who requested the run. Forty of the forty-two people named have no credential of their own, so overwriting `created_by` with the caller would have replaced all of them with a single service key's owner — and `created_by` is the only attribution those 39,459 rows have.
+
+The actual defect was never spoofing. It was that one column was being asked to answer two different questions, and could only ever answer the softer one honestly:
+
+- **`created_by` — who the work was for.** Necessarily a claim, because the person named is usually not the caller. Kept as client input, now validated against `users` and stored in that account's own spelling. Validation is the part that was genuinely missing: it stops the column decaying into free text without taking away the delegation. It rejects nothing that production sends today.
+- **`submitted_by` — who made the call.** Set from the authenticated principal, rejected with 422 if a request tries to supply it. This is the integrity half, and it is purely additive.
+
+Neither field is updatable. `FileUpdate` forbids both: `submitted_by` is derived by definition, and correcting an attribution should be a deliberate, auditable act rather than a field on a PATCH whose documented purpose is fixing a URI.
+
+`submitted_by` is nullable and deliberately **not** backfilled. For rows written before it existed the submitter is genuinely unknown; `source` already records the submitting *system*. Deriving a principal from a system name would put a value nobody asserted into an accountability column, which is worse than a null.
+
+Two things generalise. **An unauthenticated write path cannot be made accountable by tightening the payload** — until `POST /files` carries a guard, `submitted_by` is null for anonymous callers, and that is the honest answer rather than a bug. And **a documented gap can be wrong about its own remedy**: this one had been sitting in the design for weeks, was specific and confident, and would have destroyed real data. What caught it was querying production instead of reasoning from a sample — an earlier read of 40 rows from a single pipeline had suggested `created_by` was universally null.
+
 ## Permission Catalog
 
 57 permissions across 18 resources. **Scope** is `G` for global-only (may not appear in a project role) or `P` for project-scopable (may appear in either plane). **Risk** indicates blast radius, for the benefit of anyone composing a custom role.
@@ -1184,7 +1210,9 @@ Project-scoped permissions are **not** inlined into `/auth/me`; with a five-figu
 
 **403 versus 404:** return **404 for reads of resources the caller cannot see**, and **403 for writes or actions on resources they can see**. NGS360 project identifiers are semantically meaningful, so existence disclosure matters. This choice determines what every test asserts and what the UI renders, so it must be settled before Phase 4.
 
-**`POST /files/upload` `created_by`:** accepted-and-ignored from Phase 1c with a deprecation header, so the generated client keeps compiling; removed in Phase 5.
+**`POST /files/upload` `created_by`:** kept, not deprecated. See [Provenance](#provenance-created_by-is-a-claim-submitted_by-is-a-fact) — the field is a legitimate delegation channel, and removing it would leave 40 of the 42 people it names with no attribution anywhere. It is now validated against `users`, which is a narrowing: a request naming an unknown account gets 422 where it previously succeeded. Zero of the 39,459 claims in production would be rejected, so no deployed client is affected.
+
+`submitted_by` is additive on `FilePublic` and is rejected (422) on both `FileCreate` and `FileUpdate` — it is server-derived by definition. `created_by` is also now rejected on `FileUpdate`; production has issued no `PATCH /files` request in the last 30 days.
 
 ## Testing
 
@@ -1331,7 +1359,7 @@ Both are audited. A read-only script wrapper provides break-glass when the API i
 These are limitations of the design or pre-existing problems that RBAC interacts with. They are recorded here rather than left implicit.
 
 1. ~~**`PUT /api/v1/settings/{key}` is unauthenticated in production today.**~~ **Resolved** in [#361](https://github.com/NGS360/APIServer/pull/361) — now requires `CurrentSuperuser`. `GET /settings` and `GET /settings/{key}` remain open, pending Phase 1d.
-2. **Actor-field spoofing must be fixed alongside Phase 1c, or RBAC is theatre.** `POST /files/upload` accepts `created_by` as a client-supplied form field (`api/files/routes.py:89`), and `FileCreate` / `FileUpdate` accept it on the JSON paths. Once authenticated, these must be overwritten from the principal server-side. The ownership backfill depends on provenance that is currently caller-asserted.
+2. ~~**Actor-field spoofing must be fixed alongside Phase 1c, or RBAC is theatre.**~~ **Resolved differently than this item originally proposed** — see [Provenance: `created_by` is a claim, `submitted_by` is a fact](#provenance-created_by-is-a-claim-submitted_by-is-a-fact). The original prescription was to overwrite `created_by` from the authenticated principal. Production data showed that would have destroyed the attribution of 39,459 files belonging to 42 scientists, 40 of whom hold no credential at all. `created_by` is now validated rather than overwritten, and a separate server-set `submitted_by` carries accountability.
 3. **No offboarding path.** With local database assignment and no directory sync, grants only accumulate: a departed employee retains roles, memberships, and API keys indefinitely. An access-control system with no revocation path is weaker than the honest absence of one. v1 requires at minimum a periodic job reporting users no longer resolvable in LDAP — the plumbing already exists (`LDAP_ENABLED=true` in staging and prod, `api/users/ldap_service.py`) — even if it only produces a report.
 4. **Direct-database bypass channels.** `ngs360-sql-langgraph-agent` runs natural-language SQL across the whole schema; `APIServer/scripts/*` and the ETL write directly to the database and S3. API-level RBAC is a partial control while these exist, and they also bypass the audit trail. Named owners and a follow-up are required; least-privilege database users are the mechanism.
 5. **OpenSearch is not ACL-aware**, so the five `*/search` endpoints remain global-read behind `search:query` in v1. The runs index has no project field at all, so run search stays global even after an ACL index lands.
