@@ -386,7 +386,25 @@ class FileCreate(SQLModel):
     size: int | None = None
     created_on: datetime | None = None  # File timestamp - defaults to now if not provided
     source: str | None = None  # Origin of file record
-    created_by: str | None = None
+    # Accepted and IGNORED. The route sets the author from the authenticated
+    # caller instead -- see _authored_by in api/files/routes.py.
+    #
+    # Not simply deleted, because this model sets extra="forbid": removing the
+    # field turns a request that sends it into a 422, and one caller registers
+    # ~1,500 files a week here. The database cannot distinguish "key absent"
+    # from "key present and null", so whether that caller would break is not
+    # knowable from the data -- and breaking a registration pipeline to correct
+    # a field nobody reads is the wrong trade.
+    #
+    # The route logs when a value arrives, so the field can be removed outright
+    # once the log shows nobody sends one.
+    created_by: str | None = Field(
+        default=None,
+        description=(
+            "DEPRECATED and ignored. The author is taken from the "
+            "authenticated caller; any value sent here is discarded."
+        ),
+    )
     storage_backend: str | None = None
     project_id: str | None = None  # String business key, resolved to UUID at service layer
 
@@ -593,7 +611,9 @@ class FileUpdate(SQLModel):
     original_filename: str | None = None
     size: int | None = None
     source: str | None = None
-    created_by: str | None = None
+    # created_by is deliberately absent. Rewriting who authored an existing
+    # file is not a legitimate operation -- it is editing history, not fixing
+    # data. The documented use case for this endpoint is correcting a URI.
     storage_backend: str | None = None
 
     model_config = ConfigDict(extra="forbid")

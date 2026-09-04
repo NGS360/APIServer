@@ -54,12 +54,18 @@ except ImportError:
 def create_file(
     session: Session,
     file_create: FileCreate,
+    created_by: str | None = None,
 ) -> File:
     """
     Create a new file record with all associations.
 
     This is the main function for creating files from external references
     (e.g., from pipeline outputs, manifests, etc.)
+
+    `created_by` is passed separately rather than read off file_create, because
+    it is no longer a client-supplied field -- the route derives it from the
+    authenticated caller. Keeping it a plain string argument matches the
+    convention that services receive data, not User objects.
 
     Note: Same URI can exist multiple times with different created_on timestamps.
     This enables versioning - each call creates a new version.
@@ -76,7 +82,7 @@ def create_file(
         uri=file_create.uri,
         original_filename=file_create.original_filename,
         size=file_create.size,
-        created_by=file_create.created_by,
+        created_by=created_by,
         source=file_create.source,
         storage_backend=file_create.storage_backend,
     )

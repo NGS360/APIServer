@@ -10,6 +10,7 @@ Endpoints:
 - GET /api/files/download - Download file from S3
 """
 
+import logging
 from typing import Optional
 import uuid
 
@@ -31,13 +32,57 @@ from api.files.models import (
     file_to_public,
 )
 from api.files import services
-from api.auth.deps import CurrentSuperuser
+from api.auth.deps import CurrentSuperuser, OptionalUser
 from api.files.scope import scope_for_uri
 from api.rbac.deps import AuthzDep, decide, require_permission
 from api.rbac.permissions import Permission
 from core.deps import get_s3_client, SessionDep
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/files", tags=["File Endpoints"])
+
+
+def _authored_by(current_user, claimed: str | None = None) -> str | None:
+    """
+    Who to record as the author of a file record.
+
+    Previously both create endpoints took `created_by` from the client -- a JSON
+    field on one, a form field on the other -- so provenance was whatever the
+    caller asserted. The ownership backfill and the project-creator fix both
+    derive authorship from the authenticated user, so the two halves of the system
+    disagreed about whether to trust the caller.
+
+    Measured before changing it: every row registered through these endpoints had
+    a **null** created_by. No caller was passing anything, so deriving it loses no
+    attribution and gains a real one. Matches how QCRecordCreate has always
+    worked.
+
+    Returns None for an anonymous caller rather than falling back to a client
+    value. Both routes are still open (see AWAITING_AUTHENTICATION in
+    tests/test_route_coverage.py), and "an anonymous caller claims to be X" is
+    worse provenance than null, because null is honest. This is why the parameter
+    is OptionalUser and not CurrentUser: requiring authentication here would close
+    two routes as a side effect of a provenance fix, which is a separate decision
+    with its own consumer migration.
+
+    `claimed` is whatever the caller sent. It is discarded, and logged at WARNING
+    when non-null, so the field can be deleted outright once the log shows nobody
+    sends one. FileCreate sets extra="forbid", so deleting it today would turn a
+    request that sends the key into a 422 -- and one caller registers roughly
+    1,500 files a week through this endpoint. The database cannot distinguish
+    "key absent" from "key present and null", so that risk is not measurable from
+    the data; it is measurable from this log line.
+    """
+    author = current_user.username if current_user else None
+    if claimed is not None:
+        logger.warning(
+            "discarding client-supplied created_by=%r; recording %r instead",
+            claimed, author,
+            extra={"event": "files.created_by_discarded",
+                   "claimed": claimed, "recorded": author},
+        )
+    return author
 
 
 @router.post(
@@ -49,12 +94,16 @@ router = APIRouter(prefix="/files", tags=["File Endpoints"])
 def create_file(
     session: SessionDep,
     file_create: FileCreate,
+    current_user: OptionalUser = None,
 ) -> FilePublic:
     """
     Create a new file record (external reference).
 
     This endpoint is for registering files that already exist in storage
     (e.g., pipeline outputs). For file uploads, use the form-data endpoint.
+
+    `created_by` is set from the authenticated caller and is not accepted from
+    the request body -- see _authored_by.
 
     - **uri**: Required. File location (s3://, file://, etc.)
     - **original_filename**: Optional. Original filename before any renaming
@@ -70,7 +119,13 @@ def create_file(
     Note: Same URI can be registered multiple times with different timestamps,
     enabling versioning. Each POST creates a new version.
     """
-    file_record = services.create_file(session, file_create)
+    # Passed explicitly rather than set on the model: created_by is no longer a
+    # field on FileCreate, so the schema cannot advertise it as an input, and the
+    # identity stays a route-layer concern.
+    file_record = services.create_file(
+        session, file_create,
+        created_by=_authored_by(current_user, file_create.created_by),
+    )
     return file_to_public(file_record)
 
 
@@ -82,6 +137,7 @@ def create_file(
 )
 def upload_file(
     session: SessionDep,
+    current_user: OptionalUser = None,
     filename: str = Form(...),
     project_id: Optional[str] = Form(None, description="Project business key"),
     sequencing_run_id: Optional[uuid.UUID] = Form(None, description="SequencingRun UUID"),
@@ -91,7 +147,6 @@ def upload_file(
     overwrite: bool = Form(False),
     description: Optional[str] = Form(None),
     is_public: bool = Form(False),
-    created_by: Optional[str] = Form(None),
     role: Optional[str] = Form(None),
     content: Optional[UploadFile] = FastAPIFile(None),
     s3_client=Depends(get_s3_client),
@@ -108,7 +163,6 @@ def upload_file(
     - **overwrite**: If True, creates a new version if file exists
     - **description**: Optional file description
     - **is_public**: Whether file is publicly accessible
-    - **created_by**: User who uploaded the file
     - **role**: Optional role (e.g., samplesheet)
     - **content**: Optional file content
 
@@ -128,7 +182,7 @@ def upload_file(
             qcrecord_id=qcrecord_id,
             pipeline_id=pipeline_id,
             is_public=is_public,
-            created_by=created_by,
+            created_by=_authored_by(current_user),
             relative_path=relative_path,
             overwrite=overwrite,
             role=role,

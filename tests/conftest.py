@@ -788,9 +788,16 @@ def _make_client(
     app.dependency_overrides[get_s3_client] = lambda: mock_s3_client
 
     if user is not None:
-        from api.auth.deps import get_current_user
+        from api.auth.deps import get_current_user, optional_current_user
 
         app.dependency_overrides[get_current_user] = lambda: user
+        # optional_current_user is not built on get_current_user -- it parses the
+        # token itself and returns None on failure. Overriding only the former
+        # left every route using OptionalUser seeing an anonymous caller in
+        # tests, which made those routes effectively untestable: a provenance
+        # test asserting "the author is the caller" silently got None and failed
+        # for a reason that had nothing to do with the code under test.
+        app.dependency_overrides[optional_current_user] = lambda: user
 
     try:
         yield TestClient(app)
