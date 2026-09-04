@@ -20,11 +20,25 @@ Usage:
     # user and its roles alone. Note the per-user active-key limit still applies.
 
 The raw key is printed once and never recoverable -- only its hash is stored.
-Capture it straight into the secret it belongs in, for example:
+Capture it straight into the secret it belongs in. put-secret-value replaces the
+whole SecretString, so read the current value, set just the one key with jq, and
+write the merged result back -- otherwise every other key in the secret is lost:
 
     aws secretsmanager put-secret-value \\
         --secret-id <secret> \\
-        --secret-string "{\\"NGS360_API_TOKEN\\":\\"<key>\\"}"
+        --secret-string "$(aws secretsmanager get-secret-value \\
+            --secret-id <secret> \\
+            --query SecretString \\
+            --output text | jq '.NGS360_API_TOKEN = "<key>"')"
+
+The merge form needs an existing secret whose SecretString is already JSON. For a
+brand-new secret there is nothing to merge into, so seed the full object once with
+the literal JSON -- create-secret if the secret does not exist yet, otherwise a
+plain put-secret-value -- and use the merge form for every write after that:
+
+    aws secretsmanager create-secret \\
+        --name <secret> \\
+        --secret-string '{"NGS360_API_TOKEN":"<key>"}'
 
 Rotation is two runs, in this order -- mint, deploy, then retire:
 
@@ -455,9 +469,12 @@ def main() -> int:
     print("API key (shown once, not recoverable):")
     print(f"  {raw}")
     print()
-    print("Store it now, e.g.:")
+    print("Store it now. put-secret-value replaces the whole SecretString, so")
+    print("merge into the current value with jq rather than overwriting it:")
     print("  aws secretsmanager put-secret-value --secret-id <secret> \\")
-    print(f'      --secret-string \'{{"NGS360_API_TOKEN":"{raw}"}}\'')
+    print("      --secret-string \"$(aws secretsmanager get-secret-value \\")
+    print("          --secret-id <secret> --query SecretString --output text \\")
+    print(f"          | jq '.NGS360_API_TOKEN = \"{raw}\"')\"")
 
     # Only worth saying when there is in fact something left to retire: on a
     # brand-new account this key is the only one, and pointing at --revoke-key
