@@ -31,7 +31,7 @@ from api.files.models import (
     file_to_public,
 )
 from api.files import services
-from api.auth.deps import CurrentSuperuser
+from api.auth.deps import CurrentSuperuser, OptionalUser
 from api.files.scope import scope_for_uri
 from api.rbac.deps import AuthzDep, decide, require_permission
 from api.rbac.permissions import Permission
@@ -49,6 +49,7 @@ router = APIRouter(prefix="/files", tags=["File Endpoints"])
 def create_file(
     session: SessionDep,
     file_create: FileCreate,
+    current_user: OptionalUser = None,
 ) -> FilePublic:
     """
     Create a new file record (external reference).
@@ -66,11 +67,21 @@ def create_file(
     - **samples**: Sample associations with optional roles (tumor/normal)
     - **hashes**: Hash values by algorithm (md5, sha256, etc.)
     - **tags**: Key-value metadata (type, format, description, etc.)
+    - **created_by**: Optional. The person the file belongs to, which for
+      pipeline registrations is the scientist the work was done for rather
+      than the caller. Must name a known NGS360 account.
+
+    The authenticated caller is recorded separately as **submitted_by** and
+    cannot be set by the client.
 
     Note: Same URI can be registered multiple times with different timestamps,
     enabling versioning. Each POST creates a new version.
     """
-    file_record = services.create_file(session, file_create)
+    file_record = services.create_file(
+        session,
+        file_create,
+        submitted_by=current_user.username if current_user else None,
+    )
     return file_to_public(file_record)
 
 
@@ -95,6 +106,7 @@ def upload_file(
     role: Optional[str] = Form(None),
     content: Optional[UploadFile] = FastAPIFile(None),
     s3_client=Depends(get_s3_client),
+    current_user: OptionalUser = None,
 ) -> FilePublic:
     """
     Upload a file with optional content.
@@ -108,7 +120,9 @@ def upload_file(
     - **overwrite**: If True, creates a new version if file exists
     - **description**: Optional file description
     - **is_public**: Whether file is publicly accessible
-    - **created_by**: User who uploaded the file
+    - **created_by**: Optional. The person the file belongs to, which need not
+      be the caller. Must name a known NGS360 account. The authenticated
+      caller is recorded separately as **submitted_by**.
     - **role**: Optional role (e.g., samplesheet)
     - **content**: Optional file content
 
@@ -144,7 +158,11 @@ def upload_file(
         file_content = content.file.read()
 
     file_record = services.create_file_upload(
-        session, s3_client, file_upload, file_content
+        session,
+        s3_client,
+        file_upload,
+        file_content,
+        submitted_by=current_user.username if current_user else None,
     )
     return file_to_public(file_record)
 
