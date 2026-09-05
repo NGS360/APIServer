@@ -571,10 +571,14 @@ def list_user_api_keys(
     return list(keys), count
 
 
-def revoke_user_api_key(
-    session: Session, user: User, key_id: str
-) -> APIKey:
-    """Revoke an API key (soft-disable)."""
+def _find_user_api_key(session: Session, user: User, key_id: str) -> APIKey:
+    """
+    Look up one of the caller's own API keys, or 404.
+
+    A malformed uuid returns 404 rather than 422 deliberately: to a caller who
+    does not own the key, "that is not a valid id" and "that key is not yours"
+    should be indistinguishable.
+    """
     import uuid as _uuid
 
     try:
@@ -595,11 +599,33 @@ def revoke_user_api_key(
             detail="API key not found",
         )
 
-    api_key.is_active = False
-    api_key.revoked_at = datetime.now(timezone.utc)
-    session.add(api_key)
-    session.commit()
-    session.refresh(api_key)
+    return api_key
+
+
+def revoke_user_api_key(
+    session: Session, user: User, key_id: str
+) -> APIKey:
+    """
+    Retire an API key: deny it at authentication, and record when.
+
+    Authentication filters on `is_active`, so clearing it is what actually stops
+    the credential. `revoked_at` is what makes the retirement auditable -- a key
+    with `is_active = False` and no `revoked_at` is indistinguishable from one
+    that was created and never switched on.
+
+    Idempotent. Re-revoking preserves the original timestamp, because the
+    question worth answering later is when the credential stopped being usable,
+    not when somebody last asked for it to stop.
+    """
+    api_key = _find_user_api_key(session, user, key_id)
+
+    if api_key.is_active or api_key.revoked_at is None:
+        api_key.is_active = False
+        if api_key.revoked_at is None:
+            api_key.revoked_at = datetime.now(timezone.utc)
+        session.add(api_key)
+        session.commit()
+        session.refresh(api_key)
 
     return api_key
 
@@ -607,26 +633,20 @@ def revoke_user_api_key(
 def delete_user_api_key(
     session: Session, user: User, key_id: str
 ) -> None:
-    """Hard-delete an API key."""
-    import uuid as _uuid
+    """
+    Retire an API key. Despite the name, this does not destroy the row.
 
-    try:
-        key_uuid = _uuid.UUID(key_id)
-    except ValueError:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="API key not found",
-        )
+    It used to. Hard-deleting an api_keys row removes the credential and every
+    trace that it existed -- name, owner, creation date, last use, and the fact
+    of retirement -- which makes "was that key ever active, and when was it
+    turned off?" unanswerable. That question came up in practice: one key was
+    hard-deleted during a superuser cleanup and there is now no record of it at
+    all, while the keys revoked in the same hour remain fully accountable.
 
-    api_key = session.exec(
-        select(APIKey).where(APIKey.id == key_uuid, APIKey.user_id == user.id)
-    ).first()
-
-    if not api_key:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="API key not found",
-        )
-
-    session.delete(api_key)
-    session.commit()
+    So DELETE and POST /revoke now do the same thing. The endpoint is kept
+    because clients call it, and the visible contract is unchanged in the way
+    that matters -- the key stops working immediately -- but it now leaves an
+    audit trail. The key remains in `GET /api-keys` with `is_active = false`;
+    that listing has never filtered revoked keys, so callers already handle it.
+    """
+    revoke_user_api_key(session, user, key_id)
