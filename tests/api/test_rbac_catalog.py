@@ -124,9 +124,55 @@ class TestRoleDefinitions:
             # global
             "member", "demux_operator", "lab_manager", "platform_admin",
             "service_account", "auditor", "admin",
+            "workflow_publisher", "workflow_admin",
             # project
             "project_viewer", "project_contributor", "project_owner",
         }
+
+    def test_workflow_publisher_cannot_delete(self):
+        """
+        Publishing a workflow and destroying one are different privileges.
+
+        The role exists because one caller needed create/update/deploy and held
+        only `member`; `workflow:delete` was never among the refusals and stays
+        out until it is. workflow_admin is the role that has it.
+        """
+        publisher = ROLE_DEFINITIONS["workflow_publisher"].permissions
+
+        assert Permission.WORKFLOW_CREATE in publisher
+        assert Permission.WORKFLOW_UPDATE in publisher
+        assert Permission.WORKFLOW_DEPLOY in publisher
+        assert Permission.WORKFLOW_DELETE not in publisher
+        assert publisher < ROLE_DEFINITIONS["workflow_admin"].permissions
+
+    def test_workflow_admin_covers_every_workflow_permission(self):
+        """
+        Derived from the catalog, not enumerated, so a new workflow:* permission
+        joins it automatically. For a role whose stated scope is "owns the
+        workflow catalog outright", silently narrowing when the catalog grows
+        would be the bug.
+        """
+        every_workflow_permission = {
+            p for p in Permission if str(p).startswith("workflow:")
+        }
+
+        assert ROLE_DEFINITIONS["workflow_admin"].permissions == \
+            every_workflow_permission
+
+    def test_the_workflow_roles_are_narrower_than_platform_admin(self):
+        """
+        The alternative to these roles was granting platform_admin, which would
+        have conferred setting:update, system:reindex and vendor:delete to fix a
+        workflow-registration refusal.
+        """
+        platform_admin = ROLE_DEFINITIONS["platform_admin"].permissions
+
+        for name in ("workflow_publisher", "workflow_admin"):
+            role = ROLE_DEFINITIONS[name].permissions
+            assert len(role) < len(platform_admin)
+            assert Permission.SETTING_UPDATE not in role
+            assert Permission.SYSTEM_REINDEX not in role
+            assert Permission.VENDOR_DELETE not in role
 
     def test_every_global_role_beyond_member_adds_a_write(self):
         """

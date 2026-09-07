@@ -161,6 +161,34 @@ _DEMUX_OPERATOR = frozenset({
     Permission.RUN_DEMUX,
 })
 
+# GA4GH workflow registration: register a workflow, add versions to it, and
+# deploy a version to an execution backend. Done by one person today, whose only
+# role is `member` -- so all 29 of her requests over 2026-08-19..28 were recorded
+# as would_deny in the dry run and would 403 under enforce.
+#
+# The existing role carrying these is platform_admin, at 32 permissions including
+# setting:update, system:reindex and vendor:delete. Granting it would have handed
+# over thirty permissions with no demonstrated need in order to fix two. Same
+# reasoning as _DEMUX_OPERATOR: grant the capability that was refused.
+#
+# workflow:read comes from `member`, so it is omitted rather than forgotten.
+# workflow:delete is deliberately excluded -- publishing a workflow and destroying
+# one are different privileges, and nobody has needed the latter. That is what
+# workflow_admin is for.
+_WORKFLOW_PUBLISHER = frozenset({
+    Permission.WORKFLOW_CREATE,
+    Permission.WORKFLOW_UPDATE,
+    Permission.WORKFLOW_DEPLOY,
+})
+
+# Every workflow permission, including delete. Derived from the catalog rather
+# than listed, so a new workflow:* permission joins it automatically -- for this
+# role that is the intent, since "owns the workflow catalog outright" should not
+# silently narrow when the catalog grows.
+_WORKFLOW_ADMIN = frozenset(
+    p for p in Permission if str(p).startswith("workflow:")
+)
+
 # --- Project roles --------------------------------------------------------
 # A total order: viewer subset of contributor subset of owner. That is why
 # project_member allows only one role per user per project -- stacking them would
@@ -210,6 +238,17 @@ ROLE_DEFINITIONS: dict[str, RoleDefinition] = {
         "May run demultiplexing. Grants nothing else -- see the comment on "
         "_DEMUX_OPERATOR for why this is not lab_manager.",
         frozenset(_DEMUX_OPERATOR),
+    ),
+    "workflow_publisher": RoleDefinition(
+        RoleScope.GLOBAL, "Workflow Publisher",
+        "May register workflows, add versions, and deploy them. Cannot delete -- "
+        "see the comment on _WORKFLOW_PUBLISHER for why this is not platform_admin.",
+        frozenset(_WORKFLOW_PUBLISHER),
+    ),
+    "workflow_admin": RoleDefinition(
+        RoleScope.GLOBAL, "Workflow Administrator",
+        "Owns the workflow catalog outright, including deletion.",
+        frozenset(_WORKFLOW_ADMIN),
     ),
     "platform_admin": RoleDefinition(
         RoleScope.GLOBAL, "Platform Administrator",

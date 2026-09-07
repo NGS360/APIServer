@@ -334,6 +334,8 @@ Roles are database rows so that administrators can compose custom ones. The **bu
 | `member` | Default for every authenticated user | `action:read`, `platform:read`, `vendor:read`, `workflow:read`, `pipeline:read`, `run:read`, `job:read`, `job:submit`, `setting:read`, `search:query`, `chat:use`, `user:read`, `project:create`, plus the transitional global reads: `project:read`, `sample:read`, `qcrecord:read`, `file:read`. **Not** `file:download` |
 | `demux_operator` | May run demultiplexing, and nothing else | `run:demux` only |
 | `lab_manager` | Sequencing core — registers runs, demultiplexes, ingests vendor deliveries | `member` + `run:create`, `run:update`, `run:associate`, `run:demux`, `manifest:read`, `manifest:upload`, `manifest:validate`, `file:browse`, `file:create`, `file:update`, `sample:create`, `sample:update`, `qcrecord:create`, `project:ingest`, `job:read_all` |
+| `workflow_publisher` | May register workflows, add versions, and deploy them — but not delete | `workflow:create`, `workflow:update`, `workflow:deploy`. `workflow:read` comes from `member` |
+| `workflow_admin` | Owns the workflow catalog outright, including deletion | Every `workflow:*` permission, derived from the catalog so a new one joins automatically |
 | `platform_admin` | Owns the executable catalog and platform configuration | `member` + `platform:create`, `vendor:create`, `vendor:update`, `vendor:delete`, `workflow:create`, `workflow:update`, `workflow:delete`, `workflow:deploy`, `pipeline:create`, `pipeline:update`, `action:validate`, `setting:update`, `system:reindex`, `job:read_all`, `job:update` |
 | `service_account` | Machine writeback — pipeline results and Batch job-status updates only (**not** MCP, which acts as the invoking user) | `project:read`, `run:read`, `run:update`, `sample:read`, `sample:create`, `qcrecord:create`, `file:create`, `file:update`, `job:read_all`, `job:update` |
 | `auditor` | Compliance, QA, read-only agents | Every `*:read` permission, plus `file:download`, `search:query`, `role:read` |
@@ -360,6 +362,19 @@ The rule for future requests: **a new global role is justified only if it adds a
 So the role holds `run:demux` and nothing else. `member` already provides `run:read`, `job:submit` and `job:read`, which is the rest of the flow, so one permission is *sufficient* rather than merely minimal. It qualifies under the rule because `run:demux` is a write on a global resource, and it is a strict subset of `lab_manager`, so genuine sequencing-core staff still get demux from that role and nobody needs both.
 
 The general lesson: **check what else an off-the-shelf role carries before granting it for one capability.** A role's description tells you what it is *for*; only its permission set tells you what it *does*.
+
+**Second worked example, 2026-09-06 — `workflow_publisher` and `workflow_admin`.** The same shape, found the same way. `POST /workflows`, `POST /workflows/{id}/versions` and `POST /workflows/{id}/versions/{v}/deployments` had exactly one caller in 30 days of production, on a personal API key whose only role is `member`. All 29 requests returned `201` — and all 29 were recorded as `would_deny`, on `workflow:create` (15) and `workflow:deploy` (14). They were succeeding only because the mode is `dry_run`; under `enforce` every one of them is a 403. That is a Phase 1 blocker with a name attached, not an unidentified caller.
+
+The off-the-shelf answer was `platform_admin`, which carries these permissions — along with **thirty others**, including `setting:update`, `system:reindex` and `vendor:delete`. Thirty permissions with no demonstrated need, to fix two.
+
+So two roles instead, splitting a privilege that `platform_admin` conflates:
+
+- **`workflow_publisher`** — `workflow:create`, `workflow:update`, `workflow:deploy`. Publishing a workflow and destroying one are different privileges; `workflow:delete` never appeared among the refusals and stays out until it does. `workflow:read` is omitted because `member` already grants it.
+- **`workflow_admin`** — every `workflow:*` permission, **derived from the catalog rather than enumerated**. For a role whose stated scope is "owns the workflow catalog outright", silently narrowing when a new `workflow:*` permission is added would be the bug, so it is computed the way `admin` is.
+
+Both qualify under the rule: workflow writes are on a global resource. `workflow_publisher` is a strict subset of `workflow_admin`, which is a subset of `platform_admin`, so nobody needs two of them.
+
+Note what made this findable at all: the dry-run decision log names the principal, the permission and the count, so the grant could be sized from what was actually refused rather than from what a role was called. **That is the argument for staying in `dry_run` until the `would_deny` set is empty** — see [Enforcement mode](#enforcement-mode).
 
 **The roster is now pinned by a test.** Adding or removing a builtin role fails `test_the_role_roster_is_pinned`, and a global role that adds only reads fails `test_every_global_role_beyond_member_adds_a_write`. Neither guard existed until a role was added and nothing noticed — route counts had been pinned since Phase 4c, but the rule above was unenforced. Personas that differ only in *which projects* they touch — bioinformatician, PI, sequencing tech, external collaborator — are already expressed by project membership. Adding a global role per persona would re-implement project scoping in the global plane, which is exactly what this design avoids. Requests like "contributor without delete" are real, and they are served by custom roles, which is the reason roles are database rows.
 
