@@ -196,6 +196,7 @@ def create_project(
         last_modified=project.last_modified,
         data_folder_uri=f"{data_bucket}/{project.project_id}/",
         results_folder_uri=f"{results_bucket}/{project.project_id}/",
+        download_restricted=project.download_restricted,
         attributes=project.attributes,
         sequencing_runs=None  # No sequencing runs at time of project creation
     )
@@ -247,6 +248,7 @@ def get_projects(
                     last_modified=project.last_modified,
                     data_folder_uri=f"{data_bucket}/{project.project_id}/",
                     results_folder_uri=f"{results_bucket}/{project.project_id}/",
+                    download_restricted=project.download_restricted,
                     attributes=project.attributes,
                     sequencing_runs=None  # Sequencing runs are not included for performance reasons
                 )
@@ -329,6 +331,7 @@ def get_project_by_project_id(session: Session, project_id: str) -> ProjectPubli
         last_modified=project.last_modified,
         data_folder_uri=f"{data_bucket}/{project.project_id}/",
         results_folder_uri=f"{results_bucket}/{project.project_id}/",
+        download_restricted=project.download_restricted,
         attributes=project.attributes,
         sequencing_runs=sequencing_runs_public,
     )
@@ -408,6 +411,7 @@ def update_project(
         last_modified=project.last_modified,
         data_folder_uri=f"{data_bucket}/{project.project_id}/",
         results_folder_uri=f"{results_bucket}/{project.project_id}/",
+        download_restricted=project.download_restricted,
         attributes=project.attributes,
         sequencing_runs=None  # Sequencing runs are not included in list view for performance reasons
     )
