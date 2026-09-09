@@ -44,8 +44,8 @@ class FakeRuns:
         # Every runtime context the route sent, likewise. None is recorded as
         # passed: "sent nothing" differs from "sent an empty context".
         self.contexts = []
-        # Every run config the route passed, so a test can assert the caller's
-        # own credential is what the agent runs with.
+        # Every run config the route passed, so a test can assert no separate
+        # config is sent (the credential now rides `context`).
         self.configs = []
 
     @property
@@ -855,10 +855,11 @@ def test_chat_stream_reports_upstream_error(client, fake_langgraph):
 # than replaying what the caller sent, so what is asserted here is that the minted
 # token *resolves to* the caller — not that it equals any particular string.
 #
-# It travels on the run config under a key whose exact name is load-bearing:
-# LangGraph keeps `__`-prefixed configurable keys out of checkpoint metadata and
-# out of trace metadata. Renaming it would start persisting credentials, so the
-# name is asserted literally here rather than imported.
+# It travels inside the run's `context` under a key whose exact name is
+# load-bearing: the Platform mirrors `context` into `configurable`, and LangGraph
+# keeps `__`-prefixed configurable keys out of checkpoint metadata and out of trace
+# metadata. Renaming it would start persisting credentials, so the name is asserted
+# literally here rather than imported.
 
 
 USER_TOKEN_KEY = "__ngs360_user_token"
@@ -873,7 +874,7 @@ def _delegated_claims(fake):
     """The decoded claims of the credential the last run was given."""
     from core.security import decode_token
 
-    return decode_token(fake.runs.config["configurable"][USER_TOKEN_KEY])
+    return decode_token(fake.runs.context[USER_TOKEN_KEY])
 
 
 def test_chat_json_runs_as_the_calling_user(client, chat_user, fake_langgraph):
@@ -966,27 +967,31 @@ def test_an_api_key_never_leaves_the_process(client, fake_langgraph):
         headers={"Authorization": "Bearer ngs360_abc123"},
     )
 
-    assert "ngs360_abc123" not in json.dumps(fake.runs.config)
+    assert "ngs360_abc123" not in json.dumps([fake.runs.context, fake.runs.config])
 
 
 @pytest.mark.parametrize("credential", [None, ""])
-def test_user_run_config_treats_an_absent_credential_as_no_config(credential):
-    """Test that a missing or empty credential yields no run config at all.
+def test_context_with_token_leaves_the_context_untouched_without_a_credential(
+    credential,
+):
+    """Test that a missing or empty credential folds no token key into the context.
 
     No credential means the agent keeps its read-only posture. Not an empty
-    string: passing one would make the run config claim a user it
-    cannot name. Asserted directly — an authenticated route always has a user to
-    mint from, so this state is unreachable through one.
+    string: folding one in would make the run claim a user it cannot name.
+    Asserted directly — an authenticated route always has a user to mint from, so
+    this state is unreachable through one.
     """
-    from api.chat.services import user_run_config
+    from api.chat.services import context_with_token
 
-    assert user_run_config(credential) is None
+    run_context = {"caller": {"username": "jsmith"}}
+    assert context_with_token(run_context, credential) == run_context
+    assert context_with_token(None, credential) is None
 
 
-def test_the_token_travels_only_on_the_run_config(client, fake_langgraph):
+def test_the_token_stays_out_of_thread_metadata(client, fake_langgraph):
     """Test that the credential is absent from thread metadata, which is persisted.
 
-    Thread metadata is stored unencrypted. The run config is in LangGraph
+    Thread metadata is stored unencrypted. The run's context/config is in LangGraph
     Platform's at-rest encryption set; thread
     metadata is not, and it is what the ownership check reads back on every turn.
     """
@@ -994,7 +999,7 @@ def test_the_token_travels_only_on_the_run_config(client, fake_langgraph):
 
     client.post("/api/v1/chat", json=_envelope("hi"), headers=_auth())
 
-    minted = fake.runs.config["configurable"][USER_TOKEN_KEY]
+    minted = fake.runs.context[USER_TOKEN_KEY]
     assert minted not in json.dumps(fake.threads.threads)
 
 
@@ -1004,12 +1009,13 @@ def test_the_credential_and_the_context_reach_one_run_together(
 ):
     """Test that one run carries both the credential and the caller's context.
 
-    Two independent channels on the same call: the credential rides `config`, the
-    caller identity and attached context ride `context`, and neither displaces the
-    other.
+    They share one channel: LangGraph Platform rejects a run that sets both
+    `configurable` and `context`, so the credential rides inside `context`
+    alongside the caller identity, and no separate `config` is sent.
 
-    Also asserts the credential does not appear in `context`: it authorizes the
-    agent's API calls and is not part of describing who is asking.
+    Also asserts the credential is its own context entry, not smuggled into the
+    caller identity: it authorizes the agent's API calls and is not part of
+    describing who is asking.
     """
     fake = fake_langgraph(FakeLangGraphClient())
 
@@ -1018,10 +1024,11 @@ def test_the_credential_and_the_context_reach_one_run_together(
     assert response.status_code == 200
     if path.endswith("/stream"):
         _sse_data_chunks(response.text)
-    minted = fake.runs.config["configurable"][USER_TOKEN_KEY]
     assert _delegated_claims(fake)["sub"] == str(chat_user)
     assert fake.runs.context["caller"]["username"] == TEST_USERNAME
-    assert minted not in json.dumps(fake.runs.context)
+    # One channel, and the credential is not folded into the caller identity.
+    assert fake.runs.config is None
+    assert USER_TOKEN_KEY not in fake.runs.context["caller"]
 
 
 # --- The agent's tool work is invisible, except for the names ----------------
