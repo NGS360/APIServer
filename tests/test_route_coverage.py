@@ -72,7 +72,6 @@ AWAITING_AUTHENTICATION = {
     "GET /api/v1/actions/platforms",
     "GET /api/v1/actions/types",
     "GET /api/v1/files",
-    "GET /api/v1/files/download",
     "GET /api/v1/files/list",
     "GET /api/v1/files/{file_id}",
     "GET /api/v1/files/{file_id}/versions",
@@ -213,7 +212,7 @@ def test_guard_count_is_recorded():
     Pins the size of the guarded surface so growth is visible in review rather
     than incidental.
     """
-    assert len(GUARDED) == 45
+    assert len(GUARDED) == 46
 
 
 def test_the_authentication_backlog_only_shrinks():
@@ -234,8 +233,22 @@ def test_the_authentication_backlog_only_shrinks():
     same pass and were deliberately left open -- each still has a live anonymous
     python-requests caller, of one and nine requests respectively, and one
     request is not zero.
+
+    69 -> 68: GET /files/download, on 2026-09-09. This one had a second reason
+    to stay open beyond anonymous callers -- the UI used it as a plain link, and
+    a browser following a link cannot send a token, so guarding it would have
+    401'd real downloads. That reason expired: the frontend now fetches
+    /files/download-url with its token and navigates itself, and the deployed
+    bundle contains no reference to this route. Browser traffic in the 30 days to
+    09-09 was 41 requests, 39 of them a single bulk download on 08-15 (most
+    likely a tab holding a pre-fix bundle), 2 on 09-04, none since.
+
+    The anonymous python-requests caller noted above is still the accepted cost,
+    and it is now measurable rather than estimated: the guard emits a decision
+    record, so the residual shows up as 401s on this route instead of being
+    inferred from user agents.
     """
-    assert len(AWAITING_AUTHENTICATION) == 69
+    assert len(AWAITING_AUTHENTICATION) == 68
 
 
 @pytest.mark.parametrize("key", sorted(GUARDED))

@@ -82,19 +82,22 @@ class TestAuthorization:
 
 class TestTheOldRouteStillWorks:
     """
-    GET /files/download stays open and unguarded until the frontend has moved.
+    GET /files/download still serves the same redirect, but now requires auth.
 
-    Guarding it would 401 every download in the product: the UI uses it as a
-    plain link, and a browser following a link cannot send a token. These pin
-    that it is still reachable, so closing it has to be a deliberate change.
+    It was left open on the grounds that the UI used it as a plain link and a
+    browser following a link cannot send a token. The frontend moved (it fetches
+    /files/download-url with its token and navigates itself), so it was guarded
+    on 2026-09-09. These pin the part that matters for compatibility: the
+    response is still a 307 to the same place, so nothing that already
+    authenticates had to change.
     """
 
-    def test_it_is_still_anonymous(self, unauthenticated_client):
+    def test_it_now_requires_authentication(self, unauthenticated_client):
         r = unauthenticated_client.get(
             "/api/v1/files/download", params={"path": PATH},
             follow_redirects=False,
         )
-        assert r.status_code == 307
+        assert r.status_code == 401
 
     def test_it_redirects_to_the_same_place_the_new_route_returns(self, client):
         redirect = client.get(

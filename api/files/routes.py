@@ -260,44 +260,6 @@ def browse_s3(
     return services.list_s3_files(uri=uri, s3_client=s3_client)
 
 
-@router.get(
-    "/download",
-    summary="Download file from S3",
-    responses={307: {"description": "Redirect to presigned S3 URL"}},
-)
-def download_file(
-    path: str = Query(
-        ...,
-        description="S3 URI of file to download (e.g., s3://bucket/path/file.txt)"
-    ),
-    s3_client=Depends(get_s3_client),
-):
-    """
-    Download a file from S3 via presigned URL redirect.
-
-    Returns a 307 redirect to a time-limited presigned S3 URL.
-    The client follows the redirect to download directly from S3,
-    offloading bandwidth from the API server.
-
-    Deprecated in favour of GET /files/download-url, which returns the same URL
-    as JSON. This route cannot be given a permission guard: it is used by the UI
-    as a plain link, and a browser following a link cannot send an Authorization
-    header, so guarding it would 401 every download in the product. It closes
-    once browser traffic here reaches zero.
-    """
-    presigned_url = services.generate_presigned_url(
-        s3_path=path, s3_client=s3_client
-    )
-    return RedirectResponse(url=presigned_url, status_code=307)
-
-
-# Kept explicit, and passed explicitly below, rather than relying on
-# generate_presigned_url's default: expires_in is a promise to the caller, and if
-# the service default were changed this response would quietly start lying about
-# when the URL stops working.
-DOWNLOAD_URL_TTL_SECONDS = 3600
-
-
 def _restricted_projects(session, project_ids) -> list:
     """Which of these projects have opted out of open downloads."""
     if not project_ids:
@@ -391,6 +353,58 @@ def require_file_download(
 
 require_file_download.rbac_permissions = (Permission.FILE_DOWNLOAD,)
 require_file_download.rbac_plane = "project"
+
+
+@router.get(
+    "/download",
+    summary="Download file from S3",
+    responses={307: {"description": "Redirect to presigned S3 URL"}},
+    dependencies=[Depends(require_file_download)],
+)
+def download_file(
+    path: str = Query(
+        ...,
+        description="S3 URI of file to download (e.g., s3://bucket/path/file.txt)"
+    ),
+    s3_client=Depends(get_s3_client),
+):
+    """
+    Download a file from S3 via presigned URL redirect.
+
+    Returns a 307 redirect to a time-limited presigned S3 URL.
+    The client follows the redirect to download directly from S3,
+    offloading bandwidth from the API server.
+
+    Guarded, as of 2026-09-09, by the same check as GET /files/download-url. The
+    response is unchanged -- still a 307 to S3 -- so every client that already
+    sends credentials is unaffected. What changes is that anonymous callers now
+    get 401, and a file in a restricted project gets 403.
+
+    An earlier version of this docstring said the route *could not* be guarded,
+    because the UI used it as a plain link and a browser following a link cannot
+    send an Authorization header. That was true when written and is no longer:
+    the frontend fetches GET /files/download-url with its token and navigates to
+    the returned URL itself (src/lib/download.ts), and the built bundle contains
+    no reference to this route at all. Measured browser traffic over the 30 days
+    to 2026-09-09 was 41 requests -- 39 of them one bulk download on 08-15, most
+    likely from a tab holding a pre-fix bundle, then 2 on 09-04 and none since.
+
+    Still deprecated in favour of GET /files/download-url, which returns the URL
+    as JSON rather than as a redirect. This route stays because ~1.1M requests a
+    day arrive on it from htslib, and it now enforces the same policy, so there
+    is no longer any urgency to move them.
+    """
+    presigned_url = services.generate_presigned_url(
+        s3_path=path, s3_client=s3_client
+    )
+    return RedirectResponse(url=presigned_url, status_code=307)
+
+
+# Kept explicit, and passed explicitly below, rather than relying on
+# generate_presigned_url's default: expires_in is a promise to the caller, and if
+# the service default were changed this response would quietly start lying about
+# when the URL stops working.
+DOWNLOAD_URL_TTL_SECONDS = 3600
 
 
 @router.get(
