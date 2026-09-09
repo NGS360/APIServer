@@ -328,25 +328,28 @@ class TestUnresolvableURIs:
         ).status_code == 200
 
 
-class TestTheOldRouteIsTheBypass:
+class TestTheOldRouteIsNoLongerTheBypass:
     """
-    The control is only as good as the closure of the route beside it.
+    Inverted 2026-09-09, which the previous version of this class asked for.
 
-    `GET /files/download` answers the same question with no guard at all. Since
-    downloads became open by default it is no longer a *general* bypass -- for an
-    unrestricted project the two routes now agree -- so this narrowed to the two
-    things it does still bypass: restriction, and authentication.
+    `GET /files/download` was unguarded, on the stated grounds that the UI used
+    it as a plain link and a browser following a link cannot send an
+    Authorization header. That stopped being true: the frontend fetches
+    /files/download-url with its token and navigates itself, and the built bundle
+    contains no reference to the old route. Browser traffic over the 30 days to
+    09-09 was 41 requests -- 39 of them one bulk download on 08-15, then 2 on
+    09-04 and none since.
 
-    It stays open because a compute fleet calls it: measured 2026-09-08 at 29.3M
-    requests in 30 days, against 41 from browsers. These tests are here so the
-    dependency is visible in CI rather than only in a review conversation.
-
-    When that route closes, invert both.
+    So it now carries the same guard. Its response is unchanged (307 to S3), so
+    the ~1.1M requests a day that arrive on it already authenticated are
+    unaffected; what changes is that anonymous callers and restricted projects
+    are refused here too.
     """
 
-    def test_the_unguarded_route_bypasses_a_restriction(
+    def test_the_two_routes_now_agree_on_a_restriction(
         self, session, scoped_client
     ):
+        """The property the old class asserted the *absence* of."""
         project = make_project(session, "0020")
         f = make_file(session, "s3://bucket/p20/reads.fastq.gz")
         session.add(FileProject(file_id=f.id, project_id=project.id))
@@ -354,30 +357,44 @@ class TestTheOldRouteIsTheBypass:
         restrict(session, project)
 
         assert scoped_client.get(URL, params={"path": f.uri}).status_code == 403
-        bypass = scoped_client.get("/api/v1/files/download", params={"path": f.uri},
-                                   follow_redirects=False)
-        assert bypass.status_code == 307, (
-            "GET /files/download appears to be guarded now -- if so, project "
-            "restrictions are no longer bypassable and this should assert 403"
-        )
+        assert scoped_client.get(
+            "/api/v1/files/download", params={"path": f.uri},
+            follow_redirects=False,
+        ).status_code == 403
 
-    def test_the_unguarded_route_does_not_require_authentication(
+    def test_the_old_route_now_requires_authentication(
         self, session, unauthenticated_client
     ):
-        """
-        The other half, and the one that outlives restriction: "open" is meant to
-        mean open to platform *users*. On this route it means open.
-        """
         project = make_project(session, "0021")
         f = make_file(session, "s3://bucket/p21/reads.fastq.gz")
         session.add(FileProject(file_id=f.id, project_id=project.id))
         session.commit()
 
-        anon = unauthenticated_client.get(
+        assert unauthenticated_client.get(
+            "/api/v1/files/download", params={"path": f.uri},
+            follow_redirects=False,
+        ).status_code == 401
+
+    def test_an_authenticated_caller_still_gets_the_same_307(
+        self, session, scoped_client
+    ):
+        """
+        The compatibility guarantee, and the reason this needed no client
+        changes: the response shape is untouched for anyone already sending
+        credentials. htslib arrives with an API key, the project is unrestricted,
+        so it gets exactly the redirect it got before.
+        """
+        project = make_project(session, "0024")
+        f = make_file(session, "s3://bucket/p24/reads.fastq.gz")
+        session.add(FileProject(file_id=f.id, project_id=project.id))
+        session.commit()
+
+        r = scoped_client.get(
             "/api/v1/files/download", params={"path": f.uri},
             follow_redirects=False,
         )
-        assert anon.status_code == 307
+        assert r.status_code == 307
+        assert r.headers["location"]
 
 
 def test_the_resolver_is_not_confused_by_file_versioning(session):

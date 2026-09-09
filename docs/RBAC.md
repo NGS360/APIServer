@@ -218,7 +218,7 @@ Two things generalise. **An unauthenticated write path cannot be made accountabl
 | `qcrecord:create` | P | low | `POST /qcmetrics` |
 | `qcrecord:delete` | P | medium | `DELETE /qcmetrics/{id}` |
 | `file:read` | P | low | `GET /files`, `/files/{id}`, `/files/{id}/versions` |
-| `file:download` | P | medium | `GET /files/download-url` — required only when the resolved project is *restricted*, or when the URI is outside the configured buckets. Held globally by `member`, so unrestricted projects are open to any authenticated caller. `GET /files/download` is still unguarded, and remains a bypass for anonymous access and for restricted projects |
+| `file:download` | P | medium | `GET /files/download-url` — required only when the resolved project is *restricted*, or when the URI is outside the configured buckets. Not held by `member` — an unrestricted project consults no permission at all, which is what makes it open. `GET /files/download` carries the same guard as of 2026-09-09, so the two routes now agree in every case |
 | `file:create` | P | low | `POST /files`, `POST /files/upload` |
 | `file:update` | P | low | `PATCH /files/{id}` |
 | `file:delete` | P | high | `DELETE /files/{id}` |
@@ -692,7 +692,7 @@ Direct associations are tried before the run, so a file both in a project and on
 - `member` gains nothing. Step 3 consults no permission, so open downloads need no grant — which is also what makes the out-of-bucket protection in step 2 survive the inversion for free. `lab_manager`'s explicit `file:download`, restored when the permission left `member`, stays necessary.
 - **No service account is needed for the download fleet.** An earlier revision of this section said one would be, and required global `file:download` for it. The credential in question is a personal token by decision, and under the new rule it needs no grant at all.
 - **Reads were already unaffected** and remain so. `file:read`, `project:read`, `sample:read`, `qcrecord:read` are global.
-- **`GET /files/download` matters less but still matters.** The unguarded route now agrees with the guarded one for unrestricted projects, so it is no longer a general bypass. It remains a bypass for exactly two things: anonymous access, and restricted projects. `TestTheOldRouteIsTheBypass` should be narrowed to those rather than deleted.
+- **`GET /files/download` is no longer a bypass at all.** It was guarded in place on 2026-09-09 — same dependency, unchanged 307-to-S3 response — so the two routes agree in every case, including anonymous callers and restricted projects. This is what makes a restriction actually enforceable; while that route was open, restriction was the only control protecting the data and it could be walked around by changing the URL. `TestTheOldRouteIsTheBypass` is inverted rather than narrowed, as its own docstring asked.
 
 **Implemented** by `project.download_restricted` (migration `c9f4b7e28a13`), the rework of `require_file_download`, and `tests/api/test_file_download_scope.py`. Seven tests there asserted the withdrawn requirement and were rewritten rather than preserved.
 
@@ -866,11 +866,13 @@ Observations that change the plan:
 - **The Batch event Lambda writes job status**, and its traffic did not appear in the first two-hour sample at all. That is the concrete argument for the seven-day window: periodic callers are invisible in short ones.
 - **Browsers made anonymous calls**, concentrated on `files/download`. Measured over six days in production: 19 distinct browser IPs, all anonymous. That is not a missing service account and cannot be fixed by issuing one.
 
-  `GET /files/download` answers with a **307 to a presigned S3 URL**, so the UI uses it as a plain link. A browser following a link cannot attach an `Authorization` header, which means the route cannot be given a permission guard without returning 401 to every download in the product -- and `RBAC_MODE=dry_run` does not soften that, because authentication is resolved before any mode check.
+  `GET /files/download` answers with a **307 to a presigned S3 URL**, and the UI used to use it as a plain link. A browser following a link cannot attach an `Authorization` header, so for as long as that was the product's download path the route could not be guarded without returning 401 to every download -- and `RBAC_MODE=dry_run` does not soften that, because authentication is resolved before any mode check.
+
+  **That constraint expired, and the route was guarded in place on 2026-09-09.** The frontend now fetches `GET /files/download-url` with its token and navigates to the returned URL itself (`src/lib/download.ts`); the built bundle contains no reference to the old route. Browser traffic in the 30 days to 09-09 was 41 requests -- 39 of them a single bulk FASTQ download on 08-15, most likely a tab holding a pre-fix bundle, then 2 on 09-04 and none since. The response shape was left untouched, so the ~1.1M requests a day arriving from htslib with an API key were unaffected: they authenticate, the projects they read are unrestricted, and they get the same redirect as before.
 
   The fix is `GET /files/download-url`, which returns the same URL as JSON and *is* guarded. It was originally guarded on the global plane, on the grounds that the parameter is an arbitrary S3 URI and nothing maps a URI to a project. **That was wrong** — `fileproject`, `filesample` and `filesequencingrun` all exist, so the mapping was available all along; it is now used, and the guard consults the resolved project's restriction (see *Downloads: open by default, restricted by exception*). `file:browse` remains genuinely global-only, because a browse request names a prefix rather than a file. The frontend fetches it with its token, then navigates to S3 itself. No security property changes: the bytes already bypass the API today, because the redirect sends the browser to that same URL.
 
-  Sequencing: the new endpoint ships first and is additive. `GET /files/download` closes only once browser traffic on it reaches zero, which is checkable in the access log — measured 2026-09-08 as **41 requests in 30 days**, all `auth_method=none`, against 29.3M from clients that already authenticate. Since downloads became open by default, the migration needs **no** grant: `member` holds `file:download` again.
+  Sequencing, as it actually went: the new endpoint shipped first and additively; the frontend moved to it; then the old route was guarded in place rather than closed, which required **no client change at all** — every remaining caller already sends credentials, and an unrestricted project consults no permission, so nothing needed granting. Note this did *not* need `member` to hold `file:download`, and must not: see *Downloads: open by default, restricted by exception*.
 - Authenticated traffic in the same window was **4,442 requests by API key** and, at that hour, no JWT traffic at all — the SPA is human-driven, so sampling outside working hours says nothing about it.
 
 #### The Airflow callers, identified
@@ -1157,7 +1159,7 @@ The username-deduplication loop is a pre-existing bug — two identities for one
 |----------|-----------------|-------|----------|
 | **GA4GH WES** | Forward the caller's bearer token on `GET /workflows/{id}`; bound the `/auth/me` token cache to ≤5 min | `GA4GH-WES-API-Service` | **1c/1d** |
 | **Airflow (dev, UAT, prod)** | Read credentials in the **production** tier for all three; `auditor` or a `project:read`/`sample:read` role. GET-only, so writes are unaffected | Airflow owners | **1d** |
-| **Frontend SPA** | Route-loader error boundaries; permission-based gating; regenerate the API client. **Blocking: move downloads onto `GET /files/download-url`** (see below) | `NGS360/frontend-ui` | **1d** for downloads, 5 for the rest |
+| **Frontend SPA** | Route-loader error boundaries; permission-based gating; regenerate the API client. (/) **Downloads moved onto `GET /files/download-url`** — `src/lib/download.ts`, and the built bundle no longer references the old route, which is what allowed it to be guarded | `NGS360/frontend-ui` | 5d for the rest |
 | **File-download compute fleet** | Stays on a personal API key by decision. Needs `file:browse` only — downloads are open by default, so no download grant. **The `file:browse` grant must land before `GET /files/list` closes**, not with it | fleet owner | **1d** |
 | **`APIServer/scripts/*`** | Admin-only; add an `--operator` argument writing one audit row per run | this repo | 3 |
 
