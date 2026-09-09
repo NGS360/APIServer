@@ -143,7 +143,7 @@ Without a global escape hatch, either demultiplexing breaks or the service accou
 
 The default role holds *global* `project:read`, `sample:read`, `qcrecord:read` and `file:read`. This deliberately preserves today's "any authenticated user can read anything" behaviour while writes become membership-gated.
 
-`file:download` is **not** among them, and the distinction is load-bearing — see *Project-scoped downloads*. Reads stay global; downloading does not, because `has_in_project` short-circuits on a global grant, so a `member` holding global `file:download` made the project check on `GET /files/download-url` vacuous.
+`file:download` **is** among them as of 2026-09-09 — see *Downloads: open by default, restricted by exception*. It was removed from `member` when downloads became project-scoped and restored when that policy was inverted. Note the mechanic that made its removal necessary at the time, because it still applies to *restricted* projects: `has_in_project` short-circuits on a global grant, so any global holder of `file:download` bypasses a project restriction entirely. That is intended for `admin` and superusers; it is the reason a restriction cannot be enforced against a caller who holds the permission globally.
 
 The alternative — shipping read isolation and enforcement together — means one change that both rejects writes and empties every list view, with no way to separate the two if something goes wrong. Instead, tightening reads later is a **role edit through the admin API**: remove those five permissions from `member`. No deploy, no config flag, no second code path to test, and reversible in one API call. This is the primary reason the design allows global roles to carry project-scopable permissions.
 
@@ -218,7 +218,7 @@ Two things generalise. **An unauthenticated write path cannot be made accountabl
 | `qcrecord:create` | P | low | `POST /qcmetrics` |
 | `qcrecord:delete` | P | medium | `DELETE /qcmetrics/{id}` |
 | `file:read` | P | low | `GET /files`, `/files/{id}`, `/files/{id}/versions` |
-| `file:download` | P | medium | `GET /files/download-url` — checked against the projects the URI resolves to; `GET /files/download` (still unguarded, and therefore still a bypass) |
+| `file:download` | P | medium | `GET /files/download-url` — required only when the resolved project is *restricted*, or when the URI is outside the configured buckets. Held globally by `member`, so unrestricted projects are open to any authenticated caller. `GET /files/download` is still unguarded, and remains a bypass for anonymous access and for restricted projects |
 | `file:create` | P | low | `POST /files`, `POST /files/upload` |
 | `file:update` | P | low | `PATCH /files/{id}` |
 | `file:delete` | P | high | `DELETE /files/{id}` |
@@ -331,7 +331,7 @@ Roles are database rows so that administrators can compose custom ones. The **bu
 
 | Role | Purpose | Permissions |
 |------|---------|-------------|
-| `member` | Default for every authenticated user | `action:read`, `platform:read`, `vendor:read`, `workflow:read`, `pipeline:read`, `run:read`, `job:read`, `job:submit`, `setting:read`, `search:query`, `chat:use`, `user:read`, `project:create`, plus the transitional global reads: `project:read`, `sample:read`, `qcrecord:read`, `file:read`. **Not** `file:download` |
+| `member` | Default for every authenticated user | `action:read`, `platform:read`, `vendor:read`, `workflow:read`, `pipeline:read`, `run:read`, `job:read`, `job:submit`, `setting:read`, `search:query`, `chat:use`, `user:read`, `project:create`, plus the transitional global reads: `project:read`, `sample:read`, `qcrecord:read`, `file:read`. Plus `file:download` — **specified 2026-09-09, not yet in `_MEMBER`** — because downloads are open unless a project is explicitly restricted |
 | `demux_operator` | May run demultiplexing, and nothing else | `run:demux` only |
 | `lab_manager` | Sequencing core — registers runs, demultiplexes, ingests vendor deliveries | `member` + `run:create`, `run:update`, `run:associate`, `run:demux`, `manifest:read`, `manifest:upload`, `manifest:validate`, `file:browse`, `file:create`, `file:update`, `sample:create`, `sample:update`, `qcrecord:create`, `project:ingest`, `job:read_all` |
 | `workflow_publisher` | May register workflows, add versions, and deploy them — but not delete | `workflow:create`, `workflow:update`, `workflow:deploy`. `workflow:read` comes from `member` |
@@ -358,6 +358,8 @@ The rule for future requests: **a new global role is justified only if it adds a
 **Worked example, 2026-09-03 — `demux_operator`.** Demultiplexing was being attempted by eleven people over one week, with different jobs and no single team among them. The obvious answer was `lab_manager`, whose description already says "demultiplexes". That was wrong, and why is worth keeping:
 
 > `lab_manager` carries **global** `file:download`, and `has_in_project` short-circuits on a global grant. Granting it would have exempted eleven people from project-scoped downloads — days after that scoping shipped — as a side effect of a decision about demux.
+>
+> That specific consequence is now moot: downloads became open by default on 2026-09-09, and `member` holds `file:download` again. The reasoning is kept because it is still correct for *restricted* projects, and because the general lesson does not depend on it.
 
 So the role holds `run:demux` and nothing else. `member` already provides `run:read`, `job:submit` and `job:read`, which is the rest of the flow, so one permission is *sufficient* rather than merely minimal. It qualifies under the rule because `run:demux` is a write on a global resource, and it is a strict subset of `lab_manager`, so genuine sequencing-core staff still get demux from that role and nobody needs both.
 
@@ -643,45 +645,52 @@ Four things make this safe rather than a special case that rots:
 
 The alternative — splitting `viewed` onto its own route — is cleaner in isolation but needs a frontend change and a client regeneration to land before the API can enforce, which trades a self-contained change for a cross-repo sequencing dependency. Worth doing if a third operation ever appears on this route.
 
-### Project-scoped downloads
+### Downloads: open by default, restricted by exception
 
-The requirement: a caller with no permission on a project must not be able to download its files. That was **not** what the system did — `GET /files/download-url` was guarded on the global plane and `member` held `file:download`, so any authenticated user could download any file in the product by URI.
+**Policy decision, 2026-09-09.** Project data is open to any authenticated user. A project may be *explicitly* restricted, and only then does a download require permission on that project. Absence of a restriction is permission.
 
-Scoping it needs a URI resolved to a project, which an earlier revision of this document said was impossible. It was not: `fileproject`, `filesample` and `filesequencingrun` all exist. `api/files/scope.py` uses them.
+This inverts what shipped in #412/#413, which required project membership for every download. That model was built to satisfy "a caller with no permission on a project must not be able to download its files" — a requirement now withdrawn. It is worth being blunt about what changed and why, because the code still contains the machinery for both.
 
-**Two strategies, and the order between them is the policy.**
+**What the measurement showed.** The default-deny model was never exercised at scale, and the traffic that would have hit it first was not a collaborator being correctly refused — it was a genomics workload reading its own results. One caller, htslib across ~180 cluster nodes, generated **32,888,177** download requests in 30 days across **66 distinct projects**, holding `member` and no project memberships at all. Under default-deny, moving that client to the guarded route would have refused ~1.5M requests a day. Sixty-six memberships, topped up as the workload walked its project list, would have been project membership used to mean "reads everything" — which is not what membership means.
+
+So the rule is now:
+
+```
+download(caller, uri):
+  1. caller is not authenticated                      -> DENY
+  2. uri is outside the configured buckets            -> require global file:download
+  3. project = resolve(uri); project is unrestricted  -> ALLOW
+  4. project is restricted                            -> require file:download in that project
+```
+
+**Authentication is still required** (step 1). "Open" means open to users of the platform, not to the internet. This is the one part of the previous model kept deliberately: it preserves the Phase 1 route-closure work, and it means `member` regains `file:download` rather than the permission becoming vestigial.
+
+**Step 2 is not a project rule, and it is the load-bearing one.** `generate_presigned_url` signs whatever bucket and key it is given — there is no allowlist — so the endpoint mints credentials for any object the API's own IAM role can read. Under default-deny, the "unresolved URI needs global `file:download`" fallback was, incidentally, the only thing keeping that from being an arbitrary-S3-read proxy for ordinary users. Default-open removes that incidental protection, so the constraint has to become explicit. A URI in an unrelated bucket is not a project, so the open-by-default policy does not speak to it: it stays privileged. **This is the part of the change that must not be implemented as "unresolved therefore allow".**
+
+**The resolver survives unchanged.** `api/files/scope.py` is still how a URI becomes a project — that work is not wasted, it just answers a different question now. Previously: "which project must the caller belong to?" Now: "which project's restriction applies?" The ordering rationale is unchanged and still worth keeping:
 
 | Association | Resolves to | Why |
 |---|---|---|
 | `fileproject` | those projects | The file's own project. Strict — no widening |
 | `filesample` | the sample's project | A sample belongs to exactly one project |
-| `filesequencingrun` | **every** project the run touches | Permissive, by decision |
+| `filesequencingrun` | **every** project the run touches | Permissive: a flowcell is a shared artifact |
+| path inference | the project id in the URI, inside a bucket we own | Pipeline output, never registered as a `File` row |
 
-Run files are permissive because a flowcell is a shared artifact: demux statistics and samplesheets belong to the run rather than to one of the projects on it, and requiring a separate grant would produce one request per person per flowcell. The reach is the run's projects, not everyone — a caller who is a member of no project on the run is still refused.
+Direct associations are tried before the run, so a file both in a project and on a run resolves strictly — `test_a_project_association_wins_over_the_run` catches the regression. Path inference runs last, requires a whole path segment matching a project that exists, and only inside `DATA_BUCKET_URI` or `RESULTS_BUCKET_URI`.
 
-**Direct associations are tried first, and that ordering is the policy rather than an implementation detail.** A file both in a project and on a run resolves *strictly*, through its project. Letting the run path widen it would silently convert the strict case into the permissive one, which is the specific regression `test_a_project_association_wins_over_the_run` exists to catch.
+**A file resolving to two projects does not occur, and the design does not handle it.** Measured in production: 0 of 52,431 project-associated files carry more than one `fileproject` row; 0 files reach multiple projects through `filesample`; and the permissive run path — built for exactly this case — has **0 files flowing through it**, because every run-associated file also carries a project or sample association and the strict paths win. 25 runs do span multiple projects, but no file resolves through them. The schema permits the case (`fileproject` is a many-to-many with nothing forbidding a second row) so if it ever appears, the safe rule is most-restrictive-wins: any restricted project in the resolved set requires permission on it. Not implemented, because building a conflict rule for a case with zero instances is speculation.
 
-**A URI with no association, but under a project id in a bucket we own, is inferred to belong to that project.** Added after production measurement rather than designed in: of 75 unresolvable download attempts in one window, **63 were pipeline output** — zUMIs count matrices, multiqc reports, WES variant calls — written to `<results-bucket>/<project-id>/…` and never registered as `File` rows. Those are the scientific product. Refusing them refuses the most legitimate traffic the endpoint carries.
+**What restriction means, and what it costs.** Restriction is opt-in per project, so the default posture of the platform is now permissive and the security of any given project depends on someone having actively marked it. That is a real trade and it is the point of the decision: the previous model made every project secure and made routine science require 66 grants. The mitigation is that restriction must be *visible* — a restricted project should be evident in the UI and in `GET /projects/{id}`, so "nobody remembered to restrict it" is a discoverable state rather than a silent one.
 
-Two constraints are what make this a fallback rather than a hole, and both are asserted by tests that fail if either is removed:
+**Consequences of the inversion, stated plainly:**
 
-- **Only `DATA_BUCKET_URI` and `RESULTS_BUCKET_URI` count.** The guard decides whether to mint a presigned URL against the API's own credentials, so inferring a project from *any* bucket would let a member of project X reach any object whose key contains that id, anywhere the API's role can read.
-- **A project id must be a whole path segment and must exist.** Otherwise anyone able to name a file could claim a project by embedding its id in the filename.
+- The 679 `would_deny` on `file:download` recorded over 30 days — 38 distinct principals — become allows. None of them were ever refused in practice, because `RBAC_MODE` is `dry_run`.
+- `member` regains `file:download`. `lab_manager`'s explicit restoration of it, added when it left `member`, becomes redundant but harmless.
+- **No service account is needed for the download fleet.** An earlier revision of this section said one would be, and required global `file:download` for it. The credential in question is a personal token by decision, and under the new rule it needs no grant at all.
+- **Reads were already unaffected** and remain so. `file:read`, `project:read`, `sample:read`, `qcrecord:read` are global.
+- **`GET /files/download` matters less but still matters.** The unguarded route now agrees with the guarded one for unrestricted projects, so it is no longer a general bypass. It remains a bypass for exactly two things: anonymous access, and restricted projects. `TestTheOldRouteIsTheBypass` should be narrowed to those rather than deleted.
 
-Inference runs **after** every real association, so a registered file under another project's prefix still belongs to its registered project — the record is better evidence than the location. It is reported as its own origin, `path`, so the share of access granted by convention rather than by record stays visible and can be watched shrinking as pipelines start registering their outputs.
-
-The honest reading: this trades a measurable amount of rigour for not breaking scientists, and it is reversible — when pipeline outputs are registered, the `path` origin count goes to zero and the fallback can be removed.
-
-**A URI resolving to nothing even then falls back to the global `file:download` permission.** "This file belongs to no project" is not evidence of permission, so `member` — which no longer holds it — is refused; `lab_manager`, `auditor`, `admin` and superusers do hold it, so cross-project operation over raw storage still works. `has_in_project` honours a global grant, which is why those roles are unaffected by any of the above. That set is small on purpose and asserted as a closed set in the tests.
-
-`lab_manager` needed `file:download` restored explicitly after it left `member`, since it derives from it. Without that, the sequencing core could browse and upload but not download, which is not a coherent role.
-
-**The control is incomplete while `GET /files/download` stays open.** That route answers the same question with no guard at all, so every refusal above is walkable around by changing the URL. It closes when the compute fleet on it migrates — until then this is defence in depth, not a boundary, and `TestTheOldRouteIsTheBypass` asserts the bypass so the dependency is visible in CI rather than only in review.
-
-Two consequences worth stating:
-
-- **The download fleet's service account will need *global* `file:download`**, not project memberships — it reads across dozens of projects. That deliberately exempts it from project scoping, which is the documented rationale for global roles carrying project-scopable permissions.
-- **Reads are unaffected.** `file:read`, `project:read`, `sample:read` and `qcrecord:read` stay global. A user can still *see* that a file exists in a project they are not on; they cannot fetch its bytes.
+**Not yet implemented.** This section is the decision, not the state of the code. Outstanding: the restriction marker and its API; `member` regaining `file:download`; step 2's explicit bucket allowlist in `generate_presigned_url`; and reworking `require_file_download` and `tests/api/test_file_download_scope.py`, which currently assert the default-deny behaviour and will fail by design.
 
 ### List endpoints filter rows; they do not return 403
 
@@ -853,9 +862,9 @@ Observations that change the plan:
 
   `GET /files/download` answers with a **307 to a presigned S3 URL**, so the UI uses it as a plain link. A browser following a link cannot attach an `Authorization` header, which means the route cannot be given a permission guard without returning 401 to every download in the product -- and `RBAC_MODE=dry_run` does not soften that, because authentication is resolved before any mode check.
 
-  The fix is `GET /files/download-url`, which returns the same URL as JSON and *is* guarded. It was originally guarded on the global plane, on the grounds that the parameter is an arbitrary S3 URI and nothing maps a URI to a project. **That was wrong** — `fileproject`, `filesample` and `filesequencingrun` all exist, so the mapping was available all along; it is now used, and the guard is per project (see *Project-scoped downloads*). `file:browse` remains genuinely global-only, because a browse request names a prefix rather than a file. The frontend fetches it with its token, then navigates to S3 itself. No security property changes: the bytes already bypass the API today, because the redirect sends the browser to that same URL.
+  The fix is `GET /files/download-url`, which returns the same URL as JSON and *is* guarded. It was originally guarded on the global plane, on the grounds that the parameter is an arbitrary S3 URI and nothing maps a URI to a project. **That was wrong** — `fileproject`, `filesample` and `filesequencingrun` all exist, so the mapping was available all along; it is now used, and the guard consults the resolved project's restriction (see *Downloads: open by default, restricted by exception*). `file:browse` remains genuinely global-only, because a browse request names a prefix rather than a file. The frontend fetches it with its token, then navigates to S3 itself. No security property changes: the bytes already bypass the API today, because the redirect sends the browser to that same URL.
 
-  Sequencing: the new endpoint ships first and is additive. `GET /files/download` closes only once browser traffic on it reaches zero, which is checkable in the access log. `member` no longer holds `file:download`, so the migration does need project membership or one of the cross-project roles.
+  Sequencing: the new endpoint ships first and is additive. `GET /files/download` closes only once browser traffic on it reaches zero, which is checkable in the access log — measured 2026-09-08 as **41 requests in 30 days**, all `auth_method=none`, against 29.3M from clients that already authenticate. Since downloads became open by default, the migration needs **no** grant: `member` holds `file:download` again.
 - Authenticated traffic in the same window was **4,442 requests by API key** and, at that hour, no JWT traffic at all — the SPA is human-driven, so sampling outside working hours says nothing about it.
 
 #### The Airflow callers, identified
@@ -1143,7 +1152,7 @@ The username-deduplication loop is a pre-existing bug — two identities for one
 | **GA4GH WES** | Forward the caller's bearer token on `GET /workflows/{id}`; bound the `/auth/me` token cache to ≤5 min | `GA4GH-WES-API-Service` | **1c/1d** |
 | **Airflow (dev, UAT, prod)** | Read credentials in the **production** tier for all three; `auditor` or a `project:read`/`sample:read` role. GET-only, so writes are unaffected | Airflow owners | **1d** |
 | **Frontend SPA** | Route-loader error boundaries; permission-based gating; regenerate the API client. **Blocking: move downloads onto `GET /files/download-url`** (see below) | `NGS360/frontend-ui` | **1d** for downloads, 5 for the rest |
-| **File-download compute fleet** | Move off a personal API key onto a service account holding `file:download`, `file:browse`, `sample:read`. **The `file:browse` grant must land before `GET /files/list` closes**, not with it | fleet owner | **1d** |
+| **File-download compute fleet** | Stays on a personal API key by decision. Needs `file:browse` only — downloads are open by default, so no download grant. **The `file:browse` grant must land before `GET /files/list` closes**, not with it | fleet owner | **1d** |
 | **`APIServer/scripts/*`** | Admin-only; add an `--operator` argument writing one audit row per run | this repo | 3 |
 
 **Not consumers of this rollout.** The NGS360-ETL was a one-off load script and no longer runs — nothing to migrate, no credential to issue. The MCP server and NGS360-Agent are **downstream of RBAC, not blockers on it**: they are deliberately not deployed until the model below is finished, and will be built against it rather than migrated onto it. The dependency runs the other way round from every row in the table above.
@@ -1164,13 +1173,17 @@ All reads, all successful. Three things follow.
 
 **The account is a regular user, not a superuser, so RBAC does constrain it.** That is the good case: a personal *superuser* credential would short-circuit every permission check ahead of the resolver, and `enforce` would constrain the traffic not at all. But being constrained means the permissions have to actually line up, and one does not:
 
-> `member` holds `sample:read`. It does **not** hold `file:browse` (only `lab_manager` and `admin` carry it) and, since downloads became project-scoped, no longer holds `file:download` either.
+> `member` holds `sample:read` and, since 2026-09-09, `file:download` again. It does **not** hold `file:browse` — only `lab_manager` and `admin` carry that.
 
 Every user holds `member` from the bootstrap backfill and nothing more. So the moment `GET /files/list` is closed and guarded on `file:browse`, this fleet receives 403 on all 3,378 of those calls. **The grant has to land before that closure, not alongside it** — this is check 5 of *The criterion for closing a route*, and it is the first time that check has been applied before a closure rather than reconstructed after one.
 
-**The right role is a narrow custom one:** exactly `file:download`, `file:browse`, `sample:read`. The two off-the-shelf candidates are both wrong in instructive ways. `auditor` grants 18 permissions where 3 are needed, and includes `search:query`, which reaches ACL-unaware OpenSearch — the specific gap recorded under *OpenSearch-backed search is a known v1 limitation*. `lab_manager` is the obvious fit for `file:browse` and also carries `run:create`, `run:demux`, `sample:create` and `project:ingest`, none of which a download fleet has any use for.
+The download half of the problem has since dissolved rather than been solved: downloads are open by default, so no download grant is required. `file:browse` is the whole of the remaining gap, and it is one permission.
 
-**Why a service account rather than leaving the person's key in place**, given RBAC now constrains it either way: revocation cannot be done independently of that person's own access, the fleet dies silently if they change roles or leave, and every one of those 327,000 requests is attributed to a human who did not make them — which makes the access log useless for exactly the question it exists to answer.
+**The remaining grant is one permission: `file:browse`.** The two off-the-shelf candidates are both wrong in instructive ways, and the reasoning is worth keeping for the next such request. `auditor` grants 18 permissions where one is needed, and includes `search:query`, which reaches ACL-unaware OpenSearch — the specific gap recorded under *OpenSearch-backed search is a known v1 limitation*. `lab_manager` is the obvious fit for `file:browse` and also carries `run:create`, `run:demux`, `sample:create` and `project:ingest`, none of which a download fleet has any use for.
+
+**The credential stays a personal token — decided 2026-09-09.** An earlier revision of this section argued for a service account, on the grounds that revocation cannot be done independently of the person's own access, the fleet dies silently if they leave, and 327,000 requests get attributed to a human who did not make them. Those costs are real and are accepted; this is not a service and will not be modelled as one. The attribution objection is also weaker than it was: `submitted_by` now records the authenticated caller on writes, and for reads the access log records the key prefix, so "who ran this" is answerable even though the answer is a person.
+
+Scale, for the record, since it grew by two orders of magnitude once measured properly: **32,888,177** download requests in 30 days across **66 projects**, htslib on ~180 cluster nodes. That volume is what made 66 project memberships untenable and drove the open-by-default decision.
 
 A related consumer on an adjacent subnet was found sending an **expired JWT** on the same two file routes — 1,340 requests reported as `auth_method: jwt` while `auth_valid` was `false`, succeeding only because the routes are open. It is effectively anonymous on all of its traffic and invisible to a query that filters on `auth_method` alone. That discovery is what added check 3 to the closure criterion.
 
