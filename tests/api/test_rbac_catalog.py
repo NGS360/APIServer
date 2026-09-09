@@ -129,6 +129,38 @@ class TestRoleDefinitions:
             "project_viewer", "project_contributor", "project_owner",
         }
 
+    def test_member_does_not_hold_global_file_download(self):
+        """
+        Granting this to `member` would make every project restriction vacuous.
+
+        `has_in_project` returns true on a *global* grant (api/rbac/resolver.py),
+        so a universal `file:download` satisfies the restricted-project branch of
+        `require_file_download` for every user -- the feature would look
+        implemented and do nothing.
+
+        It is pinned because it is a plausible mistake rather than a far-fetched
+        one: an earlier draft of docs/RBAC.md said `member` should regain this
+        permission when downloads became open by default. Downloads from an
+        unrestricted project consult no permission at all, which is what makes
+        them open; the permission is only for restricted projects and for URIs
+        that resolve to no project.
+        """
+        assert Permission.FILE_DOWNLOAD not in ROLE_DEFINITIONS["member"].permissions
+
+    def test_the_roles_that_bypass_a_restriction_are_a_closed_set(self):
+        """
+        Global file:download bypasses project restriction by design. That is the
+        cross-project escape hatch, so who holds it is a decision and not an
+        accident -- pin the set.
+        """
+        holders = {
+            name for name, role in ROLE_DEFINITIONS.items()
+            if role.scope is RoleScope.GLOBAL
+            and Permission.FILE_DOWNLOAD in role.permissions
+        }
+
+        assert holders == {"lab_manager", "auditor", "admin"}
+
     def test_workflow_publisher_cannot_delete(self):
         """
         Publishing a workflow and destroying one are different privileges.

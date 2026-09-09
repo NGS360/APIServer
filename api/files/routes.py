@@ -18,6 +18,7 @@ from fastapi import (APIRouter, Depends, Form, HTTPException, Query, Request,
 from fastapi import File as FastAPIFile
 from fastapi.responses import RedirectResponse
 from pydantic import ValidationError
+from sqlmodel import col, select
 
 from api.files.models import FileUploadCreate
 
@@ -297,6 +298,22 @@ def download_file(
 DOWNLOAD_URL_TTL_SECONDS = 3600
 
 
+def _restricted_projects(session, project_ids) -> list:
+    """Which of these projects have opted out of open downloads."""
+    if not project_ids:
+        return []
+    from api.project.models import Project
+
+    return list(
+        session.exec(
+            select(Project.id).where(
+                col(Project.id).in_(list(project_ids)),
+                Project.download_restricted.is_(True),
+            )
+        ).all()
+    )
+
+
 def require_file_download(
     request: Request,
     authz: AuthzDep,
@@ -304,31 +321,58 @@ def require_file_download(
     path: str = Query(..., description="S3 URI of the file"),
 ):
     """
-    Project-scoped download: may this caller download *this* file?
+    May this caller download *this* file? Open unless the project says otherwise.
 
-    The parameter is a URI rather than a project id, so the project has to be
-    resolved before it can be checked -- api/files/scope.py does that, preferring a
-    file's own project association and falling back to the projects its sequencing
-    run touches. Membership of any one of the resulting projects is enough: a file
-    genuinely belonging to two projects is downloadable by members of either.
+    Downloads are open to any authenticated caller. A project opts out by setting
+    `download_restricted`, and only then is `file:download` consulted. Absence of
+    a restriction is permission -- see docs/RBAC.md, "Downloads: open by default,
+    restricted by exception".
 
-    When the URI resolves to no project at all -- unregistered, or registered with
-    no association -- the check falls back to the *global* file:download
-    permission. That is what keeps the behaviour coherent at both ends: `member`
-    does not hold it, so an ordinary user cannot download a file that belongs to
-    nothing; while lab_manager, auditor, admin and superusers do, so operating
-    across raw storage still works. Note has_in_project also honours a global
-    grant, which is why those roles are unaffected by the project scoping.
+    The parameter is a URI rather than a project id, so the project still has to
+    be resolved before its restriction can be read -- api/files/scope.py does
+    that. The resolver is unchanged by the policy inversion; it just answers a
+    different question now. Previously "which project must the caller belong
+    to?", now "which project's restriction applies?".
+
+    Three cases:
+
+    - **Resolved and unrestricted.** Allowed, without consulting any permission.
+      This is the common path and the reason the policy changed: one genomics
+      workload read 66 projects 33M times in a month, and requiring a grant per
+      project made project membership mean "reads everything".
+
+    - **Resolved and restricted.** Requires `file:download` on the project plane,
+      which project_viewer and above carry -- so a restricted project's members
+      are its allowlist. `has_in_project` also honours a *global* grant, so
+      lab_manager, auditor, admin and superusers pass regardless. That is
+      intended for cross-project operation, and it is exactly why `member` must
+      **not** be given global `file:download`: it would satisfy every restriction
+      for every user and make this branch unreachable.
+
+    - **Unresolved.** Requires *global* `file:download`, unchanged. "Belongs to
+      no project" is not evidence of permission, and this case is load-bearing
+      for a reason beyond authorization: generate_presigned_url signs whatever
+      bucket and key it is handed, so an unresolved URI can name any object the
+      API's own IAM role can read. Keeping it privileged is what stops the
+      endpoint being an arbitrary-S3-read proxy. Do not "simplify" this to allow.
 
     A dependency may take the same query parameter as its handler; both receive it
     and the OpenAPI schema is unchanged.
     """
     scope = scope_for_uri(session, path)
     if scope.resolved:
-        granted = any(
-            authz.has_in_project(Permission.FILE_DOWNLOAD, project_id)
-            for project_id in scope.project_ids
-        )
+        restricted = _restricted_projects(session, scope.project_ids)
+        if not restricted:
+            granted = True
+        else:
+            # Every restricted project in the set has to be satisfied. Only one
+            # project is ever resolved in practice -- measured 0 multi-project
+            # files in production -- so this is the safe reading of a case that
+            # does not currently occur, not a considered conflict policy.
+            granted = all(
+                authz.has_in_project(Permission.FILE_DOWNLOAD, project_id)
+                for project_id in restricted
+            )
     else:
         granted = authz.has(Permission.FILE_DOWNLOAD)
 

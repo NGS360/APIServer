@@ -1,28 +1,33 @@
 """
-Project-scoped downloads: may this caller download *this* file?
+Downloads: may this caller download *this* file?
 
-Until now `GET /files/download-url` was guarded on the global plane, and `member`
-held `file:download`, so every authenticated user could download every file in the
-product by URI. The parameter is a URI rather than a project id, so scoping it
-requires resolving the URI to a project first — api/files/scope.py does that.
+Open unless the project says otherwise. Downloads are permitted for any
+authenticated caller; a project opts out by setting `download_restricted`, and
+only then is `file:download` consulted.
 
-The policy under test, decided deliberately:
+This inverts what these tests originally asserted. The earlier policy required
+project membership for every download, and seven tests here encoded that -- they
+were rewritten rather than preserved, because they asserted the requirement that
+was withdrawn. The measurement that changed it: one genomics workload read 66
+projects 33,000,000 times in a month holding `member` and no memberships, so
+default-deny meant either refusing it or maintaining 66 grants that made project
+membership mean "reads everything".
 
-* **Project-associated files are strict.** A file associated with a project, or
-  with a sample (which belongs to exactly one project), resolves to those projects
-  and no others.
-* **Run-associated files are permissive.** A file with no project or sample
-  association but attached to a sequencing run resolves to *every* project that run
-  touches. A flowcell is a shared artifact — demux statistics and samplesheets
-  belong to the run, not to one project — and the alternative generates a grant
-  request per person per flowcell.
-* **The order between them is the policy, not an implementation detail.** A file
-  that is both in a project and on a run resolves strictly. The test for that is
-  the one that catches the permissive path quietly swallowing the strict one.
-* **A URI resolving to nothing falls back to the global permission.** `member`
-  does not hold it, so an ordinary user cannot download a file belonging to
-  nothing; lab_manager, auditor, admin and superusers do, so operating over raw
-  storage still works.
+What is under test now:
+
+* **Unrestricted is open.** A non-member downloads freely. No permission is
+  consulted at all on this path.
+* **Restricted requires `file:download` on that project**, which project_viewer
+  and above carry -- so a restricted project's members are its allowlist.
+* **The resolver is unchanged**, and its ordering is still the policy. It now
+  answers "whose restriction applies" instead of "whose membership is required",
+  so the ordering tests express themselves through a restriction rather than
+  through a refusal.
+* **An unresolved URI still needs *global* `file:download`.** Unchanged, and
+  load-bearing beyond authorization: generate_presigned_url signs any bucket and
+  key it is given, so this is what stops the endpoint being an arbitrary-S3-read
+  proxy.
+* **Authentication is still required.** "Open" means open to platform users.
 
 RBAC_MODE is `enforce` in tests, so refusals are 403s.
 """
@@ -77,6 +82,15 @@ def put_sample_on_run(session, project: Project, run: SequencingRun, name: str):
     return sample
 
 
+def restrict(session, project: Project):
+    """Opt a project out of open downloads."""
+    project.download_restricted = True
+    session.add(project)
+    session.commit()
+    session.refresh(project)
+    return project
+
+
 def enrol(session, project: Project, username: str, role_name="project_viewer"):
     from sqlmodel import select
 
@@ -116,29 +130,61 @@ class TestProjectAssociatedFilesAreStrict:
 
         assert scoped_client.get(URL, params={"path": f.uri}).status_code == 200
 
-    def test_a_non_member_cannot(self, session, scoped_client):
-        """The requirement, stated minimally."""
+    def test_a_non_member_can_when_the_project_is_not_restricted(
+        self, session, scoped_client
+    ):
+        """
+        The policy, stated minimally. This caller holds no file:download at all,
+        globally or on the project, and still gets in -- because nothing said it
+        should not.
+        """
         project = make_project(session, "0002")
         f = make_file(session, "s3://bucket/p2/reads.fastq.gz")
         session.add(FileProject(file_id=f.id, project_id=project.id))
         session.commit()
 
+        assert scoped_client.get(URL, params={"path": f.uri}).status_code == 200
+
+    def test_a_non_member_cannot_once_the_project_is_restricted(
+        self, session, scoped_client
+    ):
+        """And the opt-out actually opts out."""
+        project = make_project(session, "0022")
+        f = make_file(session, "s3://bucket/p22/reads.fastq.gz")
+        session.add(FileProject(file_id=f.id, project_id=project.id))
+        session.commit()
+        restrict(session, project)
+
         r = scoped_client.get(URL, params={"path": f.uri})
         assert r.status_code == 403
         assert "file:download" in r.json()["detail"]
 
-    def test_membership_of_a_different_project_does_not_help(
+    def test_a_member_can_download_from_a_restricted_project(
+        self, session, scoped_client
+    ):
+        """Membership is the allowlist for a restricted project."""
+        project = make_project(session, "0023")
+        f = make_file(session, "s3://bucket/p23/reads.fastq.gz")
+        session.add(FileProject(file_id=f.id, project_id=project.id))
+        session.commit()
+        restrict(session, project)
+        enrol(session, project, "scoped")
+
+        assert scoped_client.get(URL, params={"path": f.uri}).status_code == 200
+
+    def test_membership_of_a_different_project_does_not_open_a_restricted_one(
         self, session, scoped_client
     ):
         """
-        The isolation case. A check that asked "does this user hold file:download
-        anywhere" would pass the first test here and this one too.
+        The isolation case, still needed. A check asking "does this user hold
+        file:download anywhere" would pass the member test above and this one too.
         """
         mine = make_project(session, "0003")
         theirs = make_project(session, "0004")
         f = make_file(session, "s3://bucket/p4/reads.fastq.gz")
         session.add(FileProject(file_id=f.id, project_id=theirs.id))
         session.commit()
+        restrict(session, theirs)
         enrol(session, mine, "scoped")
 
         assert scoped_client.get(URL, params={"path": f.uri}).status_code == 403
@@ -196,10 +242,14 @@ class TestRunAssociatedFilesArePermissive:
         enrol(session, b, "scoped")  # member of only one of the two
         assert scoped_client.get(URL, params={"path": f.uri}).status_code == 200
 
-    def test_a_member_of_no_project_on_the_run_still_cannot(
+    def test_a_restricted_project_on_the_run_restricts_the_run_file(
         self, session, scoped_client
     ):
-        """Permissive is not open: it widens to the run's projects, not to everyone."""
+        """
+        Permissive widens *which* projects are consulted; it does not skip the
+        restriction. A run file whose run touches a restricted project needs
+        permission on that project.
+        """
         on_run = make_project(session, "0012")
         elsewhere = make_project(session, "0013")
         run = make_run(session, "260201_M1_2_FC2")
@@ -208,6 +258,7 @@ class TestRunAssociatedFilesArePermissive:
         f = make_file(session, "s3://bucket/runs/FC2/demux_stats.csv")
         session.add(FileSequencingRun(file_id=f.id, sequencing_run_id=run.id))
         session.commit()
+        restrict(session, on_run)
 
         enrol(session, elsewhere, "scoped")
         assert scoped_client.get(URL, params={"path": f.uri}).status_code == 403
@@ -230,6 +281,10 @@ class TestRunAssociatedFilesArePermissive:
         session.add(FileSequencingRun(file_id=f.id, sequencing_run_id=run.id))
         session.commit()
 
+        # Only the file's own project is restricted. The run's other project is
+        # open, so if the run path were allowed to widen this, the restriction
+        # would be bypassed and this caller would get in.
+        restrict(session, owner)
         enrol(session, also_on_run, "scoped")
         assert scoped_client.get(URL, params={"path": f.uri}).status_code == 403
 
@@ -277,29 +332,52 @@ class TestTheOldRouteIsTheBypass:
     """
     The control is only as good as the closure of the route beside it.
 
-    `GET /files/download` answers the same question with no guard at all, so while
-    it stays open every refusal above is walkable around by changing the URL. It
-    stays open because a compute fleet still calls it; this test is here so the
+    `GET /files/download` answers the same question with no guard at all. Since
+    downloads became open by default it is no longer a *general* bypass -- for an
+    unrestricted project the two routes now agree -- so this narrowed to the two
+    things it does still bypass: restriction, and authentication.
+
+    It stays open because a compute fleet calls it: measured 2026-09-08 at 29.3M
+    requests in 30 days, against 41 from browsers. These tests are here so the
     dependency is visible in CI rather than only in a review conversation.
 
-    When that route closes, invert this test.
+    When that route closes, invert both.
     """
 
-    def test_the_unguarded_route_still_serves_what_the_guarded_one_refuses(
+    def test_the_unguarded_route_bypasses_a_restriction(
         self, session, scoped_client
     ):
         project = make_project(session, "0020")
         f = make_file(session, "s3://bucket/p20/reads.fastq.gz")
         session.add(FileProject(file_id=f.id, project_id=project.id))
         session.commit()
+        restrict(session, project)
 
         assert scoped_client.get(URL, params={"path": f.uri}).status_code == 403
         bypass = scoped_client.get("/api/v1/files/download", params={"path": f.uri},
                                    follow_redirects=False)
         assert bypass.status_code == 307, (
-            "GET /files/download appears to be guarded now -- if so, project-scoped "
-            "downloads are no longer bypassable and this test should assert 403"
+            "GET /files/download appears to be guarded now -- if so, project "
+            "restrictions are no longer bypassable and this should assert 403"
         )
+
+    def test_the_unguarded_route_does_not_require_authentication(
+        self, session, unauthenticated_client
+    ):
+        """
+        The other half, and the one that outlives restriction: "open" is meant to
+        mean open to platform *users*. On this route it means open.
+        """
+        project = make_project(session, "0021")
+        f = make_file(session, "s3://bucket/p21/reads.fastq.gz")
+        session.add(FileProject(file_id=f.id, project_id=project.id))
+        session.commit()
+
+        anon = unauthenticated_client.get(
+            "/api/v1/files/download", params={"path": f.uri},
+            follow_redirects=False,
+        )
+        assert anon.status_code == 307
 
 
 def test_the_resolver_is_not_confused_by_file_versioning(session):
@@ -422,8 +500,26 @@ class TestPathInferenceForUnregisteredFiles:
                "/scRNA-Seq/zUMIs/combined.dgecounts.rds")
         assert scoped_client.get(URL, params={"path": uri}).status_code == 200
 
-    def test_a_non_member_cannot(self, session, scoped_client):
+    def test_a_non_member_can_when_the_inferred_project_is_open(
+        self, session, scoped_client
+    ):
+        """
+        This is the traffic the policy change exists to serve: unregistered
+        pipeline output under a project prefix, read by someone who is not a
+        member of it.
+        """
         project = make_project(session, "0051")
+        uri = (f"s3://test-results-bucket/{project.project_id}"
+               "/scRNA-Seq/zUMIs/combined.dgecounts.rds")
+        assert scoped_client.get(URL, params={"path": uri}).status_code == 200
+
+    def test_a_non_member_cannot_when_the_inferred_project_is_restricted(
+        self, session, scoped_client
+    ):
+        """Restriction reaches inferred files too, or it would be trivially evaded
+        by never registering the output."""
+        project = make_project(session, "0057")
+        restrict(session, project)
         uri = (f"s3://test-results-bucket/{project.project_id}"
                "/scRNA-Seq/zUMIs/combined.dgecounts.rds")
         assert scoped_client.get(URL, params={"path": uri}).status_code == 403
@@ -489,6 +585,9 @@ class TestPathInferenceForUnregisteredFiles:
         session.add(FileProject(file_id=f.id, project_id=owner.id))
         session.commit()
 
+        # Only the registered owner is restricted; the project named in the path
+        # is open. Inference winning would bypass the restriction.
+        restrict(session, owner)
         enrol(session, elsewhere, "scoped")   # member of the path's project only
         assert scoped_client.get(URL, params={"path": uri}).status_code == 403
 
@@ -516,3 +615,37 @@ class TestPathInferenceForUnregisteredFiles:
         uri = f"s3://test-results-bucket/{project.project_id}/gRNA/counts.txt"
         make_file(session, uri)   # registered, but associated with nothing
         assert scoped_client.get(URL, params={"path": uri}).status_code == 200
+
+
+class TestAuthenticationIsStillRequired:
+    """
+    Step 1 of the rule. "Open" means open to platform users, not to the internet.
+
+    Worth an explicit test because it is the one property of the previous model
+    kept deliberately, and because the natural way to implement open-by-default --
+    return early before consulting anything -- would drop it silently.
+    """
+
+    def test_an_anonymous_caller_is_refused_on_an_open_project(
+        self, session, unauthenticated_client
+    ):
+        project = make_project(session, "0060")
+        f = make_file(session, "s3://bucket/p60/reads.fastq.gz")
+        session.add(FileProject(file_id=f.id, project_id=project.id))
+        session.commit()
+
+        r = unauthenticated_client.get(URL, params={"path": f.uri})
+        assert r.status_code == 401, (
+            "an unrestricted project is open to authenticated users, not to "
+            "anonymous ones"
+        )
+
+    def test_an_anonymous_caller_is_refused_on_an_unregistered_uri(
+        self, session, unauthenticated_client
+    ):
+        project = make_project(session, "0061")
+        uri = f"s3://test-results-bucket/{project.project_id}/RNA-Seq/counts.txt"
+
+        assert unauthenticated_client.get(
+            URL, params={"path": uri}
+        ).status_code == 401
