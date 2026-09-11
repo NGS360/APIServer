@@ -627,6 +627,25 @@ def _invoke_omics_register_lambda(payload: dict) -> dict:
     return body
 
 
+# Version attributes whose values ride along on the lambda payload and
+# become AWS HealthOmics tags on the registered workflow/version. Anything
+# outside this allowlist stays in NGS360's DB and does not surface on Omics.
+_OMICS_TAG_ATTRIBUTES = ("git_commit", "git_repo", "git_ref")
+
+
+def _omics_tags_from_version(version: WorkflowVersion) -> dict[str, str]:
+    """Pull the allowlisted git_* attributes off a WorkflowVersion so the
+    Omics registration lambda can attach them as tags on the AWS resource.
+    Missing attributes simply don't get tagged."""
+    if not version.attributes:
+        return {}
+    return {
+        a.key: a.value
+        for a in version.attributes
+        if a.key in _OMICS_TAG_ATTRIBUTES and a.value
+    }
+
+
 def _register_workflow_on_omics(
     session: Session,
     workflow: Workflow,
@@ -636,6 +655,7 @@ def _register_workflow_on_omics(
     """Register the workflow/version on AWS HealthOmics via Lambda; return ARN."""
     prior = _find_existing_omics_deployment(session, workflow, engine)
     cwl_s3_path = _resolve_cwl_definition_to_s3(session, version.definition_uri)
+    tags = _omics_tags_from_version(version)
 
     if prior is None:
         payload = {
@@ -644,6 +664,7 @@ def _register_workflow_on_omics(
             "name": workflow.name,
             "cwl_s3_path": cwl_s3_path,
             "id": str(version.workflow_id),
+            "tags": tags,
         }
     else:
         # Reuse the omics workflow id from the prior deployment's ARN.
@@ -667,6 +688,7 @@ def _register_workflow_on_omics(
             "version_name": str(version.version),
             "cwl_s3_path": cwl_s3_path,
             "id": str(version.workflow_id),
+            "tags": tags,
         }
 
     body = _invoke_omics_register_lambda(payload)
