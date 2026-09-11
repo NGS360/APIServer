@@ -124,7 +124,7 @@ class TestRoleDefinitions:
             # global
             "member", "demux_operator", "lab_manager", "platform_admin",
             "service_account", "auditor", "admin",
-            "workflow_publisher", "workflow_admin",
+            "workflow_publisher", "workflow_admin", "manifest_operator",
             # project
             "project_viewer", "project_contributor", "project_owner",
         }
@@ -160,6 +160,33 @@ class TestRoleDefinitions:
         }
 
         assert holders == {"lab_manager", "auditor", "admin"}
+
+    def test_manifest_operator_holds_exactly_the_manifest_permissions(self):
+        """
+        Manifest handling is global-only -- a manifest names an arbitrary S3 URI
+        and no resolver maps it to a project -- so it cannot be project
+        membership and has to be a global role.
+        """
+        manifest = ROLE_DEFINITIONS["manifest_operator"].permissions
+
+        assert manifest == {
+            Permission.MANIFEST_READ,
+            Permission.MANIFEST_UPLOAD,
+            Permission.MANIFEST_VALIDATE,
+        }
+
+    def test_manifest_operator_is_narrower_than_lab_manager(self):
+        """
+        lab_manager was the off-the-shelf alternative, at sixteen permissions
+        beyond member including run:create and project:ingest -- none of which a
+        person uploading a manifest needs.
+        """
+        lab = ROLE_DEFINITIONS["lab_manager"].permissions
+        manifest = ROLE_DEFINITIONS["manifest_operator"].permissions
+
+        assert manifest < lab
+        assert Permission.RUN_CREATE not in manifest
+        assert Permission.PROJECT_INGEST not in manifest
 
     def test_workflow_publisher_cannot_delete(self):
         """
