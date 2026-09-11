@@ -74,20 +74,16 @@ AWAITING_AUTHENTICATION = {
     "GET /api/v1/files",
     "GET /api/v1/files/list",
     "GET /api/v1/files/{file_id}",
-    "GET /api/v1/files/{file_id}/versions",
     "GET /api/v1/jobs",
     "GET /api/v1/jobs/{job_id}",
     "GET /api/v1/jobs/{job_id}/log",
     "GET /api/v1/jobs/{job_id}/log/paginated",
-    "GET /api/v1/manifest",
-    "GET /api/v1/pipelines",
     "GET /api/v1/pipelines/{pipeline_id}",
     "GET /api/v1/platforms",
     "GET /api/v1/platforms/{name}",
     "GET /api/v1/projects/search",
     "GET /api/v1/projects/{project_id}",
     "GET /api/v1/projects/{project_id}/samples",
-    "GET /api/v1/qcmetrics/search",
     "GET /api/v1/qcmetrics/{qcrecord_id}",
     "GET /api/v1/runs",
     "GET /api/v1/runs/demultiplex",
@@ -95,39 +91,29 @@ AWAITING_AUTHENTICATION = {
     "GET /api/v1/runs/search",
     "GET /api/v1/runs/{run_id}",
     "GET /api/v1/runs/{run_id}/metrics",
-    "GET /api/v1/runs/{run_id}/samples",
     "GET /api/v1/runs/{run_id}/samplesheet",
     "GET /api/v1/search",
-    "GET /api/v1/settings",
     "GET /api/v1/settings/{key}",
     "GET /api/v1/vendors",
     "GET /api/v1/vendors/{vendor_id}",
     "GET /api/v1/workflows",
     "GET /api/v1/workflows/{workflow_id}",
     "GET /api/v1/workflows/{workflow_id}/aliases",
-    "GET /api/v1/workflows/{workflow_id}/deployments",
     "GET /api/v1/workflows/{workflow_id}/versions",
     "GET /api/v1/workflows/{workflow_id}/versions/{version_num}",
     "GET /api/v1/workflows/{workflow_id}/versions/{version_num}/deployments",
-    "PATCH /api/v1/projects/{project_id}",
     "POST /api/v1/actions/config/validate",
-    "POST /api/v1/files",
     "POST /api/v1/files/upload",
     "POST /api/v1/jobs",
-    "POST /api/v1/manifest",
-    "POST /api/v1/manifest/validate",
     "POST /api/v1/platforms",
     "POST /api/v1/projects/search",
-    "POST /api/v1/qcmetrics/search",
     "POST /api/v1/runs",
     "POST /api/v1/runs/search",
     "POST /api/v1/runs/{run_id}/samplesheet",
     "POST /api/v1/samples/reindex",
     "POST /api/v1/samples/search",
     "POST /api/v1/vendors",
-    "PUT /api/v1/projects/{project_id}",
     "PUT /api/v1/projects/{project_id}/samples/{sample_id}",
-    "PUT /api/v1/runs/{run_id}",
     "PUT /api/v1/vendors/{vendor_id}",
 }
 
@@ -212,7 +198,7 @@ def test_guard_count_is_recorded():
     Pins the size of the guarded surface so growth is visible in review rather
     than incidental.
     """
-    assert len(GUARDED) == 46
+    assert len(GUARDED) == 60
 
 
 def test_the_authentication_backlog_only_shrinks():
@@ -247,8 +233,33 @@ def test_the_authentication_backlog_only_shrinks():
     and it is now measurable rather than estimated: the guard emits a decision
     record, so the residual shows up as 401s on this route instead of being
     inferred from user agents.
+
+    68 -> 54: fourteen routes in one pass, 2026-09-11. The first batch sized by
+    resolving *every* observed caller on *every* candidate route against the
+    permission its guard would require, rather than by checking anonymous
+    traffic alone. That corrected the count in both directions -- it found ten
+    demux operators lacking run:update who would have started receiving 403s,
+    and three apparent gaps that were a credential revoked on 09-04 and
+    therefore incapable of calling again.
+
+    The arithmetic, which is the part worth keeping:
+
+      68  awaiting
+     -23  no traffic at all in the clean window (closable, but blind)
+     -28  anonymous or invalid-jwt traffic (blocked on a consumer)
+      ---
+      17  candidates
+      -3  a caller still lacks the guard after the 09-11 grants
+      ---
+      14  closed here
+
+    Note 17 candidates, not 21. An earlier count read auth_method=jwt as
+    authenticated; check 3 removes four routes, one of them
+    GET /jobs/{job_id}/log/paginated with 6,951 invalid-jwt requests against
+    7,269 valid ones -- a consumer that looks migrated in any query filtering on
+    auth_method alone.
     """
-    assert len(AWAITING_AUTHENTICATION) == 68
+    assert len(AWAITING_AUTHENTICATION) == 54
 
 
 @pytest.mark.parametrize("key", sorted(GUARDED))

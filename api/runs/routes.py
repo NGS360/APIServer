@@ -248,6 +248,7 @@ def get_run(session: SessionDep, run_id: str) -> SequencingRunPublic:
     "/{run_id}",
     response_model=SequencingRunPublic,
     tags=["Run Endpoints"],
+    dependencies=[Depends(require_permission(Permission.RUN_UPDATE))],
 )
 def update_run(
     session: SessionDep,
@@ -354,6 +355,7 @@ def associate_sample_with_run(
     "/{run_id}/samples",
     response_model=list[SampleSequencingRunPublic],
     tags=["Run Endpoints"],
+    dependencies=[Depends(require_permission(Permission.SAMPLE_READ))],
 )
 def get_samples_for_run(
     session: SessionDep,

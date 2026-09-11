@@ -902,7 +902,7 @@ Consequences for this design:
 
 Every closure so far has been justified by one query — *this route received no anonymous traffic*. That query is necessary and **not sufficient**, and each of the checks below was added because the previous version of this list let something through.
 
-Run all six. A route is closable only when every one passes.
+Run all seven. A route is closable only when every one passes.
 
 **1. `auth_method = "none"` is zero.** The original check. Note that **one request is not zero**: `GET /files/download` carried 323,785 authenticated requests against a single anonymous one, and that one was a live `python-requests` consumer sharing a host with another unmigrated caller, not noise.
 
@@ -916,7 +916,25 @@ Run all six. A route is closable only when every one passes.
 
 **6. Know whether each caller can survive a 401.** A browser can: the SPA does 401 → single-flight refresh → retry (`src/lib/interceptors.ts`), so a momentarily expired access token is invisible to the user. A `python-requests` script cannot — it has no refresh path and simply fails. The same `auth_valid = false` count therefore means something different depending on the user agent, so break it down rather than totalling it.
 
-Checks 3 and 4 postdate the closures recorded below; both were reconstructed for those routes rather than applied prospectively.
+**7. Confirm the grants actually landed, per tier, after applying them.** Check 5 tells you which grants a closure needs; it does not tell you they exist. Added 2026-09-12, after a grant batch reported as run against all three tiers turned out to be present in **none** of them — `demux_operator` had zero holders everywhere, eight days after eleven people were recorded as having it.
+
+The mechanism is worth knowing because it fails quietly in a specific way. `scripts/grant_role.py` validates every line before writing anything and **aborts the whole batch on a single unknown username** — which is correct, but means a partial failure looks like a completed run. Accounts are created on first SSO login, so the tiers diverge: of 26 usernames in one batch, dev was missing nine and staging one. One absent name there kills the run for every name.
+
+So the verification is a separate step and takes one query per tier:
+
+```sql
+SELECT r.name AS role, COUNT(ur.user_id) AS holders
+FROM role r LEFT JOIN user_role ur ON ur.role_id = r.id
+WHERE r.name IN ('demux_operator', 'manifest_operator')
+GROUP BY r.name;
+```
+
+Expect the count you intended, in the tier you intended. Two further notes from the incident:
+
+- **Divergent tiers need per-tier batches**, not one list. Dev genuinely cannot grant to a user who has never logged in there, so the honest outcome is a smaller batch in dev and a record of which accounts are absent — not a batch that silently does nothing.
+- **An empty `would_deny` set does not confirm a grant.** `run:demux` refusals stopped after the batch was believed applied, and that was read as the grant working. There had been **zero demux attempts** in the window. Absence of refusal means nobody tried; it never means somebody succeeded. Confirming a grant requires reading the grant, not the refusals.
+
+Checks 3 and 4 postdate the closures recorded below; both were reconstructed for those routes rather than applied prospectively. Check 7 postdates all of them.
 
 ### Closing `PUT /jobs/{job_id}`, 2026-08-18
 
@@ -962,6 +980,37 @@ All three take the **global** plane. None carries a project in its path, and `me
 Both remaining anonymous callers are `python-requests` from hosts nobody has claimed. Identifying their owners is now the whole of the Phase 1d discovery work.
 
 `POST /samples/search` shares a path with a closed route but stays open on purpose: it saw no traffic at all in the window, which makes it one of the zero-traffic routes rather than a migrated one. Those close on their own evidence, once a clean 30-day window exists.
+
+### Closing fourteen routes, 2026-09-11
+
+The backlog goes **68 to 54** and the guarded surface **46 to 60** — the largest single pass, and the first sized by applying every check prospectively rather than reconstructing some of them afterwards.
+
+The method was the change. Previous batches asked "does this route have anonymous traffic?". This one resolved *every observed caller* on *every* candidate route against the permission its guard would require, which is check 5 done exhaustively instead of spot-checked. The arithmetic:
+
+| | Routes |
+|---|---|
+| awaiting closure | 68 |
+| no traffic at all in the clean window | −23 |
+| anonymous or invalid-JWT traffic | −28 |
+| **candidates** | **17** |
+| a caller still lacks the guard after the 09-11 grants | −3 |
+| **closed** | **14** |
+
+**Check 3 mattered more than expected.** An earlier count put the candidates at 21 by reading `auth_method=jwt` as authenticated. Four routes fail on invalid JWTs, and one badly: `GET /jobs/{job_id}/log/paginated` carries **6,951 invalid-JWT requests against 7,269 valid ones** — a consumer that reads as fully migrated in any query filtering on `auth_method` alone, and would have received 403s on roughly half its traffic.
+
+**The exhaustive check found errors in both directions**, which is the argument for running it rather than reasoning about it:
+
+- *Under-granting.* Ten of the eleven `demux_operator` holders lacked `run:update`, needed by `POST /runs/{run_id}/samplesheet` and `PUT /runs/{run_id}`. The role had been deliberately narrowed to one permission and the narrowing was wrong — see the third worked example under *Why this set*.
+- *Phantom gaps.* Three apparent blockers were `ngs360_gDEStH0`, a key revoked on 2026-09-04. A retired credential cannot make a future request, so a naive "is this principal missing the permission?" query turns dead history into a blocker. Resolving keys regardless of `is_active`, then excluding the inactive ones, is the correct form.
+
+**Two routes were held back deliberately**, and both are one grant away:
+
+- `POST /runs` needs `run:create` for `NGS360-SequencersToS3`, whose `service_account` role lacks it.
+- `PUT /projects/{project_id}/samples/{sample_id}` needs `sample:update` for `NGS360-Demux-Batch-Job` — 110 requests. Same cause.
+
+A third, `POST /runs/{run_id}/samplesheet`, was clean except for a single request from one user holding only `member`. One request is not zero, so it stays open pending a decision on that grant rather than being closed over a live caller.
+
+The two `/projects/{project_id}` routes use `require_project_permission`, which honours a global grant as well as a project role, so it is strictly more permissive than the global plane for the same permission — safe either way, and it makes project ownership meaningful on the routes where a project is named.
 
 ### Verified Phase 1 blockers
 

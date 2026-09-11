@@ -46,6 +46,7 @@ router = APIRouter(prefix="/files", tags=["File Endpoints"])
     response_model=FilePublic,
     status_code=status.HTTP_201_CREATED,
     summary="Create a new file record",
+    dependencies=[Depends(require_permission(Permission.FILE_CREATE))],
 )
 def create_file(
     session: SessionDep,
@@ -519,6 +520,7 @@ def get_file(
     "/{file_id}/versions",
     response_model=FilesPublic,
     summary="Get all versions of a file",
+    dependencies=[Depends(require_permission(Permission.FILE_READ))],
 )
 def get_file_versions(
     file_id: uuid.UUID,
