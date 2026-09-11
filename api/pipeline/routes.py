@@ -51,6 +51,7 @@ def create_pipeline(
     "",
     response_model=PipelinesPublic,
     tags=["Pipeline Endpoints"],
+    dependencies=[Depends(require_permission(Permission.PIPELINE_READ))],
 )
 def get_pipelines(
     session: SessionDep,

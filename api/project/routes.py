@@ -197,6 +197,7 @@ def get_project_by_project_id(session: SessionDep, project: ProjectDep) -> Proje
     status_code=status.HTTP_200_OK,
     tags=["Project Endpoints"],
     response_model=ProjectPublic,
+    dependencies=[Depends(require_project_permission(Permission.PROJECT_UPDATE))],
 )
 def update_project(
     session: SessionDep,
@@ -224,6 +225,7 @@ def update_project(
     status_code=status.HTTP_200_OK,
     tags=["Project Endpoints"],
     response_model=ProjectPublic,
+    dependencies=[Depends(require_project_permission(Permission.PROJECT_UPDATE))],
 )
 def patch_project(
     session: SessionDep,

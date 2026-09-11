@@ -7,13 +7,20 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Query, Response, status, UploadFile, File
 from api.manifest import services
 from api.manifest.models import ManifestUploadResponse, ManifestValidationResponse
+from api.rbac.deps import require_permission
+from api.rbac.permissions import Permission
 from core.deps import get_s3_client, SessionDep
 
 
 router = APIRouter(prefix="/manifest", tags=["Manifest Endpoints"])
 
 
-@router.get("", response_model=str, tags=["Manifest Endpoints"])
+@router.get(
+    "",
+    response_model=str,
+    tags=["Manifest Endpoints"],
+    dependencies=[Depends(require_permission(Permission.MANIFEST_READ))],
+)
 def get_latest_manifest(
     s3_path: str = Query(
         ..., description="S3 bucket path to search for manifest files"
@@ -49,6 +56,7 @@ def get_latest_manifest(
     response_model=ManifestUploadResponse,
     status_code=status.HTTP_201_CREATED,
     tags=["Manifest Endpoints"],
+    dependencies=[Depends(require_permission(Permission.MANIFEST_UPLOAD))],
 )
 def upload_manifest(
     s3_path: str = Query(
@@ -76,6 +84,7 @@ def upload_manifest(
     "/validate",
     response_model=ManifestValidationResponse,
     tags=["Manifest Endpoints"],
+    dependencies=[Depends(require_permission(Permission.MANIFEST_VALIDATE))],
 )
 def validate_manifest(
     session: SessionDep,
