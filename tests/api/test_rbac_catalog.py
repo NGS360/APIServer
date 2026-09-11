@@ -161,6 +161,44 @@ class TestRoleDefinitions:
 
         assert holders == {"lab_manager", "auditor", "admin"}
 
+    def test_service_account_can_both_create_and_update_what_it_writes(self):
+        """
+        The role held run:update without run:create, and sample:create without
+        sample:update. A writeback identity that may change a run but not
+        register one, and create a sample but not correct it, describes no real
+        workflow -- and both halves were being hit in production by two
+        different service accounts.
+
+        Pinned as pairs because the asymmetry is the bug, and it is the kind
+        that reads as deliberate minimalism until someone measures the callers.
+        """
+        sa = ROLE_DEFINITIONS["service_account"].permissions
+
+        for create, update in (
+            (Permission.RUN_CREATE, Permission.RUN_UPDATE),
+            (Permission.SAMPLE_CREATE, Permission.SAMPLE_UPDATE),
+            (Permission.FILE_CREATE, Permission.FILE_UPDATE),
+        ):
+            assert (create in sa) == (update in sa), (
+                f"{create} and {update} should be held together or not at all"
+            )
+
+    def test_service_account_is_still_not_a_human_role(self):
+        """
+        Widening it must not turn it into a general write role. It exists for
+        machine writeback, and the permissions that spend money or destroy data
+        stay out.
+        """
+        sa = ROLE_DEFINITIONS["service_account"].permissions
+
+        for excluded in (
+            Permission.RUN_DEMUX,            # spends compute, deletes QC records
+            Permission.PROJECT_SUBMIT_ACTION,  # spends AWS Batch
+            Permission.FILE_DOWNLOAD,        # would bypass project restriction
+            Permission.SETTING_UPDATE,
+        ):
+            assert excluded not in sa
+
     def test_manifest_operator_holds_exactly_the_manifest_permissions(self):
         """
         Manifest handling is global-only -- a manifest names an arbitrary S3 URI
