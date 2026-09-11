@@ -332,7 +332,8 @@ Roles are database rows so that administrators can compose custom ones. The **bu
 | Role | Purpose | Permissions |
 |------|---------|-------------|
 | `member` | Default for every authenticated user | `action:read`, `platform:read`, `vendor:read`, `workflow:read`, `pipeline:read`, `run:read`, `job:read`, `job:submit`, `setting:read`, `search:query`, `chat:use`, `user:read`, `project:create`, plus the transitional global reads: `project:read`, `sample:read`, `qcrecord:read`, `file:read`. **Not** `file:download` — downloads from unrestricted projects consult no permission, and granting it globally would make every project restriction vacuous |
-| `demux_operator` | May run demultiplexing, and nothing else | `run:demux` only |
+| `demux_operator` | May run demultiplexing, and nothing else | `run:demux`, `run:update` — the samplesheet write and run update are part of the same job; see the worked example below |
+| `manifest_operator` | May read, upload and validate sample manifests | `manifest:read`, `manifest:upload`, `manifest:validate`. Global-only by necessity — a manifest names an arbitrary S3 URI |
 | `lab_manager` | Sequencing core — registers runs, demultiplexes, ingests vendor deliveries | `member` + `run:create`, `run:update`, `run:associate`, `run:demux`, `manifest:read`, `manifest:upload`, `manifest:validate`, `file:browse`, `file:create`, `file:update`, `sample:create`, `sample:update`, `qcrecord:create`, `project:ingest`, `job:read_all` |
 | `workflow_publisher` | May register workflows, add versions, and deploy them — but not delete | `workflow:create`, `workflow:update`, `workflow:deploy`. `workflow:read` comes from `member` |
 | `workflow_admin` | Owns the workflow catalog outright, including deletion | Every `workflow:*` permission, derived from the catalog so a new one joins automatically |
@@ -364,6 +365,14 @@ The rule for future requests: **a new global role is justified only if it adds a
 So the role holds `run:demux` and nothing else. `member` already provides `run:read`, `job:submit` and `job:read`, which is the rest of the flow, so one permission is *sufficient* rather than merely minimal. It qualifies under the rule because `run:demux` is a write on a global resource, and it is a strict subset of `lab_manager`, so genuine sequencing-core staff still get demux from that role and nobody needs both.
 
 The general lesson: **check what else an off-the-shelf role carries before granting it for one capability.** A role's description tells you what it is *for*; only its permission set tells you what it *does*.
+
+**Third worked example, 2026-09-11 — `demux_operator` was too narrow, and `manifest_operator`.** Both found by the same method, and the first one corrects this document.
+
+`demux_operator` shipped holding `run:demux` and nothing else, described here as "one permission wide by design rather than by omission". That was wrong. Preparing the next route closure resolved every caller on every route in the awaiting set, and **ten of the eleven demux operators held nothing for `POST /runs/{id}/samplesheet` or `PUT /runs/{id}`** — routes they use as part of the same job. `run:update` is not project-scopable, so project membership could not have covered it either. They would have received 403s the moment those routes were guarded.
+
+So the guard against over-granting cuts both ways, and the lesson is narrower than "prefer minimal roles": **minimal is only correct if you measured the whole flow.** The check that catches both failures is the same one — resolve every observed caller on every route the capability touches, not only the route that prompted the request. `demux_operator` is now two permissions and still a strict subset of `lab_manager`, which is what stops the sequencing core needing both.
+
+`manifest_operator` is the ordinary case: 15 scientists and one service account were using `GET /manifest`, `POST /manifest` and `POST /manifest/validate`, and `member` holds none of those. Only `lab_manager` and `admin` did, at sixteen permissions beyond `member` including `run:create` and `project:ingest` — nothing a person uploading a manifest needs. `manifest:*` is global-only by necessity, since a manifest names an arbitrary S3 URI and no resolver maps it to a project, so this could not have been project membership.
 
 **Second worked example, 2026-09-06 — `workflow_publisher` and `workflow_admin`.** The same shape, found the same way. `POST /workflows`, `POST /workflows/{id}/versions` and `POST /workflows/{id}/versions/{v}/deployments` had exactly one caller in 30 days of production, on a personal API key whose only role is `member`. All 29 requests returned `201` — and all 29 were recorded as `would_deny`, on `workflow:create` (15) and `workflow:deploy` (14). They were succeeding only because the mode is `dry_run`; under `enforce` every one of them is a 403. That is a Phase 1 blocker with a name attached, not an unidentified caller.
 

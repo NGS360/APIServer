@@ -159,6 +159,36 @@ _AUDITOR = READ_PERMISSIONS | {
 # people who share nothing else.
 _DEMUX_OPERATOR = frozenset({
     Permission.RUN_DEMUX,
+    # Added 2026-09-11. The role shipped with run:demux alone, described above as
+    # "one permission wide by design rather than by omission". That was wrong, and
+    # the correction is the more useful half of the lesson: minimal is only right
+    # if you measured the whole flow.
+    #
+    # Closing POST /runs/{run_id}/samplesheet and PUT /runs/{run_id} surfaced it --
+    # ten of the eleven demux operators had no run:update, so they would have
+    # started receiving 403s on routes they use as part of the same job. run:update
+    # is not project-scopable, so there was no per-project escape either.
+    #
+    # So the guard against over-granting cuts both ways, and the check that catches
+    # both is the same one: resolve every observed caller on every route the
+    # capability touches, not just the route that prompted the request.
+    Permission.RUN_UPDATE,
+})
+
+# Manifest handling is global-only by necessity -- a manifest names an arbitrary
+# S3 URI and no URI-to-project resolver covers it -- so it cannot be expressed as
+# project membership and has to be a global role.
+#
+# Found the same way as demux_operator, by measuring who calls the routes: 15
+# scientists plus one service account were using GET /manifest, POST /manifest and
+# POST /manifest/validate, and `member` holds none of those permissions. Only
+# lab_manager and admin did, and lab_manager carries sixteen permissions beyond
+# member including run:create and project:ingest -- nothing a person uploading a
+# manifest needs.
+_MANIFEST_OPERATOR = frozenset({
+    Permission.MANIFEST_READ,
+    Permission.MANIFEST_UPLOAD,
+    Permission.MANIFEST_VALIDATE,
 })
 
 # GA4GH workflow registration: register a workflow, add versions to it, and
@@ -249,6 +279,12 @@ ROLE_DEFINITIONS: dict[str, RoleDefinition] = {
         RoleScope.GLOBAL, "Workflow Administrator",
         "Owns the workflow catalog outright, including deletion.",
         frozenset(_WORKFLOW_ADMIN),
+    ),
+    "manifest_operator": RoleDefinition(
+        RoleScope.GLOBAL, "Manifest Operator",
+        "May read, upload and validate sample manifests. Grants nothing else -- "
+        "see the comment on _MANIFEST_OPERATOR for why this is not lab_manager.",
+        frozenset(_MANIFEST_OPERATOR),
     ),
     "platform_admin": RoleDefinition(
         RoleScope.GLOBAL, "Platform Administrator",
