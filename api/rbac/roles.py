@@ -126,14 +126,6 @@ _PLATFORM_ADMIN = _MEMBER | {
 _SERVICE_ACCOUNT = frozenset({
     Permission.PROJECT_READ,
     Permission.RUN_READ,
-    # run:create and sample:update added 2026-09-12, closing an incoherence
-    # rather than widening scope: the role already held run:update without
-    # run:create, and sample:create without sample:update. A writeback identity
-    # that may change a run but not register one, and create a sample but not
-    # correct it, describes no real workflow -- and both halves were being hit.
-    # NGS360-SequencingRunsToS3 registers runs (POST /runs) and
-    # NGS360-Demux-Batch-Job corrects samples (110 requests to
-    # PUT /projects/{id}/samples/{sample_id}).
     Permission.RUN_CREATE,
     Permission.RUN_UPDATE,
     Permission.SAMPLE_READ,
