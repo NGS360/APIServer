@@ -126,9 +126,11 @@ _PLATFORM_ADMIN = _MEMBER | {
 _SERVICE_ACCOUNT = frozenset({
     Permission.PROJECT_READ,
     Permission.RUN_READ,
+    Permission.RUN_CREATE,
     Permission.RUN_UPDATE,
     Permission.SAMPLE_READ,
     Permission.SAMPLE_CREATE,
+    Permission.SAMPLE_UPDATE,
     Permission.QCRECORD_CREATE,
     Permission.FILE_CREATE,
     Permission.FILE_UPDATE,
