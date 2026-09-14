@@ -107,13 +107,10 @@ AWAITING_AUTHENTICATION = {
     "POST /api/v1/jobs",
     "POST /api/v1/platforms",
     "POST /api/v1/projects/search",
-    "POST /api/v1/runs",
     "POST /api/v1/runs/search",
-    "POST /api/v1/runs/{run_id}/samplesheet",
     "POST /api/v1/samples/reindex",
     "POST /api/v1/samples/search",
     "POST /api/v1/vendors",
-    "PUT /api/v1/projects/{project_id}/samples/{sample_id}",
     "PUT /api/v1/vendors/{vendor_id}",
 }
 
@@ -198,7 +195,7 @@ def test_guard_count_is_recorded():
     Pins the size of the guarded surface so growth is visible in review rather
     than incidental.
     """
-    assert len(GUARDED) == 60
+    assert len(GUARDED) == 63
 
 
 def test_the_authentication_backlog_only_shrinks():
@@ -258,8 +255,26 @@ def test_the_authentication_backlog_only_shrinks():
     GET /jobs/{job_id}/log/paginated with 6,951 invalid-jwt requests against
     7,269 valid ones -- a consumer that looks migrated in any query filtering on
     auth_method alone.
+
+    54 -> 51: the last three of those 17 candidates, 2026-09-15. Each had been
+    held back on exactly one caller lacking one permission, and all three were
+    resolved by grants rather than by code:
+
+      POST /runs                          run:create    a service account
+      PUT /projects/{id}/samples/{id}     sample:update a service account
+      POST /runs/{run_id}/samplesheet     run:update    one user
+
+    The first two came from service_account holding each verb's update without
+    its create, or the reverse -- an asymmetry that described no real workflow
+    and was hit by two different accounts. The third was a demux operator missed
+    from the original list of eleven; they submit demux jobs and write
+    samplesheets, so demux_operator was the right role rather than a widening.
+
+    With these, every candidate that passed checks 1-3 is closed. What remains
+    in this list is 23 routes with no observed traffic and 28 blocked on a
+    consumer, and neither group is closable by anything we control.
     """
-    assert len(AWAITING_AUTHENTICATION) == 54
+    assert len(AWAITING_AUTHENTICATION) == 51
 
 
 @pytest.mark.parametrize("key", sorted(GUARDED))

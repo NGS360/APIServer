@@ -49,6 +49,7 @@ router = APIRouter(prefix="/runs", tags=["Run Endpoints"])
     response_model=SequencingRunPublic,
     tags=["Run Endpoints"],
     status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_permission(Permission.RUN_CREATE))],
 )
 def add_run(
     session: SessionDep,
@@ -288,7 +289,9 @@ def get_run_samplesheet(session: SessionDep, run_id: str) -> IlluminaSampleSheet
     "/{run_id}/samplesheet",
     response_model=IlluminaSampleSheetResponseModel,
     status_code=status.HTTP_201_CREATED,
-    tags=["Run Endpoints"],)
+    tags=["Run Endpoints"],
+    dependencies=[Depends(require_permission(Permission.RUN_UPDATE))],
+)
 def post_run_samplesheet(
     session: SessionDep,
     run_id: str,
