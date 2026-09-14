@@ -54,6 +54,7 @@ def api_get(endpoint, path, token, attempts=3):
     so transport-level failures are retried. HTTP error statuses are not
     retried — they will just come back the same.
     """
+    last_exc = None
     for attempt in range(1, attempts + 1):
         req = urllib.request.Request(endpoint + path)
         if token:
@@ -73,9 +74,10 @@ def api_get(endpoint, path, token, attempts=3):
             OSError,
             ValueError,
         ) as exc:
-            if attempt == attempts:
-                die("GET %s failed after %d attempts: %s" % (path, attempts, exc))
-            time.sleep(attempt)
+            last_exc = exc
+            if attempt < attempts:
+                time.sleep(attempt)
+    die("GET %s failed after %d attempts: %s" % (path, attempts, last_exc))
 
 
 def fetch_all_workflows(endpoint, token):

@@ -6,7 +6,9 @@ from sqlmodel import Session
 
 from api.files.models import File
 from api.platforms.models import Platform
-from api.workflow.models import Workflow, WorkflowVersion
+from api.workflow.models import (
+    Workflow, WorkflowVersion, WorkflowVersionAttribute,
+)
 from core.config import get_settings
 
 
@@ -646,6 +648,163 @@ def test_omics_deployment_second_version_uses_create_version(
     assert inv["Payload"]["omics_workflow_id"] == "9999999"
     assert inv["Payload"]["version_name"] == "2"
     assert inv["Payload"]["cwl_s3_path"] == "s3://b/v2.cwl"
+
+
+# ---------------------------------------------------------------------------
+# Omics tag propagation from WorkflowVersion.attributes
+# ---------------------------------------------------------------------------
+
+def _attach_attributes(
+    session: Session, version_id: str, pairs: list[tuple[str, str]],
+) -> None:
+    """Insert WorkflowVersionAttribute rows for a version. Kept inline
+    to avoid coupling test setup to the API's create endpoint."""
+    for key, value in pairs:
+        session.add(WorkflowVersionAttribute(
+            workflow_version_id=version_id, key=key, value=value,
+        ))
+    session.commit()
+
+
+def test_omics_deployment_forwards_git_attributes_as_tags(
+    client: TestClient, session: Session,
+    mock_lambda_client, omics_env,
+):
+    """Version attributes in the allowlist ride along on the lambda payload
+    so Omics tags a workflow with its git provenance at register time."""
+    _seed_omics_platform(session)
+    wf_id, ver_id, ver_num = _create_cwl_workflow_and_version(session)
+    _attach_attributes(session, ver_id, [
+        ("git_commit", "396305aa9e5fe0f6b1a152e4042938a6036a0d08"),
+        ("git_repo", "https://github.com/bms-ips/WES-Launcher-new"),
+        ("git_ref", "feature/workflow_git_tag"),
+    ])
+
+    arn = f"{OMICS_ARN_PREFIX}workflow/1324105/version/{ver_id}"
+    mock_lambda_client.set_response({
+        "statusCode": 200, "workflow_id": "1324105", "arn": arn,
+    })
+
+    resp = client.post(
+        f"/api/v1/workflows/{wf_id}/versions/{ver_num}/deployments",
+        json={"engine": OMICS_ENGINE},
+    )
+    assert resp.status_code == 201, resp.text
+
+    inv = mock_lambda_client.invocations[-1]
+    assert inv["Payload"]["action"] == "create_workflow"
+    assert inv["Payload"]["tags"] == {
+        "git_commit": "396305aa9e5fe0f6b1a152e4042938a6036a0d08",
+        "git_repo": "https://github.com/bms-ips/WES-Launcher-new",
+        "git_ref": "feature/workflow_git_tag",
+    }
+
+
+def test_omics_deployment_version_forwards_git_attributes_as_tags(
+    client: TestClient, session: Session,
+    mock_lambda_client, omics_env,
+):
+    """create_workflow_version branch also carries the git tags — pin
+    the other injection site so a future refactor can't drop it silently."""
+    _seed_omics_platform(session)
+
+    wf = Workflow(name="Multi", created_by="testuser")
+    session.add(wf)
+    session.flush()
+    v1 = WorkflowVersion(
+        workflow_id=wf.id, version=1,
+        definition_uri="s3://b/v1.cwl", created_by="testuser",
+    )
+    v2 = WorkflowVersion(
+        workflow_id=wf.id, version=2,
+        definition_uri="s3://b/v2.cwl", created_by="testuser",
+    )
+    session.add_all([v1, v2])
+    session.commit()
+    session.refresh(v2)
+    wf_id = str(wf.id)
+    _attach_attributes(session, str(v2.id), [
+        ("git_commit", "cafebabe1234567890abcdef1234567890abcdef"),
+        ("git_ref", "main"),
+    ])
+
+    # Seed an existing Omics deployment on v1 (bypasses the lambda)
+    v1_arn = f"{OMICS_ARN_PREFIX}workflow/9999999/version/{v1.id}"
+    client.post(
+        f"/api/v1/workflows/{wf_id}/versions/1/deployments",
+        json={"engine": OMICS_ENGINE, "external_id": v1_arn},
+    )
+
+    mock_lambda_client.set_response({
+        "statusCode": 200, "version_name": "2",
+        "omics_workflow_id": "9999999",
+        "arn": f"{OMICS_ARN_PREFIX}workflow/9999999/version/2",
+    })
+    resp = client.post(
+        f"/api/v1/workflows/{wf_id}/versions/2/deployments",
+        json={"engine": OMICS_ENGINE},
+    )
+    assert resp.status_code == 201, resp.text
+
+    inv = mock_lambda_client.invocations[-1]
+    assert inv["Payload"]["action"] == "create_workflow_version"
+    assert inv["Payload"]["tags"] == {
+        "git_commit": "cafebabe1234567890abcdef1234567890abcdef",
+        "git_ref": "main",
+    }
+
+
+def test_omics_deployment_filters_non_allowlisted_attributes(
+    client: TestClient, session: Session,
+    mock_lambda_client, omics_env,
+):
+    """Attributes outside the git_* allowlist stay in NGS360's DB and
+    do not surface on Omics — the allowlist is the security boundary."""
+    _seed_omics_platform(session)
+    wf_id, ver_id, ver_num = _create_cwl_workflow_and_version(session)
+    _attach_attributes(session, ver_id, [
+        ("git_commit", "abc1234"),
+        ("foo", "bar"),                    # not allowlisted
+        ("internal_note", "sensitive"),    # not allowlisted
+    ])
+
+    mock_lambda_client.set_response({
+        "statusCode": 200, "workflow_id": "1",
+        "arn": f"{OMICS_ARN_PREFIX}workflow/1/version/{ver_id}",
+    })
+    resp = client.post(
+        f"/api/v1/workflows/{wf_id}/versions/{ver_num}/deployments",
+        json={"engine": OMICS_ENGINE},
+    )
+    assert resp.status_code == 201, resp.text
+
+    inv = mock_lambda_client.invocations[-1]
+    assert inv["Payload"]["tags"] == {"git_commit": "abc1234"}
+
+
+def test_omics_deployment_sends_empty_tags_when_no_attributes(
+    client: TestClient, session: Session,
+    mock_lambda_client, omics_env,
+):
+    """A version with no attributes still gets a tags key in the payload
+    (empty dict). The lambda always sees a well-typed field, so it can
+    safely `event.get('tags') or {}` without special-casing missing."""
+    _seed_omics_platform(session)
+    wf_id, ver_id, ver_num = _create_cwl_workflow_and_version(session)
+
+    mock_lambda_client.set_response({
+        "statusCode": 200, "workflow_id": "1",
+        "arn": f"{OMICS_ARN_PREFIX}workflow/1/version/{ver_id}",
+    })
+    resp = client.post(
+        f"/api/v1/workflows/{wf_id}/versions/{ver_num}/deployments",
+        json={"engine": OMICS_ENGINE},
+    )
+    assert resp.status_code == 201, resp.text
+
+    inv = mock_lambda_client.invocations[-1]
+    assert "tags" in inv["Payload"]
+    assert inv["Payload"]["tags"] == {}
 
 
 def test_omics_deployment_lambda_not_configured(
