@@ -549,7 +549,7 @@ def _find_existing_omics_deployment(
     ).first()
 
 
-def _omics_lambda_client(settings):
+def _lambda_client(settings):
     """Build the Lambda client used for Omics workflow registration.
 
     Both settings here are load-bearing, so neither is left at its default:
@@ -601,7 +601,7 @@ def _invoke_omics_register_lambda(payload: dict) -> dict:
     )
 
     try:
-        lambda_client = _omics_lambda_client(settings)
+        lambda_client = _lambda_client(settings)
         response = lambda_client.invoke(
             FunctionName=function_name,
             InvocationType="RequestResponse",
