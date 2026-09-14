@@ -522,10 +522,15 @@ OMICS_ARN_PREFIX = "arn:aws:omics:us-east-1:123456789012:"
 
 @pytest.fixture(name="omics_env")
 def omics_env_fixture(monkeypatch):
-    """Set OMICS_REGISTER_WORKFLOW_LAMBDA env + clear settings cache."""
+    """Set OMICS_REGISTER_WORKFLOW_LAMBDA env + clear settings cache.
+
+    Also pins ENVIRONMENT=dev so tests asserting on the ngs360_env tag
+    don't depend on whatever the host shell / CI runner has set.
+    """
     monkeypatch.setenv(
         "OMICS_REGISTER_WORKFLOW_LAMBDA", "test-omics-register-lambda",
     )
+    monkeypatch.setenv("ENVIRONMENT", "dev")
     get_settings.cache_clear()
     yield
     get_settings.cache_clear()
@@ -697,6 +702,7 @@ def test_omics_deployment_forwards_git_attributes_as_tags(
         "git_commit": "396305aa9e5fe0f6b1a152e4042938a6036a0d08",
         "git_repo": "https://github.com/bms-ips/WES-Launcher-new",
         "git_ref": "feature/workflow_git_tag",
+        "ngs360_env": "dev",
     }
 
 
@@ -751,6 +757,7 @@ def test_omics_deployment_version_forwards_git_attributes_as_tags(
     assert inv["Payload"]["tags"] == {
         "git_commit": "cafebabe1234567890abcdef1234567890abcdef",
         "git_ref": "main",
+        "ngs360_env": "dev",
     }
 
 
@@ -779,16 +786,17 @@ def test_omics_deployment_filters_non_allowlisted_attributes(
     assert resp.status_code == 201, resp.text
 
     inv = mock_lambda_client.invocations[-1]
-    assert inv["Payload"]["tags"] == {"git_commit": "abc1234"}
+    assert inv["Payload"]["tags"] == {"git_commit": "abc1234", "ngs360_env": "dev"}
 
 
-def test_omics_deployment_sends_empty_tags_when_no_attributes(
+def test_omics_deployment_tags_carry_only_env_when_no_attributes(
     client: TestClient, session: Session,
     mock_lambda_client, omics_env,
 ):
-    """A version with no attributes still gets a tags key in the payload
-    (empty dict). The lambda always sees a well-typed field, so it can
-    safely `event.get('tags') or {}` without special-casing missing."""
+    """A version with no attributes still gets the ngs360_env deployment
+    tag — it's set unconditionally at payload-construction time. Pins
+    that the tags dict is always non-empty (lambda always has at least
+    one caller-supplied tag to merge with NGS360_workflow_id)."""
     _seed_omics_platform(session)
     wf_id, ver_id, ver_num = _create_cwl_workflow_and_version(session)
 
@@ -803,8 +811,35 @@ def test_omics_deployment_sends_empty_tags_when_no_attributes(
     assert resp.status_code == 201, resp.text
 
     inv = mock_lambda_client.invocations[-1]
-    assert "tags" in inv["Payload"]
-    assert inv["Payload"]["tags"] == {}
+    assert inv["Payload"]["tags"] == {"ngs360_env": "dev"}
+
+
+def test_omics_deployment_ngs360_env_reflects_environment_setting(
+    client: TestClient, session: Session,
+    mock_lambda_client, omics_env, monkeypatch,
+):
+    """The ngs360_env tag value comes from settings.ENVIRONMENT — a
+    staging APIServer stamps `ngs360_env: staging` on the workflow it
+    registers, so provenance of "which tier created this Omics resource"
+    is queryable directly from the Omics tags."""
+    monkeypatch.setenv("ENVIRONMENT", "staging")
+    get_settings.cache_clear()
+
+    _seed_omics_platform(session)
+    wf_id, ver_id, ver_num = _create_cwl_workflow_and_version(session)
+
+    mock_lambda_client.set_response({
+        "statusCode": 200, "workflow_id": "1",
+        "arn": f"{OMICS_ARN_PREFIX}workflow/1/version/{ver_id}",
+    })
+    resp = client.post(
+        f"/api/v1/workflows/{wf_id}/versions/{ver_num}/deployments",
+        json={"engine": OMICS_ENGINE},
+    )
+    assert resp.status_code == 201, resp.text
+
+    inv = mock_lambda_client.invocations[-1]
+    assert inv["Payload"]["tags"]["ngs360_env"] == "staging"
 
 
 def test_omics_deployment_lambda_not_configured(

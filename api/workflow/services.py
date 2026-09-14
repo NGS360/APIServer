@@ -656,6 +656,10 @@ def _register_workflow_on_omics(
     prior = _find_existing_omics_deployment(session, workflow, engine)
     cwl_s3_path = _resolve_cwl_definition_to_s3(session, version.definition_uri)
     tags = _omics_tags_from_version(version)
+    # Deployment-level identity: which NGS360 tier registered this workflow.
+    # settings.ENVIRONMENT falls back to "dev" if unset, so this is always
+    # present in the payload and never wrong-in-a-way-that-implies-prod.
+    tags["ngs360_env"] = get_settings().ENVIRONMENT
 
     if prior is None:
         payload = {
