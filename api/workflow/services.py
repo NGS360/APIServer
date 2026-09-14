@@ -543,7 +543,7 @@ def _find_existing_omics_deployment(
     ).first()
 
 
-def _invoke_omics_register_lambda(payload: dict) -> dict:
+def _invoke_register_lambda(payload: dict) -> dict:
     """Invoke the Omics workflow-registration Lambda and return parsed body."""
     settings = get_settings()
     function_name = settings.OMICS_REGISTER_WORKFLOW_LAMBDA
@@ -630,10 +630,10 @@ def _invoke_omics_register_lambda(payload: dict) -> dict:
 # Version attributes whose values ride along on the lambda payload and
 # become AWS HealthOmics tags on the registered workflow/version. Anything
 # outside this allowlist stays in NGS360's DB and does not surface on Omics.
-_OMICS_TAG_ATTRIBUTES = ("git_commit", "git_repo", "git_ref")
+_GIT_TAG_ATTRIBUTES = ("git_commit", "git_repo", "git_ref")
 
 
-def _omics_tags_from_version(version: WorkflowVersion) -> dict[str, str]:
+def _get_tags_from_version(version: WorkflowVersion) -> dict[str, str]:
     """Pull the allowlisted git_* attributes off a WorkflowVersion so the
     Omics registration lambda can attach them as tags on the AWS resource.
     Missing attributes simply don't get tagged."""
@@ -642,11 +642,11 @@ def _omics_tags_from_version(version: WorkflowVersion) -> dict[str, str]:
     return {
         a.key: a.value
         for a in version.attributes
-        if a.key in _OMICS_TAG_ATTRIBUTES and a.value
+        if a.key in _GIT_TAG_ATTRIBUTES and a.value
     }
 
 
-def _register_workflow_on_omics(
+def _register_workflow_via_lambda(
     session: Session,
     workflow: Workflow,
     version: WorkflowVersion,
@@ -655,7 +655,7 @@ def _register_workflow_on_omics(
     """Register the workflow/version on AWS HealthOmics via Lambda; return ARN."""
     prior = _find_existing_omics_deployment(session, workflow, engine)
     cwl_s3_path = _resolve_cwl_definition_to_s3(session, version.definition_uri)
-    tags = _omics_tags_from_version(version)
+    tags = _get_tags_from_version(version)
     # Deployment-level identity: which NGS360 tier registered this workflow.
     # settings.ENVIRONMENT falls back to "dev" if unset, so this is always
     # present in the payload and never wrong-in-a-way-that-implies-prod.
@@ -674,7 +674,7 @@ def _register_workflow_on_omics(
         # Reuse the omics workflow id from the prior deployment's ARN.
         # ARN format: arn:aws:omics:<region>:<acct>:workflow/<id>/version/<name>
         try:
-            omics_workflow_id = (
+            external_workflow_id = (
                 prior.external_id.split(":workflow/")[1].split("/")[0]
             )
         except (IndexError, AttributeError) as exc:
@@ -688,14 +688,14 @@ def _register_workflow_on_omics(
         payload = {
             "source": "ngs360",
             "action": "create_workflow_version",
-            "omics_workflow_id": omics_workflow_id,
+            "omics_workflow_id": external_workflow_id,
             "version_name": str(version.version),
             "cwl_s3_path": cwl_s3_path,
             "id": str(version.workflow_id),
             "tags": tags,
         }
 
-    body = _invoke_omics_register_lambda(payload)
+    body = _invoke_register_lambda(payload)
     return body["arn"]
 
 
@@ -738,7 +738,7 @@ def create_workflow_deployment(
     if deployment_in.external_id:
         external_id = deployment_in.external_id
     elif deployment_in.engine == "AWSHealthOmics (us-east)":
-        external_id = _register_workflow_on_omics(
+        external_id = _register_workflow_via_lambda(
             session, version.workflow, version, deployment_in.engine,
         )
     else:
