@@ -1005,12 +1005,28 @@ The method was the change. Previous batches asked "does this route have anonymou
 
 **Two routes were held back deliberately**, and both are one grant away:
 
-- `POST /runs` needs `run:create` for `NGS360-SequencersToS3`, whose `service_account` role lacks it.
-- `PUT /projects/{project_id}/samples/{sample_id}` needs `sample:update` for `NGS360-Demux-Batch-Job` — 110 requests. Same cause.
+- `POST /runs` needs `run:create` for a run-registration service account, whose `service_account` role lacks it.
+- `PUT /projects/{project_id}/samples/{sample_id}` needs `sample:update` for a demux service account — 110 requests. Same cause.
 
 A third, `POST /runs/{run_id}/samplesheet`, was clean except for a single request from one user holding only `member`. One request is not zero, so it stays open pending a decision on that grant rather than being closed over a live caller.
 
 The two `/projects/{project_id}` routes use `require_project_permission`, which honours a global grant as well as a project role, so it is strictly more permissive than the global plane for the same permission — safe either way, and it makes project ownership meaningful on the routes where a project is named.
+
+### Closing the last three candidates, 2026-09-15
+
+Backlog **54 to 51**, guarded surface **60 to 63**. Each of these three had been held back from the 09-11 batch on exactly one caller lacking exactly one permission, and all three were resolved by grants rather than by code:
+
+| Route | Permission | The one caller |
+|---|---|---|
+| `POST /runs` | `run:create` | a run-registration service account |
+| `PUT /projects/{project_id}/samples/{sample_id}` | `sample:update` | a demux service account, 110 requests |
+| `POST /runs/{run_id}/samplesheet` | `run:update` | one user, one request |
+
+The first two came from `service_account` holding each verb's *update* without its *create*, or the reverse — an asymmetry that described no real workflow and was being hit by two different accounts. Fixed by completing the pairs, which is now pinned as a pair rather than as two facts.
+
+The third is the more interesting one. It was a single request, and the temptation with a single request is to close over it. Resolving the caller showed they submit demux jobs (`POST /runs/demultiplex`) and write samplesheets — a demux operator missed from the original group of eleven, not an edge case. `demux_operator` was the correct role, so the grant was a correction rather than a widening. **One request is not zero, and it is often not noise either.**
+
+**Every candidate that passed checks 1–3 is now closed.** What remains in the backlog is 23 routes with no observed traffic and 28 blocked on a consumer — neither group closable by anything this team controls. The next reduction is either date-gated (the silent routes, once the clean window reaches 30 days) or someone else's deploy.
 
 ### Verified Phase 1 blockers
 

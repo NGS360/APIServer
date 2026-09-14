@@ -454,6 +454,7 @@ def delete_sample_from_project(
     "/{project_id}/samples/{sample_id}",
     tags=["Project Endpoints"],
     response_model=SamplePublic,
+    dependencies=[Depends(require_project_permission(Permission.SAMPLE_UPDATE))],
 )
 def update_sample_in_project(
     session: SessionDep,
