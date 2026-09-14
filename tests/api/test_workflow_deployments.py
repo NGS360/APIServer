@@ -1,5 +1,7 @@
 """Tests for WorkflowDeployment CRUD endpoints."""
 
+import uuid
+
 import pytest
 from fastapi.testclient import TestClient
 from sqlmodel import Session
@@ -663,10 +665,16 @@ def _attach_attributes(
     session: Session, version_id: str, pairs: list[tuple[str, str]],
 ) -> None:
     """Insert WorkflowVersionAttribute rows for a version. Kept inline
-    to avoid coupling test setup to the API's create endpoint."""
+    to avoid coupling test setup to the API's create endpoint.
+
+    Converts ``version_id`` (returned as str by the create helpers) to a
+    UUID object because SQLAlchemy's UUID column processor calls
+    ``value.hex`` and strings don't have that attribute.
+    """
+    ver_uuid = uuid.UUID(version_id) if isinstance(version_id, str) else version_id
     for key, value in pairs:
         session.add(WorkflowVersionAttribute(
-            workflow_version_id=version_id, key=key, value=value,
+            workflow_version_id=ver_uuid, key=key, value=value,
         ))
     session.commit()
 
