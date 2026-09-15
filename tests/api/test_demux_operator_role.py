@@ -23,10 +23,25 @@ from api.rbac.roles import ROLE_DEFINITIONS, RoleScope
 
 class TestTheRoleItself:
 
-    def test_it_holds_exactly_run_demux(self):
-        assert ROLE_DEFINITIONS["demux_operator"].permissions == frozenset(
-            {Permission.RUN_DEMUX}
-        )
+    def test_it_holds_exactly_the_demux_flow(self):
+        """
+        run:demux *and* run:update, as of 2026-09-11.
+
+        This test previously asserted run:demux alone, and that assertion was
+        the bug rather than the guard: demultiplexing also writes a samplesheet
+        and updates the run, so ten of the eleven operators held nothing for
+        POST /runs/{id}/samplesheet or PUT /runs/{id} and would have received
+        403s as soon as those routes were guarded. run:update is not
+        project-scopable, so membership could not have covered it.
+
+        The role is still deliberately narrow -- the point was never "one
+        permission", it was "only what this job needs". Measuring the whole flow
+        is what distinguishes those two, and it was not done the first time.
+        """
+        assert ROLE_DEFINITIONS["demux_operator"].permissions == frozenset({
+            Permission.RUN_DEMUX,
+            Permission.RUN_UPDATE,
+        })
 
     def test_it_is_global(self):
         """A run reaches projects only many-to-many -- a flowcell spans projects --

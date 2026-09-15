@@ -337,6 +337,23 @@ class Settings(BaseSettings):
         """Lambda function name that registers a workflow on AWS HealthOmics."""
         return self._get_config_value("OMICS_REGISTER_WORKFLOW_LAMBDA")
 
+    @computed_field
+    @property
+    def OMICS_REGISTER_LAMBDA_READ_TIMEOUT(self) -> int:
+        """Seconds to wait for the Omics registration Lambda to respond.
+
+        Must exceed how long the Lambda actually takes. Giving up early does
+        not cancel it -- it just discards the ARN of a workflow version AWS
+        has already created. Registrations have been observed at 60-90s and
+        scale with the size of the packed CWL, so the default leaves real
+        headroom rather than sitting just above the observed maximum.
+        """
+        return int(
+            self._get_config_value(
+                "OMICS_REGISTER_LAMBDA_READ_TIMEOUT", default="300",
+            )
+        )
+
     # Options are from api.files.models.StorageBackend
     STORAGE_BACKEND: str = os.getenv("STORAGE_BACKEND", "s3")
     STORAGE_ROOT_PATH: str = os.getenv("STORAGE_URI", "s3://my-storage-bucket")

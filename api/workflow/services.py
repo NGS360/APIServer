@@ -8,7 +8,13 @@ import json
 from uuid import UUID
 
 import boto3
-from botocore.exceptions import ClientError, NoCredentialsError
+from botocore.config import Config
+from botocore.exceptions import (
+    ClientError,
+    ConnectionError as BotoConnectionError,
+    NoCredentialsError,
+    ReadTimeoutError,
+)
 from fastapi import HTTPException, status
 from sqlmodel import Session, select
 from sqlalchemy import func
@@ -543,6 +549,38 @@ def _find_existing_omics_deployment(
     ).first()
 
 
+def _lambda_client(settings):
+    """Build the Lambda client used for Omics workflow registration.
+
+    Both settings here are load-bearing, so neither is left at its default:
+
+    read_timeout — the Lambda packs the CWL and calls Omics
+    CreateWorkflowVersion; observed registrations take 60-90s and grow with
+    the size of the packed definition. botocore's default read_timeout is
+    60s, so a healthy-but-slow registration raised ReadTimeoutError *after*
+    the Lambda had already created the Omics version. The version went live
+    on AWS while the exception aborted this request before the
+    WorkflowDeployment row was committed, leaving the two permanently out of
+    step (seen on wes-postalignment-tn v4).
+
+    retries — off deliberately. ReadTimeoutError is in botocore's retryable
+    set (GENERAL_CONNECTION_ERROR), and the default legacy policy allows 5
+    attempts, so a slow Lambda was re-invoked up to five times and each
+    attempt re-ran a *non-idempotent* Omics registration. Piling those
+    attempts up is also what pushed total request time past the reverse
+    proxy's read timeout, turning a slow deploy into a 504 for the caller.
+    """
+    return boto3.client(
+        "lambda",
+        region_name=settings.AWS_REGION,
+        config=Config(
+            connect_timeout=10,
+            read_timeout=settings.OMICS_REGISTER_LAMBDA_READ_TIMEOUT,
+            retries={"max_attempts": 1, "mode": "standard"},
+        ),
+    )
+
+
 def _invoke_register_lambda(payload: dict) -> dict:
     """Invoke the Omics workflow-registration Lambda and return parsed body."""
     settings = get_settings()
@@ -563,7 +601,7 @@ def _invoke_register_lambda(payload: dict) -> dict:
     )
 
     try:
-        lambda_client = boto3.client("lambda", region_name=settings.AWS_REGION)
+        lambda_client = _lambda_client(settings)
         response = lambda_client.invoke(
             FunctionName=function_name,
             InvocationType="RequestResponse",
@@ -573,6 +611,31 @@ def _invoke_register_lambda(payload: dict) -> dict:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="AWS credentials not found. Cannot invoke Omics Lambda.",
+        ) from exc
+    # ReadTimeoutError is an HTTPClientError, not a botocore ConnectionError,
+    # so it has to be named explicitly. Left unhandled these surfaced as an
+    # opaque 500, which told the operator nothing about the fact that the
+    # registration had very likely completed on the AWS side.
+    except (ReadTimeoutError, BotoConnectionError) as exc:
+        logger.error(
+            "Omics-register Lambda '%s' (action=%s) did not respond within "
+            "%ss: %s",
+            function_name,
+            payload.get("action"),
+            settings.OMICS_REGISTER_LAMBDA_READ_TIMEOUT,
+            exc,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+            detail=(
+                f"Timed out waiting for the Omics registration Lambda "
+                f"'{function_name}'. The registration may still have "
+                f"completed on AWS, so do not assume it failed: check with "
+                f"'aws omics list-workflow-versions --workflow-id "
+                f"<omics-workflow-id>'. If the version is already there, "
+                f"record it by POSTing this endpoint again with an explicit "
+                f"'external_id' rather than redeploying."
+            ),
         ) from exc
     except ClientError as exc:
         code = exc.response["Error"]["Code"]

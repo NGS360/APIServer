@@ -183,17 +183,39 @@ class TestSubmittedByComesFromTheCaller:
 
     def test_an_anonymous_caller_leaves_it_null(self, unauthenticated_client, test_project):
         """
-        POST /files still has no guard, so anonymous registration is possible.
         Recording an unknown submitter as null is honest; the alternative is
         putting a value nobody asserted into an accountability column.
+
+        Moved from POST /files to POST /files/upload on 2026-09-11: the JSON
+        route was guarded on `file:create`, so anonymous registration is no
+        longer possible there and the property is not observable. The upload
+        route is still open -- it has three anonymous requests in the clean
+        window -- so it is where this still applies. When that route closes too,
+        this test should assert 401 and the null case becomes unreachable, which
+        is the outcome to want.
         """
+        response = unauthenticated_client.post(
+            f"{BASE}/upload",
+            data={
+                "filename": "anon.txt",
+                "project_id": test_project.project_id,
+            },
+            files={"content": ("anon.txt", b"contents", "text/plain")},
+        )
+
+        assert response.status_code == 201, response.text
+        assert response.json()["submitted_by"] is None
+
+    def test_the_json_route_no_longer_admits_anonymous_callers(
+        self, unauthenticated_client, test_project
+    ):
+        """The other half of that move, pinned so the change is visible."""
         response = unauthenticated_client.post(BASE, json={
             "uri": "s3://bucket/project/P-19900109-0001/anon.txt",
             "project_id": test_project.project_id,
         })
 
-        assert response.status_code == 201, response.text
-        assert response.json()["submitted_by"] is None
+        assert response.status_code == 401
 
     def test_the_upload_route_records_it_as_well(self, client, test_project, author):
         """Both write paths, not just the JSON one."""

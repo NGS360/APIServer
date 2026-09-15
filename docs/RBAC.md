@@ -218,7 +218,7 @@ Two things generalise. **An unauthenticated write path cannot be made accountabl
 | `qcrecord:create` | P | low | `POST /qcmetrics` |
 | `qcrecord:delete` | P | medium | `DELETE /qcmetrics/{id}` |
 | `file:read` | P | low | `GET /files`, `/files/{id}`, `/files/{id}/versions` |
-| `file:download` | P | medium | `GET /files/download-url` — required only when the resolved project is *restricted*, or when the URI is outside the configured buckets. Held globally by `member`, so unrestricted projects are open to any authenticated caller. `GET /files/download` is still unguarded, and remains a bypass for anonymous access and for restricted projects |
+| `file:download` | P | medium | `GET /files/download-url` — required only when the resolved project is *restricted*, or when the URI is outside the configured buckets. Not held by `member` — an unrestricted project consults no permission at all, which is what makes it open. `GET /files/download` carries the same guard as of 2026-09-09, so the two routes now agree in every case |
 | `file:create` | P | low | `POST /files`, `POST /files/upload` |
 | `file:update` | P | low | `PATCH /files/{id}` |
 | `file:delete` | P | high | `DELETE /files/{id}` |
@@ -332,12 +332,13 @@ Roles are database rows so that administrators can compose custom ones. The **bu
 | Role | Purpose | Permissions |
 |------|---------|-------------|
 | `member` | Default for every authenticated user | `action:read`, `platform:read`, `vendor:read`, `workflow:read`, `pipeline:read`, `run:read`, `job:read`, `job:submit`, `setting:read`, `search:query`, `chat:use`, `user:read`, `project:create`, plus the transitional global reads: `project:read`, `sample:read`, `qcrecord:read`, `file:read`. **Not** `file:download` — downloads from unrestricted projects consult no permission, and granting it globally would make every project restriction vacuous |
-| `demux_operator` | May run demultiplexing, and nothing else | `run:demux` only |
+| `demux_operator` | May run demultiplexing, and nothing else | `run:demux`, `run:update` — the samplesheet write and run update are part of the same job; see the worked example below |
+| `manifest_operator` | May read, upload and validate sample manifests | `manifest:read`, `manifest:upload`, `manifest:validate`. Global-only by necessity — a manifest names an arbitrary S3 URI |
 | `lab_manager` | Sequencing core — registers runs, demultiplexes, ingests vendor deliveries | `member` + `run:create`, `run:update`, `run:associate`, `run:demux`, `manifest:read`, `manifest:upload`, `manifest:validate`, `file:browse`, `file:create`, `file:update`, `sample:create`, `sample:update`, `qcrecord:create`, `project:ingest`, `job:read_all` |
 | `workflow_publisher` | May register workflows, add versions, and deploy them — but not delete | `workflow:create`, `workflow:update`, `workflow:deploy`. `workflow:read` comes from `member` |
 | `workflow_admin` | Owns the workflow catalog outright, including deletion | Every `workflow:*` permission, derived from the catalog so a new one joins automatically |
 | `platform_admin` | Owns the executable catalog and platform configuration | `member` + `platform:create`, `vendor:create`, `vendor:update`, `vendor:delete`, `workflow:create`, `workflow:update`, `workflow:delete`, `workflow:deploy`, `pipeline:create`, `pipeline:update`, `action:validate`, `setting:update`, `system:reindex`, `job:read_all`, `job:update` |
-| `service_account` | Machine writeback — pipeline results and Batch job-status updates only (**not** MCP, which acts as the invoking user) | `project:read`, `run:read`, `run:update`, `sample:read`, `sample:create`, `qcrecord:create`, `file:create`, `file:update`, `job:read_all`, `job:update` |
+| `service_account` | Machine writeback — pipeline results and Batch job-status updates only (**not** MCP, which acts as the invoking user) | `project:read`, `run:read`, `run:create`, `run:update`, `sample:read`, `sample:create`, `sample:update`, `qcrecord:create`, `file:create`, `file:update`, `job:read_all`, `job:update`. `run:create` and `sample:update` added 2026-09-12 — the role held each verb's update without its create, or vice versa, which describes no real workflow |
 | `auditor` | Compliance, QA, read-only agents | Every `*:read` permission, plus `file:download`, `search:query`, `role:read` |
 | `admin` | Platform administrator | `ALL_PERMISSIONS`, recomputed at each sync so new permissions are picked up automatically |
 
@@ -364,6 +365,14 @@ The rule for future requests: **a new global role is justified only if it adds a
 So the role holds `run:demux` and nothing else. `member` already provides `run:read`, `job:submit` and `job:read`, which is the rest of the flow, so one permission is *sufficient* rather than merely minimal. It qualifies under the rule because `run:demux` is a write on a global resource, and it is a strict subset of `lab_manager`, so genuine sequencing-core staff still get demux from that role and nobody needs both.
 
 The general lesson: **check what else an off-the-shelf role carries before granting it for one capability.** A role's description tells you what it is *for*; only its permission set tells you what it *does*.
+
+**Third worked example, 2026-09-11 — `demux_operator` was too narrow, and `manifest_operator`.** Both found by the same method, and the first one corrects this document.
+
+`demux_operator` shipped holding `run:demux` and nothing else, described here as "one permission wide by design rather than by omission". That was wrong. Preparing the next route closure resolved every caller on every route in the awaiting set, and **ten of the eleven demux operators held nothing for `POST /runs/{id}/samplesheet` or `PUT /runs/{id}`** — routes they use as part of the same job. `run:update` is not project-scopable, so project membership could not have covered it either. They would have received 403s the moment those routes were guarded.
+
+So the guard against over-granting cuts both ways, and the lesson is narrower than "prefer minimal roles": **minimal is only correct if you measured the whole flow.** The check that catches both failures is the same one — resolve every observed caller on every route the capability touches, not only the route that prompted the request. `demux_operator` is now two permissions and still a strict subset of `lab_manager`, which is what stops the sequencing core needing both.
+
+`manifest_operator` is the ordinary case: 15 scientists and one service account were using `GET /manifest`, `POST /manifest` and `POST /manifest/validate`, and `member` holds none of those. Only `lab_manager` and `admin` did, at sixteen permissions beyond `member` including `run:create` and `project:ingest` — nothing a person uploading a manifest needs. `manifest:*` is global-only by necessity, since a manifest names an arbitrary S3 URI and no resolver maps it to a project, so this could not have been project membership.
 
 **Second worked example, 2026-09-06 — `workflow_publisher` and `workflow_admin`.** The same shape, found the same way. `POST /workflows`, `POST /workflows/{id}/versions` and `POST /workflows/{id}/versions/{v}/deployments` had exactly one caller in 30 days of production, on a personal API key whose only role is `member`. All 29 requests returned `201` — and all 29 were recorded as `would_deny`, on `workflow:create` (15) and `workflow:deploy` (14). They were succeeding only because the mode is `dry_run`; under `enforce` every one of them is a 403. That is a Phase 1 blocker with a name attached, not an unidentified caller.
 
@@ -692,7 +701,7 @@ Direct associations are tried before the run, so a file both in a project and on
 - `member` gains nothing. Step 3 consults no permission, so open downloads need no grant — which is also what makes the out-of-bucket protection in step 2 survive the inversion for free. `lab_manager`'s explicit `file:download`, restored when the permission left `member`, stays necessary.
 - **No service account is needed for the download fleet.** An earlier revision of this section said one would be, and required global `file:download` for it. The credential in question is a personal token by decision, and under the new rule it needs no grant at all.
 - **Reads were already unaffected** and remain so. `file:read`, `project:read`, `sample:read`, `qcrecord:read` are global.
-- **`GET /files/download` matters less but still matters.** The unguarded route now agrees with the guarded one for unrestricted projects, so it is no longer a general bypass. It remains a bypass for exactly two things: anonymous access, and restricted projects. `TestTheOldRouteIsTheBypass` should be narrowed to those rather than deleted.
+- **`GET /files/download` is no longer a bypass at all.** It was guarded in place on 2026-09-09 — same dependency, unchanged 307-to-S3 response — so the two routes agree in every case, including anonymous callers and restricted projects. This is what makes a restriction actually enforceable; while that route was open, restriction was the only control protecting the data and it could be walked around by changing the URL. `TestTheOldRouteIsTheBypass` is inverted rather than narrowed, as its own docstring asked.
 
 **Implemented** by `project.download_restricted` (migration `c9f4b7e28a13`), the rework of `require_file_download`, and `tests/api/test_file_download_scope.py`. Seven tests there asserted the withdrawn requirement and were rewritten rather than preserved.
 
@@ -866,11 +875,13 @@ Observations that change the plan:
 - **The Batch event Lambda writes job status**, and its traffic did not appear in the first two-hour sample at all. That is the concrete argument for the seven-day window: periodic callers are invisible in short ones.
 - **Browsers made anonymous calls**, concentrated on `files/download`. Measured over six days in production: 19 distinct browser IPs, all anonymous. That is not a missing service account and cannot be fixed by issuing one.
 
-  `GET /files/download` answers with a **307 to a presigned S3 URL**, so the UI uses it as a plain link. A browser following a link cannot attach an `Authorization` header, which means the route cannot be given a permission guard without returning 401 to every download in the product -- and `RBAC_MODE=dry_run` does not soften that, because authentication is resolved before any mode check.
+  `GET /files/download` answers with a **307 to a presigned S3 URL**, and the UI used to use it as a plain link. A browser following a link cannot attach an `Authorization` header, so for as long as that was the product's download path the route could not be guarded without returning 401 to every download -- and `RBAC_MODE=dry_run` does not soften that, because authentication is resolved before any mode check.
+
+  **That constraint expired, and the route was guarded in place on 2026-09-09.** The frontend now fetches `GET /files/download-url` with its token and navigates to the returned URL itself (`src/lib/download.ts`); the built bundle contains no reference to the old route. Browser traffic in the 30 days to 09-09 was 41 requests -- 39 of them a single bulk FASTQ download on 08-15, most likely a tab holding a pre-fix bundle, then 2 on 09-04 and none since. The response shape was left untouched, so the ~1.1M requests a day arriving from htslib with an API key were unaffected: they authenticate, the projects they read are unrestricted, and they get the same redirect as before.
 
   The fix is `GET /files/download-url`, which returns the same URL as JSON and *is* guarded. It was originally guarded on the global plane, on the grounds that the parameter is an arbitrary S3 URI and nothing maps a URI to a project. **That was wrong** — `fileproject`, `filesample` and `filesequencingrun` all exist, so the mapping was available all along; it is now used, and the guard consults the resolved project's restriction (see *Downloads: open by default, restricted by exception*). `file:browse` remains genuinely global-only, because a browse request names a prefix rather than a file. The frontend fetches it with its token, then navigates to S3 itself. No security property changes: the bytes already bypass the API today, because the redirect sends the browser to that same URL.
 
-  Sequencing: the new endpoint ships first and is additive. `GET /files/download` closes only once browser traffic on it reaches zero, which is checkable in the access log — measured 2026-09-08 as **41 requests in 30 days**, all `auth_method=none`, against 29.3M from clients that already authenticate. Since downloads became open by default, the migration needs **no** grant: `member` holds `file:download` again.
+  Sequencing, as it actually went: the new endpoint shipped first and additively; the frontend moved to it; then the old route was guarded in place rather than closed, which required **no client change at all** — every remaining caller already sends credentials, and an unrestricted project consults no permission, so nothing needed granting. Note this did *not* need `member` to hold `file:download`, and must not: see *Downloads: open by default, restricted by exception*.
 - Authenticated traffic in the same window was **4,442 requests by API key** and, at that hour, no JWT traffic at all — the SPA is human-driven, so sampling outside working hours says nothing about it.
 
 #### The Airflow callers, identified
@@ -891,7 +902,7 @@ Consequences for this design:
 
 Every closure so far has been justified by one query — *this route received no anonymous traffic*. That query is necessary and **not sufficient**, and each of the checks below was added because the previous version of this list let something through.
 
-Run all six. A route is closable only when every one passes.
+Run all seven. A route is closable only when every one passes.
 
 **1. `auth_method = "none"` is zero.** The original check. Note that **one request is not zero**: `GET /files/download` carried 323,785 authenticated requests against a single anonymous one, and that one was a live `python-requests` consumer sharing a host with another unmigrated caller, not noise.
 
@@ -905,7 +916,25 @@ Run all six. A route is closable only when every one passes.
 
 **6. Know whether each caller can survive a 401.** A browser can: the SPA does 401 → single-flight refresh → retry (`src/lib/interceptors.ts`), so a momentarily expired access token is invisible to the user. A `python-requests` script cannot — it has no refresh path and simply fails. The same `auth_valid = false` count therefore means something different depending on the user agent, so break it down rather than totalling it.
 
-Checks 3 and 4 postdate the closures recorded below; both were reconstructed for those routes rather than applied prospectively.
+**7. Confirm the grants actually landed, per tier, after applying them.** Check 5 tells you which grants a closure needs; it does not tell you they exist. Added 2026-09-12, after a grant batch reported as run against all three tiers turned out to be present in **none** of them — `demux_operator` had zero holders everywhere, eight days after eleven people were recorded as having it.
+
+The mechanism is worth knowing because it fails quietly in a specific way. `scripts/grant_role.py` validates every line before writing anything and **aborts the whole batch on a single unknown username** — which is correct, but means a partial failure looks like a completed run. Accounts are created on first SSO login, so the tiers diverge: of 26 usernames in one batch, dev was missing nine and staging one. One absent name there kills the run for every name.
+
+So the verification is a separate step and takes one query per tier:
+
+```sql
+SELECT r.name AS role, COUNT(ur.user_id) AS holders
+FROM role r LEFT JOIN user_role ur ON ur.role_id = r.id
+WHERE r.name IN ('demux_operator', 'manifest_operator')
+GROUP BY r.name;
+```
+
+Expect the count you intended, in the tier you intended. Two further notes from the incident:
+
+- **Divergent tiers need per-tier batches**, not one list. Dev genuinely cannot grant to a user who has never logged in there, so the honest outcome is a smaller batch in dev and a record of which accounts are absent — not a batch that silently does nothing.
+- **An empty `would_deny` set does not confirm a grant.** `run:demux` refusals stopped after the batch was believed applied, and that was read as the grant working. There had been **zero demux attempts** in the window. Absence of refusal means nobody tried; it never means somebody succeeded. Confirming a grant requires reading the grant, not the refusals.
+
+Checks 3 and 4 postdate the closures recorded below; both were reconstructed for those routes rather than applied prospectively. Check 7 postdates all of them.
 
 ### Closing `PUT /jobs/{job_id}`, 2026-08-18
 
@@ -951,6 +980,53 @@ All three take the **global** plane. None carries a project in its path, and `me
 Both remaining anonymous callers are `python-requests` from hosts nobody has claimed. Identifying their owners is now the whole of the Phase 1d discovery work.
 
 `POST /samples/search` shares a path with a closed route but stays open on purpose: it saw no traffic at all in the window, which makes it one of the zero-traffic routes rather than a migrated one. Those close on their own evidence, once a clean 30-day window exists.
+
+### Closing fourteen routes, 2026-09-11
+
+The backlog goes **68 to 54** and the guarded surface **46 to 60** — the largest single pass, and the first sized by applying every check prospectively rather than reconstructing some of them afterwards.
+
+The method was the change. Previous batches asked "does this route have anonymous traffic?". This one resolved *every observed caller* on *every* candidate route against the permission its guard would require, which is check 5 done exhaustively instead of spot-checked. The arithmetic:
+
+| | Routes |
+|---|---|
+| awaiting closure | 68 |
+| no traffic at all in the clean window | −23 |
+| anonymous or invalid-JWT traffic | −28 |
+| **candidates** | **17** |
+| a caller still lacks the guard after the 09-11 grants | −3 |
+| **closed** | **14** |
+
+**Check 3 mattered more than expected.** An earlier count put the candidates at 21 by reading `auth_method=jwt` as authenticated. Four routes fail on invalid JWTs, and one badly: `GET /jobs/{job_id}/log/paginated` carries **6,951 invalid-JWT requests against 7,269 valid ones** — a consumer that reads as fully migrated in any query filtering on `auth_method` alone, and would have received 403s on roughly half its traffic.
+
+**The exhaustive check found errors in both directions**, which is the argument for running it rather than reasoning about it:
+
+- *Under-granting.* Ten of the eleven `demux_operator` holders lacked `run:update`, needed by `POST /runs/{run_id}/samplesheet` and `PUT /runs/{run_id}`. The role had been deliberately narrowed to one permission and the narrowing was wrong — see the third worked example under *Why this set*.
+- *Phantom gaps.* Three apparent blockers were `ngs360_gDEStH0`, a key revoked on 2026-09-04. A retired credential cannot make a future request, so a naive "is this principal missing the permission?" query turns dead history into a blocker. Resolving keys regardless of `is_active`, then excluding the inactive ones, is the correct form.
+
+**Two routes were held back deliberately**, and both are one grant away:
+
+- `POST /runs` needs `run:create` for a run-registration service account, whose `service_account` role lacks it.
+- `PUT /projects/{project_id}/samples/{sample_id}` needs `sample:update` for a demux service account — 110 requests. Same cause.
+
+A third, `POST /runs/{run_id}/samplesheet`, was clean except for a single request from one user holding only `member`. One request is not zero, so it stays open pending a decision on that grant rather than being closed over a live caller.
+
+The two `/projects/{project_id}` routes use `require_project_permission`, which honours a global grant as well as a project role, so it is strictly more permissive than the global plane for the same permission — safe either way, and it makes project ownership meaningful on the routes where a project is named.
+
+### Closing the last three candidates, 2026-09-15
+
+Backlog **54 to 51**, guarded surface **60 to 63**. Each of these three had been held back from the 09-11 batch on exactly one caller lacking exactly one permission, and all three were resolved by grants rather than by code:
+
+| Route | Permission | The one caller |
+|---|---|---|
+| `POST /runs` | `run:create` | a run-registration service account |
+| `PUT /projects/{project_id}/samples/{sample_id}` | `sample:update` | a demux service account, 110 requests |
+| `POST /runs/{run_id}/samplesheet` | `run:update` | one user, one request |
+
+The first two came from `service_account` holding each verb's *update* without its *create*, or the reverse — an asymmetry that described no real workflow and was being hit by two different accounts. Fixed by completing the pairs, which is now pinned as a pair rather than as two facts.
+
+The third is the more interesting one. It was a single request, and the temptation with a single request is to close over it. Resolving the caller showed they submit demux jobs (`POST /runs/demultiplex`) and write samplesheets — a demux operator missed from the original group of eleven, not an edge case. `demux_operator` was the correct role, so the grant was a correction rather than a widening. **One request is not zero, and it is often not noise either.**
+
+**Every candidate that passed checks 1–3 is now closed.** What remains in the backlog is 23 routes with no observed traffic and 28 blocked on a consumer — neither group closable by anything this team controls. The next reduction is either date-gated (the silent routes, once the clean window reaches 30 days) or someone else's deploy.
 
 ### Verified Phase 1 blockers
 
@@ -1157,7 +1233,7 @@ The username-deduplication loop is a pre-existing bug — two identities for one
 |----------|-----------------|-------|----------|
 | **GA4GH WES** | Forward the caller's bearer token on `GET /workflows/{id}`; bound the `/auth/me` token cache to ≤5 min | `GA4GH-WES-API-Service` | **1c/1d** |
 | **Airflow (dev, UAT, prod)** | Read credentials in the **production** tier for all three; `auditor` or a `project:read`/`sample:read` role. GET-only, so writes are unaffected | Airflow owners | **1d** |
-| **Frontend SPA** | Route-loader error boundaries; permission-based gating; regenerate the API client. **Blocking: move downloads onto `GET /files/download-url`** (see below) | `NGS360/frontend-ui` | **1d** for downloads, 5 for the rest |
+| **Frontend SPA** | Route-loader error boundaries; permission-based gating; regenerate the API client. (/) **Downloads moved onto `GET /files/download-url`** — `src/lib/download.ts`, and the built bundle no longer references the old route, which is what allowed it to be guarded | `NGS360/frontend-ui` | 5d for the rest |
 | **File-download compute fleet** | Stays on a personal API key by decision. Needs `file:browse` only — downloads are open by default, so no download grant. **The `file:browse` grant must land before `GET /files/list` closes**, not with it | fleet owner | **1d** |
 | **`APIServer/scripts/*`** | Admin-only; add an `--operator` argument writing one audit row per run | this repo | 3 |
 
