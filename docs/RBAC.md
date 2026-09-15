@@ -1037,6 +1037,47 @@ Two consumers call the API with no credential whatsoever. Both are confirmed in 
 
 The same WES service validates every bearer token against `GET /api/v1/auth/me` and caches the token-to-username mapping (`src/wes_service/core/security.py`). Two consequences: `/auth/me`'s `username` field is a load-bearing contract, and role revocation is **not** immediate for WES. Bound that cache to five minutes or less and document the delay.
 
+### Graduating a permission to enforce
+
+**Phase 5 does not have to be one switch.** `api/rbac/mode.py` already refused `critical`-risk and `:delete` permissions while `RBAC_MODE` stayed `dry_run`, via `ALWAYS_ENFORCE`. As of 2026-09-15 that set has a second half, `_GRADUATED`, holding **25 permissions enforced on evidence** — each guards at least one closed route and recorded zero `would_deny` across the 28-day gap-free window from 2026-08-18.
+
+The two halves are opposite kinds of judgement, and the distinction is worth keeping:
+
+- the **derived** half is enforced *despite* having no evidence — a `:delete` has near-zero legitimate traffic, so dry-run buys no discovery value while leaving real harm reachable
+- the **graduated** half is enforced *because of* evidence — these carry substantial traffic and none of it was ever refused
+
+`_GRADUATED` is a hand-maintained list rather than a rule, deliberately. No property of a permission makes it safe to enforce; only a measurement, and a measurement has a date and expires.
+
+**The query.** For each permission guarding a closed route, count `would_deny` across a gap-free window:
+
+```
+fields @message
+| filter @message like /"event": "rbac.decision"/
+| parse @message '"rbac_decision": "*"' as decision
+| filter decision = "would_deny"
+| parse @message '"required_permission": "*"' as perm
+| parse @message '"request_id": "*"' as rid
+| stats count_distinct(rid) as refusals, count_distinct(who) as principals by perm
+```
+
+Zero refusals **and** at least one closed route requiring it. The second condition matters: a permission no route checks would report zero refusals because nothing is ever evaluated, not because nobody is refused. `test_graduated_permissions_guard_at_least_one_closed_route` asserts it.
+
+**Not graduated, and why** — the record is as useful as the list:
+
+| Permission | Reason |
+|---|---|
+| `file:download` | 719 refusals, 45 principals — open-by-default policy, stays `dry_run` |
+| `project:submit_action` | 75 refusals, 18 principals |
+| `run:demux` | 42 refusals, 15 principals |
+| `workflow:create`, `workflow:deploy` | granted 09-09, needs a fresh window |
+| `run:associate` | 12 refusals — a service account still lacks it |
+| `project:ingest`, `project:manage_members` | live refusals |
+| `manifest:read`, `manifest:validate` | **were** clean; two callers surfaced *after* those routes closed on 09-11, granted 09-15, so they need a fresh window |
+
+That last row is the general caution. A closure sized on a measurement window will surface callers who arrive after it, and no amount of rigour in checks 1–7 prevents that — the window is evidence about the past, not a guarantee about the future. What made it harmless is that the routes were closed while the mode stayed `dry_run`, so the guard recorded the gap instead of enforcing it. **Close a route in dry-run, let a window accumulate, then graduate the permission** — not both in one step.
+
+**A note on the tests.** Six tests failed when this landed, all using `project:read` as their stand-in for "an ordinary dry-run permission" — ordinary until it was graduated. They now derive that stand-in from the catalog (`STILL_DRY_RUN`), so the next graduation cannot break them for a reason unrelated to what they test. One test was repointed rather than fixed: `test_dry_run_lets_a_non_holder_through` became the end-to-end check that graduating a permission actually changes behaviour on a real route.
+
 ### Enforcement mode
 
 `RBAC_MODE` gates *authorization* only:
