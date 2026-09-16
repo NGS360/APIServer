@@ -1037,46 +1037,32 @@ Two consumers call the API with no credential whatsoever. Both are confirmed in 
 
 The same WES service validates every bearer token against `GET /api/v1/auth/me` and caches the token-to-username mapping (`src/wes_service/core/security.py`). Two consequences: `/auth/me`'s `username` field is a load-bearing contract, and role revocation is **not** immediate for WES. Bound that cache to five minutes or less and document the delay.
 
-### Graduating a permission to enforce
+### Graduating a permission to enforce — and why the first attempt was withdrawn
 
-**Phase 5 does not have to be one switch.** `api/rbac/mode.py` already refused `critical`-risk and `:delete` permissions while `RBAC_MODE` stayed `dry_run`, via `ALWAYS_ENFORCE`. As of 2026-09-15 that set has a second half, `_GRADUATED`, holding **25 permissions enforced on evidence** — each guards at least one closed route and recorded zero `would_deny` across the 28-day gap-free window from 2026-08-18.
+**Phase 5 does not have to be one switch.** `ALWAYS_ENFORCE` refuses `critical`-risk and `:delete` permissions while `RBAC_MODE` stays `dry_run`. A second half, `_GRADUATED`, was added on 2026-09-15 to enforce 25 permissions on the evidence of zero `would_deny` across a 28-day gap-free window, and **withdrawn on 2026-09-16 after a day in production.** It is now empty.
 
-The two halves are opposite kinds of judgement, and the distinction is worth keeping:
+**What happened.** Within a day, two scientists received real 403s on `run:update` — eleven refusals between them — while writing samplesheets mid-run. One reported it; the other, with nine of the eleven, did not.
 
-- the **derived** half is enforced *despite* having no evidence — a `:delete` has near-zero legitimate traffic, so dry-run buys no discovery value while leaving real harm reachable
-- the **graduated** half is enforced *because of* evidence — these carry substantial traffic and none of it was ever refused
+**Why the evidence was not wrong but did not cover what it appeared to.** `run:update` guards `POST /runs/{run_id}/samplesheet`. That route was **open and unguarded for the entire window that was measured**. An unguarded route runs no check, so it records no decision, so it records no refusal. "Zero `would_deny` for `run:update`" was a true statement about the routes that *were* guarded and said nothing whatever about the one that had just been closed.
 
-`_GRADUATED` is a hand-maintained list rather than a rule, deliberately. No property of a permission makes it safe to enforce; only a measurement, and a measurement has a date and expires.
+This is the same class of error as counting `PATCH` requests with a field name that does not exist, or reading `auth_method=jwt` as authenticated: **a zero produced by a measurement that could not have produced anything else.** The check that catches it is the one already written down — *a zero is only evidence if the same measurement could have returned non-zero* — and it was not applied to the permission-level window.
 
-**The query.** For each permission guarding a closed route, count `would_deny` across a gap-free window:
+**The sequencing rule this violated was already in this document**, added in the same commit that broke it: *close a route in dry-run, let a window accumulate, then graduate the permission — not both in one step.* `POST /runs/{run_id}/samplesheet` was closed on 09-15 and `run:update` graduated on 09-15.
 
-```
-fields @message
-| filter @message like /"event": "rbac.decision"/
-| parse @message '"rbac_decision": "*"' as decision
-| filter decision = "would_deny"
-| parse @message '"required_permission": "*"' as perm
-| parse @message '"request_id": "*"' as rid
-| stats count_distinct(rid) as refusals, count_distinct(who) as principals by perm
-```
+**The corrected procedure.** For each candidate permission:
 
-Zero refusals **and** at least one closed route requiring it. The second condition matters: a permission no route checks would report zero refusals because nothing is ever evaluated, not because nobody is refused. `test_graduated_permissions_guard_at_least_one_closed_route` asserts it.
+1. Every route it guards has been **guarded for the whole window**, not merely closed before the graduation. A route closed on day 20 of a 28-day window invalidates that window for its permissions.
+2. Zero `would_deny` across that window.
+3. At least one closed route requires it — otherwise the zero measures the absence of any check rather than the absence of refusals (`test_graduated_permissions_guard_at_least_one_closed_route`).
+4. The window is gap-free per *check 2*.
 
-**Not graduated, and why** — the record is as useful as the list:
+Condition 1 is the new one, and it is the one that would have prevented this.
 
-| Permission | Reason |
-|---|---|
-| `file:download` | 719 refusals, 45 principals — open-by-default policy, stays `dry_run` |
-| `project:submit_action` | 75 refusals, 18 principals |
-| `run:demux` | 42 refusals, 15 principals |
-| `workflow:create`, `workflow:deploy` | granted 09-09, needs a fresh window |
-| `run:associate` | 12 refusals — a service account still lacks it |
-| `project:ingest`, `project:manage_members` | live refusals |
-| `manifest:read`, `manifest:validate` | **were** clean; two callers surfaced *after* those routes closed on 09-11, granted 09-15, so they need a fresh window |
+**Why the set is empty rather than trimmed to the safe members.** The defect is in the method, not in which permissions were chosen. Every permission graduated alongside a route closed in the same pass carries the same flaw, and that covers most of the 25 — `run:create`, `sample:update`, `file:create`, `project:update`, `search:query`, `manifest:upload` and others all guard routes closed on 09-11 or 09-15. Re-graduating anything needs a fresh window measured after its routes were guarded.
 
-That last row is the general caution. A closure sized on a measurement window will surface callers who arrive after it, and no amount of rigour in checks 1–7 prevents that — the window is evidence about the past, not a guarantee about the future. What made it harmless is that the routes were closed while the mode stayed `dry_run`, so the guard recorded the gap instead of enforcing it. **Close a route in dry-run, let a window accumulate, then graduate the permission** — not both in one step.
+**What this means in practice.** Every permission except the eight in `ALWAYS_ENFORCE` — `role:manage`, `setting:update`, and the six `:delete`s — is back to logging rather than refusing. No authenticated caller is blocked by a permission error. That is deliberate and matches the stated policy: project data should be usable, and enforcement is the thing that breaks that, so it stays off until the evidence genuinely covers the route. Dry-run keeps recording what would have been refused, which is what made both of these findable at all.
 
-**A note on the tests.** Six tests failed when this landed, all using `project:read` as their stand-in for "an ordinary dry-run permission" — ordinary until it was graduated. They now derive that stand-in from the catalog (`STILL_DRY_RUN`), so the next graduation cannot break them for a reason unrelated to what they test. One test was repointed rather than fixed: `test_dry_run_lets_a_non_holder_through` became the end-to-end check that graduating a permission actually changes behaviour on a real route.
+**On "all actions permissible except on restricted projects."** The policy is right for data access and is implemented for downloads. It cannot be the whole authorization model, for a structural reason: **39 of the 57 catalog permissions have no project to check against.** `setting:update` rewrites the bucket URIs and the manifest Lambda; `role:manage` *is* the grant plane. For those, "permissible unless the project is restricted" evaluates to "permissible", always — and `role:manage` in particular is self-defeating, because a caller who can grant themselves `admin` is past every restriction by definition. Those eight stay enforced; everything else is permissive by default.
 
 ### Enforcement mode
 

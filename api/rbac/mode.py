@@ -32,57 +32,30 @@ class RBACMode(StrEnum):
     ENFORCE = "enforce"
 
 
-# Permissions graduated to enforce on evidence, 2026-09-15.
+# Graduated enforcement, withdrawn 2026-09-16.
 #
-# Each one guards at least one closed route and recorded *zero* would_deny
-# across the 28-day gap-free window from 2026-08-18. That is the whole
-# justification: not that the permission looks safe, but that no caller was
-# refused it in production for four weeks.
+# 25 permissions were enforced here on 09-15 on the evidence of zero would_deny
+# across a 28-day window. Within a day two scientists received real 403s on
+# `run:update` -- eleven refusals between them -- while writing samplesheets
+# mid-run. Reverted to empty.
 #
-# This is how Phase 5 happens -- permission by permission, each on its own
-# evidence and revertible on its own -- rather than as one global flip. The mode
-# stays `dry_run`, so every permission *not* in this set still logs instead of
-# refusing.
+# The evidence was not wrong; it did not cover what it appeared to. run:update
+# guards POST /runs/{run_id}/samplesheet, a route that was still *open and
+# unguarded* for the whole window that was measured. An unguarded route runs no
+# check, so it records no refusal, so "zero would_deny" said nothing about its
+# callers. The same flaw applies to every permission graduated alongside a route
+# closed in the same pass.
 #
-# Deliberately a hand-maintained list rather than a rule. There is no property
-# of a permission that makes it safe to enforce; only a measurement, which has a
-# date and expires. Anything added here needs its own window, and the query is
-# recorded in docs/RBAC.md under *Graduating a permission to enforce*.
+# That is why this is empty rather than trimmed: the defect is in the method, not
+# in which permissions were chosen, and re-graduating anything needs a window
+# measured *after* its routes were guarded. docs/RBAC.md carries the corrected
+# procedure under *Graduating a permission to enforce*.
 #
-# Not in this set, and why:
-#   file:download, run:demux, project:submit_action, workflow:create,
-#   workflow:deploy, run:associate, project:ingest, project:manage_members
-#       -- have live would_deny in the window
-#   manifest:read, manifest:validate
-#       -- were clean until two callers surfaced *after* the routes closed on
-#          09-11; grants applied 09-15, so they need a fresh window
-_GRADUATED: frozenset[Permission] = frozenset({
-    Permission.CHAT_USE,
-    Permission.FILE_CREATE,
-    Permission.FILE_READ,
-    Permission.FILE_UPDATE,
-    Permission.JOB_READ,
-    Permission.JOB_UPDATE,
-    Permission.MANIFEST_UPLOAD,
-    Permission.PIPELINE_CREATE,
-    Permission.PIPELINE_READ,
-    Permission.PIPELINE_UPDATE,
-    Permission.PROJECT_CREATE,
-    Permission.PROJECT_READ,
-    Permission.PROJECT_UPDATE,
-    Permission.QCRECORD_CREATE,
-    Permission.ROLE_READ,
-    Permission.RUN_CREATE,
-    Permission.RUN_UPDATE,
-    Permission.SAMPLE_CREATE,
-    Permission.SAMPLE_READ,
-    Permission.SAMPLE_UPDATE,
-    Permission.SEARCH_QUERY,
-    Permission.SETTING_READ,
-    Permission.USER_READ,
-    Permission.WORKFLOW_READ,
-    Permission.WORKFLOW_UPDATE,
-})
+# The policy this serves: project data should be usable without a permission
+# error. Enforcement is how that gets broken, so it stays off until the evidence
+# genuinely covers the route -- while dry-run keeps recording what would have
+# been refused, which is what made both of these findable.
+_GRADUATED: frozenset[Permission] = frozenset()
 
 
 def _always_enforce() -> frozenset[Permission]:
