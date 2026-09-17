@@ -145,6 +145,7 @@ def search_runs(
     "/search",
     status_code=status.HTTP_200_OK,
     tags=["Run Endpoints"],
+    dependencies=[Depends(require_permission(Permission.SEARCH_QUERY))],
 )
 def reindex_runs(
     session: SessionDep,
@@ -201,7 +202,10 @@ def submit_demultiplex_workflow_job(
     )
 
 
-@router.get("/demultiplex/{workflow_id}", response_model=DemuxWorkflowConfig, tags=["Run Endpoints"])
+@router.get(
+    "/demultiplex/{workflow_id}", response_model=DemuxWorkflowConfig, tags=["Run Endpoints"],
+    dependencies=[Depends(require_permission(Permission.RUN_READ))],
+)
 def get_demultiplex_workflow_config(
     workflow_id: str,
     session: SessionDep,
@@ -402,6 +406,7 @@ def clear_samples_for_run(
     "/{run_id}/samples/{sample_id}",
     status_code=status.HTTP_204_NO_CONTENT,
     tags=["Run Endpoints"],
+    dependencies=[Depends(require_permission(Permission.RUN_ASSOCIATE))],
 )
 def remove_sample_from_run(
     session: SessionDep,

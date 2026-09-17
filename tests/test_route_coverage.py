@@ -60,13 +60,6 @@ SELF_SERVICE = {
 # This set only ever shrinks. Removing an entry means that route now requires a
 # caller to authenticate, which is a breaking change for whoever calls it today.
 AWAITING_AUTHENTICATION = {
-    "DELETE /api/v1/pipelines/{pipeline_id}/workflows/{workflow_id}",
-    "DELETE /api/v1/qcmetrics/{qcrecord_id}",
-    "DELETE /api/v1/runs/{run_id}/samples/{sample_id}",
-    "DELETE /api/v1/vendors/{vendor_id}",
-    "DELETE /api/v1/workflows/{workflow_id}/aliases/{alias}",
-    "DELETE /api/v1/workflows/{workflow_id}/versions/{version_num}"
-    "/deployments/{deployment_id}",
     "GET /api/v1/actions/configs",
     "GET /api/v1/actions/options",
     "GET /api/v1/actions/platforms",
@@ -78,40 +71,23 @@ AWAITING_AUTHENTICATION = {
     "GET /api/v1/jobs/{job_id}",
     "GET /api/v1/jobs/{job_id}/log",
     "GET /api/v1/jobs/{job_id}/log/paginated",
-    "GET /api/v1/pipelines/{pipeline_id}",
     "GET /api/v1/platforms",
-    "GET /api/v1/platforms/{name}",
     "GET /api/v1/projects/search",
     "GET /api/v1/projects/{project_id}",
     "GET /api/v1/projects/{project_id}/samples",
-    "GET /api/v1/qcmetrics/{qcrecord_id}",
     "GET /api/v1/runs",
     "GET /api/v1/runs/demultiplex",
-    "GET /api/v1/runs/demultiplex/{workflow_id}",
     "GET /api/v1/runs/search",
     "GET /api/v1/runs/{run_id}",
     "GET /api/v1/runs/{run_id}/metrics",
     "GET /api/v1/runs/{run_id}/samplesheet",
     "GET /api/v1/search",
-    "GET /api/v1/settings/{key}",
     "GET /api/v1/vendors",
-    "GET /api/v1/vendors/{vendor_id}",
     "GET /api/v1/workflows",
     "GET /api/v1/workflows/{workflow_id}",
-    "GET /api/v1/workflows/{workflow_id}/aliases",
     "GET /api/v1/workflows/{workflow_id}/versions",
     "GET /api/v1/workflows/{workflow_id}/versions/{version_num}",
-    "GET /api/v1/workflows/{workflow_id}/versions/{version_num}/deployments",
-    "POST /api/v1/actions/config/validate",
     "POST /api/v1/files/upload",
-    "POST /api/v1/jobs",
-    "POST /api/v1/platforms",
-    "POST /api/v1/projects/search",
-    "POST /api/v1/runs/search",
-    "POST /api/v1/samples/reindex",
-    "POST /api/v1/samples/search",
-    "POST /api/v1/vendors",
-    "PUT /api/v1/vendors/{vendor_id}",
 }
 
 
@@ -195,7 +171,7 @@ def test_guard_count_is_recorded():
     Pins the size of the guarded surface so growth is visible in review rather
     than incidental.
     """
-    assert len(GUARDED) == 63
+    assert len(GUARDED) == 86
 
 
 def test_the_authentication_backlog_only_shrinks():
@@ -273,8 +249,32 @@ def test_the_authentication_backlog_only_shrinks():
     With these, every candidate that passed checks 1-3 is closed. What remains
     in this list is 23 routes with no observed traffic and 28 blocked on a
     consumer, and neither group is closable by anything we control.
+
+    51 -> 28: those twenty-three, 2026-09-18, once the clean window since the
+    August log gaps reached 30 days. Twenty-two had *no traffic at all* across
+    it; the twenty-third, GET /runs/demultiplex/{workflow_id}, became closable
+    when its single invalid-JWT caller stopped.
+
+    Silence is the weakest evidence this list has been reduced on -- it shows
+    nobody called, not that a future caller would authenticate. What makes it
+    acceptable is a second measurement rather than the first: for twelve of the
+    twenty-three the guard requires a permission `member` already holds, so
+    enforcement cannot refuse any authenticated caller at all. Those twelve are
+    closed against anonymous access and nothing else.
+
+    The other eleven are catalog writes and deletes -- vendors, platforms,
+    pipeline-workflow links, workflow aliases and deployments, sample reindex.
+    Four enforce immediately because their permissions are graduated or are
+    :delete -- pipeline:update, qcrecord:delete, vendor:delete, workflow:update.
+    A surprise caller there gets a 403 rather than a log line, accepted because
+    all four are administrative with zero traffic for a month. The other seven
+    log.
+
+    run:associate is deliberately among the seven that log: it has a live
+    refusing caller (a run-metrics service account), so guarding
+    DELETE /runs/{run_id}/samples/{sample_id} on it must not enforce yet.
     """
-    assert len(AWAITING_AUTHENTICATION) == 51
+    assert len(AWAITING_AUTHENTICATION) == 28
 
 
 @pytest.mark.parametrize("key", sorted(GUARDED))

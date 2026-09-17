@@ -163,6 +163,7 @@ def search_projects(
     "/search",
     status_code=status.HTTP_200_OK,
     tags=["Project Endpoints"],
+    dependencies=[Depends(require_permission(Permission.SEARCH_QUERY))],
 )
 def reindex_projects(
     session: SessionDep,
