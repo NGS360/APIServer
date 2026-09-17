@@ -236,6 +236,7 @@ def delete_workflow_version_alias(
     "/{workflow_id}/deployments",
     response_model=List[WorkflowDeploymentPublic],
     tags=["Workflow Endpoints"],
+    dependencies=[Depends(require_permission(Permission.WORKFLOW_READ))],
 )
 def get_workflow_deployments_for_workflow(
     session: SessionDep,

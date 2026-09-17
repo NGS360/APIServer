@@ -709,6 +709,125 @@ def test_omics_deployment_lambda_missing_arn(
     assert "arn" in resp.json()["detail"]
 
 
+def test_omics_lambda_client_configured_for_slow_registrations(
+    client: TestClient, session: Session,
+    mock_lambda_client, omics_env,
+):
+    """The Lambda client must outwait the registration and never retry it.
+
+    botocore's defaults are both wrong here: a 60s read_timeout is shorter
+    than a real registration, and the default retry policy treats the
+    resulting ReadTimeoutError as retryable -- re-invoking a non-idempotent
+    Omics registration up to five times.
+    """
+    _seed_omics_platform(session)
+    wf_id, _, ver_num = _create_cwl_workflow_and_version(session)
+
+    mock_lambda_client.set_response({
+        "statusCode": 200,
+        "arn": f"{OMICS_ARN_PREFIX}workflow/4256500",
+    })
+
+    resp = client.post(
+        f"/api/v1/workflows/{wf_id}/versions/{ver_num}/deployments",
+        json={"engine": OMICS_ENGINE},
+    )
+    assert resp.status_code == 201
+
+    config = mock_lambda_client.client_kwargs["config"]
+    assert config.read_timeout == 300
+    assert config.retries["max_attempts"] == 1
+
+
+def test_omics_lambda_read_timeout_setting_is_honoured(
+    client: TestClient, session: Session,
+    mock_lambda_client, omics_env, monkeypatch,
+):
+    """OMICS_REGISTER_LAMBDA_READ_TIMEOUT overrides the default."""
+    monkeypatch.setenv("OMICS_REGISTER_LAMBDA_READ_TIMEOUT", "450")
+    get_settings.cache_clear()
+
+    _seed_omics_platform(session)
+    wf_id, _, ver_num = _create_cwl_workflow_and_version(session)
+
+    mock_lambda_client.set_response({
+        "statusCode": 200,
+        "arn": f"{OMICS_ARN_PREFIX}workflow/4256500",
+    })
+
+    resp = client.post(
+        f"/api/v1/workflows/{wf_id}/versions/{ver_num}/deployments",
+        json={"engine": OMICS_ENGINE},
+    )
+    assert resp.status_code == 201
+    assert mock_lambda_client.client_kwargs["config"].read_timeout == 450
+
+
+def test_omics_deployment_lambda_read_timeout_returns_504(
+    client: TestClient, session: Session,
+    mock_lambda_client, omics_env,
+):
+    """A timed-out invoke returns 504 with reconciliation guidance.
+
+    It used to escape as an unhandled 500, which said nothing about the fact
+    that the registration had very likely completed on AWS -- so the operator
+    could not tell this apart from a deploy that never happened.
+    """
+    _seed_omics_platform(session)
+    wf_id, _, ver_num = _create_cwl_workflow_and_version(session)
+
+    mock_lambda_client.simulate_error("ReadTimeoutError")
+
+    resp = client.post(
+        f"/api/v1/workflows/{wf_id}/versions/{ver_num}/deployments",
+        json={"engine": OMICS_ENGINE},
+    )
+    assert resp.status_code == 504
+    detail = resp.json()["detail"]
+    assert "may still have completed" in detail
+    assert "external_id" in detail
+
+    # Exactly one invoke: the registration is not idempotent, so a retry
+    # would attempt to create a workflow version that may already exist.
+    assert len(mock_lambda_client.invocations) == 1
+
+    # And no half-written deployment row.
+    assert client.get(
+        f"/api/v1/workflows/{wf_id}/versions/{ver_num}/deployments",
+    ).json() == []
+
+
+def test_omics_deployment_recoverable_after_timeout(
+    client: TestClient, session: Session,
+    mock_lambda_client, omics_env,
+):
+    """After a timeout, the caller can record the ARN AWS already created.
+
+    This is the repair path the 504's detail points at, and the reason the
+    timeout must not leave a partial row behind: the retry has to be able to
+    claim the (version, engine) pair.
+    """
+    _seed_omics_platform(session)
+    wf_id, _, ver_num = _create_cwl_workflow_and_version(session)
+
+    mock_lambda_client.simulate_error("ReadTimeoutError")
+    assert client.post(
+        f"/api/v1/workflows/{wf_id}/versions/{ver_num}/deployments",
+        json={"engine": OMICS_ENGINE},
+    ).status_code == 504
+
+    # Operator finds the version on AWS and records it without redeploying.
+    arn = f"{OMICS_ARN_PREFIX}workflow/4256500/version/{ver_num}"
+    resp = client.post(
+        f"/api/v1/workflows/{wf_id}/versions/{ver_num}/deployments",
+        json={"engine": OMICS_ENGINE, "external_id": arn},
+    )
+    assert resp.status_code == 201
+    assert resp.json()["external_id"] == arn
+    # Still one invoke -- the repair does not touch the Lambda.
+    assert len(mock_lambda_client.invocations) == 1
+
+
 def test_omics_deployment_with_explicit_external_id_skips_lambda(
     client: TestClient, session: Session,
     mock_lambda_client, omics_env,

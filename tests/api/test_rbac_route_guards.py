@@ -36,11 +36,44 @@ class TestGlobalPlaneGuards:
         restricted_client.post("/api/v1/projects", json={"name": "Guarded 3"})
         assert len(session.exec(select(Project)).all()) == before
 
-    def test_dry_run_lets_a_non_holder_through(self, restricted_client, mode):
+    def test_a_graduated_permission_is_enforced_even_in_dry_run(
+        self, restricted_client, mode
+    ):
+        """
+        project:create was graduated to enforce on 2026-09-15, on the evidence
+        of zero would_deny across a 28-day window. So dry-run refuses it.
+
+        This test used to assert the opposite -- that dry-run let a non-holder
+        create a project -- and it failed when the graduation landed. It is
+        kept pointed at this route deliberately: it is now the end-to-end check
+        that graduating a permission actually changes behaviour on a real route,
+        which is the whole point of the mechanism.
+        """
         mode("dry_run")
         r = restricted_client.post("/api/v1/projects",
                                    json={"name": "Guarded 4"})
-        assert r.status_code == 201
+        assert r.status_code == 403
+
+    def test_dry_run_still_lets_a_non_holder_through_elsewhere(
+        self, restricted_client, mode
+    ):
+        """
+        The property the previous test used to carry: a permission that has not
+        been graduated is still only logged, not refused.
+
+        Uses manifest:read, which is in dry-run because two callers surfaced
+        after those routes closed on 09-11. When it graduates this will start
+        failing -- at which point move it to another non-graduated permission
+        rather than deleting it, because "dry-run does not refuse" has to stay
+        covered for as long as any permission is in dry-run.
+        """
+        mode("dry_run")
+        r = restricted_client.get("/api/v1/manifest",
+                                  params={"s3_path": "s3://bucket/prefix/"})
+        assert r.status_code != 403, (
+            "manifest:read appears to have been graduated -- repoint this test "
+            "at a permission still in dry-run"
+        )
 
     def test_off_lets_a_non_holder_through(self, restricted_client, mode):
         mode("off")

@@ -45,10 +45,17 @@ from core.security import create_access_token
 NON_STREAMING_TIMEOUT_S = 60
 STREAMING_TIMEOUT_S = 120
 
-# Run-config key carrying a credential for the calling user to the agent, so its
-# NGS360 API tools act as that user and that API's per-user permissions apply. The
-# agent reads exactly this name (NGS360-Agent: agents/ngs360_agent/mcp_user_auth.py);
+# Key carrying a credential for the calling user to the agent, so its NGS360 API
+# tools act as that user and that API's per-user permissions apply. The agent
+# reads exactly this name (NGS360-Agent: agents/ngs360_agent/mcp_user_auth.py);
 # both sides must change together.
+#
+# It rides inside `context` (see context_with_token), not on a separate `config`.
+# LangGraph Platform rejects a run that sets both `configurable` and `context`, and
+# every run already sends a context (build_run_context always names the caller), so
+# the token joins it. The Platform mirrors `context` into `configurable` on the run
+# — which is where the agent reads this key, and where the two scrubbing layers
+# below apply.
 #
 # The `__` prefix and the word "token" are both load-bearing, at different layers.
 # LangGraph copies scalar `configurable` values into persisted checkpoint metadata,
@@ -101,19 +108,27 @@ def mint_delegated_token(user: User) -> str:
     )
 
 
-def user_run_config(user_token: str | None) -> dict[str, Any] | None:
-    """The run config that makes the agent act as this user.
+def context_with_token(
+    run_context: dict[str, Any] | None, user_token: str | None
+) -> dict[str, Any] | None:
+    """``run_context`` with the caller's credential folded in under its key.
 
-    None when there is no credential to forward, so the agent falls back to its
-    read-only posture rather than being handed an empty string to treat as one.
+    The token shares the context dict but is not part of describing who is asking:
+    the agent reads it from ``configurable``, which the Platform mirrors from
+    ``context`` on the run, and its ``USER_TOKEN_CONFIG_KEY`` name is what keeps it
+    out of checkpoint and trace metadata after that mirror (see that constant).
+
+    Returns ``run_context`` unchanged when there is no credential to forward, so
+    the agent falls back to its read-only posture rather than being handed an empty
+    string to treat as one.
 
     The token reaches LangGraph Platform and is stored on the run row, which is
     inside that platform's at-rest encryption set. DELEGATED_TOKEN_TTL is what
     bounds how long that stored copy is worth anything.
     """
     if not user_token:
-        return None
-    return {"configurable": {USER_TOKEN_CONFIG_KEY: user_token}}
+        return run_context
+    return {**(run_context or {}), USER_TOKEN_CONFIG_KEY: user_token}
 
 
 # ---------------------------------------------------------------------------
@@ -558,8 +573,7 @@ async def run_chat(
                 thread_id,
                 settings.LANGSMITH_ASSISTANT_ID,
                 input={"messages": [{"role": "user", "content": message}]},
-                context=run_context,
-                config=user_run_config(user_token),
+                context=context_with_token(run_context, user_token),
                 stream_mode="values",
             ):
                 last_state = chunk.data
@@ -651,8 +665,7 @@ async def stream_chat(
                 thread_id,
                 settings.LANGSMITH_ASSISTANT_ID,
                 input={"messages": [{"role": "user", "content": message}]},
-                context=run_context,
-                config=user_run_config(user_token),
+                context=context_with_token(run_context, user_token),
                 stream_mode=STREAM_MODE,
             ):
                 kind = stream_event_kind(getattr(chunk, "event", None))
