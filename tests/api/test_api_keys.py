@@ -272,7 +272,44 @@ class TestAPIKeyRevoke:
 class TestAPIKeyDelete:
     """Test deleting API keys."""
 
-    def test_delete_key(self, unauthenticated_client: TestClient, test_user):
+    def test_delete_key_stops_the_credential(
+        self, unauthenticated_client: TestClient, test_user
+    ):
+        """DELETE must still make the key unusable -- that is the whole point."""
+        jwt_token = _login(unauthenticated_client, test_user.email)
+
+        create_resp = unauthenticated_client.post(
+            "/api/v1/auth/api-keys",
+            json={"name": "To Delete"},
+            headers={"Authorization": f"Bearer {jwt_token}"},
+        )
+        key_id = create_resp.json()["id"]
+        raw_key = create_resp.json()["key"]
+
+        resp = unauthenticated_client.delete(
+            f"/api/v1/auth/api-keys/{key_id}",
+            headers={"Authorization": f"Bearer {jwt_token}"},
+        )
+        assert resp.status_code == 204
+
+        auth = unauthenticated_client.get(
+            "/api/v1/auth/me", headers={"Authorization": f"Bearer {raw_key}"}
+        )
+        assert auth.status_code == 401
+
+    def test_delete_key_keeps_the_record(
+        self, unauthenticated_client: TestClient, test_user
+    ):
+        """
+        DELETE retires rather than destroys.
+
+        Hard-deleting the row took the credential *and* every trace it existed
+        -- name, owner, creation date, last use, and the fact of retirement --
+        which makes "was that key ever active, and when was it turned off?"
+        unanswerable. It came up for real: a key hard-deleted during a superuser
+        cleanup left no record, while keys revoked in the same hour stayed fully
+        accountable.
+        """
         jwt_token = _login(unauthenticated_client, test_user.email)
 
         create_resp = unauthenticated_client.post(
@@ -282,18 +319,117 @@ class TestAPIKeyDelete:
         )
         key_id = create_resp.json()["id"]
 
-        resp = unauthenticated_client.delete(
+        unauthenticated_client.delete(
             f"/api/v1/auth/api-keys/{key_id}",
             headers={"Authorization": f"Bearer {jwt_token}"},
         )
-        assert resp.status_code == 204
 
-        # Confirm it's gone from list
         list_resp = unauthenticated_client.get(
             "/api/v1/auth/api-keys",
             headers={"Authorization": f"Bearer {jwt_token}"},
         )
-        assert list_resp.json()["count"] == 0
+        assert list_resp.json()["count"] == 1
+        record = list_resp.json()["data"][0]
+        assert record["id"] == key_id
+        assert record["name"] == "To Delete"
+        assert record["is_active"] is False
+        assert record["revoked_at"] is not None
+
+    def test_delete_and_revoke_are_equivalent(
+        self, unauthenticated_client: TestClient, test_user
+    ):
+        """Two endpoints, one behaviour -- so neither is the unaudited path."""
+        jwt_token = _login(unauthenticated_client, test_user.email)
+        headers = {"Authorization": f"Bearer {jwt_token}"}
+
+        ids = []
+        for name in ("via-delete", "via-revoke"):
+            resp = unauthenticated_client.post(
+                "/api/v1/auth/api-keys", json={"name": name}, headers=headers
+            )
+            ids.append(resp.json()["id"])
+
+        unauthenticated_client.delete(
+            f"/api/v1/auth/api-keys/{ids[0]}", headers=headers
+        )
+        unauthenticated_client.post(
+            f"/api/v1/auth/api-keys/{ids[1]}/revoke", headers=headers
+        )
+
+        listed = unauthenticated_client.get(
+            "/api/v1/auth/api-keys", headers=headers
+        ).json()["data"]
+        by_id = {k["id"]: k for k in listed}
+        for key_id in ids:
+            assert by_id[key_id]["is_active"] is False
+            assert by_id[key_id]["revoked_at"] is not None
+
+    def test_retiring_twice_preserves_the_original_timestamp(
+        self, unauthenticated_client: TestClient, test_user
+    ):
+        """
+        Idempotent, and the timestamp is not refreshed. The auditable fact is
+        when the credential stopped working, not when someone last asked.
+        """
+        jwt_token = _login(unauthenticated_client, test_user.email)
+        headers = {"Authorization": f"Bearer {jwt_token}"}
+
+        key_id = unauthenticated_client.post(
+            "/api/v1/auth/api-keys", json={"name": "Twice"}, headers=headers
+        ).json()["id"]
+
+        first = unauthenticated_client.post(
+            f"/api/v1/auth/api-keys/{key_id}/revoke", headers=headers
+        )
+        assert first.status_code == 200
+        original = first.json()["revoked_at"]
+
+        again = unauthenticated_client.delete(
+            f"/api/v1/auth/api-keys/{key_id}", headers=headers
+        )
+        assert again.status_code == 204
+
+        listed = unauthenticated_client.get(
+            "/api/v1/auth/api-keys", headers=headers
+        ).json()["data"]
+        assert listed[0]["revoked_at"] == original
+
+    def test_a_retired_key_does_not_consume_quota(
+        self, unauthenticated_client: TestClient, test_user
+    ):
+        """
+        Keys now accumulate instead of vanishing, so the cap must count only
+        active ones -- otherwise create/delete cycles would slowly lock a user
+        out of making keys at all.
+        """
+        from api.auth.services import MAX_API_KEYS_PER_USER
+
+        jwt_token = _login(unauthenticated_client, test_user.email)
+        headers = {"Authorization": f"Bearer {jwt_token}"}
+
+        for i in range(MAX_API_KEYS_PER_USER):
+            resp = unauthenticated_client.post(
+                "/api/v1/auth/api-keys", json={"name": f"key-{i}"},
+                headers=headers,
+            )
+            assert resp.status_code == 201, resp.text
+            if i == 0:
+                first_id = resp.json()["id"]
+
+        at_cap = unauthenticated_client.post(
+            "/api/v1/auth/api-keys", json={"name": "over"}, headers=headers
+        )
+        assert at_cap.status_code == 400
+
+        unauthenticated_client.delete(
+            f"/api/v1/auth/api-keys/{first_id}", headers=headers
+        )
+
+        after = unauthenticated_client.post(
+            "/api/v1/auth/api-keys", json={"name": "room-again"},
+            headers=headers,
+        )
+        assert after.status_code == 201, after.text
 
 
 class TestAPIKeyUserIsolation:

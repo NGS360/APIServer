@@ -124,9 +124,152 @@ class TestRoleDefinitions:
             # global
             "member", "demux_operator", "lab_manager", "platform_admin",
             "service_account", "auditor", "admin",
+            "workflow_publisher", "workflow_admin", "manifest_operator",
             # project
             "project_viewer", "project_contributor", "project_owner",
         }
+
+    def test_member_does_not_hold_global_file_download(self):
+        """
+        Granting this to `member` would make every project restriction vacuous.
+
+        `has_in_project` returns true on a *global* grant (api/rbac/resolver.py),
+        so a universal `file:download` satisfies the restricted-project branch of
+        `require_file_download` for every user -- the feature would look
+        implemented and do nothing.
+
+        It is pinned because it is a plausible mistake rather than a far-fetched
+        one: an earlier draft of docs/RBAC.md said `member` should regain this
+        permission when downloads became open by default. Downloads from an
+        unrestricted project consult no permission at all, which is what makes
+        them open; the permission is only for restricted projects and for URIs
+        that resolve to no project.
+        """
+        assert Permission.FILE_DOWNLOAD not in ROLE_DEFINITIONS["member"].permissions
+
+    def test_the_roles_that_bypass_a_restriction_are_a_closed_set(self):
+        """
+        Global file:download bypasses project restriction by design. That is the
+        cross-project escape hatch, so who holds it is a decision and not an
+        accident -- pin the set.
+        """
+        holders = {
+            name for name, role in ROLE_DEFINITIONS.items()
+            if role.scope is RoleScope.GLOBAL
+            and Permission.FILE_DOWNLOAD in role.permissions
+        }
+
+        assert holders == {"lab_manager", "auditor", "admin"}
+
+    def test_service_account_can_both_create_and_update_what_it_writes(self):
+        """
+        The role held run:update without run:create, and sample:create without
+        sample:update. A writeback identity that may change a run but not
+        register one, and create a sample but not correct it, describes no real
+        workflow -- and both halves were being hit in production by two
+        different service accounts.
+
+        Pinned as pairs because the asymmetry is the bug, and it is the kind
+        that reads as deliberate minimalism until someone measures the callers.
+        """
+        sa = ROLE_DEFINITIONS["service_account"].permissions
+
+        for create, update in (
+            (Permission.RUN_CREATE, Permission.RUN_UPDATE),
+            (Permission.SAMPLE_CREATE, Permission.SAMPLE_UPDATE),
+            (Permission.FILE_CREATE, Permission.FILE_UPDATE),
+        ):
+            assert (create in sa) == (update in sa), (
+                f"{create} and {update} should be held together or not at all"
+            )
+
+    def test_service_account_is_still_not_a_human_role(self):
+        """
+        Widening it must not turn it into a general write role. It exists for
+        machine writeback, and the permissions that spend money or destroy data
+        stay out.
+        """
+        sa = ROLE_DEFINITIONS["service_account"].permissions
+
+        for excluded in (
+            Permission.RUN_DEMUX,            # spends compute, deletes QC records
+            Permission.PROJECT_SUBMIT_ACTION,  # spends AWS Batch
+            Permission.FILE_DOWNLOAD,        # would bypass project restriction
+            Permission.SETTING_UPDATE,
+        ):
+            assert excluded not in sa
+
+    def test_manifest_operator_holds_exactly_the_manifest_permissions(self):
+        """
+        Manifest handling is global-only -- a manifest names an arbitrary S3 URI
+        and no resolver maps it to a project -- so it cannot be project
+        membership and has to be a global role.
+        """
+        manifest = ROLE_DEFINITIONS["manifest_operator"].permissions
+
+        assert manifest == {
+            Permission.MANIFEST_READ,
+            Permission.MANIFEST_UPLOAD,
+            Permission.MANIFEST_VALIDATE,
+        }
+
+    def test_manifest_operator_is_narrower_than_lab_manager(self):
+        """
+        lab_manager was the off-the-shelf alternative, at sixteen permissions
+        beyond member including run:create and project:ingest -- none of which a
+        person uploading a manifest needs.
+        """
+        lab = ROLE_DEFINITIONS["lab_manager"].permissions
+        manifest = ROLE_DEFINITIONS["manifest_operator"].permissions
+
+        assert manifest < lab
+        assert Permission.RUN_CREATE not in manifest
+        assert Permission.PROJECT_INGEST not in manifest
+
+    def test_workflow_publisher_cannot_delete(self):
+        """
+        Publishing a workflow and destroying one are different privileges.
+
+        The role exists because one caller needed create/update/deploy and held
+        only `member`; `workflow:delete` was never among the refusals and stays
+        out until it is. workflow_admin is the role that has it.
+        """
+        publisher = ROLE_DEFINITIONS["workflow_publisher"].permissions
+
+        assert Permission.WORKFLOW_CREATE in publisher
+        assert Permission.WORKFLOW_UPDATE in publisher
+        assert Permission.WORKFLOW_DEPLOY in publisher
+        assert Permission.WORKFLOW_DELETE not in publisher
+        assert publisher < ROLE_DEFINITIONS["workflow_admin"].permissions
+
+    def test_workflow_admin_covers_every_workflow_permission(self):
+        """
+        Derived from the catalog, not enumerated, so a new workflow:* permission
+        joins it automatically. For a role whose stated scope is "owns the
+        workflow catalog outright", silently narrowing when the catalog grows
+        would be the bug.
+        """
+        every_workflow_permission = {
+            p for p in Permission if str(p).startswith("workflow:")
+        }
+
+        assert ROLE_DEFINITIONS["workflow_admin"].permissions == \
+            every_workflow_permission
+
+    def test_the_workflow_roles_are_narrower_than_platform_admin(self):
+        """
+        The alternative to these roles was granting platform_admin, which would
+        have conferred setting:update, system:reindex and vendor:delete to fix a
+        workflow-registration refusal.
+        """
+        platform_admin = ROLE_DEFINITIONS["platform_admin"].permissions
+
+        for name in ("workflow_publisher", "workflow_admin"):
+            role = ROLE_DEFINITIONS[name].permissions
+            assert len(role) < len(platform_admin)
+            assert Permission.SETTING_UPDATE not in role
+            assert Permission.SYSTEM_REINDEX not in role
+            assert Permission.VENDOR_DELETE not in role
 
     def test_every_global_role_beyond_member_adds_a_write(self):
         """

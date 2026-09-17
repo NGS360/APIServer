@@ -458,6 +458,7 @@ class MockLambdaClient:
         self.response_data = {}  # The response to return
         self.error_mode = None  # For simulating errors
         self.invocations = []  # Track invocations
+        self.client_kwargs = {}  # kwargs boto3.client() was called with
 
     def set_response(self, response: dict):
         """Set the response that will be returned by invoke()"""
@@ -469,7 +470,7 @@ class MockLambdaClient:
 
         Args:
             error_type: One of "ResourceNotFoundException", "AccessDeniedException",
-                        "NoCredentialsError"
+                        "NoCredentialsError", "ReadTimeoutError"
         """
         self.error_mode = error_type
 
@@ -488,6 +489,13 @@ class MockLambdaClient:
         # Check for simulated errors
         if self.error_mode == "NoCredentialsError":
             raise NoCredentialsError()
+        elif self.error_mode == "ReadTimeoutError":
+            # What a Lambda that outruns the client's read_timeout looks like.
+            # The Lambda keeps running regardless, so the invocation above is
+            # still recorded -- that is the point of the failure mode.
+            from botocore.exceptions import ReadTimeoutError
+
+            raise ReadTimeoutError(endpoint_url="https://lambda.us-east-1.amazonaws.com")
         elif self.error_mode == "ResourceNotFoundException":
             error_response = {
                 "Error": {
@@ -778,6 +786,9 @@ def _make_client(
 
     def mock_boto3_client(service_name, **kwargs):
         if service_name == "lambda":
+            # Recorded so tests can assert on the client's timeout/retry
+            # config, which is part of the contract for slow invocations.
+            mock_lambda_client.client_kwargs = kwargs
             return mock_lambda_client
         return original_boto3_client(service_name, **kwargs)
 
@@ -788,9 +799,15 @@ def _make_client(
     app.dependency_overrides[get_s3_client] = lambda: mock_s3_client
 
     if user is not None:
-        from api.auth.deps import get_current_user
+        from api.auth.deps import get_current_user, optional_current_user
 
         app.dependency_overrides[get_current_user] = lambda: user
+        # optional_current_user is not built on get_current_user -- it parses the
+        # token itself and returns None on any failure -- so overriding only
+        # get_current_user leaves every OptionalUser route seeing an anonymous
+        # caller. Tests of authenticated behaviour on those routes would then
+        # pass or fail for the wrong reason.
+        app.dependency_overrides[optional_current_user] = lambda: user
 
     try:
         yield TestClient(app)

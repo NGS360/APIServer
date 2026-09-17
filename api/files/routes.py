@@ -18,6 +18,7 @@ from fastapi import (APIRouter, Depends, Form, HTTPException, Query, Request,
 from fastapi import File as FastAPIFile
 from fastapi.responses import RedirectResponse
 from pydantic import ValidationError
+from sqlmodel import col, select
 
 from api.files.models import FileUploadCreate
 
@@ -31,7 +32,7 @@ from api.files.models import (
     file_to_public,
 )
 from api.files import services
-from api.auth.deps import CurrentSuperuser
+from api.auth.deps import CurrentSuperuser, OptionalUser
 from api.files.scope import scope_for_uri
 from api.rbac.deps import AuthzDep, decide, require_permission
 from api.rbac.permissions import Permission
@@ -45,10 +46,12 @@ router = APIRouter(prefix="/files", tags=["File Endpoints"])
     response_model=FilePublic,
     status_code=status.HTTP_201_CREATED,
     summary="Create a new file record",
+    dependencies=[Depends(require_permission(Permission.FILE_CREATE))],
 )
 def create_file(
     session: SessionDep,
     file_create: FileCreate,
+    current_user: OptionalUser = None,
 ) -> FilePublic:
     """
     Create a new file record (external reference).
@@ -66,11 +69,21 @@ def create_file(
     - **samples**: Sample associations with optional roles (tumor/normal)
     - **hashes**: Hash values by algorithm (md5, sha256, etc.)
     - **tags**: Key-value metadata (type, format, description, etc.)
+    - **created_by**: Optional. The person the file belongs to, which for
+      pipeline registrations is the scientist the work was done for rather
+      than the caller. Must name a known NGS360 account.
+
+    The authenticated caller is recorded separately as **submitted_by** and
+    cannot be set by the client.
 
     Note: Same URI can be registered multiple times with different timestamps,
     enabling versioning. Each POST creates a new version.
     """
-    file_record = services.create_file(session, file_create)
+    file_record = services.create_file(
+        session,
+        file_create,
+        submitted_by=current_user.username if current_user else None,
+    )
     return file_to_public(file_record)
 
 
@@ -95,6 +108,7 @@ def upload_file(
     role: Optional[str] = Form(None),
     content: Optional[UploadFile] = FastAPIFile(None),
     s3_client=Depends(get_s3_client),
+    current_user: OptionalUser = None,
 ) -> FilePublic:
     """
     Upload a file with optional content.
@@ -108,7 +122,9 @@ def upload_file(
     - **overwrite**: If True, creates a new version if file exists
     - **description**: Optional file description
     - **is_public**: Whether file is publicly accessible
-    - **created_by**: User who uploaded the file
+    - **created_by**: Optional. The person the file belongs to, which need not
+      be the caller. Must name a known NGS360 account. The authenticated
+      caller is recorded separately as **submitted_by**.
     - **role**: Optional role (e.g., samplesheet)
     - **content**: Optional file content
 
@@ -144,7 +160,11 @@ def upload_file(
         file_content = content.file.read()
 
     file_record = services.create_file_upload(
-        session, s3_client, file_upload, file_content
+        session,
+        s3_client,
+        file_upload,
+        file_content,
+        submitted_by=current_user.username if current_user else None,
     )
     return file_to_public(file_record)
 
@@ -241,42 +261,20 @@ def browse_s3(
     return services.list_s3_files(uri=uri, s3_client=s3_client)
 
 
-@router.get(
-    "/download",
-    summary="Download file from S3",
-    responses={307: {"description": "Redirect to presigned S3 URL"}},
-)
-def download_file(
-    path: str = Query(
-        ...,
-        description="S3 URI of file to download (e.g., s3://bucket/path/file.txt)"
-    ),
-    s3_client=Depends(get_s3_client),
-):
-    """
-    Download a file from S3 via presigned URL redirect.
+def _restricted_projects(session, project_ids) -> list:
+    """Which of these projects have opted out of open downloads."""
+    if not project_ids:
+        return []
+    from api.project.models import Project
 
-    Returns a 307 redirect to a time-limited presigned S3 URL.
-    The client follows the redirect to download directly from S3,
-    offloading bandwidth from the API server.
-
-    Deprecated in favour of GET /files/download-url, which returns the same URL
-    as JSON. This route cannot be given a permission guard: it is used by the UI
-    as a plain link, and a browser following a link cannot send an Authorization
-    header, so guarding it would 401 every download in the product. It closes
-    once browser traffic here reaches zero.
-    """
-    presigned_url = services.generate_presigned_url(
-        s3_path=path, s3_client=s3_client
+    return list(
+        session.exec(
+            select(Project.id).where(
+                col(Project.id).in_(list(project_ids)),
+                Project.download_restricted.is_(True),
+            )
+        ).all()
     )
-    return RedirectResponse(url=presigned_url, status_code=307)
-
-
-# Kept explicit, and passed explicitly below, rather than relying on
-# generate_presigned_url's default: expires_in is a promise to the caller, and if
-# the service default were changed this response would quietly start lying about
-# when the URL stops working.
-DOWNLOAD_URL_TTL_SECONDS = 3600
 
 
 def require_file_download(
@@ -286,31 +284,58 @@ def require_file_download(
     path: str = Query(..., description="S3 URI of the file"),
 ):
     """
-    Project-scoped download: may this caller download *this* file?
+    May this caller download *this* file? Open unless the project says otherwise.
 
-    The parameter is a URI rather than a project id, so the project has to be
-    resolved before it can be checked -- api/files/scope.py does that, preferring a
-    file's own project association and falling back to the projects its sequencing
-    run touches. Membership of any one of the resulting projects is enough: a file
-    genuinely belonging to two projects is downloadable by members of either.
+    Downloads are open to any authenticated caller. A project opts out by setting
+    `download_restricted`, and only then is `file:download` consulted. Absence of
+    a restriction is permission -- see docs/RBAC.md, "Downloads: open by default,
+    restricted by exception".
 
-    When the URI resolves to no project at all -- unregistered, or registered with
-    no association -- the check falls back to the *global* file:download
-    permission. That is what keeps the behaviour coherent at both ends: `member`
-    does not hold it, so an ordinary user cannot download a file that belongs to
-    nothing; while lab_manager, auditor, admin and superusers do, so operating
-    across raw storage still works. Note has_in_project also honours a global
-    grant, which is why those roles are unaffected by the project scoping.
+    The parameter is a URI rather than a project id, so the project still has to
+    be resolved before its restriction can be read -- api/files/scope.py does
+    that. The resolver is unchanged by the policy inversion; it just answers a
+    different question now. Previously "which project must the caller belong
+    to?", now "which project's restriction applies?".
+
+    Three cases:
+
+    - **Resolved and unrestricted.** Allowed, without consulting any permission.
+      This is the common path and the reason the policy changed: one genomics
+      workload read 66 projects 33M times in a month, and requiring a grant per
+      project made project membership mean "reads everything".
+
+    - **Resolved and restricted.** Requires `file:download` on the project plane,
+      which project_viewer and above carry -- so a restricted project's members
+      are its allowlist. `has_in_project` also honours a *global* grant, so
+      lab_manager, auditor, admin and superusers pass regardless. That is
+      intended for cross-project operation, and it is exactly why `member` must
+      **not** be given global `file:download`: it would satisfy every restriction
+      for every user and make this branch unreachable.
+
+    - **Unresolved.** Requires *global* `file:download`, unchanged. "Belongs to
+      no project" is not evidence of permission, and this case is load-bearing
+      for a reason beyond authorization: generate_presigned_url signs whatever
+      bucket and key it is handed, so an unresolved URI can name any object the
+      API's own IAM role can read. Keeping it privileged is what stops the
+      endpoint being an arbitrary-S3-read proxy. Do not "simplify" this to allow.
 
     A dependency may take the same query parameter as its handler; both receive it
     and the OpenAPI schema is unchanged.
     """
     scope = scope_for_uri(session, path)
     if scope.resolved:
-        granted = any(
-            authz.has_in_project(Permission.FILE_DOWNLOAD, project_id)
-            for project_id in scope.project_ids
-        )
+        restricted = _restricted_projects(session, scope.project_ids)
+        if not restricted:
+            granted = True
+        else:
+            # Every restricted project in the set has to be satisfied. Only one
+            # project is ever resolved in practice -- measured 0 multi-project
+            # files in production -- so this is the safe reading of a case that
+            # does not currently occur, not a considered conflict policy.
+            granted = all(
+                authz.has_in_project(Permission.FILE_DOWNLOAD, project_id)
+                for project_id in restricted
+            )
     else:
         granted = authz.has(Permission.FILE_DOWNLOAD)
 
@@ -329,6 +354,58 @@ def require_file_download(
 
 require_file_download.rbac_permissions = (Permission.FILE_DOWNLOAD,)
 require_file_download.rbac_plane = "project"
+
+
+@router.get(
+    "/download",
+    summary="Download file from S3",
+    responses={307: {"description": "Redirect to presigned S3 URL"}},
+    dependencies=[Depends(require_file_download)],
+)
+def download_file(
+    path: str = Query(
+        ...,
+        description="S3 URI of file to download (e.g., s3://bucket/path/file.txt)"
+    ),
+    s3_client=Depends(get_s3_client),
+):
+    """
+    Download a file from S3 via presigned URL redirect.
+
+    Returns a 307 redirect to a time-limited presigned S3 URL.
+    The client follows the redirect to download directly from S3,
+    offloading bandwidth from the API server.
+
+    Guarded, as of 2026-09-09, by the same check as GET /files/download-url. The
+    response is unchanged -- still a 307 to S3 -- so every client that already
+    sends credentials is unaffected. What changes is that anonymous callers now
+    get 401, and a file in a restricted project gets 403.
+
+    An earlier version of this docstring said the route *could not* be guarded,
+    because the UI used it as a plain link and a browser following a link cannot
+    send an Authorization header. That was true when written and is no longer:
+    the frontend fetches GET /files/download-url with its token and navigates to
+    the returned URL itself (src/lib/download.ts), and the built bundle contains
+    no reference to this route at all. Measured browser traffic over the 30 days
+    to 2026-09-09 was 41 requests -- 39 of them one bulk download on 08-15, most
+    likely from a tab holding a pre-fix bundle, then 2 on 09-04 and none since.
+
+    Still deprecated in favour of GET /files/download-url, which returns the URL
+    as JSON rather than as a redirect. This route stays because ~1.1M requests a
+    day arrive on it from htslib, and it now enforces the same policy, so there
+    is no longer any urgency to move them.
+    """
+    presigned_url = services.generate_presigned_url(
+        s3_path=path, s3_client=s3_client
+    )
+    return RedirectResponse(url=presigned_url, status_code=307)
+
+
+# Kept explicit, and passed explicitly below, rather than relying on
+# generate_presigned_url's default: expires_in is a promise to the caller, and if
+# the service default were changed this response would quietly start lying about
+# when the URL stops working.
+DOWNLOAD_URL_TTL_SECONDS = 3600
 
 
 @router.get(
@@ -443,6 +520,7 @@ def get_file(
     "/{file_id}/versions",
     response_model=FilesPublic,
     summary="Get all versions of a file",
+    dependencies=[Depends(require_permission(Permission.FILE_READ))],
 )
 def get_file_versions(
     file_id: uuid.UUID,
