@@ -1459,6 +1459,11 @@ aws_batch:
         assert data["name"] == "cellranger-mkfastq-test-run"
         assert data["command"] == "mkfastq.sh"
         assert data["user"] == test_user.username
+        # The job is attributed to the run it was submitted against, which is
+        # what puts it on that run's Jobs tab. project_id stays unset: a
+        # flowcell's demultiplexing spans every project with samples on it.
+        assert data["sequencing_run_id"] == "190110_MACHINE123_0001_FLOWCELL123"
+        assert data["project_id"] is None
 
     def test_submit_job_with_jinja_expressions(
         self, client: TestClient, mock_s3_client, monkeypatch, test_user

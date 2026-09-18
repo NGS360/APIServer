@@ -807,7 +807,8 @@ def submit_pipeline_job(
         container_overrides=container_overrides,
         job_def=action_config.aws_batch.job_definition,
         job_queue=action_config.aws_batch.job_queue,
-        user=username
+        user=username,
+        project_id=project.project_id
     )
     return batch_job
 
@@ -1218,5 +1219,6 @@ def ingest_vendor_data(
         },
         job_def=config_data.aws_batch.job_definition,
         job_queue=config_data.aws_batch.job_queue,
-        user=user
+        user=user,
+        project_id=project.project_id
     )
