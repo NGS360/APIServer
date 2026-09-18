@@ -9,7 +9,11 @@ services:
     ports:
       - 8080:8080
     environment:
-      - VITE_API_URL=http://localhost:3000/
+      # The frontend addresses the API with relative URLs (same-origin model);
+      # in dev, Vite proxies /api etc. to VITE_DEV_API_PROXY. Point it at the
+      # apiserver service on the compose network (its default, 127.0.0.1:8000,
+      # is wrong for this stack -- FastAPI is the `apiserver` service on 3000).
+      - VITE_DEV_API_PROXY=http://apiserver:3000
     volumes: # this allows live reloading of the frontend code
       - ../frontend-ui:/app
       - /app/node_modules
