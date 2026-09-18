@@ -186,39 +186,36 @@ class TestTheProjectRolesAreOrdered:
         assert response.status_code == 403
         assert "project:manage_members" in response.json()["detail"]
 
-    def test_an_owner_is_still_refused_by_the_retained_superuser_gate(
+    def test_an_owner_can_manage_their_own_project_s_members(
         self, session, restricted_client, mine
     ):
         """
-        The one place a project role does *not* yet get what it grants.
+        The positive assertion this test was written to become.
 
-        The membership routes carry the project guard **and** the original
-        `CurrentSuperuser` dependency. The guard allows -- the access log records
-        `rbac_decision: allow` with `scope: project <id>` -- and then the
-        superuser check refuses. So a project owner cannot see or manage their own
-        project's members.
+        It previously asserted the opposite: the membership routes carried the
+        project guard *and* a `CurrentSuperuser` dependency, so the guard allowed
+        and the flag then refused, and a project owner could not see their own
+        project's members. Its docstring recorded why that was deliberate --
+        "while RBAC_MODE is dry_run a guard only logs, so dropping
+        CurrentSuperuser today would not move the gate from one mechanism to the
+        other, it would remove it".
 
-        That is deliberate for now, and the reason is worth stating: while
-        RBAC_MODE is dry_run a guard only logs, so dropping `CurrentSuperuser`
-        today would not move the gate from one mechanism to the other, it would
-        remove it, and membership management would be open to every authenticated
-        user in production. The superuser check comes off at enforce, not before.
+        That reasoning was right, and the fix was not to keep the flag but to
+        make the guard hold on its own: `project:manage_members` is now
+        `critical` risk, so it is in ALWAYS_ENFORCE and refused even in dry-run.
+        Project membership *is* the project-level grant plane -- a caller who can
+        add themselves to a project has granted themselves every project-scoped
+        permission on it -- which is the same reasoning that makes `role:manage`
+        critical.
 
-        The two refusals are told apart by their message, which is what makes this
-        assertion meaningful rather than just "403": the guard says
-        "Missing permission: ...", the superuser dependency says
-        "Not enough permissions".
+        So the flag came off, and a project owner now gets what the role says it
+        grants.
         """
         grant_project_role(session, mine, "norole", "project_owner")
         response = restricted_client.get(
             f"/api/v1/projects/{mine.project_id}/members"
         )
-        assert response.status_code == 403
-        assert response.json()["detail"] == "Not enough permissions", (
-            "expected the retained superuser gate to be the thing refusing; if "
-            "this now reads 'Missing permission', the gate has been dropped and "
-            "this test should become the positive assertion it was written to be"
-        )
+        assert response.status_code == 200, response.text
 
     def test_a_superuser_can_manage_members(self, superuser_client, session):
         """The counterpart: the gate above is satisfiable, just not by a role."""

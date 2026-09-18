@@ -207,7 +207,7 @@ Two things generalise. **An unauthenticated write path cannot be made accountabl
 | `project:create` | G | low | `POST /projects` |
 | `project:update` | P | low | `PUT /projects/{id}`, `PATCH /projects/{id}` |
 | `project:delete` | P | high | *reserved — no route today* |
-| `project:manage_members` | P | medium | `GET/POST/PATCH/DELETE /projects/{id}/members` (new) |
+| `project:manage_members` | P | **critical** | `GET/POST/PATCH/DELETE /projects/{id}/members`. Raised from medium 2026-09-18: project membership *is* the project-level grant plane, so a caller who can add themselves has granted themselves every project-scoped permission on that project. `critical` puts it in `ALWAYS_ENFORCE`, which is what keeps these routes refused while the mode is `dry_run` — they previously leaned on a `CurrentSuperuser` check for that |
 | `project:submit_action` | P | **high** | `POST /projects/{id}/actions/submit` — spends AWS Batch |
 | `project:ingest` | P | **high** | `POST /projects/{id}/ingest` — spends AWS Batch, writes S3 |
 | `sample:read` | P | low | `GET /projects/{id}/samples`, `GET/POST /samples/search` |
@@ -1027,6 +1027,26 @@ The first two came from `service_account` holding each verb's *update* without i
 The third is the more interesting one. It was a single request, and the temptation with a single request is to close over it. Resolving the caller showed they submit demux jobs (`POST /runs/demultiplex`) and write samplesheets — a demux operator missed from the original group of eleven, not an edge case. `demux_operator` was the correct role, so the grant was a correction rather than a widening. **One request is not zero, and it is often not noise either.**
 
 **Every candidate that passed checks 1–3 is now closed.** What remains in the backlog is 23 routes with no observed traffic and 28 blocked on a consumer — neither group closable by anything this team controls. The next reduction is either date-gated (the silent routes, once the clean window reaches 30 days) or someone else's deploy.
+
+### Closing the silent routes, 2026-09-18
+
+Backlog **51 to 28**, guarded surface **63 to 86**. Twenty-two routes with no traffic at all across the 30-day clean window, plus `GET /runs/demultiplex/{workflow_id}`, which became closable when its single invalid-JWT caller stopped.
+
+**Silence is the weakest evidence this backlog has been reduced on.** It shows nobody called, not that a future caller would authenticate — and the 09-15 incident is the standing reminder that an unobserved caller is not an absent one. So the batch was sized on a *second* measurement rather than the first: **for each route, would an ordinary `member` satisfy the guard?**
+
+| | Routes | Consequence |
+|---|---|---|
+| Guard is a permission `member` holds | **12** | enforcement cannot refuse any authenticated caller; closed against anonymous access only |
+| Guard needs a grant, logs in dry-run | 7 | a surprise caller records `would_deny` and still succeeds |
+| Guard needs a grant, **enforces now** | 4 | a surprise caller receives 403 |
+
+That reframing is the useful part. "Is this permission enforced?" is the wrong question on its own; "would a plausible caller hold it?" is the one that predicts a 403. Half the batch is risk-free on that test regardless of enforcement state.
+
+The four that enforce immediately are `pipeline:update`, `qcrecord:delete`, `vendor:delete` and `workflow:update` — graduated or `:delete`. All four are administrative catalog operations with zero traffic for a month, which is the same basis on which `:delete` is always-enforced by design.
+
+**`run:associate` is deliberately among the seven that log.** It has a live refusing caller — a run-metrics service account, 12 refusals in the window and still going — so guarding `DELETE /runs/{run_id}/samples/{sample_id}` on it must not enforce. Closing the route while its permission stays in dry-run is exactly the sequencing that #434 got wrong.
+
+**What remains is 28 routes, none of them ours.** Every one carries anonymous or invalid-JWT traffic from a consumer another team owns. The largest is `GET /workflows/{workflow_id}` at 23,443 anonymous requests (WES bearer-token forwarding), then `/jobs` and `/jobs/{job_id}` (ngs-observe), `/runs/{id}/metrics` and `/runs/search` (RStudio), `/actions/configs` (the Batch event trigger), and `/files` and `/files/list`.
 
 ### Verified Phase 1 blockers
 

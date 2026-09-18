@@ -6,7 +6,7 @@ from typing import Literal, List as TypingList
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, status
 from sqlmodel import select
 from core.deps import SessionDep, OpenSearchDep, S3ClientDep
-from api.auth.deps import CurrentUser, CurrentSuperuser
+from api.auth.deps import CurrentUser
 from api.auth.models import User
 from api.rbac import services as rbac_services
 from api.rbac.models import ProjectMember, ProjectMemberPublic, ProjectMemberRequest, Role
@@ -163,6 +163,7 @@ def search_projects(
     "/search",
     status_code=status.HTTP_200_OK,
     tags=["Project Endpoints"],
+    dependencies=[Depends(require_permission(Permission.SEARCH_QUERY))],
 )
 def reindex_projects(
     session: SessionDep,
@@ -433,7 +434,6 @@ def delete_sample_from_project(
     session: SessionDep,
     project: ProjectDep,
     sample_id: str,
-    current_user: CurrentSuperuser,
 ) -> None:
     """
     Hard-delete a sample and all its child rows (superuser only).
@@ -576,10 +576,11 @@ def ingest_vendor_data(
 ###############################################################################
 # Project membership /api/v1/projects/{project_id}/members
 #
-# Guarded by CurrentSuperuser for now, like the rest of the RBAC admin surface:
-# gating membership on project:manage_members would be a chicken-and-egg while
-# nothing enforces permissions yet. Phase 4 swaps these onto
-# require_project_permission(Permission.PROJECT_MANAGE_MEMBERS).
+# Guarded on project:manage_members alone, as of 2026-09-18. These carried
+# CurrentSuperuser as well, which is now removed -- see the module docstring in
+# api/rbac/routes.py for why the flag was redundant over the permission guard,
+# and why removing it is the prerequisite for taking is_superuser off the three
+# personal accounts that hold it.
 ###############################################################################
 
 @router.get(
@@ -592,7 +593,6 @@ def ingest_vendor_data(
 def list_project_members(
     session: SessionDep,
     project: ProjectDep,
-    current_user: CurrentSuperuser,
 ) -> list[ProjectMemberPublic]:
     """Who has a role on this project, and which."""
     rows = session.exec(
@@ -624,7 +624,7 @@ def add_project_member(
     session: SessionDep,
     project: ProjectDep,
     body: ProjectMemberRequest,
-    current_user: CurrentSuperuser,
+    current_user: CurrentUser,
 ) -> list[ProjectMemberPublic]:
     """Add a member, or change an existing member's role."""
     user = rbac_services.get_user_or_404(session, body.username)
@@ -632,7 +632,7 @@ def add_project_member(
     rbac_services.set_project_member(
         session, project.id, user, role, granted_by=current_user.id
     )
-    return list_project_members(session, project, current_user)
+    return list_project_members(session, project)
 
 
 @router.delete(
@@ -647,8 +647,8 @@ def remove_project_member(
     session: SessionDep,
     project: ProjectDep,
     username: str,
-    current_user: CurrentSuperuser,
+    current_user: CurrentUser,
 ) -> list[ProjectMemberPublic]:
     user = rbac_services.get_user_or_404(session, username)
     rbac_services.remove_project_member(session, project.id, user)
-    return list_project_members(session, project, current_user)
+    return list_project_members(session, project)
