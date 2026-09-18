@@ -130,8 +130,20 @@ CATALOG: dict[Permission, PermissionSpec] = {
         "project", "Change project metadata and attributes", True, "low"),
     Permission.PROJECT_DELETE: PermissionSpec(
         "project", "Delete a project (reserved; no route yet)", True, "high"),
+    # critical, not medium, as of 2026-09-18: project membership *is* the
+    # project-level grant plane, by the same reasoning that makes role:manage
+    # critical. A caller who can add themselves to a project has granted
+    # themselves every project-scoped permission on it, including the download
+    # rights that project restriction exists to control.
+    #
+    # The risk level is load-bearing rather than documentation: ALWAYS_ENFORCE is
+    # derived from it, so `critical` is what keeps these routes refused while the
+    # mode is dry_run. They previously relied on a CurrentSuperuser check for
+    # that, which had to be removed so is_superuser could come off the personal
+    # accounts -- and dropping the flag without this change would have opened
+    # member management to every authenticated user.
     Permission.PROJECT_MANAGE_MEMBERS: PermissionSpec(
-        "project", "Add, change and remove project members", True, "medium"),
+        "project", "Add, change and remove project members", True, "critical"),
     Permission.PROJECT_SUBMIT_ACTION: PermissionSpec(
         "project", "Submit a pipeline job for a project (spends compute)", True, "high"),
     Permission.PROJECT_INGEST: PermissionSpec(
