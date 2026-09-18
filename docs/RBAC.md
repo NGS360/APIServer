@@ -207,7 +207,7 @@ Two things generalise. **An unauthenticated write path cannot be made accountabl
 | `project:create` | G | low | `POST /projects` |
 | `project:update` | P | low | `PUT /projects/{id}`, `PATCH /projects/{id}` |
 | `project:delete` | P | high | *reserved — no route today* |
-| `project:manage_members` | P | medium | `GET/POST/PATCH/DELETE /projects/{id}/members` (new) |
+| `project:manage_members` | P | **critical** | `GET/POST/PATCH/DELETE /projects/{id}/members`. Raised from medium 2026-09-18: project membership *is* the project-level grant plane, so a caller who can add themselves has granted themselves every project-scoped permission on that project. `critical` puts it in `ALWAYS_ENFORCE`, which is what keeps these routes refused while the mode is `dry_run` — they previously leaned on a `CurrentSuperuser` check for that |
 | `project:submit_action` | P | **high** | `POST /projects/{id}/actions/submit` — spends AWS Batch |
 | `project:ingest` | P | **high** | `POST /projects/{id}/ingest` — spends AWS Batch, writes S3 |
 | `sample:read` | P | low | `GET /projects/{id}/samples`, `GET/POST /samples/search` |

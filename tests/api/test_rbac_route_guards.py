@@ -138,32 +138,70 @@ class TestProjectPlaneGuards:
         ).status_code == 404
 
 
-class TestRetainedSuperuserGates:
+class TestTheAdminSurfaceHoldsOnItsGuardAlone:
     """
-    The superuser-only routes keep CurrentSuperuser *and* gain a guard.
+    These routes carried `CurrentSuperuser` as well as a permission guard. The
+    flag came off on 2026-09-18, because while it gated them `is_superuser`
+    could not be removed from the three personal accounts that hold it -- doing
+    so would have cost the owner the admin API.
 
-    Dropping the existing gate in favour of the guard would have opened these
-    to everyone for the length of the dry-run window, since dry-run allows what
-    it would otherwise refuse. These tests pin that the gate is still there.
+    The flag was doing real work, and the tests here previously pinned that: a
+    guard only *logs* in dry-run, so removing the flag without another change
+    would have opened these to every authenticated user in production.
+
+    What replaced it is the risk level. `setting:update` and `role:manage` were
+    already `critical`; `project:manage_members` was raised to `critical` in the
+    same change, on the reasoning that project membership is the project-level
+    grant plane. `critical` means ALWAYS_ENFORCE, which refuses even in dry-run.
+
+    So the property is preserved for `dry_run` and `enforce` by the guard alone.
+    It is *not* preserved for `off` -- see the test below, which is the honest
+    record of what this change cost.
     """
 
-    @pytest.mark.parametrize("mode_value", ["off", "dry_run", "enforce"])
-    def test_settings_update_still_requires_a_superuser(
-        self, client, mode, mode_value
-    ):
+    @pytest.mark.parametrize("mode_value", ["dry_run", "enforce"])
+    def test_settings_update_refuses_a_non_holder(self, client, mode, mode_value):
         mode(mode_value)
         r = client.put("/api/v1/settings/DATA_BUCKET_URI",
                        json={"value": "s3://hijacked"})
         assert r.status_code == 403, mode_value
 
-    @pytest.mark.parametrize("mode_value", ["off", "dry_run", "enforce"])
-    def test_project_member_management_still_requires_a_superuser(
+    @pytest.mark.parametrize("mode_value", ["dry_run", "enforce"])
+    def test_member_management_refuses_a_non_holder(
         self, client, test_project, mode, mode_value
     ):
         mode(mode_value)
         assert client.get(
             f"/api/v1/projects/{test_project.project_id}/members"
         ).status_code == 403, mode_value
+
+    @pytest.mark.parametrize("route", [
+        "/api/v1/projects/{project_id}/members",
+    ])
+    def test_off_mode_no_longer_protects_the_admin_surface(
+        self, client, test_project, mode, route
+    ):
+        """
+        What removing the flag cost, asserted rather than left implicit.
+
+        `off` means "do not check; every caller is allowed through" -- it is
+        documented as an escape hatch for local work and explicitly not the
+        rollback plan. ALWAYS_ENFORCE escalates *dry_run* to enforce and does
+        not escalate `off`, so with RBAC_MODE=off these routes are now reachable
+        by any authenticated user. The `CurrentSuperuser` dependency used to
+        hold here because it is an authentication-layer check that no mode
+        affects.
+
+        Production runs `dry_run`, where the critical risk level keeps them
+        refused. This is a local-development exposure, and it is pinned so that
+        the trade is visible rather than discovered.
+        """
+        mode("off")
+        r = client.get(route.format(project_id=test_project.project_id))
+        assert r.status_code == 200, (
+            "off mode is expected to allow this; if it now refuses, ALWAYS_ENFORCE "
+            "has been made to escalate from off and this test should be inverted"
+        )
 
     def test_a_superuser_still_passes(self, superuser_client, test_project):
         assert superuser_client.get(

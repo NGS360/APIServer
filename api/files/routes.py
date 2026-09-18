@@ -32,7 +32,7 @@ from api.files.models import (
     file_to_public,
 )
 from api.files import services
-from api.auth.deps import CurrentSuperuser, OptionalUser
+from api.auth.deps import OptionalUser
 from api.files.scope import scope_for_uri
 from api.rbac.deps import AuthzDep, decide, require_permission
 from api.rbac.permissions import Permission
@@ -457,7 +457,6 @@ def update_file(
     file_id: uuid.UUID,
     session: SessionDep,
     file_update: FileUpdate,
-    current_user: CurrentSuperuser,
 ) -> FilePublic:
     """
     Update scalar fields on a file record.
@@ -483,7 +482,6 @@ def update_file(
 def delete_file(
     file_id: uuid.UUID,
     session: SessionDep,
-    current_user: CurrentSuperuser,
 ) -> None:
     """
     Hard-delete a file record and all associated child rows.

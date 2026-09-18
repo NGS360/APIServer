@@ -1,19 +1,27 @@
 """
 Read endpoints for roles and permissions.
 
-Guarded by CurrentSuperuser rather than require_permission(ROLE_READ), and that
-is deliberate for now: nothing enforces permissions yet, and gating the role API
-on a role permission is a chicken-and-egg -- you would need a grant to make the
-first grant. They move onto require_permission in phase 4 alongside every other
-route.
+Guarded on `role:read` and `role:manage`, as of 2026-09-18. These carried
+`CurrentSuperuser` *as well as* the permission guard, on the reasoning that
+gating the role API on a role permission is a chicken-and-egg -- you would need a
+grant to make the first grant.
 
-Mutations (create/edit roles, grant and revoke) are not here yet.
+That concern is handled elsewhere, and did not need the flag: `role:manage` is
+`critical` risk and therefore in ALWAYS_ENFORCE, so it is refused even in
+dry-run, and the bootstrap path is `BOOTSTRAP_ADMIN_USERNAMES`, which grants
+`admin` at account creation without going through this API at all. The flag was
+belt-and-braces over a guard that was already correct.
+
+Removing it is what lets `is_superuser` come off the three personal accounts
+that hold it -- while the flag gated these routes, dropping it would have cost
+the owner the admin API. All three hold the `admin` role, which carries every
+permission, so their access is unchanged.
 """
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlmodel import select
 
-from api.auth.deps import CurrentActiveUser, CurrentSuperuser
+from api.auth.deps import CurrentActiveUser, CurrentUser
 from api.rbac import services
 from api.rbac.models import (
     GrantRoleRequest,
@@ -53,7 +61,7 @@ def _role_public(session: SessionDep, role: Role) -> RolePublic:
     summary="The permission catalog (superuser only)",
     dependencies=[Depends(require_permission(Permission.ROLE_READ))],
 )
-def list_permissions(current_user: CurrentSuperuser) -> list[PermissionPublic]:
+def list_permissions() -> list[PermissionPublic]:
     """
     Every permission the API recognises, with its risk and scopability.
 
@@ -79,7 +87,7 @@ def list_permissions(current_user: CurrentSuperuser) -> list[PermissionPublic]:
     summary="List roles (superuser only)",
     dependencies=[Depends(require_permission(Permission.ROLE_READ))],
 )
-def list_roles(session: SessionDep, current_user: CurrentSuperuser) -> list[RolePublic]:
+def list_roles(session: SessionDep) -> list[RolePublic]:
     roles = session.exec(select(Role).order_by(Role.scope, Role.name)).all()
     return [_role_public(session, role) for role in roles]
 
@@ -91,9 +99,7 @@ def list_roles(session: SessionDep, current_user: CurrentSuperuser) -> list[Role
     responses={404: {"description": "Role not found"}},
     dependencies=[Depends(require_permission(Permission.ROLE_READ))],
 )
-def get_role(
-    session: SessionDep, name: str, current_user: CurrentSuperuser
-) -> RolePublic:
+def get_role(session: SessionDep, name: str) -> RolePublic:
     role = session.exec(select(Role).where(Role.name == name)).first()
     if role is None:
         raise HTTPException(
@@ -134,9 +140,7 @@ def get_my_access(session: SessionDep, current_user: CurrentActiveUser) -> dict:
     responses={409: {"description": "A role with that name exists"}},
     dependencies=[Depends(require_permission(Permission.ROLE_MANAGE))],
 )
-def create_role(
-    session: SessionDep, body: RoleCreate, current_user: CurrentSuperuser
-) -> RolePublic:
+def create_role(session: SessionDep, body: RoleCreate) -> RolePublic:
     """
     Custom roles are how "contributor without delete" and similar variants are
     served, which is the reason roles are rows rather than code.
@@ -164,7 +168,6 @@ def create_role(
 )
 def update_role_permissions(
     session: SessionDep, name: str, body: RolePermissionsUpdate,
-    current_user: CurrentSuperuser,
 ) -> RolePublic:
     role = services.get_role_or_404(session, name)
     role = services.set_role_permissions(session, role, body.permissions)
@@ -178,9 +181,7 @@ def update_role_permissions(
     responses={409: {"description": "Builtin, or still granted"}},
     dependencies=[Depends(require_permission(Permission.ROLE_MANAGE))],
 )
-def delete_role(
-    session: SessionDep, name: str, current_user: CurrentSuperuser
-) -> None:
+def delete_role(session: SessionDep, name: str) -> None:
     services.delete_role(session, services.get_role_or_404(session, name))
 
 
@@ -192,9 +193,7 @@ def delete_role(
     summary="A user's global roles (superuser only)",
     dependencies=[Depends(require_permission(Permission.ROLE_READ))],
 )
-def list_user_roles(
-    session: SessionDep, username: str, current_user: CurrentSuperuser
-) -> list[str]:
+def list_user_roles(session: SessionDep, username: str) -> list[str]:
     user = services.get_user_or_404(session, username)
     return global_role_names(session, user.id)
 
@@ -208,7 +207,7 @@ def list_user_roles(
 )
 def grant_user_role(
     session: SessionDep, username: str, body: GrantRoleRequest,
-    current_user: CurrentSuperuser,
+    current_user: CurrentUser,
 ) -> list[str]:
     user = services.get_user_or_404(session, username)
     role = services.get_role_or_404(session, body.role)
@@ -225,7 +224,7 @@ def grant_user_role(
 )
 def revoke_user_role(
     session: SessionDep, username: str, role_name: str,
-    current_user: CurrentSuperuser,
+    current_user: CurrentUser,
 ) -> list[str]:
     user = services.get_user_or_404(session, username)
     role = services.get_role_or_404(session, role_name)
