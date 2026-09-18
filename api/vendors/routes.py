@@ -10,8 +10,10 @@ PUT    /api/v1/vendors/[id]            Update info about a vendor
 """
 
 from typing import Literal
-from fastapi import APIRouter, Query, status
+from fastapi import Depends, APIRouter, Query, status
 from core.deps import SessionDep
+from api.rbac.deps import require_permission
+from api.rbac.permissions import Permission
 from api.vendors.models import (
      Vendor,
      VendorCreate,
@@ -29,6 +31,7 @@ router = APIRouter(prefix="/vendors", tags=["Vendor Endpoints"])
     response_model=VendorPublic,
     tags=["Vendor Endpoints"],
     status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_permission(Permission.VENDOR_CREATE))],
 )
 def add_vendor(
     session: SessionDep,
@@ -77,6 +80,7 @@ def get_vendors(
     response_model=VendorPublic,
     status_code=status.HTTP_200_OK,
     tags=["Vendor Endpoints"],
+    dependencies=[Depends(require_permission(Permission.VENDOR_READ))],
 )
 def get_vendor(session: SessionDep, vendor_id: str):
     """
@@ -90,6 +94,7 @@ def get_vendor(session: SessionDep, vendor_id: str):
     response_model=VendorPublic,
     status_code=status.HTTP_200_OK,
     tags=["Vendor Endpoints"],
+    dependencies=[Depends(require_permission(Permission.VENDOR_UPDATE))],
 )
 def update_vendor(
     session: SessionDep,
@@ -110,6 +115,7 @@ def update_vendor(
     "/{vendor_id}",
     status_code=status.HTTP_204_NO_CONTENT,
     tags=["Vendor Endpoints"],
+    dependencies=[Depends(require_permission(Permission.VENDOR_DELETE))],
 )
 def delete_vendor(session: SessionDep, vendor_id: str):
     """

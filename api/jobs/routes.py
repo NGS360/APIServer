@@ -22,7 +22,7 @@ from api.jobs.models import (
     LogResponse
 )
 from api.jobs import services
-from api.rbac.deps import AuthzDep, decide
+from api.rbac.deps import require_permission, AuthzDep, decide
 from api.rbac.permissions import Permission
 from api.rbac.resolver import AuthzContext
 
@@ -93,6 +93,7 @@ require_job_update.rbac_plane = "global"
     response_model=BatchJobPublic,
     tags=["Job Endpoints"],
     status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_permission(Permission.JOB_SUBMIT))],
 )
 def submit_job(
     session: SessionDep,
