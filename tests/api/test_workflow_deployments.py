@@ -84,7 +84,7 @@ def test_create_deployment_minimal(
 ):
     """Only engine and external_id are required."""
     _seed_platforms(session)
-    wf_id, ver_id, ver_num = _create_workflow_and_version(session)
+    wf_id, _, ver_num = _create_workflow_and_version(session)
 
     body = {
         "engine": "SevenBridges",
@@ -104,7 +104,7 @@ def test_create_deployment_duplicate_engine_conflict(
 ):
     """Duplicate (version_num, engine) pair returns 409."""
     _seed_platforms(session)
-    wf_id, ver_id, ver_num = _create_workflow_and_version(session)
+    wf_id, _, ver_num = _create_workflow_and_version(session)
 
     body = {"engine": "Arvados", "external_id": "arv-1"}
     resp1 = client.post(
@@ -146,7 +146,7 @@ def test_create_deployment_invalid_engine(
     client: TestClient, session: Session,
 ):
     """Deployment with an unregistered engine returns 400."""
-    wf_id, ver_id, ver_num = _create_workflow_and_version(session)
+    wf_id, _, ver_num = _create_workflow_and_version(session)
 
     body = {"engine": "UnknownPlatform", "external_id": "x"}
     resp = client.post(
@@ -166,7 +166,7 @@ def test_get_deployments_empty(
     client: TestClient, session: Session,
 ):
     """List deployments for a version with none."""
-    wf_id, ver_id, ver_num = _create_workflow_and_version(session)
+    wf_id, _, ver_num = _create_workflow_and_version(session)
     resp = client.get(
         f"/api/v1/workflows/{wf_id}/versions/{ver_num}"
         f"/deployments",
@@ -180,7 +180,7 @@ def test_get_deployments_multiple(
 ):
     """List deployments after adding two engines."""
     _seed_platforms(session)
-    wf_id, ver_id, ver_num = _create_workflow_and_version(session)
+    wf_id, _, ver_num = _create_workflow_and_version(session)
 
     client.post(
         f"/api/v1/workflows/{wf_id}/versions/{ver_num}"
@@ -216,7 +216,7 @@ def test_delete_deployment(
 ):
     """Delete a deployment returns 204 and it's gone."""
     _seed_platforms(session)
-    wf_id, ver_id, ver_num = _create_workflow_and_version(session)
+    wf_id, _, ver_num = _create_workflow_and_version(session)
 
     create_resp = client.post(
         f"/api/v1/workflows/{wf_id}/versions/{ver_num}"
@@ -243,7 +243,7 @@ def test_delete_deployment_not_found(
     client: TestClient, session: Session,
 ):
     """Deleting a non-existent deployment returns 404."""
-    wf_id, ver_id, ver_num = _create_workflow_and_version(session)
+    wf_id, _, ver_num = _create_workflow_and_version(session)
     fake_dep = "00000000-0000-0000-0000-000000000000"
 
     resp = client.delete(
@@ -262,7 +262,7 @@ def test_get_deployments_filter_by_engine(
 ):
     """Filter version-level deployments by engine."""
     _seed_platforms(session)
-    wf_id, ver_id, ver_num = _create_workflow_and_version(session)
+    wf_id, _, ver_num = _create_workflow_and_version(session)
 
     client.post(
         f"/api/v1/workflows/{wf_id}/versions/{ver_num}"
@@ -293,7 +293,7 @@ def test_get_deployments_filter_engine_no_match(
 ):
     """Engine filter returns empty list when no match."""
     _seed_platforms(session)
-    wf_id, ver_id, ver_num = _create_workflow_and_version(session)
+    wf_id, _, ver_num = _create_workflow_and_version(session)
 
     client.post(
         f"/api/v1/workflows/{wf_id}/versions/{ver_num}"
@@ -318,7 +318,7 @@ def test_version_public_includes_deployments(
 ):
     """GET version includes nested deployment data."""
     _seed_platforms(session)
-    wf_id, ver_id, ver_num = _create_workflow_and_version(session)
+    wf_id, _, ver_num = _create_workflow_and_version(session)
 
     client.post(
         f"/api/v1/workflows/{wf_id}/versions/{ver_num}"
@@ -572,9 +572,9 @@ def test_omics_deployment_first_version_registers_via_lambda(
 ):
     """First Omics deployment of a workflow uses action=create_workflow."""
     _seed_omics_platform(session)
-    wf_id, ver_id, ver_num = _create_cwl_workflow_and_version(session)
+    wf_id, _, ver_num = _create_cwl_workflow_and_version(session)
 
-    arn = f"{OMICS_ARN_PREFIX}workflow/1324105/version/{ver_id}"
+    arn = f"{OMICS_ARN_PREFIX}workflow/1324105/version/{ver_num}"
     mock_lambda_client.set_response({
         "statusCode": 200,
         "workflow_id": "1324105",
@@ -628,7 +628,7 @@ def test_omics_deployment_second_version_uses_create_version(
     wf_id = str(wf.id)
 
     # Seed an existing Omics deployment on v1 (caller-supplied external_id path)
-    v1_arn = f"{OMICS_ARN_PREFIX}workflow/9999999/version/{v1.id}"
+    v1_arn = f"{OMICS_ARN_PREFIX}workflow/9999999/version/1"
     resp1 = client.post(
         f"/api/v1/workflows/{wf_id}/versions/1/deployments",
         json={"engine": OMICS_ENGINE, "external_id": v1_arn},
@@ -688,12 +688,12 @@ def test_omics_deployment_forwards_git_attributes_as_tags(
     _seed_omics_platform(session)
     wf_id, ver_id, ver_num = _create_cwl_workflow_and_version(session)
     _attach_attributes(session, ver_id, [
-        ("git_commit", "396305aa9e5fe0f6b1a152e4042938a6036a0d08"),
-        ("git_repo", "https://github.com/bms-ips/WES-Launcher-new"),
-        ("git_ref", "feature/workflow_git_tag"),
+        ("git_commit", "aabbccddeeff00112233445566778899aabbccdd"),
+        ("git_repo", "https://github.com/example-org/example-repo"),
+        ("git_ref", "main"),
     ])
 
-    arn = f"{OMICS_ARN_PREFIX}workflow/1324105/version/{ver_id}"
+    arn = f"{OMICS_ARN_PREFIX}workflow/1324105/version/{ver_num}"
     mock_lambda_client.set_response({
         "statusCode": 200, "workflow_id": "1324105", "arn": arn,
     })
@@ -707,9 +707,9 @@ def test_omics_deployment_forwards_git_attributes_as_tags(
     inv = mock_lambda_client.invocations[-1]
     assert inv["Payload"]["action"] == "create_workflow"
     assert inv["Payload"]["tags"] == {
-        "git_commit": "396305aa9e5fe0f6b1a152e4042938a6036a0d08",
-        "git_repo": "https://github.com/bms-ips/WES-Launcher-new",
-        "git_ref": "feature/workflow_git_tag",
+        "git_commit": "aabbccddeeff00112233445566778899aabbccdd",
+        "git_repo": "https://github.com/example-org/example-repo",
+        "git_ref": "main",
         "ngs360_env": "dev",
     }
 
@@ -743,7 +743,7 @@ def test_omics_deployment_version_forwards_git_attributes_as_tags(
     ])
 
     # Seed an existing Omics deployment on v1 (bypasses the lambda)
-    v1_arn = f"{OMICS_ARN_PREFIX}workflow/9999999/version/{v1.id}"
+    v1_arn = f"{OMICS_ARN_PREFIX}workflow/9999999/version/1"
     client.post(
         f"/api/v1/workflows/{wf_id}/versions/1/deployments",
         json={"engine": OMICS_ENGINE, "external_id": v1_arn},
@@ -785,7 +785,7 @@ def test_omics_deployment_filters_non_allowlisted_attributes(
 
     mock_lambda_client.set_response({
         "statusCode": 200, "workflow_id": "1",
-        "arn": f"{OMICS_ARN_PREFIX}workflow/1/version/{ver_id}",
+        "arn": f"{OMICS_ARN_PREFIX}workflow/1/version/{ver_num}",
     })
     resp = client.post(
         f"/api/v1/workflows/{wf_id}/versions/{ver_num}/deployments",
@@ -806,11 +806,11 @@ def test_omics_deployment_tags_carry_only_env_when_no_attributes(
     that the tags dict is always non-empty (lambda always has at least
     one caller-supplied tag to merge with NGS360_workflow_id)."""
     _seed_omics_platform(session)
-    wf_id, ver_id, ver_num = _create_cwl_workflow_and_version(session)
+    wf_id, _, ver_num = _create_cwl_workflow_and_version(session)
 
     mock_lambda_client.set_response({
         "statusCode": 200, "workflow_id": "1",
-        "arn": f"{OMICS_ARN_PREFIX}workflow/1/version/{ver_id}",
+        "arn": f"{OMICS_ARN_PREFIX}workflow/1/version/{ver_num}",
     })
     resp = client.post(
         f"/api/v1/workflows/{wf_id}/versions/{ver_num}/deployments",
@@ -834,11 +834,11 @@ def test_omics_deployment_ngs360_env_reflects_environment_setting(
     get_settings.cache_clear()
 
     _seed_omics_platform(session)
-    wf_id, ver_id, ver_num = _create_cwl_workflow_and_version(session)
+    wf_id, _, ver_num = _create_cwl_workflow_and_version(session)
 
     mock_lambda_client.set_response({
         "statusCode": 200, "workflow_id": "1",
-        "arn": f"{OMICS_ARN_PREFIX}workflow/1/version/{ver_id}",
+        "arn": f"{OMICS_ARN_PREFIX}workflow/1/version/{ver_num}",
     })
     resp = client.post(
         f"/api/v1/workflows/{wf_id}/versions/{ver_num}/deployments",
@@ -1036,9 +1036,9 @@ def test_omics_deployment_with_explicit_external_id_skips_lambda(
 ):
     """Caller-supplied external_id is stored as-is; Lambda is not invoked."""
     _seed_omics_platform(session)
-    wf_id, ver_id, ver_num = _create_cwl_workflow_and_version(session)
+    wf_id, _, ver_num = _create_cwl_workflow_and_version(session)
 
-    arn = f"{OMICS_ARN_PREFIX}workflow/4256500/version/{ver_id}"
+    arn = f"{OMICS_ARN_PREFIX}workflow/4256500/version/{ver_num}"
     resp = client.post(
         f"/api/v1/workflows/{wf_id}/versions/{ver_num}/deployments",
         json={"engine": OMICS_ENGINE, "external_id": arn},
@@ -1097,9 +1097,8 @@ def test_omics_deployment_resolves_ngs360_definition_uri(
 
     # Seed a File record that stands in for the NGS360 upload
     file_record = File(
-        uri="s3://bmsrd-ngs-omics/ngs360-file-store/staging/project/"
-            "P-00000000-0001/launcher_inputs/wgs.packed.cwl",
-        original_filename="wgs.packed.cwl",
+        uri="s3://example-bucket/workflows/workflow.cwl",
+        original_filename="workflow.cwl",
         created_by="testuser",
         storage_backend="s3",
     )
@@ -1107,11 +1106,11 @@ def test_omics_deployment_resolves_ngs360_definition_uri(
     session.commit()
     session.refresh(file_record)
 
-    wf_id, ver_id, ver_num = _create_ngs360_cwl_workflow_and_version(
+    wf_id, _, ver_num = _create_ngs360_cwl_workflow_and_version(
         session, definition_uri=f"ngs360://{file_record.id}",
     )
 
-    arn = f"{OMICS_ARN_PREFIX}workflow/1324105/version/{ver_id}"
+    arn = f"{OMICS_ARN_PREFIX}workflow/1324105/version/{ver_num}"
     mock_lambda_client.set_response({
         "statusCode": 200,
         "workflow_id": "1324105",
