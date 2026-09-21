@@ -2,9 +2,9 @@
 """Query registered workflows on NGS360.
 
 Read-only inventory tool for humans: list workflows, drill into one, list
-deployments across the system, and find a workflow by name. Ships alongside
-`register_ngs360_workflow.sh` (in WES-Launcher-new) so you can see what
-already exists before registering or updating.
+deployments across the system, and find a workflow by name. Complements
+the workflow registration flow so you can see what already exists before
+registering or updating.
 
 Unlike the other scripts in this folder (reindex.py, promote_superuser.py,
 etc.) this talks to the API over HTTPS rather than the DB directly. It's
@@ -25,7 +25,7 @@ Usage:
 
 Examples:
   query_workflows.py list-workflows --latest
-  query_workflows.py show-workflow f8a5371c-21ff-49cb-af3c-03e78ba4df09
+  query_workflows.py show-workflow 00000000-0000-0000-0000-000000000000
   query_workflows.py list-deployments --engine "AWSHealthOmics (us-east)"
   query_workflows.py find-workflow WES
 """
@@ -102,7 +102,7 @@ def fetch_all_workflows(endpoint, token):
 def omics_id(dep):
     """Trim the ARN to the part that identifies the Omics workflow.
 
-    arn:aws:omics:us-east-1:483421617021:workflow/1324105/version/6
+    arn:aws:omics:us-east-1:123456789012:workflow/1324105/version/6
         -> 1324105/version/6
     """
     ext = (dep or {}).get("external_id") or ""
