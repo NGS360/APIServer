@@ -13,9 +13,9 @@ session or a checkout of the API code.
 
 Environment:
   NGS360_AUTH_TOKEN  Bearer token. Optional — reads are anonymous on
-                     ngs.rdcloud.bms.com today; supply a token if the
-                     deployment you're pointing at requires auth.
-  NGS360_API_URL     API base URL, defaults to https://ngs.rdcloud.bms.com/api/v1
+                     some deployments; supply a token if the deployment
+                     you're pointing at requires auth.
+  NGS360_API_URL     API base URL (required)
 
 Usage:
   query_workflows.py list-workflows [--name <substring>] [--latest] [--json]
@@ -39,7 +39,6 @@ import time
 import urllib.error
 import urllib.request
 
-DEFAULT_API_URL = "https://ngs.rdcloud.bms.com/api/v1"
 PER_PAGE = 100
 
 
@@ -452,7 +451,10 @@ def main():
     if args.cmd is None:
         parser.print_help()
         return
-    endpoint = os.environ.get("NGS360_API_URL", DEFAULT_API_URL).rstrip("/")
+    endpoint = os.environ.get("NGS360_API_URL")
+    if not endpoint:
+        die("NGS360_API_URL is not set; export it to the API base URL")
+    endpoint = endpoint.rstrip("/")
     token = os.environ.get("NGS360_AUTH_TOKEN") or None
     args.func(args, endpoint, token)
 
