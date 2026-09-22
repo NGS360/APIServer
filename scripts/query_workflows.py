@@ -20,6 +20,7 @@ Environment:
 Usage:
   query_workflows.py list-workflows [--name <substring>] [--latest] [--json]
   query_workflows.py show-workflow <workflow-id> [--json]
+  query_workflows.py show-workflow-io <workflow-id> [--version <N>] [--json]
   query_workflows.py list-deployments [--engine <name>] [--json]
   query_workflows.py find-workflow <substring> [--json]
 
@@ -311,6 +312,115 @@ def cmd_show_workflow(args, endpoint, token):
     render_workflow(wf, show_git=True)
 
 
+def _render_version_io(ver):
+    """Print inputs and outputs tables for one workflow version."""
+    def _fmt_default(val):
+        if val is None:
+            return "-"
+        return json.dumps(val)
+
+    inputs = ver.get("inputs") or []
+    print("  v%s inputs:" % ver.get("version"))
+    if not inputs:
+        print("    (none)")
+    else:
+        rows = [
+            (
+                str(inp.get("id") or ""),
+                str(inp.get("type") or ""),
+                "required" if inp.get("required") else "optional",
+                _fmt_default(inp.get("default")),
+                (inp.get("doc") or "").replace("\n", " "),
+            )
+            for inp in inputs
+        ]
+        print_table(rows, ("ID", "TYPE", "REQ", "DEFAULT", "DOC"))
+
+    outputs = ver.get("outputs") or []
+    print("  v%s outputs:" % ver.get("version"))
+    if not outputs:
+        print("    (none)")
+    else:
+        rows = [
+            (
+                str(out.get("id") or ""),
+                str(out.get("type") or ""),
+                (out.get("doc") or "").replace("\n", " "),
+            )
+            for out in outputs
+        ]
+        print_table(rows, ("ID", "TYPE", "DOC"))
+
+
+def cmd_show_workflow_io(args, endpoint, token):
+    """Show inputs and outputs schema for a workflow, per version.
+
+    Skips versions with no schema recorded so the output stays quiet when
+    only some versions have been registered with I/O. Reads through the
+    /versions endpoint (WorkflowVersionPublic — includes inputs/outputs)
+    rather than the summary shape returned by /workflows/{id}.
+    """
+    wf = api_get(endpoint, "/workflows/%s" % args.workflow_id, token)
+    versions = api_get(
+        endpoint, "/workflows/%s/versions" % args.workflow_id, token,
+    ) or []
+
+    if args.version is not None:
+        versions = [v for v in versions if v.get("version") == args.version]
+
+    if args.json:
+        print(json.dumps(
+            [
+                {
+                    "version": v.get("version"),
+                    "inputs": v.get("inputs"),
+                    "outputs": v.get("outputs"),
+                }
+                for v in versions
+            ],
+            indent=2,
+        ))
+        return
+
+    print(wf.get("name") or "(unnamed)")
+    print("  workflow id  %s" % wf.get("id"))
+
+    if not versions:
+        print()
+        if args.version is not None:
+            print("  version %s not found" % args.version)
+        else:
+            print("  (no versions)")
+        return
+
+    populated = [
+        v for v in versions
+        if v.get("inputs") is not None or v.get("outputs") is not None
+    ]
+
+    if not populated:
+        print()
+        if args.version is not None:
+            print("  v%s: no inputs/outputs recorded" % args.version)
+        else:
+            print("  no versions have inputs/outputs recorded")
+        return
+
+    for ver in sorted(populated, key=lambda v: v.get("version") or 0):
+        print()
+        _render_version_io(ver)
+
+    # Note the skipped versions so the reader knows they're not forgotten.
+    skipped = sorted(
+        v.get("version") for v in versions
+        if v.get("inputs") is None and v.get("outputs") is None
+    )
+    if skipped:
+        skipped_str = ", ".join("v%s" % n for n in skipped)
+        print()
+        print("  (%s: no inputs/outputs recorded)" % skipped_str)
+
+
 def cmd_list_deployments(args, endpoint, token):
     """Flatten every (workflow, version, deployment) into one table.
 
@@ -422,6 +532,22 @@ def build_parser():
     sw.add_argument("workflow_id")
     sw.add_argument("--json", action="store_true", help="emit JSON")
     sw.set_defaults(func=cmd_show_workflow)
+
+    sio = sub.add_parser(
+        "show-workflow-io",
+        help="Show a workflow's inputs and outputs schema, per version.",
+    )
+    sio.add_argument("workflow_id")
+    sio.add_argument(
+        "--version",
+        type=int,
+        help=(
+            "show only this version's schema (default: every version "
+            "that has a schema recorded)"
+        ),
+    )
+    sio.add_argument("--json", action="store_true", help="emit JSON")
+    sio.set_defaults(func=cmd_show_workflow_io)
 
     ld = sub.add_parser(
         "list-deployments",

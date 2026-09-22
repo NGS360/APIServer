@@ -10,9 +10,10 @@ WorkflowVersionAttribute — Key-value metadata for workflow versions
 """
 import uuid
 from datetime import datetime, timezone
-from typing import List
+from typing import Any, List
 
-from sqlmodel import Field, Relationship, SQLModel, UniqueConstraint
+from sqlalchemy import JSON
+from sqlmodel import Column, Field, Relationship, SQLModel, UniqueConstraint
 
 # ---------------------------------------------------------------------------
 # Shared helpers
@@ -74,6 +75,8 @@ class WorkflowVersion(SQLModel, table=True):
     workflow_id: uuid.UUID = Field(foreign_key="workflow.id")
     version: int
     definition_uri: str
+    inputs: list[dict] | None = Field(default=None, sa_column=Column(JSON))
+    outputs: list[dict] | None = Field(default=None, sa_column=Column(JSON))
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     created_by: str
 
@@ -163,9 +166,33 @@ class WorkflowPublic(SQLModel):
 # Request / Response models — WorkflowVersion
 # ---------------------------------------------------------------------------
 
+class WorkflowInput(SQLModel):
+    """One input parameter descriptor on a WorkflowVersion.
+
+    `type` is the CWL type string (e.g. "File", "string?", "File[]"). Callers
+    derive `required` themselves — a `?` suffix, a `["null", T]` union, or a
+    present `default` all imply required=false. Storing it as a boolean keeps
+    consumers from having to re-parse the type string.
+    """
+    id: str
+    type: str
+    required: bool
+    doc: str | None = None
+    default: Any | None = None
+
+
+class WorkflowOutput(SQLModel):
+    """One output parameter descriptor on a WorkflowVersion."""
+    id: str
+    type: str
+    doc: str | None = None
+
+
 class WorkflowVersionCreate(SQLModel):
     definition_uri: str
     attributes: List[Attribute] | None = None
+    inputs: List[WorkflowInput] | None = None
+    outputs: List[WorkflowOutput] | None = None
 
 
 class WorkflowVersionPublic(SQLModel):
@@ -177,6 +204,8 @@ class WorkflowVersionPublic(SQLModel):
     created_by: str
     deployments: List["WorkflowDeploymentPublic"] | None = None
     attributes: List[Attribute] | None = None
+    inputs: List[WorkflowInput] | None = None
+    outputs: List[WorkflowOutput] | None = None
 
 
 # ---------------------------------------------------------------------------
