@@ -155,6 +155,9 @@ def get_jobs(
             "e.g. 260506_VH01208_93_222FCGLNX)"
         ),
     ),
+    search: Optional[str] = Query(
+        None, description="Free-text match across job id, name and user"
+    ),
     sort_by: str = Query("submitted_on", description="Field to sort by"),
     sort_order: Literal["asc", "desc"] = Query("desc", description="Sort order (asc or desc)"),
 ) -> BatchJobsPublic:
@@ -169,6 +172,7 @@ def get_jobs(
         status_filter: Optional status filter
         project_id: Optional project filter
         sequencing_run_id: Optional sequencing run filter
+        search: Optional free-text match across job id, name and user
         sort_by: Field to sort by (defaults to 'submitted_on')
         sort_order: Sort order 'asc' or 'desc' (defaults to 'desc')
 
@@ -183,6 +187,7 @@ def get_jobs(
         status_filter=status_filter,
         project_id=project_id,
         sequencing_run_id=sequencing_run_id,
+        search=search,
         sort_by=sort_by,
         sort_order=sort_order,
     )

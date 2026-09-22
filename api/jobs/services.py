@@ -2,7 +2,7 @@
 Services for managing batch jobs.
 """
 from typing import Any, List, Dict, Literal, Optional
-from sqlmodel import select, Session, func
+from sqlmodel import select, Session, func, or_
 from fastapi import HTTPException, status
 import uuid
 import boto3
@@ -39,6 +39,7 @@ def get_batch_jobs(
     status_filter: JobStatus | None = None,
     project_id: str | None = None,
     sequencing_run_id: str | None = None,
+    search: str | None = None,
     sort_by: str = "submitted_on",
     sort_order: Literal["asc", "desc"] = "desc"
 ) -> tuple[List[BatchJob], int]:
@@ -53,6 +54,7 @@ def get_batch_jobs(
         status_filter: Optional status filter
         project_id: Optional project filter (Project.project_id business key)
         sequencing_run_id: Optional run filter (SequencingRun.run_id business key)
+        search: Optional free-text match across job id, name and user
         sort_by: Field to sort by (defaults to 'submitted_on')
         sort_order: Sort order 'asc' or 'desc' (defaults to 'desc')
 
@@ -69,6 +71,27 @@ def get_batch_jobs(
         query = query.where(BatchJob.project_id == project_id)
     if sequencing_run_id:
         query = query.where(BatchJob.sequencing_run_id == sequencing_run_id)
+    if search and search.strip():
+        # Matches what the jobs tables actually show: id, name and user. The
+        # command column is deliberately excluded -- it is up to 1000
+        # characters of shell and would match almost any short term.
+        #
+        # A LIKE rather than OpenSearch, which backs project search: jobs are
+        # not indexed there, and every view that searches them is already
+        # narrowed by project, run or user, so the scan stays small. Escape
+        # the LIKE wildcards so a literal % or _ in the term cannot widen the
+        # match.
+        term = search.strip()
+        for wildcard in ("\\", "%", "_"):
+            term = term.replace(wildcard, f"\\{wildcard}")
+        pattern = f"%{term}%"
+        query = query.where(
+            or_(
+                BatchJob.id.like(pattern, escape="\\"),
+                BatchJob.name.like(pattern, escape="\\"),
+                BatchJob.user.like(pattern, escape="\\"),
+            )
+        )
 
     # Get total count
     count_query = select(func.count()).select_from(query.subquery())

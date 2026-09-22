@@ -325,6 +325,120 @@ class TestJobsAPI:
         response = client.get("/api/v1/jobs?project_id=P-00000000-0000")
         assert response.json()["count"] == 0
 
+    def test_get_jobs_search(self, client: TestClient, session: Session):
+        """Test free-text search across job id, name and user"""
+        session.add(BatchJob(
+            id="job-align-1",
+            name="rnaseq-align-batch7",
+            command="echo hello",
+            user="alice",
+            status=JobStatus.SUBMITTED,
+        ))
+        session.add(BatchJob(
+            id="job-quant-2",
+            name="salmon-quant-batch7",
+            command="echo hello",
+            user="bob",
+            status=JobStatus.SUBMITTED,
+        ))
+        session.add(BatchJob(
+            id="job-fastqc-3",
+            name="fastqc-multiqc",
+            command="rnaseq-align mentioned only in the command",
+            user="carol",
+            status=JobStatus.SUBMITTED,
+        ))
+        session.commit()
+
+        # Name match
+        response = client.get("/api/v1/jobs?search=align")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["count"] == 1
+        assert data["data"][0]["id"] == "job-align-1"
+
+        # Id match
+        assert client.get("/api/v1/jobs?search=quant-2").json()["count"] == 1
+
+        # User match
+        response = client.get("/api/v1/jobs?search=carol")
+        assert response.json()["count"] == 1
+        assert response.json()["data"][0]["id"] == "job-fastqc-3"
+
+        # Substring spanning several rows
+        assert client.get("/api/v1/jobs?search=batch7").json()["count"] == 2
+
+        # The command column is deliberately not searched
+        assert client.get("/api/v1/jobs?search=mentioned").json()["count"] == 0
+
+        # No match
+        assert client.get("/api/v1/jobs?search=nosuchthing").json()["count"] == 0
+
+        # Absent, empty and whitespace-only terms are all "no filter"
+        assert client.get("/api/v1/jobs").json()["count"] == 3
+        assert client.get("/api/v1/jobs?search=").json()["count"] == 3
+        assert client.get("/api/v1/jobs?search=%20%20").json()["count"] == 3
+
+    def test_get_jobs_search_escapes_like_wildcards(self, client: TestClient, session: Session):
+        """A literal % or _ in the term must not widen the match"""
+        session.add(BatchJob(
+            id="job-pct",
+            name="100%-complete",
+            command="echo hello",
+            user="alice",
+            status=JobStatus.SUBMITTED,
+        ))
+        session.add(BatchJob(
+            id="job-plain",
+            name="align-batch7",
+            command="echo hello",
+            user="alice",
+            status=JobStatus.SUBMITTED,
+        ))
+        session.commit()
+
+        # Bare "%" would match everything if it reached LIKE unescaped
+        response = client.get("/api/v1/jobs?search=%25")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["count"] == 1
+        assert data["data"][0]["id"] == "job-pct"
+
+        # "_" is LIKE's single-character wildcard
+        assert client.get("/api/v1/jobs?search=a_i").json()["count"] == 0
+        assert client.get("/api/v1/jobs?search=ali").json()["count"] == 2
+
+    def test_get_jobs_search_combines_with_filters(self, client: TestClient, session: Session):
+        """Search narrows within the other filters rather than replacing them"""
+        session.add(BatchJob(
+            id="job-a",
+            name="rnaseq-align",
+            command="echo hello",
+            user="alice",
+            status=JobStatus.SUBMITTED,
+            project_id="P-19900109-0001",
+        ))
+        session.add(BatchJob(
+            id="job-b",
+            name="rnaseq-align",
+            command="echo hello",
+            user="alice",
+            status=JobStatus.SUBMITTED,
+            project_id="P-19900109-0002",
+        ))
+        session.commit()
+
+        response = client.get("/api/v1/jobs?project_id=P-19900109-0001&search=align")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["count"] == 1
+        assert data["data"][0]["id"] == "job-a"
+
+        # Count reflects the search, so pagination stays correct
+        response = client.get("/api/v1/jobs?search=align&limit=1")
+        assert response.json()["count"] == 2
+        assert len(response.json()["data"]) == 1
+
     def test_get_jobs_filtered_by_sequencing_run(self, client: TestClient, session: Session):
         """Test filtering jobs by the sequencing run they were submitted against"""
         session.add(BatchJob(
