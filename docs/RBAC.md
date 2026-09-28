@@ -207,7 +207,7 @@ Two things generalise. **An unauthenticated write path cannot be made accountabl
 | `project:create` | G | low | `POST /projects` |
 | `project:update` | P | low | `PUT /projects/{id}`, `PATCH /projects/{id}` |
 | `project:delete` | P | high | *reserved — no route today* |
-| `project:manage_members` | P | medium | `GET/POST/PATCH/DELETE /projects/{id}/members` (new) |
+| `project:manage_members` | P | **critical** | `GET/POST/PATCH/DELETE /projects/{id}/members`. Raised from medium 2026-09-18: project membership *is* the project-level grant plane, so a caller who can add themselves has granted themselves every project-scoped permission on that project. `critical` puts it in `ALWAYS_ENFORCE`, which is what keeps these routes refused while the mode is `dry_run` — they previously leaned on a `CurrentSuperuser` check for that |
 | `project:submit_action` | P | **high** | `POST /projects/{id}/actions/submit` — spends AWS Batch |
 | `project:ingest` | P | **high** | `POST /projects/{id}/ingest` — spends AWS Batch, writes S3 |
 | `sample:read` | P | low | `GET /projects/{id}/samples`, `GET/POST /samples/search` |
@@ -1028,6 +1028,26 @@ The third is the more interesting one. It was a single request, and the temptati
 
 **Every candidate that passed checks 1–3 is now closed.** What remains in the backlog is 23 routes with no observed traffic and 28 blocked on a consumer — neither group closable by anything this team controls. The next reduction is either date-gated (the silent routes, once the clean window reaches 30 days) or someone else's deploy.
 
+### Closing the silent routes, 2026-09-18
+
+Backlog **51 to 28**, guarded surface **63 to 86**. Twenty-two routes with no traffic at all across the 30-day clean window, plus `GET /runs/demultiplex/{workflow_id}`, which became closable when its single invalid-JWT caller stopped.
+
+**Silence is the weakest evidence this backlog has been reduced on.** It shows nobody called, not that a future caller would authenticate — and the 09-15 incident is the standing reminder that an unobserved caller is not an absent one. So the batch was sized on a *second* measurement rather than the first: **for each route, would an ordinary `member` satisfy the guard?**
+
+| | Routes | Consequence |
+|---|---|---|
+| Guard is a permission `member` holds | **12** | enforcement cannot refuse any authenticated caller; closed against anonymous access only |
+| Guard needs a grant, logs in dry-run | 7 | a surprise caller records `would_deny` and still succeeds |
+| Guard needs a grant, **enforces now** | 4 | a surprise caller receives 403 |
+
+That reframing is the useful part. "Is this permission enforced?" is the wrong question on its own; "would a plausible caller hold it?" is the one that predicts a 403. Half the batch is risk-free on that test regardless of enforcement state.
+
+The four that enforce immediately are `pipeline:update`, `qcrecord:delete`, `vendor:delete` and `workflow:update` — graduated or `:delete`. All four are administrative catalog operations with zero traffic for a month, which is the same basis on which `:delete` is always-enforced by design.
+
+**`run:associate` is deliberately among the seven that log.** It has a live refusing caller — a run-metrics service account, 12 refusals in the window and still going — so guarding `DELETE /runs/{run_id}/samples/{sample_id}` on it must not enforce. Closing the route while its permission stays in dry-run is exactly the sequencing that #434 got wrong.
+
+**What remains is 28 routes, none of them ours.** Every one carries anonymous or invalid-JWT traffic from a consumer another team owns. The largest is `GET /workflows/{workflow_id}` at 23,443 anonymous requests (WES bearer-token forwarding), then `/jobs` and `/jobs/{job_id}` (ngs-observe), `/runs/{id}/metrics` and `/runs/search` (RStudio), `/actions/configs` (the Batch event trigger), and `/files` and `/files/list`.
+
 ### Verified Phase 1 blockers
 
 Two consumers call the API with no credential whatsoever. Both are confirmed in source and both must be fixed in Phase 1a:
@@ -1036,6 +1056,47 @@ Two consumers call the API with no credential whatsoever. Both are confirmed in 
 - ~~**`NGS360-ETL/load_json_to_db.py:989-992`**~~ — four bare `requests.post()` calls to the reindex endpoints. **No longer a blocker:** the ETL was a one-off load and is not running.
 
 The same WES service validates every bearer token against `GET /api/v1/auth/me` and caches the token-to-username mapping (`src/wes_service/core/security.py`). Two consequences: `/auth/me`'s `username` field is a load-bearing contract, and role revocation is **not** immediate for WES. Bound that cache to five minutes or less and document the delay.
+
+### Graduating a permission to enforce
+
+**Phase 5 does not have to be one switch.** `api/rbac/mode.py` already refused `critical`-risk and `:delete` permissions while `RBAC_MODE` stayed `dry_run`, via `ALWAYS_ENFORCE`. As of 2026-09-15 that set has a second half, `_GRADUATED`, holding **25 permissions enforced on evidence** — each guards at least one closed route and recorded zero `would_deny` across the 28-day gap-free window from 2026-08-18.
+
+The two halves are opposite kinds of judgement, and the distinction is worth keeping:
+
+- the **derived** half is enforced *despite* having no evidence — a `:delete` has near-zero legitimate traffic, so dry-run buys no discovery value while leaving real harm reachable
+- the **graduated** half is enforced *because of* evidence — these carry substantial traffic and none of it was ever refused
+
+`_GRADUATED` is a hand-maintained list rather than a rule, deliberately. No property of a permission makes it safe to enforce; only a measurement, and a measurement has a date and expires.
+
+**The query.** For each permission guarding a closed route, count `would_deny` across a gap-free window:
+
+```
+fields @message
+| filter @message like /"event": "rbac.decision"/
+| parse @message '"rbac_decision": "*"' as decision
+| filter decision = "would_deny"
+| parse @message '"required_permission": "*"' as perm
+| parse @message '"request_id": "*"' as rid
+| stats count_distinct(rid) as refusals, count_distinct(who) as principals by perm
+```
+
+Zero refusals **and** at least one closed route requiring it. The second condition matters: a permission no route checks would report zero refusals because nothing is ever evaluated, not because nobody is refused. `test_graduated_permissions_guard_at_least_one_closed_route` asserts it.
+
+**Not graduated, and why** — the record is as useful as the list:
+
+| Permission | Reason |
+|---|---|
+| `file:download` | 719 refusals, 45 principals — open-by-default policy, stays `dry_run` |
+| `project:submit_action` | 75 refusals, 18 principals |
+| `run:demux` | 42 refusals, 15 principals |
+| `workflow:create`, `workflow:deploy` | granted 09-09, needs a fresh window |
+| `run:associate` | 12 refusals — a service account still lacks it |
+| `project:ingest`, `project:manage_members` | live refusals |
+| `manifest:read`, `manifest:validate` | **were** clean; two callers surfaced *after* those routes closed on 09-11, granted 09-15, so they need a fresh window |
+
+That last row is the general caution. A closure sized on a measurement window will surface callers who arrive after it, and no amount of rigour in checks 1–7 prevents that — the window is evidence about the past, not a guarantee about the future. What made it harmless is that the routes were closed while the mode stayed `dry_run`, so the guard recorded the gap instead of enforcing it. **Close a route in dry-run, let a window accumulate, then graduate the permission** — not both in one step.
+
+**A note on the tests.** Six tests failed when this landed, all using `project:read` as their stand-in for "an ordinary dry-run permission" — ordinary until it was graduated. They now derive that stand-in from the catalog (`STILL_DRY_RUN`), so the next graduation cannot break them for a reason unrelated to what they test. One test was repointed rather than fixed: `test_dry_run_lets_a_non_holder_through` became the end-to-end check that graduating a permission actually changes behaviour on a real route.
 
 ### Enforcement mode
 

@@ -195,6 +195,7 @@ def set_workflow_version_alias(
     "/{workflow_id}/aliases",
     response_model=List[WorkflowVersionAliasPublic],
     tags=["Workflow Endpoints"],
+    dependencies=[Depends(require_permission(Permission.WORKFLOW_READ))],
 )
 def get_workflow_version_aliases(
     session: SessionDep,
@@ -214,6 +215,7 @@ def get_workflow_version_aliases(
     "/{workflow_id}/aliases/{alias}",
     status_code=status.HTTP_204_NO_CONTENT,
     tags=["Workflow Endpoints"],
+    dependencies=[Depends(require_permission(Permission.WORKFLOW_UPDATE))],
 )
 def delete_workflow_version_alias(
     session: SessionDep,
@@ -323,6 +325,7 @@ def create_workflow_deployment(
     "/{workflow_id}/versions/{version_num}/deployments",
     response_model=List[WorkflowDeploymentPublic],
     tags=["Workflow Endpoints"],
+    dependencies=[Depends(require_permission(Permission.WORKFLOW_READ))],
 )
 def get_workflow_deployments(
     session: SessionDep,
@@ -358,6 +361,7 @@ def get_workflow_deployments(
     "/deployments/{deployment_id}",
     status_code=status.HTTP_204_NO_CONTENT,
     tags=["Workflow Endpoints"],
+    dependencies=[Depends(require_permission(Permission.WORKFLOW_DEPLOY))],
 )
 def delete_workflow_deployment(
     session: SessionDep,

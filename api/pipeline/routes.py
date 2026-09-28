@@ -76,6 +76,7 @@ def get_pipelines(
     "/{pipeline_id}",
     response_model=PipelinePublic,
     tags=["Pipeline Endpoints"],
+    dependencies=[Depends(require_permission(Permission.PIPELINE_READ))],
 )
 def get_pipeline_by_id(
     session: SessionDep, pipeline_id: str
@@ -119,6 +120,7 @@ def add_workflow_to_pipeline(
     "/{pipeline_id}/workflows/{workflow_id}",
     status_code=status.HTTP_204_NO_CONTENT,
     tags=["Pipeline Endpoints"],
+    dependencies=[Depends(require_permission(Permission.PIPELINE_UPDATE))],
 )
 def remove_workflow_from_pipeline(
     session: SessionDep,

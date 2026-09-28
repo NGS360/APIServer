@@ -206,6 +206,7 @@ def search_qcrecords_post(
     "/{qcrecord_id}",
     response_model=QCRecordPublic,
     summary="Get QC record by ID",
+    dependencies=[Depends(require_permission(Permission.QCRECORD_READ))],
 )
 def get_qcrecord(
     session: SessionDep,
@@ -223,6 +224,7 @@ def get_qcrecord(
     "/{qcrecord_id}",
     status_code=status.HTTP_200_OK,
     summary="Delete QC record",
+    dependencies=[Depends(require_permission(Permission.QCRECORD_DELETE))],
 )
 def delete_qcrecord(
     session: SessionDep,

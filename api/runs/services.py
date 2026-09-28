@@ -749,7 +749,11 @@ def submit_demux_job(
         container_overrides=container_overrides,
         job_def=tool_config.aws_batch.job_definition,
         job_queue=tool_config.aws_batch.job_queue,
-        user=username
+        user=username,
+        # Attribute the job to the run it was submitted against. project_id is
+        # left unset: a flowcell's demultiplexing spans every project with
+        # samples on it, so there is no single owning project.
+        sequencing_run_id=workflow_body.run_id
     )
 
     return BatchJobPublic.model_validate(batch_job)

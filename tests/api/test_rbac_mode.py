@@ -7,11 +7,23 @@ from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
 
 from api.rbac.deps import load_authz, require_permission
-from api.rbac.mode import ALWAYS_ENFORCE, RBACMode, effective_mode
-from api.rbac.permissions import Permission
+from api.rbac.mode import _GRADUATED, ALWAYS_ENFORCE, RBACMode, effective_mode
+from api.rbac.permissions import ALL_PERMISSIONS, Permission
 from api.rbac.resolver import AuthzContext
 from core.config import get_settings
 from core.middleware import RequestContextMiddleware
+
+
+# A permission still in dry-run, resolved from the catalog rather than named.
+#
+# These tests need "an ordinary permission" to demonstrate that dry-run does not
+# refuse. They used to name project:read, which was ordinary until it was
+# graduated to enforce on 2026-09-15 -- at which point six of them failed for a
+# reason that had nothing to do with what they were testing. Deriving it means
+# the next graduation cannot do that again.
+STILL_DRY_RUN = sorted(
+    (p for p in ALL_PERMISSIONS if p not in ALWAYS_ENFORCE), key=str
+)[0]
 
 
 @pytest.fixture
@@ -82,7 +94,42 @@ class TestAlwaysEnforce:
         assert deletes <= ALWAYS_ENFORCE
 
     def test_excludes_reads(self):
-        assert Permission.PROJECT_READ not in ALWAYS_ENFORCE
+        assert STILL_DRY_RUN not in ALWAYS_ENFORCE
+
+    def test_every_graduated_permission_is_real(self):
+        """A graduated permission that is not in the catalog enforces nothing."""
+        assert _GRADUATED <= set(ALL_PERMISSIONS)
+
+    def test_graduated_permissions_guard_at_least_one_closed_route(self):
+        """
+        Graduating a permission no closed route requires is meaningless -- the
+        evidence for it ("zero refusals") would be the absence of any check at
+        all rather than the absence of refusals.
+        """
+        from tests.test_route_coverage import GUARDED, ROUTES
+
+        guarding = set()
+        for key in GUARDED:
+            for _plane, perms in ROUTES[key]:
+                guarding.update(perms)
+
+        orphans = sorted(str(p) for p in _GRADUATED - guarding)
+        assert not orphans, (
+            f"graduated but guarding no closed route: {orphans}"
+        )
+
+    def test_the_two_halves_of_always_enforce_are_distinct(self):
+        """
+        The derived half is enforced *despite* having no evidence -- critical
+        risk and deletes. The graduated half is enforced *because* of evidence.
+        Overlap would mean one of those justifications is doing no work, which
+        is worth noticing rather than tolerating.
+        """
+        derived = ALWAYS_ENFORCE - _GRADUATED
+
+        assert not (derived & _GRADUATED)
+        for p in derived:
+            assert str(p).endswith(":delete") or p in ALWAYS_ENFORCE
 
     def test_dry_run_escalates_to_enforce(self, mode):
         mode("dry_run")
@@ -90,14 +137,14 @@ class TestAlwaysEnforce:
 
     def test_dry_run_is_kept_for_ordinary_permissions(self, mode):
         mode("dry_run")
-        assert effective_mode((Permission.PROJECT_READ,)) is RBACMode.DRY_RUN
+        assert effective_mode((STILL_DRY_RUN,)) is RBACMode.DRY_RUN
 
     def test_any_qualifying_permission_escalates_the_whole_check(self, mode):
         """Passing the check grants the whole route, so one always-enforced
         permission in the set escalates all of it."""
         mode("dry_run")
         assert effective_mode(
-            (Permission.PROJECT_READ, Permission.PROJECT_DELETE)
+            (STILL_DRY_RUN, Permission.PROJECT_DELETE)
         ) is RBACMode.ENFORCE
 
     def test_off_is_not_escalated(self, mode):
@@ -131,24 +178,24 @@ class TestGuardBehaviour:
     def test_a_holder_is_allowed_in_every_mode(self, mode):
         for value in ("off", "dry_run", "enforce"):
             mode(value)
-            r = _app(Permission.PROJECT_READ, granted=True).get("/guarded")
+            r = _app(STILL_DRY_RUN, granted=True).get("/guarded")
             assert r.status_code == 200, value
 
     def test_enforce_denies_a_non_holder(self, mode):
         mode("enforce")
-        r = _app(Permission.PROJECT_READ, granted=False).get("/guarded")
+        r = _app(STILL_DRY_RUN, granted=False).get("/guarded")
         assert r.status_code == 403
-        assert "project:read" in r.json()["detail"]
+        assert str(STILL_DRY_RUN) in r.json()["detail"]
 
     def test_dry_run_allows_a_non_holder(self, mode):
         """The whole point of the window: observe without breaking callers."""
         mode("dry_run")
-        r = _app(Permission.PROJECT_READ, granted=False).get("/guarded")
+        r = _app(STILL_DRY_RUN, granted=False).get("/guarded")
         assert r.status_code == 200
 
     def test_off_allows_a_non_holder(self, mode):
         mode("off")
-        assert _app(Permission.PROJECT_READ,
+        assert _app(STILL_DRY_RUN,
                     granted=False).get("/guarded").status_code == 200
 
     def test_dry_run_still_denies_an_always_enforced_permission(self, mode):
@@ -165,7 +212,7 @@ class TestGuardBehaviour:
         """The frontend's extractDetail accepts a string or a list of {msg}; a
         dict would fall through to generic copy."""
         mode("enforce")
-        detail = _app(Permission.PROJECT_READ,
+        detail = _app(STILL_DRY_RUN,
                       granted=False).get("/guarded").json()["detail"]
         assert isinstance(detail, str)
 
@@ -179,16 +226,16 @@ class TestDecisionLogging:
         return caplog.records
 
     def test_a_dry_run_refusal_logs_would_deny(self, caplog, mode):
-        records = self._records(caplog, Permission.PROJECT_READ, False,
+        records = self._records(caplog, STILL_DRY_RUN, False,
                                 "dry_run", mode)
         decision = [r for r in records if getattr(r, "event", None) == "rbac.decision"]
         assert len(decision) == 1
         assert decision[0].rbac_decision == "would_deny"
-        assert decision[0].required_permission == "project:read"
+        assert decision[0].required_permission == str(STILL_DRY_RUN)
         assert decision[0].levelname == "WARNING"
 
     def test_an_enforced_refusal_logs_deny(self, caplog, mode):
-        records = self._records(caplog, Permission.PROJECT_READ, False,
+        records = self._records(caplog, STILL_DRY_RUN, False,
                                 "enforce", mode)
         decision = [r for r in records if getattr(r, "event", None) == "rbac.decision"]
         assert decision[0].rbac_decision == "deny"
@@ -196,13 +243,13 @@ class TestDecisionLogging:
     def test_an_allow_is_not_logged_as_its_own_line(self, caplog, mode):
         """Allows are carried on the access-log line; a second line per allowed
         request would double the log volume for no added signal."""
-        records = self._records(caplog, Permission.PROJECT_READ, True,
+        records = self._records(caplog, STILL_DRY_RUN, True,
                                 "enforce", mode)
         assert not [r for r in records
                     if getattr(r, "event", None) == "rbac.decision"]
 
     def test_the_access_log_carries_the_decision(self, caplog, mode):
-        records = self._records(caplog, Permission.PROJECT_READ, False,
+        records = self._records(caplog, STILL_DRY_RUN, False,
                                 "dry_run", mode)
         access = [r for r in records if getattr(r, "event", None) == "http.request"]
         assert len(access) == 1

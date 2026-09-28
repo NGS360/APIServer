@@ -71,6 +71,7 @@ def search_samples_get(
     response_model=SamplesPublicSearchResponse,
     status_code=status.HTTP_200_OK,
     tags=["Sample Endpoints"],
+    dependencies=[Depends(require_permission(Permission.SEARCH_QUERY))],
 )
 def search_samples_post(
     session: SessionDep,
@@ -124,6 +125,7 @@ def search_samples_post(
     "/reindex",
     status_code=status.HTTP_201_CREATED,
     tags=["Sample Endpoints"],
+    dependencies=[Depends(require_permission(Permission.SYSTEM_REINDEX))],
 )
 def reindex_samples(
     session: SessionDep,
