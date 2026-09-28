@@ -1,7 +1,7 @@
 """Add workflowversion.inputs and .outputs JSON columns
 
 Revision ID: d5e8a3f9b1c2
-Revises: c9f4b7e28a13
+Revises: a3c81f0d5e29
 Create Date: 2026-09-21
 
 Two nullable JSON columns hold the workflow's declared input and output
@@ -16,7 +16,7 @@ import sqlalchemy as sa
 
 
 revision = 'd5e8a3f9b1c2'
-down_revision = 'c9f4b7e28a13'
+down_revision = 'a3c81f0d5e29'
 branch_labels = None
 depends_on = None
 
