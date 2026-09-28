@@ -27,6 +27,8 @@ from api.workflow.models import (
     WorkflowAttribute,
     WorkflowAliasSummary,
     WorkflowCreate,
+    WorkflowInput,
+    WorkflowOutput,
     WorkflowPublic,
     WorkflowDeployment,
     WorkflowDeploymentCreate,
@@ -260,6 +262,14 @@ def create_workflow_version(
         workflow_id=workflow.id,
         version=next_version,
         definition_uri=version_in.definition_uri,
+        inputs=(
+            [i.model_dump() for i in version_in.inputs]
+            if version_in.inputs is not None else None
+        ),
+        outputs=(
+            [o.model_dump() for o in version_in.outputs]
+            if version_in.outputs is not None else None
+        ),
         created_by=created_by,
     )
     session.add(version)
@@ -355,6 +365,15 @@ def workflow_version_to_public(
             for a in version.attributes
         ]
 
+    inputs = (
+        [WorkflowInput(**i) for i in version.inputs]
+        if version.inputs is not None else None
+    )
+    outputs = (
+        [WorkflowOutput(**o) for o in version.outputs]
+        if version.outputs is not None else None
+    )
+
     return WorkflowVersionPublic(
         id=version.id,
         workflow_id=version.workflow_id,
@@ -364,6 +383,8 @@ def workflow_version_to_public(
         created_by=version.created_by,
         deployments=deployments,
         attributes=attributes,
+        inputs=inputs,
+        outputs=outputs,
     )
 
 

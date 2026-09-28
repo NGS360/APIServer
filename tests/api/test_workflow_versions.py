@@ -193,3 +193,124 @@ def test_workflow_public_includes_versions(
     data = resp.json()
     assert len(data["versions"]) == 1
     assert data["versions"][0]["version"] == 1
+
+
+# ---------------------------------------------------------------------------
+# inputs / outputs
+# ---------------------------------------------------------------------------
+
+def test_create_version_with_inputs_and_outputs(
+    client: TestClient, session: Session,
+):
+    """Inputs and outputs round-trip through create and GET."""
+    wf_id = _create_workflow(session)
+
+    body = {
+        "definition_uri": "s3://bucket/align.cwl",
+        "inputs": [
+            {
+                "id": "reference_genome",
+                "type": "File",
+                "required": True,
+                "doc": "Reference genome FASTA.",
+            },
+            {
+                "id": "bait_set_name",
+                "type": "string?",
+                "required": False,
+                "doc": "Name of bait set.",
+                "default": None,
+            },
+            {
+                "id": "coverage_threshold",
+                "type": "int",
+                "required": False,
+                "default": 30,
+            },
+        ],
+        "outputs": [
+            {
+                "id": "AlignmentSummaryMetrics",
+                "type": "File",
+                "doc": "Alignment Summary Metrics.",
+            },
+            {
+                "id": "OutputBAM",
+                "type": "File",
+            },
+        ],
+    }
+    resp = client.post(
+        f"/api/v1/workflows/{wf_id}/versions", json=body,
+    )
+    assert resp.status_code == 201, resp.text
+    data = resp.json()
+
+    assert len(data["inputs"]) == 3
+    assert data["inputs"][0]["id"] == "reference_genome"
+    assert data["inputs"][0]["required"] is True
+    assert data["inputs"][1]["required"] is False
+    assert data["inputs"][2]["default"] == 30
+
+    assert len(data["outputs"]) == 2
+    assert data["outputs"][0]["id"] == "AlignmentSummaryMetrics"
+    assert "required" not in data["outputs"][0]
+
+    # Same data on GET
+    ver_num = data["version"]
+    get_resp = client.get(
+        f"/api/v1/workflows/{wf_id}/versions/{ver_num}",
+    )
+    assert get_resp.status_code == 200
+    got = get_resp.json()
+    assert got["inputs"] == data["inputs"]
+    assert got["outputs"] == data["outputs"]
+
+
+def test_create_version_without_inputs_outputs(
+    client: TestClient, session: Session,
+):
+    """Omitting inputs/outputs stores NULL and round-trips as None."""
+    wf_id = _create_workflow(session)
+    resp = client.post(
+        f"/api/v1/workflows/{wf_id}/versions",
+        json={"definition_uri": "s3://bucket/v.cwl"},
+    )
+    assert resp.status_code == 201
+    data = resp.json()
+    assert data["inputs"] is None
+    assert data["outputs"] is None
+
+
+def test_create_version_input_missing_required_field(
+    client: TestClient, session: Session,
+):
+    """Server rejects an input entry missing 'required'."""
+    wf_id = _create_workflow(session)
+    resp = client.post(
+        f"/api/v1/workflows/{wf_id}/versions",
+        json={
+            "definition_uri": "s3://bucket/v.cwl",
+            "inputs": [
+                {"id": "x", "type": "File"},  # missing 'required'
+            ],
+        },
+    )
+    assert resp.status_code == 422
+
+
+def test_create_version_output_missing_required_field(
+    client: TestClient, session: Session,
+):
+    """Server rejects an output entry missing 'id'."""
+    wf_id = _create_workflow(session)
+    resp = client.post(
+        f"/api/v1/workflows/{wf_id}/versions",
+        json={
+            "definition_uri": "s3://bucket/v.cwl",
+            "outputs": [
+                {"type": "File"},  # missing 'id'
+            ],
+        },
+    )
+    assert resp.status_code == 422
