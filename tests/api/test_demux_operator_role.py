@@ -103,16 +103,32 @@ class TestItWorksOnTheRoute:
         assert response.status_code == 403
         assert "run:demux" in response.json()["detail"]
 
-    def test_the_default_role_alone_is_refused(self, client_with_permissions, run):
-        """`member` deliberately does not include it -- demux spends compute and
-        deletes run-scoped QC records."""
+    def test_the_default_role_now_gets_past_the_guard(
+        self, client_with_permissions, run
+    ):
+        """
+        Inverted on 2026-09-28. This test previously asserted the opposite, and
+        its docstring read "`member` deliberately does not include it -- demux
+        spends compute and deletes run-scoped QC records".
+
+        That description of what demux does is still accurate. What changed is
+        who is trusted with it: demux_operator had reached fourteen holders
+        through reactive grants and every request had been approved, so the
+        permission was already effectively universal with a ticket queue in
+        front of it. It is now granted by default instead.
+
+        Kept pointed at the default role rather than deleted, because "what a
+        brand-new user can do to a run" is the property worth pinning in either
+        direction -- if `member` is ever tightened again, this is the test that
+        should fail first.
+        """
         from api.rbac.roles import DEFAULT_ROLE_NAME
 
         member = sorted(
             str(p) for p in ROLE_DEFINITIONS[DEFAULT_ROLE_NAME].permissions
         )
         api = client_with_permissions(member, username="plainmember")
-        assert self._submit(api, run).status_code == 403
+        assert self._submit(api, run).status_code != 403
 
     def test_run_demux_alone_gets_past_the_guard(
         self, client_with_permissions, run
