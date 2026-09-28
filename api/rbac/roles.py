@@ -136,6 +136,15 @@ _SERVICE_ACCOUNT = frozenset({
     Permission.FILE_UPDATE,
     Permission.JOB_READ_ALL,
     Permission.JOB_UPDATE,
+    # Added 2026-09-28. A writeback identity that records pipeline results has
+    # to resolve the workflow and version it is recording them for, and unlike
+    # every human role it does not get workflow:read from `member` -- machine
+    # accounts are created with `--role service_account` alone, which calls
+    # grant_role directly and never goes through assign_default_roles.
+    #
+    # Worth stating because it is not a dry-run issue: workflow:read is in
+    # _GRADUATED, so it is refused today rather than logged.
+    Permission.WORKFLOW_READ,
 })
 
 _AUDITOR = READ_PERMISSIONS | {
