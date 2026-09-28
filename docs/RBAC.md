@@ -331,8 +331,8 @@ Roles are database rows so that administrators can compose custom ones. The **bu
 
 | Role | Purpose | Permissions |
 |------|---------|-------------|
-| `member` | Default for every authenticated user | `action:read`, `platform:read`, `vendor:read`, `workflow:read`, `pipeline:read`, `run:read`, `job:read`, `job:submit`, `setting:read`, `search:query`, `chat:use`, `user:read`, `project:create`, plus the transitional global reads: `project:read`, `sample:read`, `qcrecord:read`, `file:read`. **Not** `file:download` — downloads from unrestricted projects consult no permission, and granting it globally would make every project restriction vacuous |
-| `demux_operator` | May run demultiplexing, and nothing else | `run:demux`, `run:update` — the samplesheet write and run update are part of the same job; see the worked example below |
+| `member` | Default for every authenticated user | `action:read`, `platform:read`, `vendor:read`, `workflow:read`, `pipeline:read`, `run:read`, `job:read`, `job:submit`, `setting:read`, `search:query`, `chat:use`, `user:read`, `project:create`, `run:demux`, `run:update`, plus the transitional global reads: `project:read`, `sample:read`, `qcrecord:read`, `file:read`. `run:demux` and `run:update` added 2026-09-28 — see [Demultiplexing became a default](#demultiplexing-became-a-default). **Not** `file:download` — downloads from unrestricted projects consult no permission, and granting it globally would make every project restriction vacuous |
+| `demux_operator` | **Subsumed by `member` as of 2026-09-28** — grants nothing its holders do not already have. Retained, not deleted: `sync_rbac_catalog` only iterates `ROLE_DEFINITIONS`, so removing it from code would orphan the row and its 14 grants rather than clean them up, and it is where the grants should fall back to if `member` is ever tightened | `run:demux`, `run:update` — the samplesheet write and run update are part of the same job; see the worked example below |
 | `manifest_operator` | May read, upload and validate sample manifests | `manifest:read`, `manifest:upload`, `manifest:validate`. Global-only by necessity — a manifest names an arbitrary S3 URI |
 | `lab_manager` | Sequencing core — registers runs, demultiplexes, ingests vendor deliveries | `member` + `run:create`, `run:update`, `run:associate`, `run:demux`, `manifest:read`, `manifest:upload`, `manifest:validate`, `file:browse`, `file:create`, `file:update`, `sample:create`, `sample:update`, `qcrecord:create`, `project:ingest`, `job:read_all` |
 | `workflow_publisher` | May register workflows, add versions, and deploy them — but not delete | `workflow:create`, `workflow:update`, `workflow:deploy`. `workflow:read` comes from `member` |
@@ -351,6 +351,23 @@ Roles are database rows so that administrators can compose custom ones. The **bu
 | `project_owner` | `project_contributor` + `project:manage_members`, `project:delete` |
 
 ### Why this set, and how to evaluate additions
+
+### Demultiplexing became a default
+
+On 2026-09-28 `run:demux` and `run:update` moved into `member`, which makes demultiplexing available to every authenticated user, existing accounts included — `sync_rbac_catalog` reconciles `member`'s permission set on restart, so all 249 holders receive them at the next deploy rather than through a backfill.
+
+This reverses an earlier decision, and the reversal is recorded rather than quietly applied because **the reasoning that kept `run:demux` out was never refuted**. Demux spends compute and deletes the run's QC records; it remains the only `high`-risk run permission, and the catalog description is unchanged. What changed is the judgement about who should be trusted with it, not the assessment of what it does.
+
+The evidence:
+
+- Demux was already being done by **eleven different people in a single week**, with different jobs and no team in common — the finding that created `demux_operator` in the first place.
+- `demux_operator` had grown to **fourteen holders**, every one of them added reactively on request, and **no request was ever refused**.
+- A permission that is granted to everyone who asks for it is not a restricted permission. It is an unrestricted one with a ticket queue in front of it, and the queue's only real effect is that the eleventh person waits.
+- It is consistent with the project-level stance already adopted: actions are permissible except on projects explicitly marked restricted.
+
+`run:update` was included deliberately, not as a convenience. It is the other half of the same flow — the samplesheet edit that precedes a demux submission — and granting demux without it reproduces the 2026-09-11 incident exactly, where ten of the eleven operators could submit a demux but not prepare one.
+
+What this does **not** change: `file:download` stays out of `member`, project restrictions still apply, and `run:create` and `run:associate` are still role-gated. Demux is now open; registering and re-associating runs is not.
 
 `member` plus `admin` alone would reproduce today's problem with extra steps: every run registration, workflow alias change, and settings edit funnelling through the same two people. `service_account` must be separate from any human role because it needs `job:update` — the ability to write another user's job status, which no human role should hold and which cannot be expressed as "the owner can update it", since the AWS Batch poller is not the owner.
 

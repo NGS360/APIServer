@@ -63,6 +63,28 @@ _MEMBER = frozenset({
     Permission.CHAT_USE,
     Permission.USER_READ,
     Permission.PROJECT_CREATE,
+    # Demultiplexing, open to every authenticated user as of 2026-09-28.
+    #
+    # This is a deliberate reversal, recorded because the reasoning that kept
+    # run:demux out is still true and was not refuted: demux spends compute and
+    # deletes the run's QC records, which is why it is the only high-risk run
+    # permission. What changed is the judgement about who should be trusted with
+    # it, not the assessment of what it does.
+    #
+    # The evidence behind the reversal: demux was already being done by eleven
+    # people over a single week with no team in common, demux_operator had grown
+    # to fourteen holders through purely reactive grants, and every one of those
+    # grants was approved. A permission granted on request to everyone who asks
+    # is not a restricted permission -- it is an unrestricted one with a ticket
+    # queue in front of it. Consistent with the project stance that actions are
+    # permissible except on restricted projects.
+    #
+    # run:update rides along because it is the other half of the same flow: the
+    # samplesheet edit that precedes a demux submission. Granting demux without
+    # it reproduces the 2026-09-11 incident, where ten of the eleven operators
+    # could submit but not prepare.
+    Permission.RUN_DEMUX,
+    Permission.RUN_UPDATE,
     # Transitional global reads -- see above.
     Permission.PROJECT_READ,
     Permission.SAMPLE_READ,
@@ -153,6 +175,14 @@ _AUDITOR = READ_PERMISSIONS | {
     Permission.ROLE_READ,
 }
 
+# SUBSUMED as of 2026-09-28: `member` now carries run:demux and run:update, so
+# this role grants nothing its holders do not already have. It is kept rather
+# than deleted for two reasons -- sync_rbac_catalog only iterates
+# ROLE_DEFINITIONS, so removing it here would orphan the row and its fourteen
+# grants in every tier rather than clean them up; and if `member` is ever
+# tightened again this is the role the grants should fall back to. The history
+# below is left intact because it is the record of how the decision moved.
+#
 # Demultiplexing turned out to be done by eleven different people over one week,
 # with different jobs and no single team among them. The obvious answer -- give
 # them lab_manager -- was wrong: that role carries sixteen permissions beyond
