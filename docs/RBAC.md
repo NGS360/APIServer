@@ -368,7 +368,18 @@ This is the same shape as `demux_operator` and `manifest_operator`, reached from
 
 **It makes runs an exception to the create/update pairing rule**, and that is deliberate. `service_account` keeps `run:update`. The pairing rule added on 2026-09-12 assumes one identity handles a resource's whole lifecycle, which holds for samples and files — whoever writes a record also corrects it. It does not hold for runs: the role is shared by nine accounts for job and result writeback, and pairing the verbs meant eight machine identities could create runs so that one could. `tests/api/test_rbac_catalog.py::test_run_registration_is_separated_from_run_writeback` pins the exception so that re-adding `run:create` has to argue with a test rather than look like a tidy-up.
 
-Note the ordering constraint for deployment: `sync_rbac_catalog()` creates the `run_registrar` row at startup, so the role does not exist to be granted until the tier has been deployed. Removal and grant therefore cannot be simultaneous — deploy first, then grant, and `POST /runs` returns 403 for the registrar accounts in between.
+**Exactly one account is granted it: `NGS360-SequencersToS3`.** `svc-illumina-sync-process` also held `run:create` through `service_account` and is deliberately *not* being granted the replacement — it has no `POST /runs` traffic in either the 14-day or the six-week window, so granting it would recreate an unused grant of precisely the kind this change exists to remove. If it turns out to need the permission, a 403 will say so and the grant is one API call.
+
+Ordering constraint for deployment: `sync_rbac_catalog()` creates the `run_registrar` row at startup, so the role does not exist to be granted until the tier has been deployed. Removal and grant therefore cannot be simultaneous — deploy first, then grant, and `POST /runs` returns 403 for `NGS360-SequencersToS3` in between. It registers runs on most days, so do the grant immediately after the deploy rather than batching it.
+
+The grant goes through the supported API rather than the database — `POST /rbac/users/{username}/roles` requires `role:manage`, which is `critical` and therefore enforced:
+
+```
+POST /api/v1/rbac/users/NGS360-SequencersToS3/roles
+{"role": "run_registrar"}
+```
+
+Not `scripts/create_service_account.py --role`: that grants the role but also mints an additional API key as part of the same run, which would count against the per-user active-key limit and leave a key nobody has stored anywhere.
 
 ### Demultiplexing became a default
 
