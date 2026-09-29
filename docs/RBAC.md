@@ -335,6 +335,7 @@ Roles are database rows so that administrators can compose custom ones. The **bu
 | `demux_operator` | **Subsumed by `member` as of 2026-09-28** — grants nothing its holders do not already have. Retained, not deleted: `sync_rbac_catalog` only iterates `ROLE_DEFINITIONS`, so removing it from code would orphan the row and its 14 grants rather than clean them up, and it is where the grants should fall back to if `member` is ever tightened | `run:demux`, `run:update` — the samplesheet write and run update are part of the same job; see the worked example below |
 | `manifest_operator` | May read, upload and validate sample manifests | `manifest:read`, `manifest:upload`, `manifest:validate`. Global-only by necessity — a manifest names an arbitrary S3 URI |
 | `run_registrar` | May register sequencing runs, and nothing else | `run:create` — granted alongside `service_account`, which still supplies `run:read` and the job writeback |
+| `run_associator` | May associate and dissociate samples and runs, and nothing else | `run:associate` — granted alongside `service_account`, which still supplies `run:read`, `run:update` and `sample:create` |
 | `lab_manager` | Sequencing core — registers runs, demultiplexes, ingests vendor deliveries | `member` + `run:create`, `run:update`, `run:associate`, `run:demux`, `manifest:read`, `manifest:upload`, `manifest:validate`, `file:browse`, `file:create`, `file:update`, `sample:create`, `sample:update`, `qcrecord:create`, `project:ingest`, `job:read_all`. `run:create` removed 2026-09-28 — five holders, none of whom had ever registered a run; see [Run registration was narrowed to one service](#run-registration-was-narrowed-to-one-service) |
 | `workflow_publisher` | May register workflows, add versions, and deploy them — but not delete | `workflow:create`, `workflow:update`, `workflow:deploy`. `workflow:read` comes from `member` |
 | `workflow_admin` | Owns the workflow catalog outright, including deletion | Every `workflow:*` permission, derived from the catalog so a new one joins automatically |
@@ -352,6 +353,32 @@ Roles are database rows so that administrators can compose custom ones. The **bu
 | `project_owner` | `project_contributor` + `project:manage_members`, `project:delete` |
 
 ### Why this set, and how to evaluate additions
+
+### Sample/run association was separated the same way
+
+On 2026-09-29 `run:associate` was given its own role, `run_associator`, rather than being added to `service_account`.
+
+`NGS360-CollectRunMetrics-lambda` clears a run's sample associations before repopulating them, and was being recorded as `would_deny` on all 64 attempts over the preceding month — 27 of them in the last week, so this was live and ongoing, not historical.
+
+Resolving every caller on `DELETE /runs/{run_id}/samples` produced the same shape as `run:create`, twice over:
+
+- the `NGS360-CollectRunMetrics-lambda` service account, refused throughout; and
+- a personal API key belonging to an administrator, allowed via `admin`, revoked on 2026-09-04 — a human doing by hand what the pipeline now does.
+
+That is the second time a run-related permission turned out to be needed by exactly one machine account, with the only other caller being an admin's personal key since retired. Worth noting as a pattern: where a permission looks like it belongs to a shared machine role, the evidence has so far said it belongs to one specific service.
+
+So `run:associate` was not added to `service_account`, for the reason `run:create` was removed from it — nine accounts hold that role and one needs this permission. The lambda keeps `service_account` for `run:read`, `run:update` and `sample:create`, which is the rest of its flow, and gains `run_associator` for the one permission that was refused.
+
+**`lab_manager` keeps `run:associate` even though no holder has ever called the route.** That grant is unused by the same measurement that condemned `run:create`, and it is deliberately left alone here: removing it is a separate decision rather than a side effect of unblocking a pipeline.
+
+Deployment has the same ordering constraint as `run_registrar` — the role row is created by `sync_rbac_catalog()` at startup, so deploy first, then grant:
+
+```
+POST /api/v1/rbac/users/NGS360-CollectRunMetrics-lambda/roles
+{"role": "run_associator"}
+```
+
+Unlike the `run_registrar` case there is no 403 window to manage: `run:associate` is still in dry-run, so the lambda is being logged rather than refused and has been working throughout. The grant stops the `would_deny` stream, which is what currently blocks graduating the permission.
 
 ### Run registration was narrowed to one service
 

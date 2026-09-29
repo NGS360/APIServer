@@ -245,6 +245,27 @@ _RUN_REGISTRAR = frozenset({
     Permission.RUN_CREATE,
 })
 
+# Sample/run association, which is the run-metrics pipeline's job.
+#
+# Found the same way as _RUN_REGISTRAR, and the finding is the same shape twice
+# over: on DELETE /runs/{run_id}/samples across 2026-09-01..29 there were exactly
+# two callers. One is the NGS360-CollectRunMetrics-lambda service account, which
+# clears a run's sample associations before repopulating them and was being
+# recorded as would_deny on all 64 attempts. The other was a personal API key
+# belonging to an administrator, revoked on 2026-09-04 -- again a human doing by
+# hand what the pipeline now does.
+#
+# No lab_manager holder has ever called the route, although lab_manager carries
+# run:associate. That grant is unused, and is left in place here rather than
+# removed as a side effect of this fix.
+#
+# Granted alongside service_account: run:read, run:update and sample:create --
+# the rest of the lambda's flow -- already come from there. This role adds the
+# one permission that was refused.
+_RUN_ASSOCIATOR = frozenset({
+    Permission.RUN_ASSOCIATE,
+})
+
 # Manifest handling is global-only by necessity -- a manifest names an arbitrary
 # S3 URI and no URI-to-project resolver covers it -- so it cannot be expressed as
 # project membership and has to be a global role.
@@ -355,6 +376,12 @@ ROLE_DEFINITIONS: dict[str, RoleDefinition] = {
         "May register sequencing runs. Grants nothing else -- see the comment on "
         "_RUN_REGISTRAR for why this is not service_account or lab_manager.",
         frozenset(_RUN_REGISTRAR),
+    ),
+    "run_associator": RoleDefinition(
+        RoleScope.GLOBAL, "Run Associator",
+        "May associate and dissociate samples and runs. Grants nothing else -- "
+        "see the comment on _RUN_ASSOCIATOR for why this is not service_account.",
+        frozenset(_RUN_ASSOCIATOR),
     ),
     "manifest_operator": RoleDefinition(
         RoleScope.GLOBAL, "Manifest Operator",
