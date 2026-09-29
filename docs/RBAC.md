@@ -334,11 +334,12 @@ Roles are database rows so that administrators can compose custom ones. The **bu
 | `member` | Default for every authenticated user | `action:read`, `platform:read`, `vendor:read`, `workflow:read`, `pipeline:read`, `run:read`, `job:read`, `job:submit`, `setting:read`, `search:query`, `chat:use`, `user:read`, `project:create`, `run:demux`, `run:update`, plus the transitional global reads: `project:read`, `sample:read`, `qcrecord:read`, `file:read`. `run:demux` and `run:update` added 2026-09-28 — see [Demultiplexing became a default](#demultiplexing-became-a-default). **Not** `file:download` — downloads from unrestricted projects consult no permission, and granting it globally would make every project restriction vacuous |
 | `demux_operator` | **Subsumed by `member` as of 2026-09-28** — grants nothing its holders do not already have. Retained, not deleted: `sync_rbac_catalog` only iterates `ROLE_DEFINITIONS`, so removing it from code would orphan the row and its 14 grants rather than clean them up, and it is where the grants should fall back to if `member` is ever tightened | `run:demux`, `run:update` — the samplesheet write and run update are part of the same job; see the worked example below |
 | `manifest_operator` | May read, upload and validate sample manifests | `manifest:read`, `manifest:upload`, `manifest:validate`. Global-only by necessity — a manifest names an arbitrary S3 URI |
-| `lab_manager` | Sequencing core — registers runs, demultiplexes, ingests vendor deliveries | `member` + `run:create`, `run:update`, `run:associate`, `run:demux`, `manifest:read`, `manifest:upload`, `manifest:validate`, `file:browse`, `file:create`, `file:update`, `sample:create`, `sample:update`, `qcrecord:create`, `project:ingest`, `job:read_all` |
+| `run_registrar` | May register sequencing runs, and nothing else | `run:create` — granted alongside `service_account`, which still supplies `run:read` and the job writeback |
+| `lab_manager` | Sequencing core — registers runs, demultiplexes, ingests vendor deliveries | `member` + `run:create`, `run:update`, `run:associate`, `run:demux`, `manifest:read`, `manifest:upload`, `manifest:validate`, `file:browse`, `file:create`, `file:update`, `sample:create`, `sample:update`, `qcrecord:create`, `project:ingest`, `job:read_all`. `run:create` removed 2026-09-28 — five holders, none of whom had ever registered a run; see [Run registration was narrowed to one service](#run-registration-was-narrowed-to-one-service) |
 | `workflow_publisher` | May register workflows, add versions, and deploy them — but not delete | `workflow:create`, `workflow:update`, `workflow:deploy`. `workflow:read` comes from `member` |
 | `workflow_admin` | Owns the workflow catalog outright, including deletion | Every `workflow:*` permission, derived from the catalog so a new one joins automatically |
 | `platform_admin` | Owns the executable catalog and platform configuration | `member` + `platform:create`, `vendor:create`, `vendor:update`, `vendor:delete`, `workflow:create`, `workflow:update`, `workflow:delete`, `workflow:deploy`, `pipeline:create`, `pipeline:update`, `action:validate`, `setting:update`, `system:reindex`, `job:read_all`, `job:update` |
-| `service_account` | Machine writeback — pipeline results and Batch job-status updates only (**not** MCP, which acts as the invoking user) | `project:read`, `run:read`, `run:create`, `run:update`, `sample:read`, `sample:create`, `sample:update`, `qcrecord:create`, `file:create`, `file:update`, `job:read_all`, `job:update`, `workflow:read`. `run:create` and `sample:update` added 2026-09-12 — the role held each verb's update without its create, or vice versa, which describes no real workflow. `workflow:read` added 2026-09-28 — a writeback identity has to resolve the workflow and version it is recording results for, and a machine account created with `--role service_account` never receives `member`, which is where every human role gets it |
+| `service_account` | Machine writeback — pipeline results and Batch job-status updates only (**not** MCP, which acts as the invoking user) | `project:read`, `run:read`, `run:create`, `run:update`, `sample:read`, `sample:create`, `sample:update`, `qcrecord:create`, `file:create`, `file:update`, `job:read_all`, `job:update`, `workflow:read`. `run:create` and `sample:update` added 2026-09-12 — the role held each verb's update without its create, or vice versa, which describes no real workflow. `workflow:read` added 2026-09-28 — a writeback identity has to resolve the workflow and version it is recording results for, and a machine account created with `--role service_account` never receives `member`, which is where every human role gets it. `run:create` removed 2026-09-28 and moved to `run_registrar` — nine accounts hold this role, exactly one registers runs |
 | `auditor` | Compliance, QA, read-only agents | Every `*:read` permission, plus `file:download`, `search:query`, `role:read` |
 | `admin` | Platform administrator | `ALL_PERMISSIONS`, recomputed at each sync so new permissions are picked up automatically |
 
@@ -351,6 +352,23 @@ Roles are database rows so that administrators can compose custom ones. The **bu
 | `project_owner` | `project_contributor` + `project:manage_members`, `project:delete` |
 
 ### Why this set, and how to evaluate additions
+
+### Run registration was narrowed to one service
+
+On 2026-09-28 `run:create` was removed from `lab_manager` and `service_account` and moved to a new one-permission role, `run_registrar`.
+
+Measured before narrowing rather than after. Over 2026-08-18..09-28, exactly **two** principals called `POST /runs`:
+
+- the `NGS360-SequencersToS3` service account, which still does it daily; and
+- a personal API key belonging to an administrator, named after the same job, revoked on 2026-09-18 — a human doing by hand what the service account now does.
+
+No `lab_manager` holder has ever registered a run, and neither have the other eight `service_account` holders. So seventeen accounts could register runs and one did.
+
+This is the same shape as `demux_operator` and `manifest_operator`, reached from the opposite direction. Those roles exist because people were being refused something they needed; this one exists because accounts held something they never used. Both corrections require the same measurement, which is the point worth carrying forward: resolve every principal on the route before deciding the role is the right width — in either direction.
+
+**It makes runs an exception to the create/update pairing rule**, and that is deliberate. `service_account` keeps `run:update`. The pairing rule added on 2026-09-12 assumes one identity handles a resource's whole lifecycle, which holds for samples and files — whoever writes a record also corrects it. It does not hold for runs: the role is shared by nine accounts for job and result writeback, and pairing the verbs meant eight machine identities could create runs so that one could. `tests/api/test_rbac_catalog.py::test_run_registration_is_separated_from_run_writeback` pins the exception so that re-adding `run:create` has to argue with a test rather than look like a tidy-up.
+
+Note the ordering constraint for deployment: `sync_rbac_catalog()` creates the `run_registrar` row at startup, so the role does not exist to be granted until the tier has been deployed. Removal and grant therefore cannot be simultaneous — deploy first, then grant, and `POST /runs` returns 403 for the registrar accounts in between.
 
 ### Demultiplexing became a default
 

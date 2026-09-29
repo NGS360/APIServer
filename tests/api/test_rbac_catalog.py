@@ -125,6 +125,7 @@ class TestRoleDefinitions:
             "member", "demux_operator", "lab_manager", "platform_admin",
             "service_account", "auditor", "admin",
             "workflow_publisher", "workflow_admin", "manifest_operator",
+            "run_registrar",
             # project
             "project_viewer", "project_contributor", "project_owner",
         }
@@ -164,24 +165,63 @@ class TestRoleDefinitions:
     def test_service_account_can_both_create_and_update_what_it_writes(self):
         """
         The role held run:update without run:create, and sample:create without
-        sample:update. A writeback identity that may change a run but not
-        register one, and create a sample but not correct it, describes no real
-        workflow -- and both halves were being hit in production by two
-        different service accounts.
+        sample:update. A writeback identity that may change a sample but not
+        correct it describes no real workflow -- and both halves were being hit
+        in production by two different service accounts.
 
         Pinned as pairs because the asymmetry is the bug, and it is the kind
         that reads as deliberate minimalism until someone measures the callers.
+
+        Runs are the deliberate exception as of 2026-09-28, which is why the
+        pair is gone from this list and asserted separately below. The pairing
+        rule assumes one identity does the whole lifecycle of a resource. That
+        holds for samples and files, where whoever writes a record also
+        corrects it. It does not hold for runs: nine accounts share this role
+        for job and result writeback, and exactly one of them registers runs,
+        so pairing the verbs meant eight machine identities could create runs
+        in order to let one do so.
         """
         sa = ROLE_DEFINITIONS["service_account"].permissions
 
         for create, update in (
-            (Permission.RUN_CREATE, Permission.RUN_UPDATE),
             (Permission.SAMPLE_CREATE, Permission.SAMPLE_UPDATE),
             (Permission.FILE_CREATE, Permission.FILE_UPDATE),
         ):
             assert (create in sa) == (update in sa), (
                 f"{create} and {update} should be held together or not at all"
             )
+
+    def test_run_registration_is_separated_from_run_writeback(self):
+        """
+        The exception to the pairing rule above, asserted rather than left as a
+        gap so that "re-add run:create to service_account" has to argue with a
+        test instead of looking like a tidy-up.
+
+        Over 2026-08-18..09-28, exactly two principals called POST /runs: the
+        NGS360-SequencersToS3 service account, and a personal API key belonging
+        to an administrator that was doing the same job by hand and has since
+        been revoked. No lab_manager holder has ever registered a run.
+        """
+        sa = ROLE_DEFINITIONS["service_account"].permissions
+        lab = ROLE_DEFINITIONS["lab_manager"].permissions
+        registrar = ROLE_DEFINITIONS["run_registrar"].permissions
+
+        assert Permission.RUN_CREATE not in sa
+        assert Permission.RUN_CREATE not in lab
+        assert Permission.RUN_CREATE in registrar
+
+        # Writeback stays where the accounts that do it already are.
+        assert Permission.RUN_UPDATE in sa
+
+        # And the new role grants nothing else -- run:read and the job
+        # writeback still come from service_account alongside it.
+        assert registrar == {Permission.RUN_CREATE}
+
+    def test_only_admin_and_run_registrar_can_register_a_run(self):
+        """`member` must not pick this up the way run:demux did."""
+        holders = {n for n, r in ROLE_DEFINITIONS.items()
+                   if Permission.RUN_CREATE in r.permissions}
+        assert holders == {"run_registrar", "admin"}
 
     def test_service_account_is_still_not_a_human_role(self):
         """
