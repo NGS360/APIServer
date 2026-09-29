@@ -105,7 +105,10 @@ _LAB_MANAGER = _MEMBER | {
     # is enrolled in no projects does not have. Without this they could browse
     # and upload but not download, which is not a coherent role.
     Permission.FILE_DOWNLOAD,
-    Permission.RUN_CREATE,
+    # run:create removed 2026-09-28. Five people held it through lab_manager and
+    # none of them had ever registered a run -- the only principal that has is
+    # the NGS360-SequencersToS3 service account, which does it on a schedule.
+    # Run registration is a machine job here, so it is now `run_registrar`.
     Permission.RUN_UPDATE,
     Permission.RUN_ASSOCIATE,
     Permission.RUN_DEMUX,
@@ -148,7 +151,12 @@ _PLATFORM_ADMIN = _MEMBER | {
 _SERVICE_ACCOUNT = frozenset({
     Permission.PROJECT_READ,
     Permission.RUN_READ,
-    Permission.RUN_CREATE,
+    # run:create removed 2026-09-28 and moved to `run_registrar`. It was added
+    # here on 2026-09-12 to complete the create/update pair, which was right at
+    # the time -- but the pair is the wrong unit for runs specifically. Nine
+    # accounts hold service_account for job and result writeback; exactly one of
+    # them registers runs. Keeping run:create on the shared role meant eight
+    # machine identities could create runs to fix one that needed to.
     Permission.RUN_UPDATE,
     Permission.SAMPLE_READ,
     Permission.SAMPLE_CREATE,
@@ -214,6 +222,27 @@ _DEMUX_OPERATOR = frozenset({
     # both is the same one: resolve every observed caller on every route the
     # capability touches, not just the route that prompted the request.
     Permission.RUN_UPDATE,
+})
+
+# Run registration, which turned out to be one service's job rather than a
+# capability several roles needed.
+#
+# Measured before narrowing rather than after: over 2026-08-18..09-28 exactly two
+# principals called POST /runs. One is the NGS360-SequencersToS3 service account,
+# which still does it daily. The other was a personal API key belonging to an
+# administrator, named after the same job and revoked on 2026-09-18 -- a human
+# doing by hand what the service account now does. No lab_manager holder has ever
+# registered a run, and neither have the other eight service_account holders.
+#
+# So this is the same shape as _DEMUX_OPERATOR and _MANIFEST_OPERATOR, arrived at
+# from the opposite direction: those roles were created because people were being
+# refused something they needed, this one because accounts held something they
+# did not use. Both corrections need the same measurement.
+#
+# Granted alongside service_account rather than replacing it -- run:read and the
+# job writeback still come from there.
+_RUN_REGISTRAR = frozenset({
+    Permission.RUN_CREATE,
 })
 
 # Manifest handling is global-only by necessity -- a manifest names an arbitrary
@@ -320,6 +349,12 @@ ROLE_DEFINITIONS: dict[str, RoleDefinition] = {
         RoleScope.GLOBAL, "Workflow Administrator",
         "Owns the workflow catalog outright, including deletion.",
         frozenset(_WORKFLOW_ADMIN),
+    ),
+    "run_registrar": RoleDefinition(
+        RoleScope.GLOBAL, "Run Registrar",
+        "May register sequencing runs. Grants nothing else -- see the comment on "
+        "_RUN_REGISTRAR for why this is not service_account or lab_manager.",
+        frozenset(_RUN_REGISTRAR),
     ),
     "manifest_operator": RoleDefinition(
         RoleScope.GLOBAL, "Manifest Operator",
