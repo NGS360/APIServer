@@ -125,7 +125,7 @@ class TestRoleDefinitions:
             "member", "demux_operator", "lab_manager", "platform_admin",
             "service_account", "auditor", "admin",
             "workflow_publisher", "workflow_admin", "manifest_operator",
-            "run_registrar",
+            "run_registrar", "run_associator",
             # project
             "project_viewer", "project_contributor", "project_owner",
         }
@@ -216,6 +216,31 @@ class TestRoleDefinitions:
         # And the new role grants nothing else -- run:read and the job
         # writeback still come from service_account alongside it.
         assert registrar == {Permission.RUN_CREATE}
+
+    def test_sample_run_association_is_separated_from_the_shared_role(self):
+        """
+        The second instance of the same finding, pinned for the same reason as
+        run:create above.
+
+        On DELETE /runs/{run_id}/samples across 2026-09-01..29 there were two
+        callers: the NGS360-CollectRunMetrics-lambda service account, recorded
+        as would_deny on all 64 attempts, and a personal API key belonging to
+        an administrator, revoked on 2026-09-04.
+
+        run:associate stays out of service_account for the reason run:create
+        did -- nine accounts share that role and one needs this permission.
+        lab_manager keeps it despite no holder ever having used the route;
+        removing that is a separate decision, not a side effect of this fix.
+        """
+        sa = ROLE_DEFINITIONS["service_account"].permissions
+        associator = ROLE_DEFINITIONS["run_associator"].permissions
+
+        assert Permission.RUN_ASSOCIATE not in sa
+        assert associator == {Permission.RUN_ASSOCIATE}
+
+        holders = {n for n, r in ROLE_DEFINITIONS.items()
+                   if Permission.RUN_ASSOCIATE in r.permissions}
+        assert holders == {"run_associator", "lab_manager", "admin"}
 
     def test_only_admin_and_run_registrar_can_register_a_run(self):
         """`member` must not pick this up the way run:demux did."""
