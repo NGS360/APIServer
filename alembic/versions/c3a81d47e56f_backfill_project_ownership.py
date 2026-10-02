@@ -89,6 +89,13 @@ def _ownerless_count(conn, owner_role) -> int:
 def upgrade() -> None:
     conn = op.get_bind()
 
+    projects = conn.execute(sa.text("SELECT COUNT(*) FROM project")).scalar()
+    if not projects:
+        # A fresh database -- CI, a new tier, a local container. Nothing to
+        # backfill, and the role catalog may not be seeded yet either. Matches
+        # the guard already in e5f92c1b7d34 and f7a2c9e14b60.
+        return
+
     owner_role = _role_id(conn, 'project_owner')
     contributor_role = _role_id(conn, 'project_contributor')
 
