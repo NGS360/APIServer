@@ -799,21 +799,9 @@ def bulk_create_samples(
     #    matching MySQL's default collation behaviour)
     for item in samples_in:
         if item.attributes:
-            seen_keys: set[str] = set()
-            dup_keys: list[str] = []
-            for attr in item.attributes:
-                key_lower = attr.key.lower() if attr.key else ""
-                if key_lower in seen_keys:
-                    dup_keys.append(attr.key)
-                seen_keys.add(key_lower)
-            if dup_keys:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=(
-                        f"Duplicate attribute keys ({', '.join(dup_keys)}) "
-                        f"on sample '{item.sample_id}'."
-                    ),
-                )
+            check_duplicate_attribute_keys(
+                item.attributes, f"sample attributes on '{item.sample_id}'"
+            )
 
     # ── Transactional creation ────────────────────────────────────────
 
