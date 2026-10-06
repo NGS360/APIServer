@@ -1,12 +1,13 @@
 """
 Routes/endpoints for the Jobs API
 
-HTTP   URI                  Action
-----   ---                  ------
-GET    /api/v1/jobs         Retrieve a list of batch jobs
-POST   /api/v1/jobs         Submit a new batch job to AWS Batch
-GET    /api/v1/jobs/[id]    Retrieve info about a specific job
-PUT    /api/v1/jobs/[id]    Update a batch job
+HTTP   URI                       Action
+----   ---                       ------
+GET    /api/v1/jobs              Retrieve a list of batch jobs
+POST   /api/v1/jobs              Submit a new batch job to AWS Batch
+GET    /api/v1/jobs/submitters   Retrieve the submitters of those jobs
+GET    /api/v1/jobs/[id]         Retrieve info about a specific job
+PUT    /api/v1/jobs/[id]         Update a batch job
 """
 
 from typing import Optional, Literal
@@ -19,6 +20,8 @@ from api.jobs.models import (
     BatchJobPublic,
     BatchJobsPublic,
     JobStatus,
+    JobSubmitter,
+    JobSubmittersPublic,
     LogResponse
 )
 from api.jobs import services
@@ -152,7 +155,7 @@ def get_jobs(
         None,
         description=(
             "Filter by sequencing run (SequencingRun.run_id, "
-            "e.g. 260506_VH01208_93_222FCGLNX)"
+            "e.g. 240101_VH00000_1_EXAMPLE01)"
         ),
     ),
     search: Optional[str] = Query(
@@ -194,6 +197,69 @@ def get_jobs(
     return BatchJobsPublic(
         data=[BatchJobPublic.model_validate(job) for job in jobs],
         count=total_count
+    )
+
+
+@router.get(
+    "/submitters",
+    response_model=JobSubmittersPublic,
+    tags=["Job Endpoints"],
+    dependencies=[Depends(require_permission(Permission.JOB_READ))],
+)
+def get_job_submitters(
+    session: SessionDep,
+    project_id: Optional[str] = Query(
+        None, description="Restrict to one project (Project.project_id, e.g. P-19900109-0001)"
+    ),
+    sequencing_run_id: Optional[str] = Query(
+        None,
+        description=(
+            "Restrict to one sequencing run (SequencingRun.run_id, "
+            "e.g. 240101_VH00000_1_EXAMPLE01)"
+        ),
+    ),
+    q: Optional[str] = Query(None, description="Substring match on the username"),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(10, ge=1, le=100),
+) -> JobSubmittersPublic:
+    """
+    Retrieve a page of the submitters of the jobs in a scope.
+
+    Supports the Submitted By filter on the jobs tables. GET /jobs matches `user`
+    exactly and usernames are opaque ids, so the filter offers the submitters
+    rather than asking for one to be typed. Scoped by the same project and run
+    arguments as GET /jobs, so every option offered returns rows.
+
+    Paged and ranked by job count, because the set only ever grows -- a
+    submitter stays one forever. The filter offers the busiest few and narrows
+    by `q` as the caller types.
+
+    Args:
+        session: Database session
+        project_id: Optional project filter
+        sequencing_run_id: Optional sequencing run filter
+        q: Optional substring match on the username
+        skip: Number of submitters to skip
+        limit: Maximum number of submitters to return
+
+    Returns:
+        A page of submitters, busiest first, and the total matching in the
+        scope -- which is how a caller knows whether more remain
+    """
+    submitters, total = services.get_job_submitters(
+        session=session,
+        project_id=project_id,
+        sequencing_run_id=sequencing_run_id,
+        q=q,
+        skip=skip,
+        limit=limit,
+    )
+    return JobSubmittersPublic(
+        data=[
+            JobSubmitter(username=username, job_count=job_count)
+            for username, job_count in submitters
+        ],
+        count=total,
     )
 
 

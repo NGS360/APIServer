@@ -17,6 +17,25 @@ from api.jobs.models import (
 )
 
 
+def _like_pattern(term: str) -> str:
+    """
+    Build a contains-pattern for LIKE, with the wildcards escaped.
+
+    Without this a literal % or _ in the term widens the match instead of
+    narrowing it -- a bare '%' would return every row. Callers pass the result
+    with escape="\\".
+
+    Args:
+        term: Raw user-supplied search term
+
+    Returns:
+        The term wrapped in % wildcards, with its own wildcards escaped
+    """
+    for wildcard in ("\\", "%", "_"):
+        term = term.replace(wildcard, f"\\{wildcard}")
+    return f"%{term}%"
+
+
 def get_batch_job(session: Session, job_id: str) -> BatchJob | None:
     """
     Retrieve a batch job by ID.
@@ -78,13 +97,8 @@ def get_batch_jobs(
         #
         # A LIKE rather than OpenSearch, which backs project search: jobs are
         # not indexed there, and every view that searches them is already
-        # narrowed by project, run or user, so the scan stays small. Escape
-        # the LIKE wildcards so a literal % or _ in the term cannot widen the
-        # match.
-        term = search.strip()
-        for wildcard in ("\\", "%", "_"):
-            term = term.replace(wildcard, f"\\{wildcard}")
-        pattern = f"%{term}%"
+        # narrowed by project, run or user, so the scan stays small.
+        pattern = _like_pattern(search.strip())
         query = query.where(
             or_(
                 BatchJob.id.like(pattern, escape="\\"),
@@ -106,6 +120,71 @@ def get_batch_jobs(
     jobs = session.exec(query).all()
 
     return jobs, total_count
+
+
+def get_job_submitters(
+    session: Session,
+    project_id: str | None = None,
+    sequencing_run_id: str | None = None,
+    q: str | None = None,
+    skip: int = 0,
+    limit: int = 10,
+) -> tuple[List[tuple[str, int]], int]:
+    """
+    Retrieve the submitters of the jobs in a scope, busiest first.
+
+    Backs the Submitted By filter, whose values the list endpoint matches
+    exactly: usernames are opaque ids, so the filter has to offer them rather
+    than ask for them to be typed. Scoped with the same arguments as get_batch_jobs so
+    the options offered are only ever ones that return rows.
+
+    Ranked by job count rather than alphabetically because the filter shows
+    only the first page: the busiest submitters are the ones worth defaulting
+    to, and a username tie-break keeps that order stable across pages.
+
+    `q` matches the username only. Matching a display name would mean joining
+    directory data that is not held locally, and the ids are derived from
+    surnames anyway, so a surname fragment finds its submitter.
+
+    Args:
+        session: Database session
+        project_id: Optional project filter (Project.project_id business key)
+        sequencing_run_id: Optional run filter (SequencingRun.run_id business key)
+        q: Optional substring match on the username
+        skip: Number of submitters to skip
+        limit: Maximum number of submitters to return
+
+    Returns:
+        Tuple of (list of (username, job count) for this page, total number of
+        submitters matching in the scope). The total counts submitters, not
+        their jobs, so a caller can tell whether another page exists.
+    """
+    job_count = func.count().label("job_count")
+    query = select(BatchJob.user, job_count).group_by(BatchJob.user)
+
+    if project_id:
+        query = query.where(BatchJob.project_id == project_id)
+    if sequencing_run_id:
+        query = query.where(BatchJob.sequencing_run_id == sequencing_run_id)
+    term = q.strip() if q else ""
+    if term:
+        query = query.where(BatchJob.user.like(_like_pattern(term), escape="\\"))
+
+    # Counts the groups rather than the jobs in them: one row per submitter,
+    # which is what the caller pages through.
+    total_query = select(func.count()).select_from(
+        query.with_only_columns(BatchJob.user).subquery()
+    )
+    total = session.exec(total_query).one()
+
+    page = (
+        query.order_by(job_count.desc(), BatchJob.user.asc())
+        .offset(skip)
+        .limit(limit)
+    )
+    submitters = [(username, count) for username, count in session.exec(page).all()]
+
+    return submitters, total
 
 
 def update_batch_job(

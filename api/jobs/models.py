@@ -39,7 +39,7 @@ class BatchJob(SQLModel, table=True):
     # constraint violation.
     project_id: str | None = Field(default=None, max_length=255)
     # Business key of the sequencing run this job was submitted against
-    # (SequencingRun.run_id, e.g. 260506_VH01208_93_222FCGLNX). Independent of
+    # (SequencingRun.run_id, e.g. 240101_VH00000_1_EXAMPLE01). Independent of
     # project_id rather than an alternative to it: demultiplexing a flowcell has
     # a run but no project, while a pipeline job can have both. Nullable and not
     # a foreign key for the same reasons as project_id above.
@@ -49,6 +49,10 @@ class BatchJob(SQLModel, table=True):
     # for project X, newest first", and covering the sort avoids a filesort
     # over the wide command column. The run index mirrors it for "jobs for
     # run X, newest first", which is the only way the run page reads.
+    #
+    # user stands alone rather than joining either composite: the Submitted By
+    # filter groups by it on every keystroke, and the unscoped admin case has
+    # no project or run to narrow the aggregate first.
     __table_args__ = (
         Index("ix_batchjob_project_id_submitted_on", "project_id", "submitted_on"),
         Index(
@@ -56,6 +60,7 @@ class BatchJob(SQLModel, table=True):
             "sequencing_run_id",
             "submitted_on",
         ),
+        Index("ix_batchjob_user", "user"),
     )
 
     model_config = ConfigDict(from_attributes=True)
@@ -87,6 +92,20 @@ class BatchJobPublic(SQLModel):
 class BatchJobsPublic(SQLModel):
     """Schema for returning multiple batch jobs"""
     data: list[BatchJobPublic]
+    count: int
+
+
+class JobSubmitter(SQLModel):
+    """Schema for one submitter of a set of jobs"""
+    username: str
+    job_count: int
+
+
+class JobSubmittersPublic(SQLModel):
+    """Schema for returning a page of the submitters of a set of jobs"""
+    data: list[JobSubmitter]
+    # Submitters matching in the scope, not the length of this page, so a
+    # caller can tell whether another page exists.
     count: int
 
 
