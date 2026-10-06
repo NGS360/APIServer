@@ -297,7 +297,18 @@ def require_file_download(
     different question now. Previously "which project must the caller belong
     to?", now "which project's restriction applies?".
 
-    Three cases:
+    Four cases:
+
+    - **Inside a registered run folder.** Allowed for any authenticated caller,
+      without resolving a project. A flowcell is operational lab data and the run
+      page offers its folder for browsing, while roughly half of recent runs --
+      3% across all history -- reach no project at all, so project resolution
+      cannot carry this traffic. Note this includes raw base calls; see
+      `_under_a_run_folder` for why that was chosen over a report allowlist.
+
+      Checked *first* here but resolved *last* in the scope resolver, which is
+      the order that matters: a file that resolves to a restricted project never
+      reaches the run-folder opening.
 
     - **Resolved and unrestricted.** Allowed, without consulting any permission.
       This is the common path and the reason the policy changed: one genomics
@@ -323,7 +334,10 @@ def require_file_download(
     and the OpenAPI schema is unchanged.
     """
     scope = scope_for_uri(session, path)
-    if scope.resolved:
+    if scope.open_to_authenticated:
+        # Run-folder contents. No project to consult, and none required.
+        granted = True
+    elif scope.resolved:
         restricted = _restricted_projects(session, scope.project_ids)
         if not restricted:
             granted = True
