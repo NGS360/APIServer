@@ -36,6 +36,7 @@ from datetime import date
 import pytest
 
 from api.files.models import File, FileProject, FileSample, FileSequencingRun
+from api.files.scope import scope_for_uri
 from api.project.models import Project
 from api.rbac.models import GrantSource, ProjectMember, Role
 from api.rbac.permissions import Permission
@@ -666,3 +667,146 @@ class TestAuthenticationIsStillRequired:
         assert unauthenticated_client.get(
             URL, params={"path": uri}
         ).status_code == 401
+
+
+class TestRunFoldersAreOpenToAuthenticatedCallers:
+    """
+    Added 2026-10-06. Any file inside a registered run's folder is downloadable
+    by any authenticated caller, without resolving a project.
+
+    Why this exists rather than project resolution: the refusals that prompted
+    it were demux QC reports clicked from the run page, and resolving a run to
+    projects goes through its samples -- which held for 48% of runs in the last
+    30 days and 3% across all history. Project resolution cannot carry run
+    traffic, so the rule stopped depending on it.
+
+    The scope is the whole run folder, raw base calls included, chosen over an
+    allowlist of report subpaths that would have covered all observed traffic.
+    `_under_a_run_folder` records that trade-off; these tests pin the behaviour
+    that follows from it, including the two limits that keep it bounded.
+    """
+
+    RUN_FOLDER = "s3://raw/illumina/260930_VH01208_113_AAJHHH7M5"
+
+    def make_registered_run(self, session, folder: str) -> SequencingRun:
+        run = make_run(session, folder.rsplit("/", 1)[-1])
+        run.run_folder_uri = folder
+        session.add(run)
+        session.commit()
+        session.refresh(run)
+        return run
+
+    def test_a_qc_report_in_a_run_folder_is_downloadable(
+        self, session, scoped_client
+    ):
+        """The actual refused request, as a test."""
+        self.make_registered_run(session, self.RUN_FOLDER)
+        uri = f"{self.RUN_FOLDER}/Reports/html/FC/all/all/all/laneBarcode.html"
+
+        assert scoped_client.get(URL, params={"path": uri}).status_code == 200
+
+    def test_no_permission_is_consulted(self, session, scoped_client):
+        """
+        The caller holds no file:download anywhere -- not globally, not on any
+        project -- and the file is registered nowhere. Access comes purely from
+        where it sits.
+        """
+        self.make_registered_run(session, self.RUN_FOLDER)
+        uri = f"{self.RUN_FOLDER}/Stats/Stats.json"
+        scope = scope_for_uri(session, uri)
+
+        assert scope.open_to_authenticated
+        assert scope.origin == "run-folder"
+        assert scope.project_ids == frozenset()
+        assert scoped_client.get(URL, params={"path": uri}).status_code == 200
+
+    def test_raw_base_calls_are_included(self, session, scoped_client):
+        """
+        Asserted rather than left implicit, because it is the cost of the choice
+        and should not be discoverable only in production. If this is ever
+        narrowed to a report allowlist, this test should be inverted and the
+        comment on `_under_a_run_folder` updated with it.
+        """
+        self.make_registered_run(session, self.RUN_FOLDER)
+        uri = f"{self.RUN_FOLDER}/Data/Intensities/BaseCalls/L001/C1.1/L001_1.cbcl"
+
+        assert scoped_client.get(URL, params={"path": uri}).status_code == 200
+
+    def test_an_unregistered_run_folder_is_still_refused(self, session, scoped_client):
+        """
+        The bound on the rule: registration is what distinguishes a run folder
+        from an arbitrary bucket and key. Nothing here was ever ingested, so the
+        URI falls through to the unresolved branch and its global requirement --
+        which is what stops the endpoint signing anything it is handed.
+        """
+        uri = "s3://raw/illumina/270101_NOT_A_RUN/Stats/Stats.json"
+
+        assert scoped_client.get(URL, params={"path": uri}).status_code == 403
+
+    def test_a_decoy_prefix_does_not_match(self, session, scoped_client):
+        """
+        Prefix matching happens at segment boundaries. A sibling folder whose
+        name merely starts with a registered run's name must not inherit it,
+        which a `startswith` comparison would have allowed.
+        """
+        self.make_registered_run(session, self.RUN_FOLDER)
+        uri = f"{self.RUN_FOLDER}-decoy/Stats/Stats.json"
+
+        assert scoped_client.get(URL, params={"path": uri}).status_code == 403
+
+    def test_a_trailing_slash_on_the_stored_folder_still_matches(
+        self, session, scoped_client
+    ):
+        """Stored run folder URIs are inconsistent about the trailing slash."""
+        self.make_registered_run(session, self.RUN_FOLDER + "/")
+        uri = f"{self.RUN_FOLDER}/Stats/Stats.json"
+
+        assert scoped_client.get(URL, params={"path": uri}).status_code == 200
+
+    def test_a_restricted_project_still_wins(self, session, scoped_client):
+        """
+        The ordering that makes `download_restricted` survive this change.
+
+        A file that is both associated with a restricted project and sitting
+        inside a run folder resolves strictly, through the project, and is
+        refused. Checking the run folder before project resolution would have
+        made restriction unenforceable for exactly the files most likely to be
+        restricted -- raw data under a run folder.
+        """
+        project = restrict(session, make_project(session, "0099"))
+        uri = f"{self.RUN_FOLDER}/Data/restricted.cbcl"
+        f = make_file(session, uri)
+        session.add(FileProject(file_id=f.id, project_id=project.id))
+        session.commit()
+        self.make_registered_run(session, self.RUN_FOLDER)
+
+        scope = scope_for_uri(session, uri)
+        assert not scope.open_to_authenticated
+        assert scope.origin == "project"
+        assert scoped_client.get(URL, params={"path": uri}).status_code == 403
+
+    def test_a_restricted_project_s_member_can_still_download_it(
+        self, session, scoped_client
+    ):
+        """The counterpart: strict resolution is satisfiable, just not bypassed."""
+        project = restrict(session, make_project(session, "0098"))
+        uri = f"{self.RUN_FOLDER}/Data/also-restricted.cbcl"
+        f = make_file(session, uri)
+        session.add(FileProject(file_id=f.id, project_id=project.id))
+        session.commit()
+        self.make_registered_run(session, self.RUN_FOLDER)
+        enrol(session, project, "scoped")
+
+        assert scoped_client.get(URL, params={"path": uri}).status_code == 200
+
+    def test_authentication_is_still_required(self, session):
+        """"Open" means open to platform users, not to the internet."""
+        from fastapi.testclient import TestClient
+
+        from main import app
+
+        self.make_registered_run(session, self.RUN_FOLDER)
+        anon = TestClient(app)
+        uri = f"{self.RUN_FOLDER}/Stats/Stats.json"
+
+        assert anon.get(URL, params={"path": uri}).status_code in (401, 403)

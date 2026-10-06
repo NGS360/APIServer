@@ -63,7 +63,7 @@ from sqlmodel import Session, select
 
 from api.files.models import File, FileProject, FileSample, FileSequencingRun
 from api.project.models import Project
-from api.runs.models import SampleSequencingRun
+from api.runs.models import SampleSequencingRun, SequencingRun
 from api.samples.models import Sample
 from api.settings.services import get_setting_value
 
@@ -78,7 +78,8 @@ _OWNED_BUCKET_SETTINGS = ("DATA_BUCKET_URI", "RESULTS_BUCKET_URI")
 #: How a URI was resolved. Recorded on the access log so the mix is measurable --
 #: in particular "path", which is access granted by naming convention rather than
 #: by a registered association and should trend towards zero.
-Origin = Literal["project", "sample", "run", "path", "unregistered", "unassociated"]
+Origin = Literal["project", "sample", "run", "run-folder", "path",
+                 "unregistered", "unassociated"]
 
 
 @dataclass(frozen=True)
@@ -87,6 +88,12 @@ class FileScope:
 
     project_ids: frozenset[uuid.UUID]
     origin: Origin
+
+    #: Allowed for any authenticated caller, without resolving a project at all.
+    #: Set only for run-folder contents -- see `_under_a_run_folder`. Distinct
+    #: from `resolved`: there is no project here to carry a restriction, so the
+    #: caller is allowed on the strength of where the file sits.
+    open_to_authenticated: bool = False
 
     @property
     def resolved(self) -> bool:
@@ -186,6 +193,92 @@ def _project_from_path(session: Session, uri: str) -> set[uuid.UUID]:
     return {project_id} if project_id else set()
 
 
+def _parent_prefixes(uri: str) -> list[str]:
+    """
+    Every proper parent prefix of a URI, longest first, cut at segment
+    boundaries.
+
+    Segment boundaries are the point: generating prefixes rather than comparing
+    with `startswith` is what stops `s3://b/illumina/RUN-decoy/x` matching a run
+    folder of `s3://b/illumina/RUN`. The URI itself is excluded -- a file has to
+    be *under* a run folder, not be one.
+    """
+    parts = _normalise(uri).split("/")
+    # parts[:3] is "s3:", "", "<bucket>", so i stops at 4: the shallowest
+    # candidate is bucket plus one segment. The bucket root is excluded
+    # deliberately -- a run row whose run_folder_uri was somehow just a bucket
+    # would otherwise open every object in it.
+    return ["/".join(parts[:i]) for i in range(len(parts) - 1, 3, -1)]
+
+
+def _under_a_run_folder(session: Session, uri: str) -> bool:
+    """
+    Does this URI sit inside a registered sequencing run's folder?
+
+    Run folders are opened to every authenticated caller: a flowcell's contents
+    are operational lab data, the run page offers the folder for browsing, and
+    the alternative measured out at roughly half of recent runs reaching no
+    project at all (3% across all history), so project resolution cannot carry
+    this traffic. See docs/RBAC.md, "Run folders are open to authenticated
+    callers".
+
+    **This includes raw base calls.** A run folder holds
+    `Data/Intensities/BaseCalls/**.cbcl` alongside the QC reports, and cbcl is
+    decodable into reads, so this opens instrument-level sequence data to every
+    platform user. That was the deliberate choice -- the narrower option was an
+    allowlist of report subpaths, which covered all of the observed traffic --
+    and it is recorded here because the next person to read this rule should
+    know it was a decision rather than an oversight.
+
+    What keeps it bounded is the run having been *registered*: the prefix is
+    matched against `sequencingrun.run_folder_uri`, a value the platform wrote
+    when it ingested the run. An arbitrary bucket and key does not match, which
+    is what stops this becoming the arbitrary-S3-read proxy the unresolved
+    branch exists to prevent. No bucket allowlist is needed and none is used --
+    the registered folder is a stronger statement than a bucket prefix, and it
+    covers ONT and Illumina layouts without either being special-cased.
+
+    One indexed `IN` query over the URI's parent prefixes, which is a handful of
+    values even for a deep base-calls path.
+    """
+    prefixes = _parent_prefixes(uri)
+    if not prefixes:
+        return False
+
+    # Stored values may or may not carry a trailing slash; normalise both sides.
+    candidates = session.exec(
+        select(SequencingRun.run_folder_uri)
+        .where(SequencingRun.run_folder_uri.in_(prefixes))
+        .limit(1)
+    ).first()
+    if candidates is not None:
+        return True
+
+    # Fall back to comparing normalised values when the stored URI has a
+    # trailing slash, which the IN above would have missed.
+    slashed = [p + "/" for p in prefixes]
+    return session.exec(
+        select(SequencingRun.run_folder_uri)
+        .where(SequencingRun.run_folder_uri.in_(slashed))
+        .limit(1)
+    ).first() is not None
+
+
+def _unresolved(session: Session, uri: str, origin: Origin) -> FileScope:
+    """
+    The terminal case, with the run-folder opening applied.
+
+    Deliberately reached only *after* every project-resolving strategy has
+    failed. Checking the run folder earlier would let it override a
+    `download_restricted` project for any file that happens to sit under a run
+    folder, which would make the restriction unenforceable exactly where raw
+    data lives. Restriction first, opening second.
+    """
+    if _under_a_run_folder(session, uri):
+        return FileScope(frozenset(), "run-folder", open_to_authenticated=True)
+    return FileScope(frozenset(), origin)
+
+
 def scope_for_uri(session: Session, uri: str) -> FileScope:
     """
     Which projects govern this URI. See the module docstring for the policy.
@@ -198,7 +291,7 @@ def scope_for_uri(session: Session, uri: str) -> FileScope:
         inferred = _project_from_path(session, uri)
         if inferred:
             return FileScope(frozenset(inferred), "path")
-        return FileScope(frozenset(), "unregistered")
+        return _unresolved(session, uri, "unregistered")
 
     direct = _projects_direct(session, file_ids)
     if direct:
@@ -218,4 +311,4 @@ def scope_for_uri(session: Session, uri: str) -> FileScope:
     if inferred:
         return FileScope(frozenset(inferred), "path")
 
-    return FileScope(frozenset(), "unassociated")
+    return _unresolved(session, uri, "unassociated")

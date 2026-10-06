@@ -729,10 +729,13 @@ So the rule is now:
 ```
 download(caller, uri):
   1. caller is not authenticated                      -> DENY
-  2. uri resolves to no project                       -> require global file:download
-  3. project = resolve(uri); project is unrestricted  -> ALLOW, no permission consulted
-  4. project is restricted                            -> require file:download in that project
+  2. project = resolve(uri); project is unrestricted  -> ALLOW, no permission consulted
+  3. project is restricted                            -> require file:download in that project
+  4. unresolved, but inside a registered run folder   -> ALLOW, no permission consulted
+  5. unresolved otherwise                             -> require global file:download
 ```
+
+Step 4 was added 2026-10-06; see [Run folders are open to authenticated callers](#run-folders-are-open-to-authenticated-callers). It sits *after* project resolution on purpose.
 
 **Authentication is still required** (step 1). "Open" means open to users of the platform, not to the internet. This is the one part of the previous model kept deliberately, and it needs an explicit test, because the natural way to write step 3 — return early before consulting anything — drops it silently.
 
@@ -740,7 +743,7 @@ download(caller, uri):
 
 So `file:download` now means something narrower and more precise than before: *may download from a restricted project, or from outside any project*. `project_viewer` and above carry it on the project plane, which makes a restricted project's members its allowlist. `lab_manager`, `auditor`, `admin` and superusers carry it globally, which is the intended cross-project escape hatch — and the reason a restriction cannot be enforced against them.
 
-**Step 2 is not a project rule, and it is the load-bearing one.** It is also *unchanged* from the previous model — the only thing the inversion touches is steps 3 and 4. `generate_presigned_url` signs whatever bucket and key it is given — there is no allowlist — so the endpoint mints credentials for any object the API's own IAM role can read. Under default-deny, the "unresolved URI needs global `file:download`" fallback was, incidentally, the only thing keeping that from being an arbitrary-S3-read proxy for ordinary users. Default-open removes that incidental protection, so the constraint has to become explicit. A URI in an unrelated bucket is not a project, so the open-by-default policy does not speak to it: it stays privileged. **This is the part of the change that must not be implemented as "unresolved therefore allow".**
+**Step 5 is not a project rule, and it is the load-bearing one.** It is also *unchanged* from the previous model — the only thing the inversion touches is steps 3 and 4. `generate_presigned_url` signs whatever bucket and key it is given — there is no allowlist — so the endpoint mints credentials for any object the API's own IAM role can read. Under default-deny, the "unresolved URI needs global `file:download`" fallback was, incidentally, the only thing keeping that from being an arbitrary-S3-read proxy for ordinary users. Default-open removes that incidental protection, so the constraint has to become explicit. A URI in an unrelated bucket is not a project, so the open-by-default policy does not speak to it: it stays privileged. **This is the part of the change that must not be implemented as "unresolved therefore allow".**
 
 **The resolver survives unchanged.** `api/files/scope.py` is still how a URI becomes a project — that work is not wasted, it just answers a different question now. Previously: "which project must the caller belong to?" Now: "which project's restriction applies?" The ordering rationale is unchanged and still worth keeping:
 
@@ -750,6 +753,7 @@ So `file:download` now means something narrower and more precise than before: *m
 | `filesample` | the sample's project | A sample belongs to exactly one project |
 | `filesequencingrun` | **every** project the run touches | Permissive: a flowcell is a shared artifact |
 | path inference | the project id in the URI, inside a bucket we own | Pipeline output, never registered as a `File` row |
+| run folder | *nothing* — returns open-to-authenticated | Flowcell contents, where no project resolution exists to be had. Tried last |
 
 Direct associations are tried before the run, so a file both in a project and on a run resolves strictly — `test_a_project_association_wins_over_the_run` catches the regression. Path inference runs last, requires a whole path segment matching a project that exists, and only inside `DATA_BUCKET_URI` or `RESULTS_BUCKET_URI`.
 
@@ -768,6 +772,33 @@ Direct associations are tried before the run, so a file both in a project and on
 **Implemented** by `project.download_restricted` (migration `c9f4b7e28a13`), the rework of `require_file_download`, and `tests/api/test_file_download_scope.py`. Seven tests there asserted the withdrawn requirement and were rewritten rather than preserved.
 
 Still outstanding, and both are defence in depth rather than the policy: an explicit bucket allowlist inside `generate_presigned_url`, so signing is constrained even when authorization has already passed; and surfacing restriction in the UI, since with an opt-in control the dangerous state is a project nobody remembered to restrict.
+
+
+### Run folders are open to authenticated callers
+
+**Policy decision, 2026-10-06.** Any file inside a registered sequencing run's folder is downloadable by any authenticated caller, with no project resolved and no permission consulted.
+
+**What prompted it.** `file:download` was the largest remaining source of `would_deny` in the dry run — 262 events from 35 principals over 28 days, roughly 50 a week. With **zero of 11,156 projects** setting `download_restricted`, the restricted branch was unreachable, so every one of those refusals was the unresolved branch: a URI that mapped to no project, requiring a global grant that ordinary users do not have.
+
+The refused URIs were demux QC reports — `laneBarcode.html`, `Stats.json`, `DemultiplexingStats.xml`, `SampleSheet.csv` — requested from the run page, which offers the run folder for browsing. Routine lab work, refused.
+
+**Why not fix it through resolution.** Two options were worked up in [FILE_REGISTRATION.md](FILE_REGISTRATION.md): have pipelines register their artifacts against the run, or infer the run from the path. Both end in the same join — run → samples → projects — and that join was measured:
+
+| Run age | Runs | Reaching a project |
+|---|---|---|
+| last 30 days | 46 | 48% |
+| last 90 days | 172 | 56% |
+| all time | 6,712 | 3% |
+
+Neither option could cover more than about half of recent run traffic. Project resolution cannot carry this case, so the rule stopped depending on it. (Separately, `filesequencingrun` held **zero rows platform-wide** — the permissive run fallback documented above has never resolved anything in production. Registration remains worth doing, but it was never going to be the fix here.)
+
+**The rule.** A URI's parent prefixes are matched against `sequencingrun.run_folder_uri`. Registration is the boundary: the prefix must be a folder the platform itself recorded when it ingested the run, so an arbitrary bucket and key still falls through to step 5. No bucket allowlist is involved — a registered run folder is a stronger statement than a bucket prefix, and it covers ONT and Illumina layouts without special-casing either. Prefixes are cut at segment boundaries so a sibling folder cannot inherit a run's opening by sharing its name as a prefix.
+
+**It opens raw base calls, and that was the choice made.** A run folder holds `Data/Intensities/BaseCalls/**.cbcl` next to the QC reports, and cbcl decodes into reads — so this opens instrument-level sequence data to every platform user. The narrower option was an allowlist of report subpaths (`Reports/`, `Stats/`, `InterOp/`, the XMLs, the sample sheets), which covered **100% of the observed traffic**. The whole folder was chosen instead, on the grounds that it matches what the run page already offers and leaves no allowlist to maintain. `test_raw_base_calls_are_included` pins it so the cost is visible in the test suite rather than discovered later.
+
+**Ordering is what keeps `download_restricted` alive.** The opening is evaluated only after every project-resolving strategy has failed. A file that is both associated with a restricted project and sitting under a run folder resolves strictly, through the project, and stays refused. Checking the run folder first would have made restriction unenforceable for precisely the files most likely to warrant it. `test_a_restricted_project_still_wins` pins the ordering.
+
+**Measured effect.** Replaying 28 days of real download URIs through the new resolver against the production database: 38 requests move from refused to open, 1,271 continue to resolve to a project, and **83 remain refused**. Those 83 are a different family — vendor inbound buckets of the form `.../incoming/<project-id>/...` whose buckets are not in `DATA_BUCKET_URI`/`RESULTS_BUCKET_URI`, so path inference does not reach them. They carry project ids and would resolve if those buckets were recognised, which is the next thing to look at and is not addressed here.
 
 ### List endpoints filter rows; they do not return 403
 
