@@ -146,7 +146,13 @@ def get_jobs(
     session: SessionDep,
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=1000),
-    user: Optional[str] = Query(None, description="Filter by user"),
+    user: Optional[list[str]] = Query(
+        None,
+        description=(
+            "Filter by submitter. Repeat the parameter to match any of "
+            "several, e.g. ?user=alice&user=bob"
+        ),
+    ),
     status_filter: Optional[JobStatus] = Query(None, description="Filter by status"),
     project_id: Optional[str] = Query(
         None, description="Filter by owning project (Project.project_id, e.g. P-19900109-0001)"
@@ -171,7 +177,7 @@ def get_jobs(
         session: Database session
         skip: Number of records to skip
         limit: Maximum number of records to return
-        user: Optional user filter
+        user: Optional submitters to match; any one of them, not all
         status_filter: Optional status filter
         project_id: Optional project filter
         sequencing_run_id: Optional sequencing run filter

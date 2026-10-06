@@ -454,6 +454,30 @@ class TestJobsAPI:
             ))
         session.commit()
 
+    def test_get_jobs_filtered_by_several_users(self, client: TestClient, session: Session):
+        """Repeating user matches any of them, so the filter can be multi-select"""
+        for user in ["alice", "bob", "carol"]:
+            self._submit(session, user, 1)
+
+        response = client.get("/api/v1/jobs?user=alice&user=carol")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["count"] == 2
+        assert {row["user"] for row in data["data"]} == {"alice", "carol"}
+
+        # One is still one, so a single-select caller is unaffected
+        response = client.get("/api/v1/jobs?user=alice")
+        assert response.json()["count"] == 1
+
+        # And it narrows within the other filters rather than replacing them
+        self._submit(session, "alice", 1, project_id="P-19900109-0001")
+        response = client.get(
+            "/api/v1/jobs?user=alice&user=carol&project_id=P-19900109-0001"
+        )
+        data = response.json()
+        assert data["count"] == 1
+        assert data["data"][0]["user"] == "alice"
+
     def test_get_job_submitters(self, client: TestClient, session: Session):
         """One row per submitter, busiest first, with the job count"""
         self._submit(session, "alice", 1)
@@ -962,7 +986,7 @@ class TestJobsServices:
         session.commit()
 
         # Filter by user
-        jobs, count = get_batch_jobs(session, user="user1")
+        jobs, count = get_batch_jobs(session, user=["user1"])
         assert count == 3
 
         # Filter by status
@@ -971,7 +995,7 @@ class TestJobsServices:
 
         # Both filters
         jobs, count = get_batch_jobs(
-            session, user="user2", status_filter=JobStatus.RUNNING
+            session, user=["user2"], status_filter=JobStatus.RUNNING
         )
         assert count == 2
 
@@ -995,7 +1019,7 @@ class TestJobsServices:
         assert all(job.project_id == "P-19900109-0001" for job in jobs)
 
         jobs, count = get_batch_jobs(
-            session, user="user1", project_id="P-19900109-0001"
+            session, user=["user1"], project_id="P-19900109-0001"
         )
         assert count == 2
 
@@ -1023,7 +1047,7 @@ class TestJobsServices:
         assert count == 3
         assert all(job.sequencing_run_id == run for job in jobs)
 
-        jobs, count = get_batch_jobs(session, user="user1", sequencing_run_id=run)
+        jobs, count = get_batch_jobs(session, user=["user1"], sequencing_run_id=run)
         assert count == 2
 
         # A null sequencing_run_id must never match a filtered query

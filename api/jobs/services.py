@@ -54,7 +54,7 @@ def get_batch_jobs(
     session: Session,
     skip: int = 0,
     limit: int = 100,
-    user: str | None = None,
+    user: List[str] | None = None,
     status_filter: JobStatus | None = None,
     project_id: str | None = None,
     sequencing_run_id: str | None = None,
@@ -69,7 +69,7 @@ def get_batch_jobs(
         session: Database session
         skip: Number of records to skip
         limit: Maximum number of records to return
-        user: Optional user filter
+        user: Optional submitters to match; any one of them, not all
         status_filter: Optional status filter
         project_id: Optional project filter (Project.project_id business key)
         sequencing_run_id: Optional run filter (SequencingRun.run_id business key)
@@ -83,7 +83,9 @@ def get_batch_jobs(
     query = select(BatchJob)
 
     if user:
-        query = query.where(BatchJob.user == user)
+        # Any of the given submitters. A single-element list is the same
+        # equality match this took before it accepted several.
+        query = query.where(BatchJob.user.in_(user))
     if status_filter:
         query = query.where(BatchJob.status == status_filter)
     if project_id:
