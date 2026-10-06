@@ -49,6 +49,7 @@ router = APIRouter(prefix="/runs", tags=["Run Endpoints"])
     response_model=SequencingRunPublic,
     tags=["Run Endpoints"],
     status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_permission(Permission.RUN_CREATE))],
 )
 def add_run(
     session: SessionDep,
@@ -144,6 +145,7 @@ def search_runs(
     "/search",
     status_code=status.HTTP_200_OK,
     tags=["Run Endpoints"],
+    dependencies=[Depends(require_permission(Permission.SEARCH_QUERY))],
 )
 def reindex_runs(
     session: SessionDep,
@@ -200,7 +202,10 @@ def submit_demultiplex_workflow_job(
     )
 
 
-@router.get("/demultiplex/{workflow_id}", response_model=DemuxWorkflowConfig, tags=["Run Endpoints"])
+@router.get(
+    "/demultiplex/{workflow_id}", response_model=DemuxWorkflowConfig, tags=["Run Endpoints"],
+    dependencies=[Depends(require_permission(Permission.RUN_READ))],
+)
 def get_demultiplex_workflow_config(
     workflow_id: str,
     session: SessionDep,
@@ -248,6 +253,7 @@ def get_run(session: SessionDep, run_id: str) -> SequencingRunPublic:
     "/{run_id}",
     response_model=SequencingRunPublic,
     tags=["Run Endpoints"],
+    dependencies=[Depends(require_permission(Permission.RUN_UPDATE))],
 )
 def update_run(
     session: SessionDep,
@@ -287,7 +293,9 @@ def get_run_samplesheet(session: SessionDep, run_id: str) -> IlluminaSampleSheet
     "/{run_id}/samplesheet",
     response_model=IlluminaSampleSheetResponseModel,
     status_code=status.HTTP_201_CREATED,
-    tags=["Run Endpoints"],)
+    tags=["Run Endpoints"],
+    dependencies=[Depends(require_permission(Permission.RUN_UPDATE))],
+)
 def post_run_samplesheet(
     session: SessionDep,
     run_id: str,
@@ -354,6 +362,7 @@ def associate_sample_with_run(
     "/{run_id}/samples",
     response_model=list[SampleSequencingRunPublic],
     tags=["Run Endpoints"],
+    dependencies=[Depends(require_permission(Permission.SAMPLE_READ))],
 )
 def get_samples_for_run(
     session: SessionDep,
@@ -397,6 +406,7 @@ def clear_samples_for_run(
     "/{run_id}/samples/{sample_id}",
     status_code=status.HTTP_204_NO_CONTENT,
     tags=["Run Endpoints"],
+    dependencies=[Depends(require_permission(Permission.RUN_ASSOCIATE))],
 )
 def remove_sample_from_run(
     session: SessionDep,

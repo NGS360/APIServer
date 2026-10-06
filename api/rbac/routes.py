@@ -7,6 +7,12 @@ superuser cannot serve the roles it exists to administer, so an `auditor` or a
 `platform_admin` who is not flagged as a superuser would be locked out of the
 panel their role is for.
 
+Gating the role API on a role permission looks like a chicken-and-egg -- you
+would need a grant to make the first grant -- but it is handled without the
+flag. `role:manage` is `critical` risk and therefore in ALWAYS_ENFORCE, so it is
+refused even in dry-run, and the bootstrap path is `BOOTSTRAP_ADMIN_USERNAMES`,
+which grants `admin` at account creation without going through this API at all.
+
 role:read reads the whole roster -- emails, status flags, who is an
 administrator -- and role:manage is the grant plane itself, so a route added here
 needs one of them rather than something broader that happens to be convenient.
@@ -20,7 +26,7 @@ from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlmodel import select
 
-from api.auth.deps import CurrentActiveUser
+from api.auth.deps import CurrentActiveUser, CurrentUser
 from api.rbac import services
 from api.rbac.models import (
     GrantRoleRequest,
@@ -212,7 +218,7 @@ def list_user_roles(session: SessionDep, username: str) -> list[str]:
 )
 def grant_user_role(
     session: SessionDep, username: str, body: GrantRoleRequest,
-    current_user: CurrentActiveUser,
+    current_user: CurrentUser,
 ) -> list[str]:
     user = services.get_user_or_404(session, username)
     role = services.get_role_or_404(session, body.role)
@@ -229,7 +235,7 @@ def grant_user_role(
 )
 def revoke_user_role(
     session: SessionDep, username: str, role_name: str,
-    current_user: CurrentActiveUser,
+    current_user: CurrentUser,
 ) -> list[str]:
     user = services.get_user_or_404(session, username)
     role = services.get_role_or_404(session, role_name)

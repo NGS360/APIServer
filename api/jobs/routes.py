@@ -22,7 +22,7 @@ from api.jobs.models import (
     LogResponse
 )
 from api.jobs import services
-from api.rbac.deps import AuthzDep, decide
+from api.rbac.deps import require_permission, AuthzDep, decide
 from api.rbac.permissions import Permission
 from api.rbac.resolver import AuthzContext
 
@@ -93,6 +93,7 @@ require_job_update.rbac_plane = "global"
     response_model=BatchJobPublic,
     tags=["Job Endpoints"],
     status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_permission(Permission.JOB_SUBMIT))],
 )
 def submit_job(
     session: SessionDep,
@@ -127,6 +128,8 @@ def submit_job(
         job_def=job_in.job_definition,
         job_queue=job_in.job_queue,
         user=job_in.user,
+        project_id=job_in.project_id,
+        sequencing_run_id=job_in.sequencing_run_id,
     )
     return BatchJobPublic.model_validate(job)
 
@@ -142,6 +145,16 @@ def get_jobs(
     limit: int = Query(100, ge=1, le=1000),
     user: Optional[str] = Query(None, description="Filter by user"),
     status_filter: Optional[JobStatus] = Query(None, description="Filter by status"),
+    project_id: Optional[str] = Query(
+        None, description="Filter by owning project (Project.project_id, e.g. P-19900109-0001)"
+    ),
+    sequencing_run_id: Optional[str] = Query(
+        None,
+        description=(
+            "Filter by sequencing run (SequencingRun.run_id, "
+            "e.g. 260506_VH01208_93_222FCGLNX)"
+        ),
+    ),
     sort_by: str = Query("submitted_on", description="Field to sort by"),
     sort_order: Literal["asc", "desc"] = Query("desc", description="Sort order (asc or desc)"),
 ) -> BatchJobsPublic:
@@ -154,6 +167,8 @@ def get_jobs(
         limit: Maximum number of records to return
         user: Optional user filter
         status_filter: Optional status filter
+        project_id: Optional project filter
+        sequencing_run_id: Optional sequencing run filter
         sort_by: Field to sort by (defaults to 'submitted_on')
         sort_order: Sort order 'asc' or 'desc' (defaults to 'desc')
 
@@ -166,6 +181,8 @@ def get_jobs(
         limit=limit,
         user=user,
         status_filter=status_filter,
+        project_id=project_id,
+        sequencing_run_id=sequencing_run_id,
         sort_by=sort_by,
         sort_order=sort_order,
     )

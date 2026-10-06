@@ -159,22 +159,28 @@ def _authz_summary(request: Request) -> dict[str, Any]:
     Kept flat rather than nested so CloudWatch Logs Insights can filter on
     `rbac_decision` directly; Insights cannot filter inside an array.
 
-    A route can carry more than one check, and a refusal raises on the first one,
-    so at most one record is ever a deny. The deny wins where there is one, so a
-    single line answers "was anything refused here" without needing the
-    individual records. Requests that ran no check at all contribute nothing,
-    keeping the field absent rather than misleadingly "allow".
+    A route can carry more than one check. The worst decision wins, so one line
+    answers "was anything refused here" without needing the individual records
+    -- deny beats would_deny beats allow. Requests that ran no check at all
+    contribute nothing, keeping the field absent rather than misleadingly
+    "allow".
     """
     decisions = getattr(request.state, "rbac_decisions", None)
     if not decisions:
         return {}
 
-    worst = max(decisions, key=lambda d: d["rbac_decision"] == "deny")
+    ranked = {"deny": 3, "would_deny": 2, "allow": 1, "skipped": 0}
+    worst = max(decisions, key=lambda d: ranked.get(d["rbac_decision"], 0))
     return {
+        "rbac_mode": worst["rbac_mode"],
         "rbac_decision": worst["rbac_decision"],
         "required_permission": worst["required_permission"],
         "scope": worst["scope"],
         "rbac_checks": len(decisions),
+        # Only present when the check recorded one; absent rather than null so
+        # `filter ispresent(rbac_subject)` selects exactly those requests.
+        **({"rbac_subject": worst["rbac_subject"]}
+           if "rbac_subject" in worst else {}),
     }
 
 

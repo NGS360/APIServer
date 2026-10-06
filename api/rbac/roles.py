@@ -63,6 +63,28 @@ _MEMBER = frozenset({
     Permission.CHAT_USE,
     Permission.USER_READ,
     Permission.PROJECT_CREATE,
+    # Demultiplexing, open to every authenticated user as of 2026-09-28.
+    #
+    # This is a deliberate reversal, recorded because the reasoning that kept
+    # run:demux out is still true and was not refuted: demux spends compute and
+    # deletes the run's QC records, which is why it is the only high-risk run
+    # permission. What changed is the judgement about who should be trusted with
+    # it, not the assessment of what it does.
+    #
+    # The evidence behind the reversal: demux was already being done by eleven
+    # people over a single week with no team in common, demux_operator had grown
+    # to fourteen holders through purely reactive grants, and every one of those
+    # grants was approved. A permission granted on request to everyone who asks
+    # is not a restricted permission -- it is an unrestricted one with a ticket
+    # queue in front of it. Consistent with the project stance that actions are
+    # permissible except on restricted projects.
+    #
+    # run:update rides along because it is the other half of the same flow: the
+    # samplesheet edit that precedes a demux submission. Granting demux without
+    # it reproduces the 2026-09-11 incident, where ten of the eleven operators
+    # could submit but not prepare.
+    Permission.RUN_DEMUX,
+    Permission.RUN_UPDATE,
     # Transitional global reads -- see above.
     Permission.PROJECT_READ,
     Permission.SAMPLE_READ,
@@ -83,7 +105,10 @@ _LAB_MANAGER = _MEMBER | {
     # is enrolled in no projects does not have. Without this they could browse
     # and upload but not download, which is not a coherent role.
     Permission.FILE_DOWNLOAD,
-    Permission.RUN_CREATE,
+    # run:create removed 2026-09-28. Five people held it through lab_manager and
+    # none of them had ever registered a run -- the only principal that has is
+    # the NGS360-SequencersToS3 service account, which does it on a schedule.
+    # Run registration is a machine job here, so it is now `run_registrar`.
     Permission.RUN_UPDATE,
     Permission.RUN_ASSOCIATE,
     Permission.RUN_DEMUX,
@@ -126,14 +151,30 @@ _PLATFORM_ADMIN = _MEMBER | {
 _SERVICE_ACCOUNT = frozenset({
     Permission.PROJECT_READ,
     Permission.RUN_READ,
+    # run:create removed 2026-09-28 and moved to `run_registrar`. It was added
+    # here on 2026-09-12 to complete the create/update pair, which was right at
+    # the time -- but the pair is the wrong unit for runs specifically. Nine
+    # accounts hold service_account for job and result writeback; exactly one of
+    # them registers runs. Keeping run:create on the shared role meant eight
+    # machine identities could create runs to fix one that needed to.
     Permission.RUN_UPDATE,
     Permission.SAMPLE_READ,
     Permission.SAMPLE_CREATE,
+    Permission.SAMPLE_UPDATE,
     Permission.QCRECORD_CREATE,
     Permission.FILE_CREATE,
     Permission.FILE_UPDATE,
     Permission.JOB_READ_ALL,
     Permission.JOB_UPDATE,
+    # Added 2026-09-28. A writeback identity that records pipeline results has
+    # to resolve the workflow and version it is recording them for, and unlike
+    # every human role it does not get workflow:read from `member` -- machine
+    # accounts are created with `--role service_account` alone, which calls
+    # grant_role directly and never goes through assign_default_roles.
+    #
+    # Worth stating because it is not a dry-run issue: workflow:read is in
+    # _GRADUATED, so it is refused today rather than logged.
+    Permission.WORKFLOW_READ,
 })
 
 _AUDITOR = READ_PERMISSIONS | {
@@ -141,6 +182,133 @@ _AUDITOR = READ_PERMISSIONS | {
     Permission.SEARCH_QUERY,
     Permission.ROLE_READ,
 }
+
+# SUBSUMED as of 2026-09-28: `member` now carries run:demux and run:update, so
+# this role grants nothing its holders do not already have. It is kept rather
+# than deleted for two reasons -- sync_rbac_catalog only iterates
+# ROLE_DEFINITIONS, so removing it here would orphan the row and its fourteen
+# grants in every tier rather than clean them up; and if `member` is ever
+# tightened again this is the role the grants should fall back to. The history
+# below is left intact because it is the record of how the decision moved.
+#
+# Demultiplexing turned out to be done by eleven different people over one week,
+# with different jobs and no single team among them. The obvious answer -- give
+# them lab_manager -- was wrong: that role carries sixteen permissions beyond
+# member, including *global* file:download, and has_in_project short-circuits on a
+# global grant. Granting it would have exempted eleven people from the
+# project-scoped downloads shipped days earlier, as a side effect of a decision
+# about demux.
+#
+# So: exactly the permission that was refused, and nothing else. `member` already
+# provides run:read, job:submit and job:read, which is the rest of the demux flow,
+# so this role is one permission wide by design rather than by omission.
+#
+# It qualifies under the rule above -- run:demux is a write on a global resource --
+# and it is the shape to copy the next time a single capability needs granting to
+# people who share nothing else.
+_DEMUX_OPERATOR = frozenset({
+    Permission.RUN_DEMUX,
+    # Added 2026-09-11. The role shipped with run:demux alone, described above as
+    # "one permission wide by design rather than by omission". That was wrong, and
+    # the correction is the more useful half of the lesson: minimal is only right
+    # if you measured the whole flow.
+    #
+    # Closing POST /runs/{run_id}/samplesheet and PUT /runs/{run_id} surfaced it --
+    # ten of the eleven demux operators had no run:update, so they would have
+    # started receiving 403s on routes they use as part of the same job. run:update
+    # is not project-scopable, so there was no per-project escape either.
+    #
+    # So the guard against over-granting cuts both ways, and the check that catches
+    # both is the same one: resolve every observed caller on every route the
+    # capability touches, not just the route that prompted the request.
+    Permission.RUN_UPDATE,
+})
+
+# Run registration, which turned out to be one service's job rather than a
+# capability several roles needed.
+#
+# Measured before narrowing rather than after: over 2026-08-18..09-28 exactly two
+# principals called POST /runs. One is the NGS360-SequencersToS3 service account,
+# which still does it daily. The other was a personal API key belonging to an
+# administrator, named after the same job and revoked on 2026-09-18 -- a human
+# doing by hand what the service account now does. No lab_manager holder has ever
+# registered a run, and neither have the other eight service_account holders.
+#
+# So this is the same shape as _DEMUX_OPERATOR and _MANIFEST_OPERATOR, arrived at
+# from the opposite direction: those roles were created because people were being
+# refused something they needed, this one because accounts held something they
+# did not use. Both corrections need the same measurement.
+#
+# Granted alongside service_account rather than replacing it -- run:read and the
+# job writeback still come from there.
+_RUN_REGISTRAR = frozenset({
+    Permission.RUN_CREATE,
+})
+
+# Sample/run association, which is the run-metrics pipeline's job.
+#
+# Found the same way as _RUN_REGISTRAR, and the finding is the same shape twice
+# over: on DELETE /runs/{run_id}/samples across 2026-09-01..29 there were exactly
+# two callers. One is the NGS360-CollectRunMetrics-lambda service account, which
+# clears a run's sample associations before repopulating them and was being
+# recorded as would_deny on all 64 attempts. The other was a personal API key
+# belonging to an administrator, revoked on 2026-09-04 -- again a human doing by
+# hand what the pipeline now does.
+#
+# No lab_manager holder has ever called the route, although lab_manager carries
+# run:associate. That grant is unused, and is left in place here rather than
+# removed as a side effect of this fix.
+#
+# Granted alongside service_account: run:read, run:update and sample:create --
+# the rest of the lambda's flow -- already come from there. This role adds the
+# one permission that was refused.
+_RUN_ASSOCIATOR = frozenset({
+    Permission.RUN_ASSOCIATE,
+})
+
+# Manifest handling is global-only by necessity -- a manifest names an arbitrary
+# S3 URI and no URI-to-project resolver covers it -- so it cannot be expressed as
+# project membership and has to be a global role.
+#
+# Found the same way as demux_operator, by measuring who calls the routes: 15
+# scientists plus one service account were using GET /manifest, POST /manifest and
+# POST /manifest/validate, and `member` holds none of those permissions. Only
+# lab_manager and admin did, and lab_manager carries sixteen permissions beyond
+# member including run:create and project:ingest -- nothing a person uploading a
+# manifest needs.
+_MANIFEST_OPERATOR = frozenset({
+    Permission.MANIFEST_READ,
+    Permission.MANIFEST_UPLOAD,
+    Permission.MANIFEST_VALIDATE,
+})
+
+# GA4GH workflow registration: register a workflow, add versions to it, and
+# deploy a version to an execution backend. Done by one person today, whose only
+# role is `member` -- so all 29 of her requests over 2026-08-19..28 were recorded
+# as would_deny in the dry run and would 403 under enforce.
+#
+# The existing role carrying these is platform_admin, at 32 permissions including
+# setting:update, system:reindex and vendor:delete. Granting it would have handed
+# over thirty permissions with no demonstrated need in order to fix two. Same
+# reasoning as _DEMUX_OPERATOR: grant the capability that was refused.
+#
+# workflow:read comes from `member`, so it is omitted rather than forgotten.
+# workflow:delete is deliberately excluded -- publishing a workflow and destroying
+# one are different privileges, and nobody has needed the latter. That is what
+# workflow_admin is for.
+_WORKFLOW_PUBLISHER = frozenset({
+    Permission.WORKFLOW_CREATE,
+    Permission.WORKFLOW_UPDATE,
+    Permission.WORKFLOW_DEPLOY,
+})
+
+# Every workflow permission, including delete. Derived from the catalog rather
+# than listed, so a new workflow:* permission joins it automatically -- for this
+# role that is the intent, since "owns the workflow catalog outright" should not
+# silently narrow when the catalog grows.
+_WORKFLOW_ADMIN = frozenset(
+    p for p in Permission if str(p).startswith("workflow:")
+)
 
 # --- Project roles --------------------------------------------------------
 # A total order: viewer subset of contributor subset of owner. That is why
@@ -185,6 +353,41 @@ ROLE_DEFINITIONS: dict[str, RoleDefinition] = {
         RoleScope.GLOBAL, "Lab Manager",
         "Sequencing core: registers runs, demultiplexes, ingests vendor deliveries.",
         frozenset(_LAB_MANAGER),
+    ),
+    "demux_operator": RoleDefinition(
+        RoleScope.GLOBAL, "Demux Operator",
+        "May run demultiplexing. Grants nothing else -- see the comment on "
+        "_DEMUX_OPERATOR for why this is not lab_manager.",
+        frozenset(_DEMUX_OPERATOR),
+    ),
+    "workflow_publisher": RoleDefinition(
+        RoleScope.GLOBAL, "Workflow Publisher",
+        "May register workflows, add versions, and deploy them. Cannot delete -- "
+        "see the comment on _WORKFLOW_PUBLISHER for why this is not platform_admin.",
+        frozenset(_WORKFLOW_PUBLISHER),
+    ),
+    "workflow_admin": RoleDefinition(
+        RoleScope.GLOBAL, "Workflow Administrator",
+        "Owns the workflow catalog outright, including deletion.",
+        frozenset(_WORKFLOW_ADMIN),
+    ),
+    "run_registrar": RoleDefinition(
+        RoleScope.GLOBAL, "Run Registrar",
+        "May register sequencing runs. Grants nothing else -- see the comment on "
+        "_RUN_REGISTRAR for why this is not service_account or lab_manager.",
+        frozenset(_RUN_REGISTRAR),
+    ),
+    "run_associator": RoleDefinition(
+        RoleScope.GLOBAL, "Run Associator",
+        "May associate and dissociate samples and runs. Grants nothing else -- "
+        "see the comment on _RUN_ASSOCIATOR for why this is not service_account.",
+        frozenset(_RUN_ASSOCIATOR),
+    ),
+    "manifest_operator": RoleDefinition(
+        RoleScope.GLOBAL, "Manifest Operator",
+        "May read, upload and validate sample manifests. Grants nothing else -- "
+        "see the comment on _MANIFEST_OPERATOR for why this is not lab_manager.",
+        frozenset(_MANIFEST_OPERATOR),
     ),
     "platform_admin": RoleDefinition(
         RoleScope.GLOBAL, "Platform Administrator",

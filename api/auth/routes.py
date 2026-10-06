@@ -418,13 +418,23 @@ def list_api_keys(
 @router.delete(
     "/api-keys/{key_id}",
     status_code=status.HTTP_204_NO_CONTENT,
+    summary="Retire an API key",
 )
 def delete_api_key(
     session: SessionDep,
     current_user: CurrentActiveUser,
     key_id: str,
 ) -> None:
-    """Delete an API key."""
+    """
+    Retire an API key. Equivalent to `POST /api-keys/{key_id}/revoke`.
+
+    The key stops authenticating immediately. The record is kept, with
+    `is_active = false` and `revoked_at` set, so that the retirement stays
+    auditable -- it is not erased. It continues to appear in `GET /api-keys`.
+
+    Idempotent: retiring an already-retired key succeeds and preserves the
+    original `revoked_at`.
+    """
     auth_services.delete_user_api_key(session, current_user, key_id)
 
 

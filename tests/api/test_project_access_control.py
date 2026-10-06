@@ -186,34 +186,36 @@ class TestTheProjectRolesAreOrdered:
         assert response.status_code == 403
         assert "project:manage_members" in response.json()["detail"]
 
-    def test_an_owner_can_manage_its_own_project(
+    def test_an_owner_can_manage_their_own_project_s_members(
         self, session, restricted_client, mine
     ):
         """
-        The self-serve case the project plane exists for.
+        The positive assertion this test was written to become.
 
-        This was the one place a project role did not get what it granted. The
-        membership routes carried the project guard **and** a `CurrentSuperuser`
-        dependency, so the guard allowed -- the access log recorded
-        `rbac_decision: allow` with `scope: project <id>` -- and the superuser
-        check then refused, leaving an owner unable to see their own members.
+        It previously asserted the opposite: the membership routes carried the
+        project guard *and* a `CurrentSuperuser` dependency, so the guard allowed
+        and the flag then refused, and a project owner could not see their own
+        project's members. Its docstring recorded why that was deliberate --
+        "while RBAC_MODE is dry_run a guard only logs, so dropping
+        CurrentSuperuser today would not move the gate from one mechanism to the
+        other, it would remove it".
 
-        That was defensible only while a guard merely logged: dropping the
-        dependency then would have removed the gate rather than moved it, opening
-        membership to every authenticated caller. Enforcement is unconditional
-        now, so the guard *is* the gate and the dependency is gone -- a panel
-        gated on a flag cannot serve a role-based model. `restricted_client`
-        holds no global role whatsoever, so the project grant is doing all the
-        work here.
+        That reasoning was right, and the fix was not to keep the flag but to
+        make the guard hold on its own: `project:manage_members` is now
+        `critical` risk, so it is in ALWAYS_ENFORCE and refused even in dry-run.
+        Project membership *is* the project-level grant plane -- a caller who can
+        add themselves to a project has granted themselves every project-scoped
+        permission on it -- which is the same reasoning that makes `role:manage`
+        critical.
 
-        This test was written as the negative assertion with a note saying it
-        should become this one when the gate came off. It has.
+        So the flag came off, and a project owner now gets what the role says it
+        grants.
         """
         grant_project_role(session, mine, "norole", "project_owner")
         response = restricted_client.get(
             f"/api/v1/projects/{mine.project_id}/members"
         )
-        assert response.status_code == 200
+        assert response.status_code == 200, response.text
 
     def test_a_superuser_can_manage_members(self, superuser_client, session):
         """The counterpart: the gate above is satisfiable, just not by a role."""

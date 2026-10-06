@@ -23,6 +23,7 @@ router = APIRouter(prefix="/settings", tags=["Settings Endpoints"])
     response_model=list[Setting],
     status_code=status.HTTP_200_OK,
     tags=["Settings Endpoints"],
+    dependencies=[Depends(require_permission(Permission.SETTING_READ))],
 )
 def get_settings_by_tag(
     session: SessionDep,
@@ -45,6 +46,7 @@ def get_settings_by_tag(
     response_model=Setting,
     status_code=status.HTTP_200_OK,
     tags=["Settings Endpoints"],
+    dependencies=[Depends(require_permission(Permission.SETTING_READ))],
 )
 def get_setting(session: SessionDep, key: str) -> Setting:
     """

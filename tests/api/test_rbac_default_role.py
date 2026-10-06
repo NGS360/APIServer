@@ -187,14 +187,41 @@ class TestOAuthCreation:
         user = self._sso(seeded, "sso@example.com", "abc123", "ssouser")
         assert _roles_of(seeded, user.username) == ["member"]
 
-    def test_the_very_first_sso_user_also_becomes_admin(self, seeded):
+    def test_the_very_first_sso_user_is_no_longer_made_admin(self, seeded):
         """
-        Documents the interaction with the legacy "first user registered wins"
-        bootstrap rather than papering over it: on an empty database that account
-        is made a superuser, so it picks up `admin` as well. docs/RBAC.md already
-        flags that bootstrap as a privilege-escalation path to be replaced with
-        BOOTSTRAP_ADMIN_USERNAMES.
+        This asserted the opposite until BOOTSTRAP_ADMIN_USERNAMES replaced the
+        "first user registered wins" bootstrap.
+
+        Being first is no longer a claim to superuser. On an empty database that
+        rule handed the first person to reach the login page a credential that
+        short-circuits every permission check -- and it raced, because two
+        concurrent registrations could both see no users.
         """
         user = self._sso(seeded, "first-sso@example.com", "first1", "firstsso")
-        assert user.is_superuser is True
-        assert _roles_of(seeded, user.username) == ["admin", "member"]
+        assert user.is_superuser is False
+        assert _roles_of(seeded, user.username) == ["member"]
+
+    def test_a_listed_username_is_created_as_a_superuser(self, seeded, monkeypatch):
+        """The replacement path: configuration, not arrival order."""
+        from core import config
+
+        monkeypatch.setenv("BOOTSTRAP_ADMIN_USERNAMES", "someoneelse, firstsso ")
+        config.get_settings.cache_clear()
+        try:
+            user = self._sso(seeded, "first-sso@example.com", "first1", "firstsso")
+            assert user.is_superuser is True
+            assert _roles_of(seeded, user.username) == ["admin", "member"]
+        finally:
+            config.get_settings.cache_clear()
+
+    def test_matching_ignores_case_and_surrounding_space(self, seeded, monkeypatch):
+        """Matches how the ownership backfill resolves usernames."""
+        from core import config
+
+        monkeypatch.setenv("BOOTSTRAP_ADMIN_USERNAMES", "  FirstSSO  ")
+        config.get_settings.cache_clear()
+        try:
+            user = self._sso(seeded, "first-sso@example.com", "first1", "firstsso")
+            assert user.is_superuser is True
+        finally:
+            config.get_settings.cache_clear()

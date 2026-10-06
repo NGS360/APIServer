@@ -37,6 +37,18 @@ class Project(SQLModel, table=True):
 
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     created_by: str
+
+    # Downloads are open to any authenticated user unless a project opts out by
+    # setting this. Only then is `file:download` consulted, against the project
+    # plane -- so restriction is expressed by project membership.
+    #
+    # Default-false means the platform's resting posture is permissive and a
+    # project is only as protected as someone actively made it. That is the
+    # deliberate trade recorded in docs/RBAC.md: the previous default-deny model
+    # made every project safe and made one legitimate 33M-request genomics
+    # workload require 66 project grants.
+    download_restricted: bool = Field(default=False)
+
     last_modified: datetime = Field(
         default_factory=lambda: datetime.now(timezone.utc),
         sa_column_kwargs={"onupdate": lambda: datetime.now(timezone.utc)}
@@ -61,6 +73,10 @@ class ProjectUpdate(SQLModel):
     """
     name: str | None = None
     attributes: List[Attribute] | None = None
+    # Guarded by `project:update` like the rest of this model. That is a
+    # project-scoped permission, so restricting a project requires authority
+    # over that project -- project_owner, or a global holder.
+    download_restricted: bool | None = None
 
 
 class ProjectPublic(SQLModel):
@@ -71,6 +87,10 @@ class ProjectPublic(SQLModel):
     last_modified: datetime | None
     data_folder_uri: str | None
     results_folder_uri: str | None
+    # Surfaced deliberately: with an opt-in control, the dangerous state is a
+    # project nobody remembered to restrict, and that is only discoverable if
+    # the flag is visible rather than implied by its absence.
+    download_restricted: bool = False
     attributes: List[Attribute] | None
     sequencing_runs: List[SequencingRunPublic] | None = None
 

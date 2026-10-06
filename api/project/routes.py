@@ -6,7 +6,7 @@ from typing import Literal, List as TypingList
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, status
 from sqlmodel import select
 from core.deps import SessionDep, OpenSearchDep, S3ClientDep
-from api.auth.deps import CurrentActiveUser, CurrentUser, CurrentSuperuser
+from api.auth.deps import CurrentUser
 from api.auth.models import User
 from api.rbac import services as rbac_services
 from api.rbac.models import ProjectMember, ProjectMemberPublic, ProjectMemberRequest, Role
@@ -167,6 +167,7 @@ def search_projects(
     "/search",
     status_code=status.HTTP_200_OK,
     tags=["Project Endpoints"],
+    dependencies=[Depends(require_permission(Permission.SEARCH_QUERY))],
 )
 def reindex_projects(
     session: SessionDep,
@@ -213,6 +214,7 @@ def get_project_by_project_id(
     status_code=status.HTTP_200_OK,
     tags=["Project Endpoints"],
     response_model=ProjectPublic,
+    dependencies=[Depends(require_project_permission(Permission.PROJECT_UPDATE))],
 )
 def update_project(
     session: SessionDep,
@@ -240,6 +242,7 @@ def update_project(
     status_code=status.HTTP_200_OK,
     tags=["Project Endpoints"],
     response_model=ProjectPublic,
+    dependencies=[Depends(require_project_permission(Permission.PROJECT_UPDATE))],
 )
 def patch_project(
     session: SessionDep,
@@ -447,7 +450,6 @@ def delete_sample_from_project(
     session: SessionDep,
     project: ProjectDep,
     sample_id: str,
-    current_user: CurrentSuperuser,
 ) -> None:
     """
     Hard-delete a sample and all its child rows (superuser only).
@@ -468,6 +470,7 @@ def delete_sample_from_project(
     "/{project_id}/samples/{sample_id}",
     tags=["Project Endpoints"],
     response_model=SamplePublic,
+    dependencies=[Depends(require_project_permission(Permission.SAMPLE_UPDATE))],
 )
 def update_sample_in_project(
     session: SessionDep,
@@ -641,7 +644,7 @@ def add_project_member(
     session: SessionDep,
     project: ProjectDep,
     body: ProjectMemberRequest,
-    current_user: CurrentActiveUser,
+    current_user: CurrentUser,
 ) -> list[ProjectMemberPublic]:
     """Add a member, or change an existing member's role."""
     user = rbac_services.get_user_or_404(session, body.username)
@@ -664,6 +667,7 @@ def remove_project_member(
     session: SessionDep,
     project: ProjectDep,
     username: str,
+    current_user: CurrentUser,
 ) -> list[ProjectMemberPublic]:
     user = rbac_services.get_user_or_404(session, username)
     rbac_services.remove_project_member(session, project.id, user)

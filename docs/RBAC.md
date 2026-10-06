@@ -9,7 +9,7 @@ NGS360 today has authentication but effectively no authorization. RBAC provides:
 - **Least privilege**: A closed catalog of `resource:action` permissions, grouped into named roles, replacing the single `is_superuser` boolean
 - **Two grant scopes**: Global roles for platform resources (runs, workflows, vendors, settings) and per-project roles for project-owned data (samples, QC records, files)
 - **Auditable grants**: Every assignment records who granted it, when, and by what mechanism
-- **A safe rollout path**: A dry-run mode that logs denials without enforcing them, so the permission model can be validated against real production traffic before it starts rejecting requests. *(Served its purpose and was removed — see* Enforcement mode *below.)*
+- **A safe rollout path**: A dry-run mode that logs denials without enforcing them, so the permission model can be validated against real production traffic before it starts rejecting requests
 - **Machine identities**: First-class service accounts with narrowly scoped API keys, replacing the current practice of integrations borrowing a human's credentials
 
 ### Current state
@@ -143,7 +143,7 @@ Without a global escape hatch, either demultiplexing breaks or the service accou
 
 The default role holds *global* `project:read`, `sample:read`, `qcrecord:read` and `file:read`. This deliberately preserves today's "any authenticated user can read anything" behaviour while writes become membership-gated.
 
-`file:download` is **not** among them, and the distinction is load-bearing — see *Project-scoped downloads*. Reads stay global; downloading does not, because `has_in_project` short-circuits on a global grant, so a `member` holding global `file:download` made the project check on `GET /files/download-url` vacuous.
+`file:download` is **not** among them, and after the 2026-09-09 policy inversion the reason is sharper than before — see *Downloads: open by default, restricted by exception*. Downloads from an unrestricted project consult no permission at all, so `member` does not need it. And it must not have it: `has_in_project` short-circuits on a global grant (`api/rbac/resolver.py:116`), so a global `file:download` on `member` would satisfy every project restriction for every user. The permission is what *restricted* projects and out-of-bucket URIs are checked against; granting it universally would empty it of meaning.
 
 The alternative — shipping read isolation and enforcement together — means one change that both rejects writes and empties every list view, with no way to separate the two if something goes wrong. Instead, tightening reads later is a **role edit through the admin API**: remove those five permissions from `member`. No deploy, no config flag, no second code path to test, and reversible in one API call. This is the primary reason the design allows global roles to carry project-scopable permissions.
 
@@ -169,6 +169,32 @@ Global roles compose meaningfully — `member` plus `service_account` is a legit
 
 **A note on naming.** The schema already uses `role` as a column name with an unrelated meaning: `FileProject.role` holds values like `"samplesheet"`, and `FileSample.role` holds `"tumor"` / `"normal"`. Throughout this design, an RBAC role is always the `role` table or a `role_id` column. The existing columns are untouched.
 
+### Provenance: `created_by` is a claim, `submitted_by` is a fact
+
+`file.created_by` is client-supplied. Known Gap 2 called that actor-field spoofing and prescribed the obvious fix: once the route is authenticated, overwrite the field from the principal. A branch doing exactly that was opened as [#417](https://github.com/NGS360/APIServer/pull/417) and closed unmerged, because the production data says the premise is wrong.
+
+| | |
+|---|---|
+| `file` rows | 634,353 |
+| rows carrying a `created_by` | 39,459 |
+| claims that resolve to a real account | 39,459 — **none bogus** |
+| distinct people named | 42 |
+| of those 42, holding an API key | **2** |
+| `source` on every attributed row | `NGS360_demux` |
+
+The field is not being abused. It is being used correctly, as an *on behalf of* channel: one demux pipeline, running on one credential, registers files for the scientist who requested the run. Forty of the forty-two people named have no credential of their own, so overwriting `created_by` with the caller would have replaced all of them with a single service key's owner — and `created_by` is the only attribution those 39,459 rows have.
+
+The actual defect was never spoofing. It was that one column was being asked to answer two different questions, and could only ever answer the softer one honestly:
+
+- **`created_by` — who the work was for.** Necessarily a claim, because the person named is usually not the caller. Kept as client input, now validated against `users` and stored in that account's own spelling. Validation is the part that was genuinely missing: it stops the column decaying into free text without taking away the delegation. It rejects nothing that production sends today.
+- **`submitted_by` — who made the call.** Set from the authenticated principal, rejected with 422 if a request tries to supply it. This is the integrity half, and it is purely additive.
+
+Neither field is updatable. `FileUpdate` forbids both: `submitted_by` is derived by definition, and correcting an attribution should be a deliberate, auditable act rather than a field on a PATCH whose documented purpose is fixing a URI.
+
+`submitted_by` is nullable and deliberately **not** backfilled. For rows written before it existed the submitter is genuinely unknown; `source` already records the submitting *system*. Deriving a principal from a system name would put a value nobody asserted into an accountability column, which is worse than a null.
+
+Two things generalise. **An unauthenticated write path cannot be made accountable by tightening the payload** — until `POST /files` carries a guard, `submitted_by` is null for anonymous callers, and that is the honest answer rather than a bug. And **a documented gap can be wrong about its own remedy**: this one had been sitting in the design for weeks, was specific and confident, and would have destroyed real data. What caught it was querying production instead of reasoning from a sample — an earlier read of 40 rows from a single pipeline had suggested `created_by` was universally null.
+
 ## Permission Catalog
 
 57 permissions across 18 resources. **Scope** is `G` for global-only (may not appear in a project role) or `P` for project-scopable (may appear in either plane). **Risk** indicates blast radius, for the benefit of anyone composing a custom role.
@@ -181,7 +207,7 @@ Global roles compose meaningfully — `member` plus `service_account` is a legit
 | `project:create` | G | low | `POST /projects` |
 | `project:update` | P | low | `PUT /projects/{id}`, `PATCH /projects/{id}` |
 | `project:delete` | P | high | *reserved — no route today* |
-| `project:manage_members` | P | medium | `GET/POST/PATCH/DELETE /projects/{id}/members` (new) |
+| `project:manage_members` | P | **critical** | `GET/POST/PATCH/DELETE /projects/{id}/members`. Raised from medium 2026-09-18: project membership *is* the project-level grant plane, so a caller who can add themselves has granted themselves every project-scoped permission on that project. `critical` puts it in `ALWAYS_ENFORCE`, which is what keeps these routes refused while the mode is `dry_run` — they previously leaned on a `CurrentSuperuser` check for that |
 | `project:submit_action` | P | **high** | `POST /projects/{id}/actions/submit` — spends AWS Batch |
 | `project:ingest` | P | **high** | `POST /projects/{id}/ingest` — spends AWS Batch, writes S3 |
 | `sample:read` | P | low | `GET /projects/{id}/samples`, `GET/POST /samples/search` |
@@ -192,7 +218,7 @@ Global roles compose meaningfully — `member` plus `service_account` is a legit
 | `qcrecord:create` | P | low | `POST /qcmetrics` |
 | `qcrecord:delete` | P | medium | `DELETE /qcmetrics/{id}` |
 | `file:read` | P | low | `GET /files`, `/files/{id}`, `/files/{id}/versions` |
-| `file:download` | P | medium | `GET /files/download-url` — checked against the projects the URI resolves to; `GET /files/download` (still unguarded, and therefore still a bypass) |
+| `file:download` | P | medium | `GET /files/download-url` — required only when the resolved project is *restricted*, or when the URI is outside the configured buckets. Not held by `member` — an unrestricted project consults no permission at all, which is what makes it open. `GET /files/download` carries the same guard as of 2026-09-09, so the two routes now agree in every case |
 | `file:create` | P | low | `POST /files`, `POST /files/upload` |
 | `file:update` | P | low | `PATCH /files/{id}` |
 | `file:delete` | P | high | `DELETE /files/{id}` |
@@ -305,10 +331,16 @@ Roles are database rows so that administrators can compose custom ones. The **bu
 
 | Role | Purpose | Permissions |
 |------|---------|-------------|
-| `member` | Default for every authenticated user | `action:read`, `platform:read`, `vendor:read`, `workflow:read`, `pipeline:read`, `run:read`, `job:read`, `job:submit`, `setting:read`, `search:query`, `chat:use`, `user:read`, `project:create`, plus the transitional global reads: `project:read`, `sample:read`, `qcrecord:read`, `file:read`. **Not** `file:download` |
-| `lab_manager` | Sequencing core — registers runs, demultiplexes, ingests vendor deliveries | `member` + `run:create`, `run:update`, `run:associate`, `run:demux`, `manifest:read`, `manifest:upload`, `manifest:validate`, `file:browse`, `file:create`, `file:update`, `sample:create`, `sample:update`, `qcrecord:create`, `project:ingest`, `job:read_all` |
+| `member` | Default for every authenticated user | `action:read`, `platform:read`, `vendor:read`, `workflow:read`, `pipeline:read`, `run:read`, `job:read`, `job:submit`, `setting:read`, `search:query`, `chat:use`, `user:read`, `project:create`, `run:demux`, `run:update`, plus the transitional global reads: `project:read`, `sample:read`, `qcrecord:read`, `file:read`. `run:demux` and `run:update` added 2026-09-28 — see [Demultiplexing became a default](#demultiplexing-became-a-default). **Not** `file:download` — downloads from unrestricted projects consult no permission, and granting it globally would make every project restriction vacuous |
+| `demux_operator` | **Subsumed by `member` as of 2026-09-28** — grants nothing its holders do not already have. Retained, not deleted: `sync_rbac_catalog` only iterates `ROLE_DEFINITIONS`, so removing it from code would orphan the row and its 14 grants rather than clean them up, and it is where the grants should fall back to if `member` is ever tightened | `run:demux`, `run:update` — the samplesheet write and run update are part of the same job; see the worked example below |
+| `manifest_operator` | May read, upload and validate sample manifests | `manifest:read`, `manifest:upload`, `manifest:validate`. Global-only by necessity — a manifest names an arbitrary S3 URI |
+| `run_registrar` | May register sequencing runs, and nothing else | `run:create` — granted alongside `service_account`, which still supplies `run:read` and the job writeback |
+| `run_associator` | May associate and dissociate samples and runs, and nothing else | `run:associate` — granted alongside `service_account`, which still supplies `run:read`, `run:update` and `sample:create` |
+| `lab_manager` | Sequencing core — registers runs, demultiplexes, ingests vendor deliveries | `member` + `run:create`, `run:update`, `run:associate`, `run:demux`, `manifest:read`, `manifest:upload`, `manifest:validate`, `file:browse`, `file:create`, `file:update`, `sample:create`, `sample:update`, `qcrecord:create`, `project:ingest`, `job:read_all`. `run:create` removed 2026-09-28 — five holders, none of whom had ever registered a run; see [Run registration was narrowed to one service](#run-registration-was-narrowed-to-one-service) |
+| `workflow_publisher` | May register workflows, add versions, and deploy them — but not delete | `workflow:create`, `workflow:update`, `workflow:deploy`. `workflow:read` comes from `member` |
+| `workflow_admin` | Owns the workflow catalog outright, including deletion | Every `workflow:*` permission, derived from the catalog so a new one joins automatically |
 | `platform_admin` | Owns the executable catalog and platform configuration | `member` + `platform:create`, `vendor:create`, `vendor:update`, `vendor:delete`, `workflow:create`, `workflow:update`, `workflow:delete`, `workflow:deploy`, `pipeline:create`, `pipeline:update`, `action:validate`, `setting:update`, `system:reindex`, `job:read_all`, `job:update` |
-| `service_account` | Machine writeback — pipeline results and Batch job-status updates only (**not** MCP, which acts as the invoking user) | `project:read`, `run:read`, `run:update`, `sample:read`, `sample:create`, `qcrecord:create`, `file:create`, `file:update`, `job:read_all`, `job:update` |
+| `service_account` | Machine writeback — pipeline results and Batch job-status updates only (**not** MCP, which acts as the invoking user) | `project:read`, `run:read`, `run:create`, `run:update`, `sample:read`, `sample:create`, `sample:update`, `qcrecord:create`, `file:create`, `file:update`, `job:read_all`, `job:update`, `workflow:read`. `run:create` and `sample:update` added 2026-09-12 — the role held each verb's update without its create, or vice versa, which describes no real workflow. `workflow:read` added 2026-09-28 — a writeback identity has to resolve the workflow and version it is recording results for, and a machine account created with `--role service_account` never receives `member`, which is where every human role gets it. `run:create` removed 2026-09-28 and moved to `run_registrar` — nine accounts hold this role, exactly one registers runs |
 | `auditor` | Compliance, QA, read-only agents | Every `*:read` permission, plus `file:download`, `search:query`, `role:read` |
 | `admin` | Platform administrator | `ALL_PERMISSIONS`, recomputed at each sync so new permissions are picked up automatically |
 
@@ -322,9 +354,102 @@ Roles are database rows so that administrators can compose custom ones. The **bu
 
 ### Why this set, and how to evaluate additions
 
+### Sample/run association was separated the same way
+
+On 2026-09-29 `run:associate` was given its own role, `run_associator`, rather than being added to `service_account`.
+
+`NGS360-CollectRunMetrics-lambda` clears a run's sample associations before repopulating them, and was being recorded as `would_deny` on all 64 attempts over the preceding month — 27 of them in the last week, so this was live and ongoing, not historical.
+
+Resolving every caller on `DELETE /runs/{run_id}/samples` produced the same shape as `run:create`, twice over:
+
+- the `NGS360-CollectRunMetrics-lambda` service account, refused throughout; and
+- a personal API key belonging to an administrator, allowed via `admin`, revoked on 2026-09-04 — a human doing by hand what the pipeline now does.
+
+That is the second time a run-related permission turned out to be needed by exactly one machine account, with the only other caller being an admin's personal key since retired. Worth noting as a pattern: where a permission looks like it belongs to a shared machine role, the evidence has so far said it belongs to one specific service.
+
+So `run:associate` was not added to `service_account`, for the reason `run:create` was removed from it — nine accounts hold that role and one needs this permission. The lambda keeps `service_account` for `run:read`, `run:update` and `sample:create`, which is the rest of its flow, and gains `run_associator` for the one permission that was refused.
+
+**`lab_manager` keeps `run:associate` even though no holder has ever called the route.** That grant is unused by the same measurement that condemned `run:create`, and it is deliberately left alone here: removing it is a separate decision rather than a side effect of unblocking a pipeline.
+
+Deployment has the same ordering constraint as `run_registrar` — the role row is created by `sync_rbac_catalog()` at startup, so deploy first, then grant:
+
+```
+POST /api/v1/rbac/users/NGS360-CollectRunMetrics-lambda/roles
+{"role": "run_associator"}
+```
+
+Unlike the `run_registrar` case there is no 403 window to manage: `run:associate` is still in dry-run, so the lambda is being logged rather than refused and has been working throughout. The grant stops the `would_deny` stream, which is what currently blocks graduating the permission.
+
+### Run registration was narrowed to one service
+
+On 2026-09-28 `run:create` was removed from `lab_manager` and `service_account` and moved to a new one-permission role, `run_registrar`.
+
+Measured before narrowing rather than after. Over 2026-08-18..09-28, exactly **two** principals called `POST /runs`:
+
+- the `NGS360-SequencersToS3` service account, which still does it daily; and
+- a personal API key belonging to an administrator, named after the same job, revoked on 2026-09-18 — a human doing by hand what the service account now does.
+
+No `lab_manager` holder has ever registered a run, and neither have the other eight `service_account` holders. So seventeen accounts could register runs and one did.
+
+This is the same shape as `demux_operator` and `manifest_operator`, reached from the opposite direction. Those roles exist because people were being refused something they needed; this one exists because accounts held something they never used. Both corrections require the same measurement, which is the point worth carrying forward: resolve every principal on the route before deciding the role is the right width — in either direction.
+
+**It makes runs an exception to the create/update pairing rule**, and that is deliberate. `service_account` keeps `run:update`. The pairing rule added on 2026-09-12 assumes one identity handles a resource's whole lifecycle, which holds for samples and files — whoever writes a record also corrects it. It does not hold for runs: the role is shared by nine accounts for job and result writeback, and pairing the verbs meant eight machine identities could create runs so that one could. `tests/api/test_rbac_catalog.py::test_run_registration_is_separated_from_run_writeback` pins the exception so that re-adding `run:create` has to argue with a test rather than look like a tidy-up.
+
+Note the ordering constraint for deployment: `sync_rbac_catalog()` creates the `run_registrar` row at startup, so the role does not exist to be granted until the tier has been deployed. Removal and grant therefore cannot be simultaneous — deploy first, then grant, and `POST /runs` returns 403 for the registrar accounts in between.
+
+### Demultiplexing became a default
+
+On 2026-09-28 `run:demux` and `run:update` moved into `member`, which makes demultiplexing available to every authenticated user, existing accounts included — `sync_rbac_catalog` reconciles `member`'s permission set on restart, so all 249 holders receive them at the next deploy rather than through a backfill.
+
+This reverses an earlier decision, and the reversal is recorded rather than quietly applied because **the reasoning that kept `run:demux` out was never refuted**. Demux spends compute and deletes the run's QC records; it remains the only `high`-risk run permission, and the catalog description is unchanged. What changed is the judgement about who should be trusted with it, not the assessment of what it does.
+
+The evidence:
+
+- Demux was already being done by **eleven different people in a single week**, with different jobs and no team in common — the finding that created `demux_operator` in the first place.
+- `demux_operator` had grown to **fourteen holders**, every one of them added reactively on request, and **no request was ever refused**.
+- A permission that is granted to everyone who asks for it is not a restricted permission. It is an unrestricted one with a ticket queue in front of it, and the queue's only real effect is that the eleventh person waits.
+- It is consistent with the project-level stance already adopted: actions are permissible except on projects explicitly marked restricted.
+
+`run:update` was included deliberately, not as a convenience. It is the other half of the same flow — the samplesheet edit that precedes a demux submission — and granting demux without it reproduces the 2026-09-11 incident exactly, where ten of the eleven operators could submit a demux but not prepare one.
+
+What this does **not** change: `file:download` stays out of `member`, project restrictions still apply, and `run:create` and `run:associate` are still role-gated. Demux is now open; registering and re-associating runs is not.
+
 `member` plus `admin` alone would reproduce today's problem with extra steps: every run registration, workflow alias change, and settings edit funnelling through the same two people. `service_account` must be separate from any human role because it needs `job:update` — the ability to write another user's job status, which no human role should hold and which cannot be expressed as "the owner can update it", since the AWS Batch poller is not the owner.
 
-The rule for future requests: **a new global role is justified only if it adds a write permission on a global (non-project) resource.** Personas that differ only in *which projects* they touch — bioinformatician, PI, sequencing tech, external collaborator — are already expressed by project membership. Adding a global role per persona would re-implement project scoping in the global plane, which is exactly what this design avoids. Requests like "contributor without delete" are real, and they are served by custom roles, which is the reason roles are database rows.
+The rule for future requests: **a new global role is justified only if it adds a write permission on a global (non-project) resource.**
+
+**Worked example, 2026-09-03 — `demux_operator`.** Demultiplexing was being attempted by eleven people over one week, with different jobs and no single team among them. The obvious answer was `lab_manager`, whose description already says "demultiplexes". That was wrong, and why is worth keeping:
+
+> `lab_manager` carries **global** `file:download`, and `has_in_project` short-circuits on a global grant. Granting it would have exempted eleven people from project-scoped downloads — days after that scoping shipped — as a side effect of a decision about demux.
+>
+> That specific consequence is now moot: downloads became open by default on 2026-09-09, and `member` holds `file:download` again. The reasoning is kept because it is still correct for *restricted* projects, and because the general lesson does not depend on it.
+
+So the role holds `run:demux` and nothing else. `member` already provides `run:read`, `job:submit` and `job:read`, which is the rest of the flow, so one permission is *sufficient* rather than merely minimal. It qualifies under the rule because `run:demux` is a write on a global resource, and it is a strict subset of `lab_manager`, so genuine sequencing-core staff still get demux from that role and nobody needs both.
+
+The general lesson: **check what else an off-the-shelf role carries before granting it for one capability.** A role's description tells you what it is *for*; only its permission set tells you what it *does*.
+
+**Third worked example, 2026-09-11 — `demux_operator` was too narrow, and `manifest_operator`.** Both found by the same method, and the first one corrects this document.
+
+`demux_operator` shipped holding `run:demux` and nothing else, described here as "one permission wide by design rather than by omission". That was wrong. Preparing the next route closure resolved every caller on every route in the awaiting set, and **ten of the eleven demux operators held nothing for `POST /runs/{id}/samplesheet` or `PUT /runs/{id}`** — routes they use as part of the same job. `run:update` is not project-scopable, so project membership could not have covered it either. They would have received 403s the moment those routes were guarded.
+
+So the guard against over-granting cuts both ways, and the lesson is narrower than "prefer minimal roles": **minimal is only correct if you measured the whole flow.** The check that catches both failures is the same one — resolve every observed caller on every route the capability touches, not only the route that prompted the request. `demux_operator` is now two permissions and still a strict subset of `lab_manager`, which is what stops the sequencing core needing both.
+
+`manifest_operator` is the ordinary case: 15 scientists and one service account were using `GET /manifest`, `POST /manifest` and `POST /manifest/validate`, and `member` holds none of those. Only `lab_manager` and `admin` did, at sixteen permissions beyond `member` including `run:create` and `project:ingest` — nothing a person uploading a manifest needs. `manifest:*` is global-only by necessity, since a manifest names an arbitrary S3 URI and no resolver maps it to a project, so this could not have been project membership.
+
+**Second worked example, 2026-09-06 — `workflow_publisher` and `workflow_admin`.** The same shape, found the same way. `POST /workflows`, `POST /workflows/{id}/versions` and `POST /workflows/{id}/versions/{v}/deployments` had exactly one caller in 30 days of production, on a personal API key whose only role is `member`. All 29 requests returned `201` — and all 29 were recorded as `would_deny`, on `workflow:create` (15) and `workflow:deploy` (14). They were succeeding only because the mode is `dry_run`; under `enforce` every one of them is a 403. That is a Phase 1 blocker with a name attached, not an unidentified caller.
+
+The off-the-shelf answer was `platform_admin`, which carries these permissions — along with **thirty others**, including `setting:update`, `system:reindex` and `vendor:delete`. Thirty permissions with no demonstrated need, to fix two.
+
+So two roles instead, splitting a privilege that `platform_admin` conflates:
+
+- **`workflow_publisher`** — `workflow:create`, `workflow:update`, `workflow:deploy`. Publishing a workflow and destroying one are different privileges; `workflow:delete` never appeared among the refusals and stays out until it does. `workflow:read` is omitted because `member` already grants it.
+- **`workflow_admin`** — every `workflow:*` permission, **derived from the catalog rather than enumerated**. For a role whose stated scope is "owns the workflow catalog outright", silently narrowing when a new `workflow:*` permission is added would be the bug, so it is computed the way `admin` is.
+
+Both qualify under the rule: workflow writes are on a global resource. `workflow_publisher` is a strict subset of `workflow_admin`, which is a subset of `platform_admin`, so nobody needs two of them.
+
+Note what made this findable at all: the dry-run decision log names the principal, the permission and the count, so the grant could be sized from what was actually refused rather than from what a role was called. **That is the argument for staying in `dry_run` until the `would_deny` set is empty** — see [Enforcement mode](#enforcement-mode).
+
+**The roster is now pinned by a test.** Adding or removing a builtin role fails `test_the_role_roster_is_pinned`, and a global role that adds only reads fails `test_every_global_role_beyond_member_adds_a_write`. Neither guard existed until a role was added and nothing noticed — route counts had been pinned since Phase 4c, but the rule above was unenforced. Personas that differ only in *which projects* they touch — bioinformatician, PI, sequencing tech, external collaborator — are already expressed by project membership. Adding a global role per persona would re-implement project scoping in the global plane, which is exactly what this design avoids. Requests like "contributor without delete" are real, and they are served by custom roles, which is the reason roles are database rows.
 
 The three project roles are the minimum lattice separating *see*, *change*, and *control who sees and changes*. Fewer collapses two of those; more is site policy rather than platform policy.
 
@@ -430,6 +555,12 @@ There is no precedence between the global and project planes because there are n
 **New users are auto-granted `member`.** A brand-new corporate-SSO user landing on a wall of 403s generates one support ticket per user. The grant happens at both creation sites — `register_user` (`api/auth/services.py`) and `find_or_create_oauth_user` (`api/auth/oauth2_service.py`) — through a single shared `assign_default_roles()`, with the role name read from `DEFAULT_USER_ROLE` (default `member`; empty string disables). `member` is deliberately harmless: it can read catalogs and create its own projects.
 
 **`POST /projects` grants the creator `project_owner` in the same transaction as the project insert.** Without this, a user creates a project they immediately cannot administer. This applies equally to project creation via MCP.
+
+> **This requirement went unimplemented until 2026-08-29, and the gap is worth recording.** `create_project` set `created_by` and inserted no membership row. Because the ownership backfill (`c3a81d47e56f`) covered every project that existed when it ran, only projects created *afterwards* were affected — and they had **no members at all**, not even their creator. Nothing failed, because nothing was being enforced.
+>
+> It surfaced in the first clean production dry-run window, as the largest single source of `would_deny` from a real user: somebody downloading FASTQs out of a project created two days earlier, refused because nobody was a member of it. `f7a2c9e14b60` backfills the gap.
+>
+> Two things generalise from it. **A documented requirement is not an implemented one** — the design said this plainly for weeks and the code never did it. And **dry-run found it, which is what dry-run is for**: under `enforce` this would have arrived as a user unable to reach their own data, and the population was growing with every project created.
 
 **`is_superuser` remains outside the role system.** It is break-glass: if a bad `role:manage` edit strips `role:manage` from `admin`, superusers are the way back in. It is set only via `BOOTSTRAP_ADMIN_USERNAMES` or an explicit `user:manage` operation, never used for routine access, and `GET /auth/me` surfaces both it and the user's roles so nobody has to wonder why a permission appears to work. Startup logs a warning if the superuser count exceeds a configured threshold.
 
@@ -581,38 +712,93 @@ Four things make this safe rather than a special case that rots:
 - **A dependency may declare the same body model as the handler.** FastAPI parses it once, the handler still receives it, and the OpenAPI `requestBody` stays a `$ref` to `BatchJobUpdate` — so the generated frontend client does not move and no consumer has to change.
 - **The field set is matched against `model_dump(exclude_unset=True)`, which is exactly what `update_batch_job` persists.** The check cannot drift from the write, and naming a writeback field requires the permission even when the value sent is `null`.
 - **The stricter requirement wins on a mixed payload**, or adding `viewed` to a body becomes a way to downgrade the check.
-- **It goes through `decide()`.** A bespoke guard that enforced correctly but skipped the recorder would be invisible to the access log and the deny-rate alarms — which is how a refusal gets noticed at all. Both permissions are tagged on the closure so route introspection sees both branches rather than whichever one was hardcoded.
+- **It goes through `decide()`.** A bespoke guard that enforced correctly but skipped the recorder would be invisible to the dry-run data and the deny-rate alarms — the instrument the whole rollout is steered by. Both permissions are tagged on the closure so route introspection sees both branches rather than whichever one was hardcoded.
 
 The alternative — splitting `viewed` onto its own route — is cleaner in isolation but needs a frontend change and a client regeneration to land before the API can enforce, which trades a self-contained change for a cross-repo sequencing dependency. Worth doing if a third operation ever appears on this route.
 
-### Project-scoped downloads
+### Downloads: open by default, restricted by exception
 
-The requirement: a caller with no permission on a project must not be able to download its files. That was **not** what the system did — `GET /files/download-url` was guarded on the global plane and `member` held `file:download`, so any authenticated user could download any file in the product by URI.
+**Policy decision, 2026-09-09.** Project data is open to any authenticated user. A project may be *explicitly* restricted, and only then does a download require permission on that project. Absence of a restriction is permission.
 
-Scoping it needs a URI resolved to a project, which an earlier revision of this document said was impossible. It was not: `fileproject`, `filesample` and `filesequencingrun` all exist. `api/files/scope.py` uses them.
+This inverts what shipped in #412/#413, which required project membership for every download. That model was built to satisfy "a caller with no permission on a project must not be able to download its files" — a requirement now withdrawn. It is worth being blunt about what changed and why, because the code still contains the machinery for both.
 
-**Two strategies, and the order between them is the policy.**
+**What the measurement showed.** The default-deny model was never exercised at scale, and the traffic that would have hit it first was not a collaborator being correctly refused — it was a genomics workload reading its own results. One caller, htslib across ~180 cluster nodes, generated **32,888,177** download requests in 30 days across **66 distinct projects**, holding `member` and no project memberships at all. Under default-deny, moving that client to the guarded route would have refused ~1.5M requests a day. Sixty-six memberships, topped up as the workload walked its project list, would have been project membership used to mean "reads everything" — which is not what membership means.
+
+So the rule is now:
+
+```
+download(caller, uri):
+  1. caller is not authenticated                      -> DENY
+  2. project = resolve(uri); project is unrestricted  -> ALLOW, no permission consulted
+  3. project is restricted                            -> require file:download in that project
+  4. unresolved, but inside a registered run folder   -> ALLOW, no permission consulted
+  5. unresolved otherwise                             -> require global file:download
+```
+
+Step 4 was added 2026-10-06; see [Run folders are open to authenticated callers](#run-folders-are-open-to-authenticated-callers). It sits *after* project resolution on purpose.
+
+**Authentication is still required** (step 1). "Open" means open to users of the platform, not to the internet. This is the one part of the previous model kept deliberately, and it needs an explicit test, because the natural way to write step 3 — return early before consulting anything — drops it silently.
+
+**`member` must NOT be given global `file:download`.** An earlier draft of this section said it would regain it. That was wrong, and the error is instructive: `has_in_project` returns true on a *global* grant (`api/rbac/resolver.py:116`), so if every user held `file:download` globally, step 4 would pass for everyone and restriction would be unenforceable — the feature would look implemented and do nothing. Step 3 therefore consults **no permission at all**; that is what makes unrestricted projects open, and it is why the permission can stay off `member`.
+
+So `file:download` now means something narrower and more precise than before: *may download from a restricted project, or from outside any project*. `project_viewer` and above carry it on the project plane, which makes a restricted project's members its allowlist. `lab_manager`, `auditor`, `admin` and superusers carry it globally, which is the intended cross-project escape hatch — and the reason a restriction cannot be enforced against them.
+
+**Step 5 is not a project rule, and it is the load-bearing one.** It is also *unchanged* from the previous model — the only thing the inversion touches is steps 3 and 4. `generate_presigned_url` signs whatever bucket and key it is given — there is no allowlist — so the endpoint mints credentials for any object the API's own IAM role can read. Under default-deny, the "unresolved URI needs global `file:download`" fallback was, incidentally, the only thing keeping that from being an arbitrary-S3-read proxy for ordinary users. Default-open removes that incidental protection, so the constraint has to become explicit. A URI in an unrelated bucket is not a project, so the open-by-default policy does not speak to it: it stays privileged. **This is the part of the change that must not be implemented as "unresolved therefore allow".**
+
+**The resolver survives unchanged.** `api/files/scope.py` is still how a URI becomes a project — that work is not wasted, it just answers a different question now. Previously: "which project must the caller belong to?" Now: "which project's restriction applies?" The ordering rationale is unchanged and still worth keeping:
 
 | Association | Resolves to | Why |
 |---|---|---|
 | `fileproject` | those projects | The file's own project. Strict — no widening |
 | `filesample` | the sample's project | A sample belongs to exactly one project |
-| `filesequencingrun` | **every** project the run touches | Permissive, by decision |
+| `filesequencingrun` | **every** project the run touches | Permissive: a flowcell is a shared artifact |
+| path inference | the project id in the URI, inside a bucket we own | Pipeline output, never registered as a `File` row |
+| run folder | *nothing* — returns open-to-authenticated | Flowcell contents, where no project resolution exists to be had. Tried last |
 
-Run files are permissive because a flowcell is a shared artifact: demux statistics and samplesheets belong to the run rather than to one of the projects on it, and requiring a separate grant would produce one request per person per flowcell. The reach is the run's projects, not everyone — a caller who is a member of no project on the run is still refused.
+Direct associations are tried before the run, so a file both in a project and on a run resolves strictly — `test_a_project_association_wins_over_the_run` catches the regression. Path inference runs last, requires a whole path segment matching a project that exists, and only inside `DATA_BUCKET_URI` or `RESULTS_BUCKET_URI`.
 
-**Direct associations are tried first, and that ordering is the policy rather than an implementation detail.** A file both in a project and on a run resolves *strictly*, through its project. Letting the run path widen it would silently convert the strict case into the permissive one, which is the specific regression `test_a_project_association_wins_over_the_run` exists to catch.
+**A file resolving to two projects does not occur, and the design does not handle it.** Measured in production: 0 of 52,431 project-associated files carry more than one `fileproject` row; 0 files reach multiple projects through `filesample`; and the permissive run path — built for exactly this case — has **0 files flowing through it**, because every run-associated file also carries a project or sample association and the strict paths win. 25 runs do span multiple projects, but no file resolves through them. The schema permits the case (`fileproject` is a many-to-many with nothing forbidding a second row) so if it ever appears, the safe rule is most-restrictive-wins: any restricted project in the resolved set requires permission on it. Not implemented, because building a conflict rule for a case with zero instances is speculation.
 
-**A URI resolving to nothing falls back to the global `file:download` permission.** "This file belongs to no project" is not evidence of permission, so `member` — which no longer holds it — is refused; `lab_manager`, `auditor`, `admin` and superusers do hold it, so cross-project operation over raw storage still works. `has_in_project` honours a global grant, which is why those roles are unaffected by any of the above. That set is small on purpose and asserted as a closed set in the tests.
+**What restriction means, and what it costs.** Restriction is opt-in per project, so the default posture of the platform is now permissive and the security of any given project depends on someone having actively marked it. That is a real trade and it is the point of the decision: the previous model made every project secure and made routine science require 66 grants. The mitigation is that restriction must be *visible* — a restricted project should be evident in the UI and in `GET /projects/{id}`, so "nobody remembered to restrict it" is a discoverable state rather than a silent one.
 
-`lab_manager` needed `file:download` restored explicitly after it left `member`, since it derives from it. Without that, the sequencing core could browse and upload but not download, which is not a coherent role.
+**Consequences of the inversion, stated plainly:**
 
-**The control is incomplete while `GET /files/download` stays open.** That route answers the same question with no guard at all, so every refusal above is walkable around by changing the URL. It closes when the compute fleet on it migrates — until then this is defence in depth, not a boundary, and `TestTheOldRouteIsTheBypass` asserts the bypass so the dependency is visible in CI rather than only in review.
+- The 679 `would_deny` on `file:download` recorded over 30 days — 38 distinct principals — become allows. None of them were ever refused in practice, because `RBAC_MODE` is `dry_run`.
+- `member` gains nothing. Step 3 consults no permission, so open downloads need no grant — which is also what makes the out-of-bucket protection in step 2 survive the inversion for free. `lab_manager`'s explicit `file:download`, restored when the permission left `member`, stays necessary.
+- **No service account is needed for the download fleet.** An earlier revision of this section said one would be, and required global `file:download` for it. The credential in question is a personal token by decision, and under the new rule it needs no grant at all.
+- **Reads were already unaffected** and remain so. `file:read`, `project:read`, `sample:read`, `qcrecord:read` are global.
+- **`GET /files/download` is no longer a bypass at all.** It was guarded in place on 2026-09-09 — same dependency, unchanged 307-to-S3 response — so the two routes agree in every case, including anonymous callers and restricted projects. This is what makes a restriction actually enforceable; while that route was open, restriction was the only control protecting the data and it could be walked around by changing the URL. `TestTheOldRouteIsTheBypass` is inverted rather than narrowed, as its own docstring asked.
 
-Two consequences worth stating:
+**Implemented** by `project.download_restricted` (migration `c9f4b7e28a13`), the rework of `require_file_download`, and `tests/api/test_file_download_scope.py`. Seven tests there asserted the withdrawn requirement and were rewritten rather than preserved.
 
-- **The download fleet's service account will need *global* `file:download`**, not project memberships — it reads across dozens of projects. That deliberately exempts it from project scoping, which is the documented rationale for global roles carrying project-scopable permissions.
-- **Reads are unaffected.** `file:read`, `project:read`, `sample:read` and `qcrecord:read` stay global. A user can still *see* that a file exists in a project they are not on; they cannot fetch its bytes.
+Still outstanding, and both are defence in depth rather than the policy: an explicit bucket allowlist inside `generate_presigned_url`, so signing is constrained even when authorization has already passed; and surfacing restriction in the UI, since with an opt-in control the dangerous state is a project nobody remembered to restrict.
+
+
+### Run folders are open to authenticated callers
+
+**Policy decision, 2026-10-06.** Any file inside a registered sequencing run's folder is downloadable by any authenticated caller, with no project resolved and no permission consulted.
+
+**What prompted it.** `file:download` was the largest remaining source of `would_deny` in the dry run — 262 events from 35 principals over 28 days, roughly 50 a week. With **zero of 11,156 projects** setting `download_restricted`, the restricted branch was unreachable, so every one of those refusals was the unresolved branch: a URI that mapped to no project, requiring a global grant that ordinary users do not have.
+
+The refused URIs were demux QC reports — `laneBarcode.html`, `Stats.json`, `DemultiplexingStats.xml`, `SampleSheet.csv` — requested from the run page, which offers the run folder for browsing. Routine lab work, refused.
+
+**Why not fix it through resolution.** Two options were worked up in [FILE_REGISTRATION.md](FILE_REGISTRATION.md): have pipelines register their artifacts against the run, or infer the run from the path. Both end in the same join — run → samples → projects — and that join was measured:
+
+| Run age | Runs | Reaching a project |
+|---|---|---|
+| last 30 days | 46 | 48% |
+| last 90 days | 172 | 56% |
+| all time | 6,712 | 3% |
+
+Neither option could cover more than about half of recent run traffic. Project resolution cannot carry this case, so the rule stopped depending on it. (Separately, `filesequencingrun` held **zero rows platform-wide** — the permissive run fallback documented above has never resolved anything in production. Registration remains worth doing, but it was never going to be the fix here.)
+
+**The rule.** A URI's parent prefixes are matched against `sequencingrun.run_folder_uri`. Registration is the boundary: the prefix must be a folder the platform itself recorded when it ingested the run, so an arbitrary bucket and key still falls through to step 5. No bucket allowlist is involved — a registered run folder is a stronger statement than a bucket prefix, and it covers ONT and Illumina layouts without special-casing either. Prefixes are cut at segment boundaries so a sibling folder cannot inherit a run's opening by sharing its name as a prefix.
+
+**It opens raw base calls, and that was the choice made.** A run folder holds `Data/Intensities/BaseCalls/**.cbcl` next to the QC reports, and cbcl decodes into reads — so this opens instrument-level sequence data to every platform user. The narrower option was an allowlist of report subpaths (`Reports/`, `Stats/`, `InterOp/`, the XMLs, the sample sheets), which covered **100% of the observed traffic**. The whole folder was chosen instead, on the grounds that it matches what the run page already offers and leaves no allowlist to maintain. `test_raw_base_calls_are_included` pins it so the cost is visible in the test suite rather than discovered later.
+
+**Ordering is what keeps `download_restricted` alive.** The opening is evaluated only after every project-resolving strategy has failed. A file that is both associated with a restricted project and sitting under a run folder resolves strictly, through the project, and stays refused. Checking the run folder first would have made restriction unenforceable for precisely the files most likely to warrant it. `test_a_restricted_project_still_wins` pins the ordering.
+
+**Measured effect.** Replaying 28 days of real download URIs through the new resolver against the production database: 38 requests move from refused to open, 1,271 continue to resolve to a project, and **83 remain refused**. Those 83 are a different family — vendor inbound buckets of the form `.../incoming/<project-id>/...` whose buckets are not in `DATA_BUCKET_URI`/`RESULTS_BUCKET_URI`, so path inference does not reach them. They carry project ids and would resolve if those buckets were recognised, which is the next thing to look at and is not addressed here.
 
 ### List endpoints filter rows; they do not return 403
 
@@ -659,7 +845,19 @@ user_filter = None if authz.has(Permission.JOB_READ_ALL) else authz.username
 
 ## Bootstrap and Administration
 
-### Replacing "first user registered wins"
+### Replacing "first user registered wins" *(done 2026-09-01)*
+
+Implemented as `BOOTSTRAP_ADMIN_USERNAMES`, with `scripts/promote_superuser.py` as the path for accounts that already exist.
+
+Three details are the design:
+
+- **Creation only.** Adding a username later does not promote an existing account on next login. A configuration change should not silently grant superuser to someone who already holds a session.
+- **Empty means nobody.** There is deliberately no fallback to first-user-wins, because a fallback that restores the unsafe behaviour whenever the variable is unset is the same bug with an extra step. The consequence is that a fresh deployment has no administrator until one is promoted — which is why the script exists.
+- **One function, both sites.** `register_user` and `find_or_create_oauth_user` each carried their own copy of the old rule. They now call `is_bootstrap_admin`; a security decision duplicated in two files is one that will eventually differ between them, which is how the old rule survived in two copies.
+
+`promote_superuser.py` refuses to remove the last superuser without `--force`, because nothing else can grant it back: the admin API is itself guarded by `CurrentSuperuser`, so a database with no superuser cannot produce one through the API. That script is also the only supported way to take the flag *off* someone, which matters for offboarding.
+
+
 
 The current bootstrap grants `is_superuser` to whoever registers first, and is duplicated at `api/auth/services.py:132-137` and `api/auth/oauth2_service.py:463-468`. It has three defects:
 
@@ -676,7 +874,7 @@ New computed fields in `core/config.py`, following the established `_get_config_
 | Setting | Default | Purpose |
 |---------|---------|---------|
 | `ENVIRONMENT` | `dev` | `dev`, `staging`, or `prod`. **Does not exist today** — tiers are currently distinguished only by which Elastic Beanstalk environment is deployed to. Nothing else here can be tier-gated until it exists. |
-| ~~`RBAC_MODE`~~ | — | **Removed.** Enforcement is unconditional; see *Enforcement mode* below. |
+| `RBAC_MODE` | `dry_run`, then `enforce` | `off`, `dry_run`, or `enforce`. See below. |
 | `DEFAULT_USER_ROLE` | `member` | Role auto-granted at user creation; empty disables |
 | `BOOTSTRAP_ADMIN_USERNAMES` | *(empty)* | Comma-separated usernames granted `admin` + `is_superuser` at creation |
 
@@ -692,21 +890,18 @@ New router `api/rbac/routes.py` at `/api/v1/rbac`:
 | GET | `/rbac/roles/{name}` | `role:read` |
 | PATCH | `/rbac/roles/{name}` | `role:manage` — permission set only; builtin roles reject rename and scope change |
 | DELETE | `/rbac/roles/{name}` | `role:manage` — `409` if builtin or if assignments exist |
-| GET | `/rbac/users` | `role:read` — the user roster: status flags and global roles, paginated, filterable on name, role and status |
 | GET | `/rbac/users/{username}/roles` | `role:read` |
 | POST | `/rbac/users/{username}/roles` | `role:manage` |
 | DELETE | `/rbac/users/{username}/roles/{role_name}` | `role:manage` |
+| GET | `/rbac/users` | `role:read` — the user roster: status flags and global roles, paginated, filterable on name, role and status |
 | GET | `/rbac/users/{username}/access` | `role:read` — both grant planes for one user, including project memberships |
-
-And on the user router, because it mutates the user rather than a grant:
-
-| Method | Path | Permission |
-|--------|------|------------|
-| PATCH | `/users/{username}` | `user:manage` **and** superuser — `is_active`, `is_verified`, `is_superuser`, each optional |
 
 `GET /rbac/users` exists rather than reusing `GET /users/search` because those are two different endpoints wearing the same name. Search backs the user *picker*: it may answer from LDAP, it requires a query of at least two characters, and it filters to `is_active`. All three are right for choosing somebody to grant a role to, and all three are wrong for administering accounts — the deactivated account is the one the administrator came to find.
 
-`PATCH /users/{username}` is what `user:manage` describes. Until it existed the permission was in the catalog and in the `admin` role while granting nothing. Note that both `is_active` and `is_verified` are required by `get_current_active_user`, so clearing either is an account lockout, and the two lockouts that cannot be undone through the API are refused: the last superuser who can still sign in, and the last non-superuser holder of `role:manage`. That second one matters because deactivation would otherwise be a trivial way around the guard on `DELETE /rbac/users/{username}/roles/{role_name}`.
+Both take `role:read` rather than `user:read`: the latter is the directory-search permission every `member` holds, and it does not describe reading the whole roster's status flags and grants.
+
+`GET /rbac/me` carries the global plane only. Project-scoped permissions are not inlined there — with a five-figure project count the payload would be unbounded — so `GET /projects/{project_id}` carries a per-caller `permissions` list for the project in hand instead. It is `None` when the request was anonymous and `[]` when a real caller was evaluated and holds nothing, which are different facts.
+
 
 Project membership lives on the project router so that owners can self-serve:
 
@@ -755,18 +950,11 @@ Phase 1 — closing the 73 remaining open routes — is the highest-value securi
 | **1c** | Close remaining writes; stop honouring client-supplied `created_by`. **First closure landed: `PUT /jobs/{job_id}`** — see *Closing PUT /jobs/{job_id}* below | **Yes** | As above |
 | **1d** | Close reads | **Yes** | CI asserts every route not in `PUBLIC_ROUTES` returns 401 unauthenticated; *The criterion for closing a route* passes over 7 days |
 | **2** | RBAC schema, catalog seeding, resolver, `/auth/me` permission fields. **No route behaviour change** | No | Catalog present in all three tiers; resolution-matrix test passes; the diff touches no route's authorization |
-| **3** | Membership backfill; admin API guarded by ~~the existing `CurrentSuperuser`~~ **its own permissions** (see *Access control is gated by permission, not by superuser* below) | No | Admins can grant and revoke; the "projects with no member" report is empty or explicitly signed off |
+| **3** | Membership backfill; admin API guarded by the existing `CurrentSuperuser` (no chicken-and-egg) | No | Admins can grant and revoke; the "projects with no member" report is empty or explicitly signed off |
 | **4** | `require_permission` wired onto routes with `RBAC_MODE=dry_run` | No | 14 days in production dry-run, with every distinct `(principal, permission, route)` denial either resolved by a grant or explicitly accepted |
-| **4b** | ~~Flip the mode~~ **Delete the mode.** `api/rbac/mode.py` and `RBAC_MODE` removed; guards enforce unconditionally. Ships with the admin UI, after the Phase 4 window closed | **Yes** | Phase 4's denial punch list is empty; `tests/api/test_rbac_enforcement.py` passes |
-| ~~**5**~~ | ~~`RBAC_MODE=enforce`, dev → staging → prod~~ — **subsumed by 4b**; there is no mode to flip | **Yes** | 30 days in production with no rollback |
+| **5** | `RBAC_MODE=enforce`, dev → staging → prod | **Yes** | 30 days in production enforce with no rollback |
 | **6** | Row-level read filtering and pagination | **Yes** | Pagination tests pass; list totals reflect membership |
 | **7** | Frontend permission gating, MCP 403 handling, access reporting | No | — |
-
-**Access control is gated by permission, not by superuser.** The admin API, the project membership routes, `PATCH /users/{username}` and `PUT /settings/{key}` were originally given a `CurrentSuperuser` dependency *in addition to* their `require_permission` guard, on the reasoning that dry-run allows what it would otherwise refuse and the grant plane should not be open for the length of the rollout. That reasoning was right about the risk and wrong about the remedy: a panel gated on being a superuser cannot serve the roles it exists to administer, so an `auditor` (who holds `role:read`) or a `platform_admin` (who holds `setting:update`) was refused by every route their role names, and the frontend's permission-based gating offered them controls that answered 403.
-
-Both halves are now gone — the dependency *and* the dry-run window it was compensating for. `require_permission` is the whole guard, and it refuses unconditionally. The sequencing that made this possible is worth recording, because it is the reason no compensating mechanism was needed: the dry-run window ran on the release *before* this one, against the pre-existing routes that had real callers to discover. The admin API has no legacy callers at all, so it never needed observing — only enforcing. Merging it after the window closed means it could be enforced from its first request.
-
-The break-glass flag keeps its extra condition: setting `is_superuser` requires `user:manage` **and** being a superuser. That check lives on the mutation in `api/rbac/services.py`, not on the route, because the rule belongs to the change rather than to one way of reaching it. `TestSuperuserFlagNeedsMoreThanUserManage` pins it, and `user-flags-card.tsx` mirrors it in the UI so the switch is disabled rather than offered-and-refused.
 
 **Phase 0 is not optional.** There is no request-logging middleware today, and therefore no inventory of who calls the 73 remaining open routes. Skipping it means discovering consumers from a production outage. It uses `optional_current_user` (already present at `api/auth/deps.py:163`), which returns `None` rather than raising — zero behaviour change, but the caller's identity becomes available for logging.
 
@@ -789,11 +977,13 @@ Observations that change the plan:
 - **The Batch event Lambda writes job status**, and its traffic did not appear in the first two-hour sample at all. That is the concrete argument for the seven-day window: periodic callers are invisible in short ones.
 - **Browsers made anonymous calls**, concentrated on `files/download`. Measured over six days in production: 19 distinct browser IPs, all anonymous. That is not a missing service account and cannot be fixed by issuing one.
 
-  `GET /files/download` answers with a **307 to a presigned S3 URL**, so the UI uses it as a plain link. A browser following a link cannot attach an `Authorization` header, which means the route cannot be given a permission guard without returning 401 to every download in the product -- and no authorization setting could have softened that, because authentication is resolved before any permission check.
+  `GET /files/download` answers with a **307 to a presigned S3 URL**, and the UI used to use it as a plain link. A browser following a link cannot attach an `Authorization` header, so for as long as that was the product's download path the route could not be guarded without returning 401 to every download -- and `RBAC_MODE=dry_run` does not soften that, because authentication is resolved before any mode check.
 
-  The fix is `GET /files/download-url`, which returns the same URL as JSON and *is* guarded. It was originally guarded on the global plane, on the grounds that the parameter is an arbitrary S3 URI and nothing maps a URI to a project. **That was wrong** — `fileproject`, `filesample` and `filesequencingrun` all exist, so the mapping was available all along; it is now used, and the guard is per project (see *Project-scoped downloads*). `file:browse` remains genuinely global-only, because a browse request names a prefix rather than a file. The frontend fetches it with its token, then navigates to S3 itself. No security property changes: the bytes already bypass the API today, because the redirect sends the browser to that same URL.
+  **That constraint expired, and the route was guarded in place on 2026-09-09.** The frontend now fetches `GET /files/download-url` with its token and navigates to the returned URL itself (`src/lib/download.ts`); the built bundle contains no reference to the old route. Browser traffic in the 30 days to 09-09 was 41 requests -- 39 of them a single bulk FASTQ download on 08-15, most likely a tab holding a pre-fix bundle, then 2 on 09-04 and none since. The response shape was left untouched, so the ~1.1M requests a day arriving from htslib with an API key were unaffected: they authenticate, the projects they read are unrestricted, and they get the same redirect as before.
 
-  Sequencing: the new endpoint ships first and is additive. `GET /files/download` closes only once browser traffic on it reaches zero, which is checkable in the access log. `member` no longer holds `file:download`, so the migration does need project membership or one of the cross-project roles.
+  The fix is `GET /files/download-url`, which returns the same URL as JSON and *is* guarded. It was originally guarded on the global plane, on the grounds that the parameter is an arbitrary S3 URI and nothing maps a URI to a project. **That was wrong** — `fileproject`, `filesample` and `filesequencingrun` all exist, so the mapping was available all along; it is now used, and the guard consults the resolved project's restriction (see *Downloads: open by default, restricted by exception*). `file:browse` remains genuinely global-only, because a browse request names a prefix rather than a file. The frontend fetches it with its token, then navigates to S3 itself. No security property changes: the bytes already bypass the API today, because the redirect sends the browser to that same URL.
+
+  Sequencing, as it actually went: the new endpoint shipped first and additively; the frontend moved to it; then the old route was guarded in place rather than closed, which required **no client change at all** — every remaining caller already sends credentials, and an unrestricted project consults no permission, so nothing needed granting. Note this did *not* need `member` to hold `file:download`, and must not: see *Downloads: open by default, restricted by exception*.
 - Authenticated traffic in the same window was **4,442 requests by API key** and, at that hour, no JWT traffic at all — the SPA is human-driven, so sampling outside working hours says nothing about it.
 
 #### The Airflow callers, identified
@@ -814,7 +1004,7 @@ Consequences for this design:
 
 Every closure so far has been justified by one query — *this route received no anonymous traffic*. That query is necessary and **not sufficient**, and each of the checks below was added because the previous version of this list let something through.
 
-Run all six. A route is closable only when every one passes.
+Run all seven. A route is closable only when every one passes.
 
 **1. `auth_method = "none"` is zero.** The original check. Note that **one request is not zero**: `GET /files/download` carried 323,785 authenticated requests against a single anonymous one, and that one was a live `python-requests` consumer sharing a host with another unmigrated caller, not noise.
 
@@ -828,7 +1018,25 @@ Run all six. A route is closable only when every one passes.
 
 **6. Know whether each caller can survive a 401.** A browser can: the SPA does 401 → single-flight refresh → retry (`src/lib/interceptors.ts`), so a momentarily expired access token is invisible to the user. A `python-requests` script cannot — it has no refresh path and simply fails. The same `auth_valid = false` count therefore means something different depending on the user agent, so break it down rather than totalling it.
 
-Checks 3 and 4 postdate the closures recorded below; both were reconstructed for those routes rather than applied prospectively.
+**7. Confirm the grants actually landed, per tier, after applying them.** Check 5 tells you which grants a closure needs; it does not tell you they exist. Added 2026-09-12, after a grant batch reported as run against all three tiers turned out to be present in **none** of them — `demux_operator` had zero holders everywhere, eight days after eleven people were recorded as having it.
+
+The mechanism is worth knowing because it fails quietly in a specific way. `scripts/grant_role.py` validates every line before writing anything and **aborts the whole batch on a single unknown username** — which is correct, but means a partial failure looks like a completed run. Accounts are created on first SSO login, so the tiers diverge: of 26 usernames in one batch, dev was missing nine and staging one. One absent name there kills the run for every name.
+
+So the verification is a separate step and takes one query per tier:
+
+```sql
+SELECT r.name AS role, COUNT(ur.user_id) AS holders
+FROM role r LEFT JOIN user_role ur ON ur.role_id = r.id
+WHERE r.name IN ('demux_operator', 'manifest_operator')
+GROUP BY r.name;
+```
+
+Expect the count you intended, in the tier you intended. Two further notes from the incident:
+
+- **Divergent tiers need per-tier batches**, not one list. Dev genuinely cannot grant to a user who has never logged in there, so the honest outcome is a smaller batch in dev and a record of which accounts are absent — not a batch that silently does nothing.
+- **An empty `would_deny` set does not confirm a grant.** `run:demux` refusals stopped after the batch was believed applied, and that was read as the grant working. There had been **zero demux attempts** in the window. Absence of refusal means nobody tried; it never means somebody succeeded. Confirming a grant requires reading the grant, not the refusals.
+
+Checks 3 and 4 postdate the closures recorded below; both were reconstructed for those routes rather than applied prospectively. Check 7 postdates all of them.
 
 ### Closing `PUT /jobs/{job_id}`, 2026-08-18
 
@@ -875,6 +1083,73 @@ Both remaining anonymous callers are `python-requests` from hosts nobody has cla
 
 `POST /samples/search` shares a path with a closed route but stays open on purpose: it saw no traffic at all in the window, which makes it one of the zero-traffic routes rather than a migrated one. Those close on their own evidence, once a clean 30-day window exists.
 
+### Closing fourteen routes, 2026-09-11
+
+The backlog goes **68 to 54** and the guarded surface **46 to 60** — the largest single pass, and the first sized by applying every check prospectively rather than reconstructing some of them afterwards.
+
+The method was the change. Previous batches asked "does this route have anonymous traffic?". This one resolved *every observed caller* on *every* candidate route against the permission its guard would require, which is check 5 done exhaustively instead of spot-checked. The arithmetic:
+
+| | Routes |
+|---|---|
+| awaiting closure | 68 |
+| no traffic at all in the clean window | −23 |
+| anonymous or invalid-JWT traffic | −28 |
+| **candidates** | **17** |
+| a caller still lacks the guard after the 09-11 grants | −3 |
+| **closed** | **14** |
+
+**Check 3 mattered more than expected.** An earlier count put the candidates at 21 by reading `auth_method=jwt` as authenticated. Four routes fail on invalid JWTs, and one badly: `GET /jobs/{job_id}/log/paginated` carries **6,951 invalid-JWT requests against 7,269 valid ones** — a consumer that reads as fully migrated in any query filtering on `auth_method` alone, and would have received 403s on roughly half its traffic.
+
+**The exhaustive check found errors in both directions**, which is the argument for running it rather than reasoning about it:
+
+- *Under-granting.* Ten of the eleven `demux_operator` holders lacked `run:update`, needed by `POST /runs/{run_id}/samplesheet` and `PUT /runs/{run_id}`. The role had been deliberately narrowed to one permission and the narrowing was wrong — see the third worked example under *Why this set*.
+- *Phantom gaps.* Three apparent blockers were `ngs360_gDEStH0`, a key revoked on 2026-09-04. A retired credential cannot make a future request, so a naive "is this principal missing the permission?" query turns dead history into a blocker. Resolving keys regardless of `is_active`, then excluding the inactive ones, is the correct form.
+
+**Two routes were held back deliberately**, and both are one grant away:
+
+- `POST /runs` needs `run:create` for a run-registration service account, whose `service_account` role lacks it.
+- `PUT /projects/{project_id}/samples/{sample_id}` needs `sample:update` for a demux service account — 110 requests. Same cause.
+
+A third, `POST /runs/{run_id}/samplesheet`, was clean except for a single request from one user holding only `member`. One request is not zero, so it stays open pending a decision on that grant rather than being closed over a live caller.
+
+The two `/projects/{project_id}` routes use `require_project_permission`, which honours a global grant as well as a project role, so it is strictly more permissive than the global plane for the same permission — safe either way, and it makes project ownership meaningful on the routes where a project is named.
+
+### Closing the last three candidates, 2026-09-15
+
+Backlog **54 to 51**, guarded surface **60 to 63**. Each of these three had been held back from the 09-11 batch on exactly one caller lacking exactly one permission, and all three were resolved by grants rather than by code:
+
+| Route | Permission | The one caller |
+|---|---|---|
+| `POST /runs` | `run:create` | a run-registration service account |
+| `PUT /projects/{project_id}/samples/{sample_id}` | `sample:update` | a demux service account, 110 requests |
+| `POST /runs/{run_id}/samplesheet` | `run:update` | one user, one request |
+
+The first two came from `service_account` holding each verb's *update* without its *create*, or the reverse — an asymmetry that described no real workflow and was being hit by two different accounts. Fixed by completing the pairs, which is now pinned as a pair rather than as two facts.
+
+The third is the more interesting one. It was a single request, and the temptation with a single request is to close over it. Resolving the caller showed they submit demux jobs (`POST /runs/demultiplex`) and write samplesheets — a demux operator missed from the original group of eleven, not an edge case. `demux_operator` was the correct role, so the grant was a correction rather than a widening. **One request is not zero, and it is often not noise either.**
+
+**Every candidate that passed checks 1–3 is now closed.** What remains in the backlog is 23 routes with no observed traffic and 28 blocked on a consumer — neither group closable by anything this team controls. The next reduction is either date-gated (the silent routes, once the clean window reaches 30 days) or someone else's deploy.
+
+### Closing the silent routes, 2026-09-18
+
+Backlog **51 to 28**, guarded surface **63 to 86**. Twenty-two routes with no traffic at all across the 30-day clean window, plus `GET /runs/demultiplex/{workflow_id}`, which became closable when its single invalid-JWT caller stopped.
+
+**Silence is the weakest evidence this backlog has been reduced on.** It shows nobody called, not that a future caller would authenticate — and the 09-15 incident is the standing reminder that an unobserved caller is not an absent one. So the batch was sized on a *second* measurement rather than the first: **for each route, would an ordinary `member` satisfy the guard?**
+
+| | Routes | Consequence |
+|---|---|---|
+| Guard is a permission `member` holds | **12** | enforcement cannot refuse any authenticated caller; closed against anonymous access only |
+| Guard needs a grant, logs in dry-run | 7 | a surprise caller records `would_deny` and still succeeds |
+| Guard needs a grant, **enforces now** | 4 | a surprise caller receives 403 |
+
+That reframing is the useful part. "Is this permission enforced?" is the wrong question on its own; "would a plausible caller hold it?" is the one that predicts a 403. Half the batch is risk-free on that test regardless of enforcement state.
+
+The four that enforce immediately are `pipeline:update`, `qcrecord:delete`, `vendor:delete` and `workflow:update` — graduated or `:delete`. All four are administrative catalog operations with zero traffic for a month, which is the same basis on which `:delete` is always-enforced by design.
+
+**`run:associate` is deliberately among the seven that log.** It has a live refusing caller — a run-metrics service account, 12 refusals in the window and still going — so guarding `DELETE /runs/{run_id}/samples/{sample_id}` on it must not enforce. Closing the route while its permission stays in dry-run is exactly the sequencing that #434 got wrong.
+
+**What remains is 28 routes, none of them ours.** Every one carries anonymous or invalid-JWT traffic from a consumer another team owns. The largest is `GET /workflows/{workflow_id}` at 23,443 anonymous requests (WES bearer-token forwarding), then `/jobs` and `/jobs/{job_id}` (ngs-observe), `/runs/{id}/metrics` and `/runs/search` (RStudio), `/actions/configs` (the Batch event trigger), and `/files` and `/files/list`.
+
 ### Verified Phase 1 blockers
 
 Two consumers call the API with no credential whatsoever. Both are confirmed in source and both must be fixed in Phase 1a:
@@ -884,32 +1159,50 @@ Two consumers call the API with no credential whatsoever. Both are confirmed in 
 
 The same WES service validates every bearer token against `GET /api/v1/auth/me` and caches the token-to-username mapping (`src/wes_service/core/security.py`). Two consequences: `/auth/me`'s `username` field is a load-bearing contract, and role revocation is **not** immediate for WES. Bound that cache to five minutes or less and document the delay.
 
+### Graduating a permission to enforce
+
+**Phase 5 does not have to be one switch.** `api/rbac/mode.py` already refused `critical`-risk and `:delete` permissions while `RBAC_MODE` stayed `dry_run`, via `ALWAYS_ENFORCE`. As of 2026-09-15 that set has a second half, `_GRADUATED`, holding **25 permissions enforced on evidence** — each guards at least one closed route and recorded zero `would_deny` across the 28-day gap-free window from 2026-08-18.
+
+The two halves are opposite kinds of judgement, and the distinction is worth keeping:
+
+- the **derived** half is enforced *despite* having no evidence — a `:delete` has near-zero legitimate traffic, so dry-run buys no discovery value while leaving real harm reachable
+- the **graduated** half is enforced *because of* evidence — these carry substantial traffic and none of it was ever refused
+
+`_GRADUATED` is a hand-maintained list rather than a rule, deliberately. No property of a permission makes it safe to enforce; only a measurement, and a measurement has a date and expires.
+
+**The query.** For each permission guarding a closed route, count `would_deny` across a gap-free window:
+
+```
+fields @message
+| filter @message like /"event": "rbac.decision"/
+| parse @message '"rbac_decision": "*"' as decision
+| filter decision = "would_deny"
+| parse @message '"required_permission": "*"' as perm
+| parse @message '"request_id": "*"' as rid
+| stats count_distinct(rid) as refusals, count_distinct(who) as principals by perm
+```
+
+Zero refusals **and** at least one closed route requiring it. The second condition matters: a permission no route checks would report zero refusals because nothing is ever evaluated, not because nobody is refused. `test_graduated_permissions_guard_at_least_one_closed_route` asserts it.
+
+**Not graduated, and why** — the record is as useful as the list:
+
+| Permission | Reason |
+|---|---|
+| `file:download` | 719 refusals, 45 principals — open-by-default policy, stays `dry_run` |
+| `project:submit_action` | 75 refusals, 18 principals |
+| `run:demux` | 42 refusals, 15 principals |
+| `workflow:create`, `workflow:deploy` | granted 09-09, needs a fresh window |
+| `run:associate` | 12 refusals — a service account still lacks it |
+| `project:ingest`, `project:manage_members` | live refusals |
+| `manifest:read`, `manifest:validate` | **were** clean; two callers surfaced *after* those routes closed on 09-11, granted 09-15, so they need a fresh window |
+
+That last row is the general caution. A closure sized on a measurement window will surface callers who arrive after it, and no amount of rigour in checks 1–7 prevents that — the window is evidence about the past, not a guarantee about the future. What made it harmless is that the routes were closed while the mode stayed `dry_run`, so the guard recorded the gap instead of enforcing it. **Close a route in dry-run, let a window accumulate, then graduate the permission** — not both in one step.
+
+**A note on the tests.** Six tests failed when this landed, all using `project:read` as their stand-in for "an ordinary dry-run permission" — ordinary until it was graduated. They now derive that stand-in from the catalog (`STILL_DRY_RUN`), so the next graduation cannot break them for a reason unrelated to what they test. One test was repointed rather than fixed: `test_dry_run_lets_a_non_holder_through` became the end-to-end check that graduating a permission actually changes behaviour on a real route.
+
 ### Enforcement mode
 
-> **Superseded.** There is no enforcement mode. `RBAC_MODE`, `RBACMode`,
-> `effective_mode()` and `ALWAYS_ENFORCE` were all removed along with
-> `api/rbac/mode.py`; `require_permission` raises 403 on a failed check,
-> unconditionally. The reasoning that produced the mode is preserved below
-> because it explains the rollout that actually happened — phases 0 through 4
-> ran behind `dry_run` on the release *before* the admin UI, which is what the
-> dry-run window was for. By the time the permission model was settled the
-> switch had no remaining job, and a switch that can turn authorization off is a
-> switch that can be left off. See *Access control is gated by permission* in the
-> phase notes above.
->
-> What survives of the design: decisions are still recorded on `request.state`
-> and folded onto the access-log line by `_authz_summary` in `core/middleware.py`,
-> refusals still log at WARNING under `event=rbac.decision`, and the 403 detail
-> is still a plain string because the frontend's `extractDetail` cannot parse a
-> dict. Those are pinned by `tests/api/test_rbac_enforcement.py`.
->
-> **Rollback is a forward fix — grant the missing role.** It was never
-> `alembic downgrade`, and it is no longer `eb setenv` either. There is no
-> configuration change that restores pre-RBAC behaviour, by design.
->
-> The historical design follows.
-
-`RBAC_MODE` gated *authorization* only:
+`RBAC_MODE` gates *authorization* only:
 
 ```python
 @computed_field
@@ -938,9 +1231,9 @@ Four properties matter:
 
 Dry-run necessarily lets a should-be-denied write succeed. That is acceptable for reads and ordinary writes, but a small `ALWAYS_ENFORCE` set hard-denies even in dry-run: `PUT /settings/{key}`, every `DELETE`, and all role-grant routes. These have near-zero legitimate traffic, so there is no discovery value in dry-running them and real damage potential in doing so.
 
-**Operational hygiene** *(historical — no mode exists to report)*. Log a startup banner at ERROR when `RBAC_MODE=dry_run` and `ENVIRONMENT=prod`. Alarm in CloudWatch if production still reports `dry_run` past the cutover date. Expose `GET /api/v1/rbac/status` (authenticated) returning `{environment, rbac_mode, permission_count, seeded_at}` so "is it actually on?" is a two-second question — and keep mode off the public `/api/health`.
+**Operational hygiene.** Log a startup banner at ERROR when `RBAC_MODE=dry_run` and `ENVIRONMENT=prod`. Alarm in CloudWatch if production still reports `dry_run` past the cutover date. Expose `GET /api/v1/rbac/status` (authenticated) returning `{environment, rbac_mode, permission_count, seeded_at}` so "is it actually on?" is a two-second question — and keep mode off the public `/api/health`.
 
-**Rollback was `eb setenv RBAC_MODE=dry_run`** *(historical — this is no longer the rollback path; grant the missing role instead)* — roughly one to three minutes, no deploy, no migration. Note that `get_settings()` is `lru_cache`d, so this takes effect via the worker restart that an Elastic Beanstalk environment-property change triggers; it is not a hot toggle. This, not `alembic downgrade`, is the rollback path.
+**Rollback is `eb setenv RBAC_MODE=dry_run`** — roughly one to three minutes, no deploy, no migration. Note that `get_settings()` is `lru_cache`d, so this takes effect via the worker restart that an Elastic Beanstalk environment-property change triggers; it is not a hot toggle. This, not `alembic downgrade`, is the rollback path.
 
 ## Migration
 
@@ -1015,7 +1308,7 @@ Three implementation requirements:
 
 - **All four Gunicorn workers run lifespan.** `sync_env_to_settings()` is already racy but benign; catalog seeding is not. Take a MySQL advisory lock — `SELECT GET_LOCK('ngs360_rbac_seed', 10)` — around the seed.
 - **Never `DELETE`.** Seeding upserts `role` and `role_permission` rows for `is_builtin` roles only. Admin-created roles and *all* grants are never touched. Removing a permission from the catalog in code marks it inactive; a delete would cascade grants away.
-- ~~**Fail startup on seed failure when enforcing.**~~ **Done.** `core/lifespan.py` raises `RuntimeError` if `sync_rbac_catalog` fails, rather than logging and continuing. An empty catalog is now a site-wide 403 in every case — enforcement is unconditional — so failing `/api/health` and letting the load balancer pull the instance is strictly better than serving the outage.
+- **Fail startup on seed failure when enforcing.** `sync_env_to_settings()` currently swallows exceptions with a warning; for RBAC that is wrong, because an empty catalog plus `enforce` is a site-wide 403. If `RBAC_MODE=enforce` and the catalog is empty, refuse to start — failing `/api/health` and letting the load balancer pull the instance is far better than serving an outage as 403s.
 
 #### The cost of that choice: the migration chain is not self-sufficient
 
@@ -1093,7 +1386,7 @@ The username-deduplication loop is a pre-existing bug — two identities for one
 
 ### Rollback
 
-**`alembic downgrade` is not the rollback plan.** In-place deploys, no blue/green, and non-transactional MySQL DDL make downgrading a live production schema a data-loss risk. The rollback is a **forward fix — grant the missing role.** There is no configuration switch to fall back to: `RBAC_MODE` was removed with `api/rbac/mode.py`, deliberately, because a switch that turns authorization off is a switch that can be left off.
+**`alembic downgrade` is not the rollback plan.** In-place deploys, no blue/green, and non-transactional MySQL DDL make downgrading a live production schema a data-loss risk. The rollback is `eb setenv RBAC_MODE=dry_run`, followed by a forward fix — granting the missing role — rather than a redeploy.
 
 `downgrade()` must still be written and exercised in CI (`alembic upgrade head && alembic downgrade -1 && alembic upgrade head`) as a development convenience and as a correctness check on each revision.
 
@@ -1103,8 +1396,8 @@ The username-deduplication loop is a pre-existing bug — two identities for one
 |----------|-----------------|-------|----------|
 | **GA4GH WES** | Forward the caller's bearer token on `GET /workflows/{id}`; bound the `/auth/me` token cache to ≤5 min | `GA4GH-WES-API-Service` | **1c/1d** |
 | **Airflow (dev, UAT, prod)** | Read credentials in the **production** tier for all three; `auditor` or a `project:read`/`sample:read` role. GET-only, so writes are unaffected | Airflow owners | **1d** |
-| **Frontend SPA** | Route-loader error boundaries; permission-based gating; regenerate the API client. **Blocking: move downloads onto `GET /files/download-url`** (see below) | `NGS360/frontend-ui` | **1d** for downloads, 5 for the rest |
-| **File-download compute fleet** | Move off a personal API key onto a service account holding `file:download`, `file:browse`, `sample:read`. **The `file:browse` grant must land before `GET /files/list` closes**, not with it | fleet owner | **1d** |
+| **Frontend SPA** | Route-loader error boundaries; permission-based gating; regenerate the API client. (/) **Downloads moved onto `GET /files/download-url`** — `src/lib/download.ts`, and the built bundle no longer references the old route, which is what allowed it to be guarded | `NGS360/frontend-ui` | 5d for the rest |
+| **File-download compute fleet** | Stays on a personal API key by decision. Needs `file:browse` only — downloads are open by default, so no download grant. **The `file:browse` grant must land before `GET /files/list` closes**, not with it | fleet owner | **1d** |
 | **`APIServer/scripts/*`** | Admin-only; add an `--operator` argument writing one audit row per run | this repo | 3 |
 
 **Not consumers of this rollout.** The NGS360-ETL was a one-off load script and no longer runs — nothing to migrate, no credential to issue. The MCP server and NGS360-Agent are **downstream of RBAC, not blockers on it**: they are deliberately not deployed until the model below is finished, and will be built against it rather than migrated onto it. The dependency runs the other way round from every row in the table above.
@@ -1125,13 +1418,17 @@ All reads, all successful. Three things follow.
 
 **The account is a regular user, not a superuser, so RBAC does constrain it.** That is the good case: a personal *superuser* credential would short-circuit every permission check ahead of the resolver, and `enforce` would constrain the traffic not at all. But being constrained means the permissions have to actually line up, and one does not:
 
-> `member` holds `sample:read`. It does **not** hold `file:browse` (only `lab_manager` and `admin` carry it) and, since downloads became project-scoped, no longer holds `file:download` either.
+> `member` holds `sample:read` and, since 2026-09-09, `file:download` again. It does **not** hold `file:browse` — only `lab_manager` and `admin` carry that.
 
 Every user holds `member` from the bootstrap backfill and nothing more. So the moment `GET /files/list` is closed and guarded on `file:browse`, this fleet receives 403 on all 3,378 of those calls. **The grant has to land before that closure, not alongside it** — this is check 5 of *The criterion for closing a route*, and it is the first time that check has been applied before a closure rather than reconstructed after one.
 
-**The right role is a narrow custom one:** exactly `file:download`, `file:browse`, `sample:read`. The two off-the-shelf candidates are both wrong in instructive ways. `auditor` grants 18 permissions where 3 are needed, and includes `search:query`, which reaches ACL-unaware OpenSearch — the specific gap recorded under *OpenSearch-backed search is a known v1 limitation*. `lab_manager` is the obvious fit for `file:browse` and also carries `run:create`, `run:demux`, `sample:create` and `project:ingest`, none of which a download fleet has any use for.
+The download half of the problem has since dissolved rather than been solved: downloads are open by default, so no download grant is required. `file:browse` is the whole of the remaining gap, and it is one permission.
 
-**Why a service account rather than leaving the person's key in place**, given RBAC now constrains it either way: revocation cannot be done independently of that person's own access, the fleet dies silently if they change roles or leave, and every one of those 327,000 requests is attributed to a human who did not make them — which makes the access log useless for exactly the question it exists to answer.
+**The remaining grant is one permission: `file:browse`.** The two off-the-shelf candidates are both wrong in instructive ways, and the reasoning is worth keeping for the next such request. `auditor` grants 18 permissions where one is needed, and includes `search:query`, which reaches ACL-unaware OpenSearch — the specific gap recorded under *OpenSearch-backed search is a known v1 limitation*. `lab_manager` is the obvious fit for `file:browse` and also carries `run:create`, `run:demux`, `sample:create` and `project:ingest`, none of which a download fleet has any use for.
+
+**The credential stays a personal token — decided 2026-09-09.** An earlier revision of this section argued for a service account, on the grounds that revocation cannot be done independently of the person's own access, the fleet dies silently if they leave, and 327,000 requests get attributed to a human who did not make them. Those costs are real and are accepted; this is not a service and will not be modelled as one. The attribution objection is also weaker than it was: `submitted_by` now records the authenticated caller on writes, and for reads the access log records the key prefix, so "who ran this" is answerable even though the answer is a person.
+
+Scale, for the record, since it grew by two orders of magnitude once measured properly: **32,888,177** download requests in 30 days across **66 projects**, htslib on ~180 cluster nodes. That volume is what made 66 project memberships untenable and drove the open-by-default decision.
 
 A related consumer on an adjacent subnet was found sending an **expired JWT** on the same two file routes — 1,340 requests reported as `auth_method: jwt` while `auth_valid` was `false`, succeeding only because the routes are open. It is effectively anonymous on all of its traffic and invisible to a query that filters on `auth_method` alone. That discovery is what added check 3 to the closure criterion.
 
@@ -1186,7 +1483,9 @@ Project-scoped permissions are **not** inlined into `/auth/me`; with a five-figu
 
 **403 versus 404:** return **404 for reads of resources the caller cannot see**, and **403 for writes or actions on resources they can see**. NGS360 project identifiers are semantically meaningful, so existence disclosure matters. This choice determines what every test asserts and what the UI renders, so it must be settled before Phase 4.
 
-**`POST /files/upload` `created_by`:** accepted-and-ignored from Phase 1c with a deprecation header, so the generated client keeps compiling; removed in Phase 5.
+**`POST /files/upload` `created_by`:** kept, not deprecated. See [Provenance](#provenance-created_by-is-a-claim-submitted_by-is-a-fact) — the field is a legitimate delegation channel, and removing it would leave 40 of the 42 people it names with no attribution anywhere. It is now validated against `users`, which is a narrowing: a request naming an unknown account gets 422 where it previously succeeded. Zero of the 39,459 claims in production would be rejected, so no deployed client is affected.
+
+`submitted_by` is additive on `FilePublic` and is rejected (422) on both `FileCreate` and `FileUpdate` — it is server-derived by definition. `created_by` is also now rejected on `FileUpdate`; production has issued no `PATCH /files` request in the last 30 days.
 
 ## Testing
 
@@ -1199,7 +1498,7 @@ Project-scoped permissions are **not** inlined into `/auth/me`; with a five-figu
 1. **Refactor first.** `client_fixture`, `superuser_client_fixture`, and `unauthenticated_client_fixture` are near-identical 40-line blocks. Collapse them onto one `_make_client(session, user=None)` helper *before* adding RBAC, or the duplication becomes eightfold.
 2. **Persist the fixture users.** Create real `User` rows in the `session` fixture and have the override close over the persisted instance, built once rather than per call. This is fixture-internal and requires no test-module edits.
 3. **Give the default `client` a legacy-equivalent role** whose permission set is exactly what the pre-RBAC API allowed an authenticated user to do. Existing tests then pass unchanged. This is both how the rewrite of 32 modules is avoided *and* a precise executable specification of the old behaviour.
-4. ~~**Pin the mode.**~~ Not applicable — there is no mode. The suite exercises the only path there is. `reset_settings_cache` remains useful for other settings.
+4. **Pin the mode.** Set `RBAC_MODE=enforce` in `isolate_test_environment` so tests always exercise the strict path. The existing `reset_settings_cache` fixture clears the `lru_cache` per test, so per-test `monkeypatch.setenv` still works for dry-run cases.
 5. Add a parametrizable `client_as(global_roles=..., project_roles=...)` factory rather than more fixture copies.
 
 Budget for genuinely touching five to ten modules where tests relied on unauthenticated access — `tests/api/test_settings.py` was the first such case and was already migrated to the `superuser_client` fixture in [#361](https://github.com/NGS360/APIServer/pull/361), which is a worked example of the pattern — not all 32.
@@ -1214,7 +1513,7 @@ Budget for genuinely touching five to ten modules where tests relied on unauthen
 | **Negative 403 tests** | Per permission family; assert status, that `detail` is a string, and that `required_permission` is present. |
 | **Cross-project isolation** | A member of P1 gets 403 or 404 on every project-scoped route for P2. |
 | **Pagination under filtering** | Create 25 projects, make the user a member of 7, assert `total_items == 7`, page 1 returns 7 rows, `has_next is False`. Catches post-filtering directly. |
-| **Refusal semantics** | A denied request returns 403 with a plain-string detail and emits exactly one `event=rbac.decision` line at WARNING; the decision is also folded onto the access-log line, for allows as well as denies. |
+| **Dry-run semantics** | A would-be-denied request returns 2xx and emits exactly one denial log line; an `ALWAYS_ENFORCE` route returns 403 even in dry-run. |
 | **Seeding idempotence** | Run `sync_rbac_catalog()` twice; row counts stable; a manually created role and a manual grant both survive. |
 | **Migration round-trip** | Upgrade, backfill, assert every project has an owner, downgrade, assert only `source='MIGRATION'` rows were removed, upgrade again and assert the same result. Requires MySQL — see issue #379. |
 | **Superuser break-glass** | Still bypasses every check. |
@@ -1305,7 +1604,7 @@ Deferred: read auditing, an audit UI, tamper-evidence, and S3 archival.
 Both as first-class endpoints rather than ad-hoc SQL, so they stay correct as the model evolves:
 
 - `GET /api/v1/rbac/projects/{project_id}/access` → for each principal: user, role, `source` (`direct`, `global`, or `superuser`), `granted_by`, `granted_at`, effective permissions. **This must include the implicit paths** — global roles, superusers, service accounts — or the answer is wrong in the dangerous direction.
-- `GET /api/v1/rbac/users/{username}/access` → global roles, project memberships, effective permission set, active API keys and their scopes, last activity. **Built**, less the API keys and last activity, which are still outstanding.
+- `GET /api/v1/rbac/users/{username}/access` → global roles, project memberships, effective permission set, active API keys and their scopes, last activity.
 
 Both are audited. A read-only script wrapper provides break-glass when the API is itself the broken thing.
 
@@ -1333,8 +1632,14 @@ Both are audited. A read-only script wrapper provides break-glass when the API i
 These are limitations of the design or pre-existing problems that RBAC interacts with. They are recorded here rather than left implicit.
 
 1. ~~**`PUT /api/v1/settings/{key}` is unauthenticated in production today.**~~ **Resolved** in [#361](https://github.com/NGS360/APIServer/pull/361) — now requires `CurrentSuperuser`. `GET /settings` and `GET /settings/{key}` remain open, pending Phase 1d.
-2. **Actor-field spoofing must be fixed alongside Phase 1c, or RBAC is theatre.** `POST /files/upload` accepts `created_by` as a client-supplied form field (`api/files/routes.py:89`), and `FileCreate` / `FileUpdate` accept it on the JSON paths. Once authenticated, these must be overwritten from the principal server-side. The ownership backfill depends on provenance that is currently caller-asserted.
+2. ~~**Actor-field spoofing must be fixed alongside Phase 1c, or RBAC is theatre.**~~ **Resolved differently than this item originally proposed** — see [Provenance: `created_by` is a claim, `submitted_by` is a fact](#provenance-created_by-is-a-claim-submitted_by-is-a-fact). The original prescription was to overwrite `created_by` from the authenticated principal. Production data showed that would have destroyed the attribution of 39,459 files belonging to 42 scientists, 40 of whom hold no credential at all. `created_by` is now validated rather than overwritten, and a separate server-set `submitted_by` carries accountability.
 3. **No offboarding path.** With local database assignment and no directory sync, grants only accumulate: a departed employee retains roles, memberships, and API keys indefinitely. An access-control system with no revocation path is weaker than the honest absence of one. v1 requires at minimum a periodic job reporting users no longer resolvable in LDAP — the plumbing already exists (`LDAP_ENABLED=true` in staging and prod, `api/users/ldap_service.py`) — even if it only produces a report.
+
+   **Key retirement is now auditable, which it was not.** `DELETE /auth/api-keys/{key_id}` hard-deleted the row, taking the credential *and* every trace it existed — name, owner, creation date, last use, and the fact of retirement — so "was that key ever active, and when was it turned off?" had no answer. It now does the same thing as `POST /auth/api-keys/{key_id}/revoke`: clears `is_active`, stamps `revoked_at`, keeps the row. The endpoint is retained because clients call it, and the contract is unchanged in the way that matters — the key stops authenticating immediately.
+
+   > This surfaced during the 2026-09-04 superuser-key cleanup. Nine active keys sat on three superuser accounts; five were retired that day. Four were revoked and remain fully accountable. One was hard-deleted through this endpoint and there is now no record of it whatsoever — not its name, not that it was ever active, not that anybody retired it. The row count went 62 → 61 and that is the only evidence. An access-control cleanup whose own audit trail is destroyed by the tool performing it is not a cleanup that can be reviewed.
+   >
+   > Note the cap interaction, which is why this is safe: `create_user_api_key` counts only `is_active` keys, so retired keys accumulate without consuming a user's 25-key quota. Had the cap counted all rows, switching from delete to revoke would have slowly locked out anyone who cycles keys.
 4. **Direct-database bypass channels.** `ngs360-sql-langgraph-agent` runs natural-language SQL across the whole schema; `APIServer/scripts/*` and the ETL write directly to the database and S3. API-level RBAC is a partial control while these exist, and they also bypass the audit trail. Named owners and a follow-up are required; least-privilege database users are the mechanism.
 5. **OpenSearch is not ACL-aware**, so the five `*/search` endpoints remain global-read behind `search:query` in v1. The runs index has no project field at all, so run search stays global even after an ACL index lands.
 6. **`manifest:*` and `file:browse` cannot be project-scoped** without an S3-URI-to-project resolver.
@@ -1358,7 +1663,7 @@ Deliberately out of scope for v1:
 | API-key permission scopes | Was proposed mainly to bound a shared MCP key; with MCP on per-user tokens there is no such key, so this is a plain v2 item. Semantics if revisited: intersection only, never expansion |
 | Project-scoping the S3 passthrough endpoints | Requires a URI-to-project resolver |
 | Run-scoped or vendor-scoped roles | The two-table schema is deliberately not polymorphic; a third scope means a third table |
-| ~~Admin UI for role management~~ | **No longer a non-goal.** The admin UI is being built in `NGS360/frontend-ui` against this API: a user roster and per-user access page, a role editor over the permission catalog, and project membership on the project page. The API stays the enforcement point; the UI only decides what to render. |
+| Admin UI for role management | API only in v1 |
 | Rate limiting, per-role quotas | Unrelated concern |
 
 ## Source Files
@@ -1367,10 +1672,10 @@ Deliberately out of scope for v1:
 |------|-------------|
 | `api/rbac/permissions.py` | `Permission` enum, `PermissionSpec`, `CATALOG`, `PROJECT_SCOPABLE`, `ALL_PERMISSIONS` |
 | `api/rbac/roles.py` | `ROLE_DEFINITIONS` — builtin global and project roles with their permission sets |
-| `api/rbac/models.py` | `Role`, `RolePermission`, `UserRole`, `ProjectMember`, `RoleScope`, `GrantSource`, and the administration read models |
+| `api/rbac/models.py` | `Role`, `RolePermission`, `UserRole`, `ProjectMember`, `RoleScope`, `GrantSource` |
 | `api/rbac/deps.py` | `AuthzContext`, `load_authz`, `require_permission()`, `require_project_permission()`, `project_scope()` |
-| `api/rbac/services.py` | The single resolver, `assign_default_roles()`, `sync_rbac_catalog()`, role and membership CRUD, `list_users()`, `get_user_access()`, `update_user_flags()` |
-| `api/rbac/routes.py` | `/rbac/permissions`, `/rbac/roles`, `/rbac/users`, `/rbac/users/{u}/roles`, `/rbac/users/{u}/access`, `/rbac/me` |
+| `api/rbac/services.py` | The single resolver, `assign_default_roles()`, `sync_rbac_catalog()`, role and membership CRUD |
+| `api/rbac/routes.py` | `/rbac/permissions`, `/rbac/roles`, `/rbac/users/{u}/roles`, `/rbac/status`, access reporting |
 | `api/auth/deps.py` | Unchanged; `load_authz` layers onto `get_current_active_user` |
 | `api/auth/services.py` | Remove the "first user wins" block; call `assign_default_roles()` |
 | `api/auth/oauth2_service.py` | Remove the duplicate bootstrap; claim unclaimed shell users by username |
@@ -1378,7 +1683,7 @@ Deliberately out of scope for v1:
 | `api/project/deps.py` | `ProjectDep` becomes a sub-dependency of `require_project_permission` |
 | `api/project/routes.py` | Membership endpoints; `ProjectDep` replaced by permission-carrying aliases |
 | `main.py` | `RequestContextMiddleware` (done); router registration with default authentication; `rbac_router` |
-| `core/config.py` | `ENVIRONMENT`, `LOG_FORMAT` (both done); `DEFAULT_USER_ROLE`, `BOOTSTRAP_ADMIN_USERNAMES` |
+| `core/config.py` | `ENVIRONMENT`, `LOG_FORMAT` (both done); `RBAC_MODE`, `DEFAULT_USER_ROLE`, `BOOTSTRAP_ADMIN_USERNAMES` |
 | `core/lifespan.py` | `sync_rbac_catalog()` with an advisory lock and a fail-closed startup assertion |
 | `core/logger.py` | JSON formatter (`LOG_FORMAT=text` for local work); replaces the root handler so gunicorn/uvicorn do not duplicate lines |
 | `core/middleware.py` | `RequestContextMiddleware`: request id, principal resolution with no DB access, structured access log |
@@ -1391,5 +1696,5 @@ Deliberately out of scope for v1:
 | `scripts/grant_role.py` | Break-glass role assignment CLI |
 | `tests/conftest.py` | Consolidated client fixtures, persisted users, `client_as()` factory |
 | `tests/api/test_rbac_resolution.py` | Permission-resolution matrix |
-| `tests/api/test_rbac_enforcement.py` | Guard behaviour, 403 shape, and decision logging |
+| `tests/api/test_rbac_enforcement.py` | Negative 403 tests, cross-project isolation, dry-run semantics |
 | `tests/test_route_coverage.py` | Route-coverage guard and unauthenticated-closure regression |

@@ -3,6 +3,8 @@
 from fastapi import APIRouter, Depends, Query, status
 
 from core.deps import SessionDep, get_s3_client
+from api.rbac.deps import require_permission
+from api.rbac.permissions import Permission
 from . import services
 from .models import ActionConfig, ActionConfigsResponse, SelectOption, ActionOption, ActionPlatform
 
@@ -35,6 +37,7 @@ def get_all_configs(
     response_model=ActionConfig,
     tags=["Action Endpoints"],
     status_code=status.HTTP_200_OK,
+    dependencies=[Depends(require_permission(Permission.ACTION_VALIDATE))],
 )
 def validate_action_config(
     session: SessionDep,

@@ -47,6 +47,56 @@ except ImportError:
     BOTO3_AVAILABLE = False
 
 # ============================================================================
+# Provenance
+# ============================================================================
+
+
+def resolve_claimed_author(session: Session, claimed: str | None) -> str | None:
+    """
+    Validate a client-supplied ``created_by`` and return it in canonical form.
+
+    ``created_by`` is an *on behalf of* claim: the batch pipelines register files
+    for the scientist who requested the work, not for the identity holding the
+    API key. That is legitimate and worth keeping -- most of the people named own
+    no credential of their own, so overwriting the field with the caller would
+    erase the only attribution those files have.
+
+    What it lacked was any guarantee of meaning. Requiring the claim to name a
+    real account keeps the field from decaying into free text, without taking
+    away the delegation. Accountability for the call itself lives in
+    ``submitted_by``, which clients cannot set.
+
+    Returns None for a missing or blank claim -- attribution stays optional.
+
+    Raises:
+        HTTPException: 422 if the claim does not name a known account.
+    """
+    if claimed is None:
+        return None
+
+    claimed = claimed.strip()
+    if not claimed:
+        return None
+
+    from api.auth.services import get_user_by_username
+
+    user = get_user_by_username(session, claimed)
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                f"created_by '{claimed}' does not match a known NGS360 account. "
+                "Supply the username of the person the file belongs to, or omit "
+                "the field. Note that created_by records who the work was done "
+                "for; the caller is recorded automatically."
+            ),
+        )
+
+    # Store the account's own spelling so the column stays joinable.
+    return user.username
+
+
+# ============================================================================
 # File Creation Functions
 # ============================================================================
 
@@ -54,6 +104,7 @@ except ImportError:
 def create_file(
     session: Session,
     file_create: FileCreate,
+    submitted_by: str | None = None,
 ) -> File:
     """
     Create a new file record with all associations.
@@ -67,6 +118,8 @@ def create_file(
     Args:
         session: Database session
         file_create: FileCreate model with file metadata
+        submitted_by: Username of the authenticated caller, or None if the
+            request was anonymous. Never taken from the request body.
 
     Returns:
         Created File object with all relationships loaded
@@ -76,7 +129,8 @@ def create_file(
         uri=file_create.uri,
         original_filename=file_create.original_filename,
         size=file_create.size,
-        created_by=file_create.created_by,
+        created_by=resolve_claimed_author(session, file_create.created_by),
+        submitted_by=submitted_by,
         source=file_create.source,
         storage_backend=file_create.storage_backend,
     )
@@ -160,6 +214,7 @@ def create_file_upload(
     s3_client,
     file_upload: FileUploadCreate,
     file_content: bytes | None = None,
+    submitted_by: str | None = None,
 ) -> File:
     """
     Create a file record via upload with optional content storage.
@@ -171,6 +226,8 @@ def create_file_upload(
         s3_client: boto3 S3 client for S3 operations
         file_upload: FileUploadCreate model with upload metadata
         file_content: Optional file content bytes to store
+        submitted_by: Username of the authenticated caller, or None if the
+            request was anonymous. Never taken from the request body.
 
     Returns:
         Created File object
@@ -186,6 +243,11 @@ def create_file_upload(
 
     # Validate entity exists
     _validate_upload_entity_exists(session, file_upload)
+
+    # Resolved up front, with the other input validation, so a rejected claim
+    # cannot leave an object in S3. The upload happens further down; keeping the
+    # check here means that stays true if the order below is ever rearranged.
+    created_by = resolve_claimed_author(session, file_upload.created_by)
 
     # Get storage configuration
     from core.config import get_settings
@@ -234,7 +296,8 @@ def create_file_upload(
         uri=uri,
         original_filename=file_upload.original_filename or file_upload.filename,
         size=file_size,
-        created_by=file_upload.created_by,
+        created_by=created_by,
+        submitted_by=submitted_by,
         storage_backend=storage_backend,
     )
 

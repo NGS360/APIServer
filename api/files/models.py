@@ -214,7 +214,14 @@ class File(SQLModel, table=True):
     original_filename: str | None = Field(default=None, max_length=255)  # For uploads only
     size: int | None = Field(default=None, sa_type=BigInteger)  # Bytes (BIGINT — files > 2 GB)
     created_on: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    created_by: str | None = Field(default=None, max_length=100)  # User identifier
+    created_by: str | None = Field(default=None, max_length=100)  # Who did the work
+    # Who actually made the API call. Client-supplied created_by is an
+    # "on behalf of" claim -- one pipeline registers files for 42 scientists, 40
+    # of whom hold no credential of their own -- so it cannot also carry
+    # accountability. This can: it is set from the authenticated caller and is
+    # never accepted from a request. Null for rows written before it existed, and
+    # for anonymous callers while the create routes remain open.
+    submitted_by: str | None = Field(default=None, max_length=100)
     source: str | None = Field(default=None, max_length=1024)  # Origin of file record
     storage_backend: str | None = Field(default=None, max_length=20)  # LOCAL, S3, AZURE, GCS
 
@@ -540,6 +547,7 @@ class FilePublic(SQLModel):
     size: int | None
     created_on: datetime
     created_by: str | None
+    submitted_by: str | None
     source: str | None
     storage_backend: str | None
     associations: List[FileAssociationPublic]
@@ -593,7 +601,14 @@ class FileUpdate(SQLModel):
     original_filename: str | None = None
     size: int | None = None
     source: str | None = None
-    created_by: str | None = None
+    # Neither created_by nor submitted_by is updatable.
+    #
+    # created_by is an attribution claim: correcting it is a deliberate,
+    # auditable act, not a field on a general-purpose PATCH whose documented
+    # purpose is fixing a URI. Nobody has needed it in 634k rows.
+    #
+    # submitted_by is derived from the caller by definition, so a client
+    # setting it would defeat the only thing it is for.
     storage_backend: str | None = None
 
     model_config = ConfigDict(extra="forbid")
@@ -665,6 +680,7 @@ def file_to_public(file: File) -> FilePublic:
         size=file.size,
         created_on=file.created_on,
         created_by=file.created_by,
+        submitted_by=file.submitted_by,
         source=file.source,
         storage_backend=file.storage_backend,
         associations=associations,

@@ -132,14 +132,48 @@ class Settings(BaseSettings):
 
     @computed_field
     @property
+    def RBAC_MODE(self) -> str:
+        """
+        Authorization enforcement mode: "off", "dry_run", or "enforce".
+
+        Three properties, each deliberate:
+
+        Unrecognised values resolve to "enforce", not to the default. A typo
+        such as RBAC_MODE=enforced must never be read as "authorization is off"
+        -- the failure mode of a misspelling has to be a visible 403, not a
+        silent hole.
+
+        The default is "dry_run" for this release and tightens to "enforce" in
+        the Phase 5 release. Making the *default* move is what stops a
+        forgotten flag from leaving a tier unprotected indefinitely: the switch
+        decays toward safe rather than toward open.
+
+        "off" is clamped to "dry_run" in prod. It exists for local work, and a
+        production environment where authorization can be turned off entirely
+        by one `eb setenv` is a worse risk than any it mitigates. Rollback is a
+        forward fix -- grant the missing role -- per docs/RBAC.md.
+
+        Note this is read from the environment and Secrets Manager only, never
+        from the settings table: a PUT /settings/RBAC_MODE that switches
+        authorization off would be self-defeating.
+        """
+        value = self._get_config_value("RBAC_MODE", default="dry_run").strip().lower()
+        if value not in ("off", "dry_run", "enforce"):
+            return "enforce"
+        if value == "off" and self.ENVIRONMENT == "prod":
+            return "dry_run"
+        return value
+
+    @computed_field
+    @property
     def DEFAULT_USER_ROLE(self) -> str:
         """
         Global role granted to every user at creation. "none" disables it.
 
-        Without this, a new user holds nothing, and holding nothing is a 403 on
-        every endpoint from their first request -- one support ticket per person
-        who signs in, which is the most predictable way to make an authorization
-        rollout look like an outage.
+        Without this, a new user holds nothing, and under RBAC_MODE=enforce that
+        is a 403 on every endpoint from their first request -- one support ticket
+        per person who signs in, which is the most predictable way to make an
+        authorization rollout look like an outage.
 
         "member" is deliberately a wide, read-heavy set rather than a minimal
         one: it is what an authenticated caller could already do before RBAC, so
@@ -154,6 +188,42 @@ class Settings(BaseSettings):
         """
         value = self._get_config_value("DEFAULT_USER_ROLE", default="member").strip()
         return "" if value.lower() == "none" else value
+
+    @computed_field
+    @property
+    def BOOTSTRAP_ADMIN_USERNAMES(self) -> frozenset[str]:
+        """
+        Usernames that receive `is_superuser` when their account is created.
+
+        This replaces "the first user to register becomes an administrator",
+        which was duplicated at both account-creation sites and is a privilege
+        escalation path on any database with no users yet: whoever registers
+        first gets superuser, and superuser short-circuits every permission check
+        ahead of the resolver. It is also a race, because two concurrent
+        registrations can both observe an empty table.
+
+        That was tolerable while empty databases were hypothetical. The CI work
+        established they are not -- a new tier, a restored snapshot, and the
+        migrations job all start from nothing.
+
+        Semantics, each chosen deliberately:
+
+        * **Creation only.** A username added here later does not promote an
+          existing account on next login. A configuration change should not
+          silently grant superuser to someone who already has a session; use
+          scripts/promote_superuser.py, which records who did it.
+        * **Empty means nobody.** No fallback to first-user-wins, because a
+          fallback that restores the unsafe behaviour whenever the variable is
+          unset is not a fix. A fresh deployment with this unset gets no
+          administrator, which is why the promote script exists and why startup
+          warns when the database has no superuser.
+        * **Compared case-insensitively and trimmed**, matching how the
+          ownership backfill resolves usernames.
+        """
+        raw = self._get_config_value("BOOTSTRAP_ADMIN_USERNAMES", default="")
+        return frozenset(
+            name.strip().lower() for name in raw.split(",") if name.strip()
+        )
 
     @computed_field
     @property
@@ -266,6 +336,23 @@ class Settings(BaseSettings):
     def OMICS_REGISTER_WORKFLOW_LAMBDA(self) -> str | None:
         """Lambda function name that registers a workflow on AWS HealthOmics."""
         return self._get_config_value("OMICS_REGISTER_WORKFLOW_LAMBDA")
+
+    @computed_field
+    @property
+    def OMICS_REGISTER_LAMBDA_READ_TIMEOUT(self) -> int:
+        """Seconds to wait for the Omics registration Lambda to respond.
+
+        Must exceed how long the Lambda actually takes. Giving up early does
+        not cancel it -- it just discards the ARN of a workflow version AWS
+        has already created. Registrations have been observed at 60-90s and
+        scale with the size of the packed CWL, so the default leaves real
+        headroom rather than sitting just above the observed maximum.
+        """
+        return int(
+            self._get_config_value(
+                "OMICS_REGISTER_LAMBDA_READ_TIMEOUT", default="300",
+            )
+        )
 
     # Options are from api.files.models.StorageBackend
     STORAGE_BACKEND: str = os.getenv("STORAGE_BACKEND", "s3")

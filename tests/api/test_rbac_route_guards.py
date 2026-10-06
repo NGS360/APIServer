@@ -1,4 +1,16 @@
 """ Test cases for the permission guards now attached to routes """
+import pytest
+
+from core.config import get_settings
+
+
+@pytest.fixture
+def mode(monkeypatch):
+    def _set(value: str):
+        monkeypatch.setenv("RBAC_MODE", value)
+        monkeypatch.setenv("ENVIRONMENT", "dev")
+        get_settings.cache_clear()
+    return _set
 
 
 class TestGlobalPlaneGuards:
@@ -23,6 +35,51 @@ class TestGlobalPlaneGuards:
         before = len(session.exec(select(Project)).all())
         restricted_client.post("/api/v1/projects", json={"name": "Guarded 3"})
         assert len(session.exec(select(Project)).all()) == before
+
+    def test_a_graduated_permission_is_enforced_even_in_dry_run(
+        self, restricted_client, mode
+    ):
+        """
+        project:create was graduated to enforce on 2026-09-15, on the evidence
+        of zero would_deny across a 28-day window. So dry-run refuses it.
+
+        This test used to assert the opposite -- that dry-run let a non-holder
+        create a project -- and it failed when the graduation landed. It is
+        kept pointed at this route deliberately: it is now the end-to-end check
+        that graduating a permission actually changes behaviour on a real route,
+        which is the whole point of the mechanism.
+        """
+        mode("dry_run")
+        r = restricted_client.post("/api/v1/projects",
+                                   json={"name": "Guarded 4"})
+        assert r.status_code == 403
+
+    def test_dry_run_still_lets_a_non_holder_through_elsewhere(
+        self, restricted_client, mode
+    ):
+        """
+        The property the previous test used to carry: a permission that has not
+        been graduated is still only logged, not refused.
+
+        Uses manifest:read, which is in dry-run because two callers surfaced
+        after those routes closed on 09-11. When it graduates this will start
+        failing -- at which point move it to another non-graduated permission
+        rather than deleting it, because "dry-run does not refuse" has to stay
+        covered for as long as any permission is in dry-run.
+        """
+        mode("dry_run")
+        r = restricted_client.get("/api/v1/manifest",
+                                  params={"s3_path": "s3://bucket/prefix/"})
+        assert r.status_code != 403, (
+            "manifest:read appears to have been graduated -- repoint this test "
+            "at a permission still in dry-run"
+        )
+
+    def test_off_lets_a_non_holder_through(self, restricted_client, mode):
+        mode("off")
+        r = restricted_client.post("/api/v1/projects",
+                                   json={"name": "Guarded 5"})
+        assert r.status_code == 201
 
 
 class TestProjectPlaneGuards:
@@ -81,24 +138,39 @@ class TestProjectPlaneGuards:
         ).status_code == 404
 
 
-class TestTheAccessControlSurfaceIsGuarded:
+class TestTheAdminSurfaceHoldsOnItsGuardAlone:
     """
-    The administrative surface is gated by its permission, and by nothing else.
+    These routes carried `CurrentSuperuser` as well as a permission guard. The
+    flag came off on 2026-09-18, because while it gated them `is_superuser`
+    could not be removed from the three personal accounts that hold it -- doing
+    so would have cost the owner the admin API.
 
-    These routes used to carry CurrentSuperuser on top of their guard. It came
-    off because it made the panel unusable by the very roles it administers --
-    see TestTheAdminPanelWorksWithoutSuperuser below -- which leaves the
-    permission as the only gate. These tests are the other half of that trade:
-    the `client` fixture holds the pre-RBAC permission set, and must still be
-    refused everywhere.
+    The flag was doing real work, and the tests here previously pinned that: a
+    guard only *logs* in dry-run, so removing the flag without another change
+    would have opened these to every authenticated user in production.
+
+    What replaced it is the risk level. `setting:update` and `role:manage` were
+    already `critical`; `project:manage_members` was raised to `critical` in the
+    same change, on the reasoning that project membership is the project-level
+    grant plane. `critical` means ALWAYS_ENFORCE, which refuses even in dry-run.
+
+    So the property is preserved for `dry_run` and `enforce` by the guard alone.
+    It is *not* preserved for `off` -- see the test below, which is the honest
+    record of what this change cost.
     """
 
-    def test_settings_update_refuses_a_non_holder(self, client):
+    @pytest.mark.parametrize("mode_value", ["dry_run", "enforce"])
+    def test_settings_update_refuses_a_non_holder(self, client, mode, mode_value):
+        mode(mode_value)
         r = client.put("/api/v1/settings/DATA_BUCKET_URI",
                        json={"value": "s3://hijacked"})
         assert r.status_code == 403
 
-    def test_membership_read_refuses_a_non_holder(self, client, test_project):
+    @pytest.mark.parametrize("mode_value", ["dry_run", "enforce"])
+    def test_member_management_refuses_a_non_holder(
+        self, client, test_project, mode, mode_value
+    ):
+        mode(mode_value)
         assert client.get(
             f"/api/v1/projects/{test_project.project_id}/members"
         ).status_code == 403
@@ -110,6 +182,34 @@ class TestTheAccessControlSurfaceIsGuarded:
         assert client.patch(
             "/api/v1/users/testuser", json={"is_verified": True}
         ).status_code == 403
+
+    @pytest.mark.parametrize("route", [
+        "/api/v1/projects/{project_id}/members",
+    ])
+    def test_off_mode_no_longer_protects_the_admin_surface(
+        self, client, test_project, mode, route
+    ):
+        """
+        What removing the flag cost, asserted rather than left implicit.
+
+        `off` means "do not check; every caller is allowed through" -- it is
+        documented as an escape hatch for local work and explicitly not the
+        rollback plan. ALWAYS_ENFORCE escalates *dry_run* to enforce and does
+        not escalate `off`, so with RBAC_MODE=off these routes are now reachable
+        by any authenticated user. The `CurrentSuperuser` dependency used to
+        hold here because it is an authentication-layer check that no mode
+        affects.
+
+        Production runs `dry_run`, where the critical risk level keeps them
+        refused. This is a local-development exposure, and it is pinned so that
+        the trade is visible rather than discovered.
+        """
+        mode("off")
+        r = client.get(route.format(project_id=test_project.project_id))
+        assert r.status_code == 200, (
+            "off mode is expected to allow this; if it now refuses, ALWAYS_ENFORCE "
+            "has been made to escalate from off and this test should be inverted"
+        )
 
     def test_a_superuser_still_passes(self, superuser_client, test_project):
         assert superuser_client.get(

@@ -6,10 +6,7 @@ dependency overrides keep working untouched. Because get_current_user already
 reloads the User row on every request, roles live in the database with no JWT
 change -- the token stays {sub, exp, iat, type} and revocation is immediate.
 
-A failed check is a 403. There is no mode flag: authorization either holds or it
-does not, and a switch that turns it off is a switch that can be left off. The
-dry-run window this rolled out behind lived on the release before this one, and
-went out with it -- see docs/RBAC.md.
+Nothing here is attached to a route yet. Phase 4 does that, behind a mode flag.
 """
 
 import logging
@@ -22,6 +19,7 @@ from api.auth.deps import OptionalUser, get_current_active_user
 from api.auth.models import User
 from api.project.deps import ProjectDep
 from api.project.models import Project
+from api.rbac.mode import RBACMode, effective_mode
 from api.rbac.permissions import Permission
 from api.rbac.resolver import AuthzContext
 from core.deps import SessionDep
@@ -110,30 +108,58 @@ def decide(
     granted: bool,
     permissions: tuple[Permission, ...],
     scope: str | None,
+    subject: str | None = None,
 ) -> None:
     """
-    Record one check's result, and raise if it failed.
+    Apply the enforcement mode to one check's result, and record it.
 
     Public because a route whose requirement depends on its payload cannot use
     the factories below -- it has to resolve the permission itself and then come
-    back here, so that a bespoke check refuses on the same terms as every other
-    one and still lands in the access log alongside them.
+    back here, so that a bespoke check is still subject to the mode flag and
+    still lands in the access log alongside every other decision.
 
-    Every check emits a decision, allow as well as deny. Knowing only the
-    refusals tells you nothing about which principals a permission actually lets
-    through, and that is the question an access review asks.
+    Every check emits a decision, allow or deny, because the point of the
+    dry-run window is a complete picture of who calls what -- knowing only the
+    refusals tells you nothing about which principals a permission would newly
+    let through.
 
-    Refusals log at WARNING so they are findable without trawling. A 403 here is
-    ordinary -- it is what a permission is for -- so the line is a record, not an
-    alarm.
+    Refusals log at WARNING so a dry-run deny is findable without trawling; in
+    dry-run the decision is reported as `would_deny` and the request proceeds.
+
+    `subject` is the thing being authorised, when that is not already obvious
+    from the route. It exists because it was not obvious enough: the file
+    download guard resolves an S3 URI to a set of projects, and 88% of the
+    refusals in the first clean production window reported "unregistered, 0
+    projects" -- with no way to tell from the log whether those files are
+    genuinely unregistered or whether the resolver's exact match on File.uri is
+    missing a URI form. The access log records request.url.path without the query
+    string, so the URI that produced the decision was invisible. That is the
+    difference between a data problem and a bug in the resolver, and it was not
+    answerable.
     """
-    decision = "allow" if granted else "deny"
+    rbac_mode = effective_mode(permissions)
+
+    if granted:
+        decision = "allow"
+    elif rbac_mode is RBACMode.ENFORCE:
+        decision = "deny"
+    elif rbac_mode is RBACMode.OFF:
+        decision = "skipped"
+    else:
+        decision = "would_deny"
 
     record = {
+        "rbac_mode": str(rbac_mode),
         "rbac_decision": decision,
         "required_permission": ",".join(str(p) for p in permissions),
         "scope": scope,
     }
+    # Kept out of `scope` deliberately: scope answers "over what authority", the
+    # subject answers "over which object", and Insights cannot filter on half a
+    # concatenated string. Omitted entirely when absent rather than logged as
+    # null, so `ispresent(rbac_subject)` selects exactly the checks that have one.
+    if subject is not None:
+        record["rbac_subject"] = subject
     # The access-log line in RequestContextMiddleware picks these up, so a
     # single CloudWatch query can join a decision to the request that caused it.
     decisions = getattr(request.state, "rbac_decisions", None)
@@ -142,7 +168,7 @@ def decide(
         request.state.rbac_decisions = decisions
     decisions.append(record)
 
-    if not granted:
+    if decision in ("deny", "would_deny"):
         logger.warning(
             "rbac %s: %s", decision, record["required_permission"],
             extra={
@@ -156,6 +182,7 @@ def decide(
             },
         )
 
+    if decision == "deny":
         raise _denied(permissions, scope=scope)
 
 

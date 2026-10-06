@@ -105,6 +105,260 @@ class TestCatalogMatchesTheDesign:
 
 class TestRoleDefinitions:
 
+    def test_the_role_roster_is_pinned(self):
+        """
+        The exact set of builtin roles, so adding or removing one is a visible,
+        deliberate change in review rather than an incidental one.
+
+        This guard was missing until a role was added and no test noticed --
+        while route counts have been pinned since Phase 4c. docs/RBAC.md carries
+        a rule for when a new global role is justified ("only if it adds a write
+        permission on a global resource"), and a rule with nothing asserting it
+        is a suggestion.
+
+        If you are here because this failed: the question to answer in the PR is
+        whether the persona differs by *which projects* it touches, in which case
+        it is project membership and not a global role.
+        """
+        assert set(ROLE_DEFINITIONS) == {
+            # global
+            "member", "demux_operator", "lab_manager", "platform_admin",
+            "service_account", "auditor", "admin",
+            "workflow_publisher", "workflow_admin", "manifest_operator",
+            "run_registrar", "run_associator",
+            # project
+            "project_viewer", "project_contributor", "project_owner",
+        }
+
+    def test_member_does_not_hold_global_file_download(self):
+        """
+        Granting this to `member` would make every project restriction vacuous.
+
+        `has_in_project` returns true on a *global* grant (api/rbac/resolver.py),
+        so a universal `file:download` satisfies the restricted-project branch of
+        `require_file_download` for every user -- the feature would look
+        implemented and do nothing.
+
+        It is pinned because it is a plausible mistake rather than a far-fetched
+        one: an earlier draft of docs/RBAC.md said `member` should regain this
+        permission when downloads became open by default. Downloads from an
+        unrestricted project consult no permission at all, which is what makes
+        them open; the permission is only for restricted projects and for URIs
+        that resolve to no project.
+        """
+        assert Permission.FILE_DOWNLOAD not in ROLE_DEFINITIONS["member"].permissions
+
+    def test_the_roles_that_bypass_a_restriction_are_a_closed_set(self):
+        """
+        Global file:download bypasses project restriction by design. That is the
+        cross-project escape hatch, so who holds it is a decision and not an
+        accident -- pin the set.
+        """
+        holders = {
+            name for name, role in ROLE_DEFINITIONS.items()
+            if role.scope is RoleScope.GLOBAL
+            and Permission.FILE_DOWNLOAD in role.permissions
+        }
+
+        assert holders == {"lab_manager", "auditor", "admin"}
+
+    def test_service_account_can_both_create_and_update_what_it_writes(self):
+        """
+        The role held run:update without run:create, and sample:create without
+        sample:update. A writeback identity that may change a sample but not
+        correct it describes no real workflow -- and both halves were being hit
+        in production by two different service accounts.
+
+        Pinned as pairs because the asymmetry is the bug, and it is the kind
+        that reads as deliberate minimalism until someone measures the callers.
+
+        Runs are the deliberate exception as of 2026-09-28, which is why the
+        pair is gone from this list and asserted separately below. The pairing
+        rule assumes one identity does the whole lifecycle of a resource. That
+        holds for samples and files, where whoever writes a record also
+        corrects it. It does not hold for runs: nine accounts share this role
+        for job and result writeback, and exactly one of them registers runs,
+        so pairing the verbs meant eight machine identities could create runs
+        in order to let one do so.
+        """
+        sa = ROLE_DEFINITIONS["service_account"].permissions
+
+        for create, update in (
+            (Permission.SAMPLE_CREATE, Permission.SAMPLE_UPDATE),
+            (Permission.FILE_CREATE, Permission.FILE_UPDATE),
+        ):
+            assert (create in sa) == (update in sa), (
+                f"{create} and {update} should be held together or not at all"
+            )
+
+    def test_run_registration_is_separated_from_run_writeback(self):
+        """
+        The exception to the pairing rule above, asserted rather than left as a
+        gap so that "re-add run:create to service_account" has to argue with a
+        test instead of looking like a tidy-up.
+
+        Over 2026-08-18..09-28, exactly two principals called POST /runs: the
+        NGS360-SequencersToS3 service account, and a personal API key belonging
+        to an administrator that was doing the same job by hand and has since
+        been revoked. No lab_manager holder has ever registered a run.
+        """
+        sa = ROLE_DEFINITIONS["service_account"].permissions
+        lab = ROLE_DEFINITIONS["lab_manager"].permissions
+        registrar = ROLE_DEFINITIONS["run_registrar"].permissions
+
+        assert Permission.RUN_CREATE not in sa
+        assert Permission.RUN_CREATE not in lab
+        assert Permission.RUN_CREATE in registrar
+
+        # Writeback stays where the accounts that do it already are.
+        assert Permission.RUN_UPDATE in sa
+
+        # And the new role grants nothing else -- run:read and the job
+        # writeback still come from service_account alongside it.
+        assert registrar == {Permission.RUN_CREATE}
+
+    def test_sample_run_association_is_separated_from_the_shared_role(self):
+        """
+        The second instance of the same finding, pinned for the same reason as
+        run:create above.
+
+        On DELETE /runs/{run_id}/samples across 2026-09-01..29 there were two
+        callers: the NGS360-CollectRunMetrics-lambda service account, recorded
+        as would_deny on all 64 attempts, and a personal API key belonging to
+        an administrator, revoked on 2026-09-04.
+
+        run:associate stays out of service_account for the reason run:create
+        did -- nine accounts share that role and one needs this permission.
+        lab_manager keeps it despite no holder ever having used the route;
+        removing that is a separate decision, not a side effect of this fix.
+        """
+        sa = ROLE_DEFINITIONS["service_account"].permissions
+        associator = ROLE_DEFINITIONS["run_associator"].permissions
+
+        assert Permission.RUN_ASSOCIATE not in sa
+        assert associator == {Permission.RUN_ASSOCIATE}
+
+        holders = {n for n, r in ROLE_DEFINITIONS.items()
+                   if Permission.RUN_ASSOCIATE in r.permissions}
+        assert holders == {"run_associator", "lab_manager", "admin"}
+
+    def test_only_admin_and_run_registrar_can_register_a_run(self):
+        """`member` must not pick this up the way run:demux did."""
+        holders = {n for n, r in ROLE_DEFINITIONS.items()
+                   if Permission.RUN_CREATE in r.permissions}
+        assert holders == {"run_registrar", "admin"}
+
+    def test_service_account_is_still_not_a_human_role(self):
+        """
+        Widening it must not turn it into a general write role. It exists for
+        machine writeback, and the permissions that spend money or destroy data
+        stay out.
+        """
+        sa = ROLE_DEFINITIONS["service_account"].permissions
+
+        for excluded in (
+            Permission.RUN_DEMUX,            # spends compute, deletes QC records
+            Permission.PROJECT_SUBMIT_ACTION,  # spends AWS Batch
+            Permission.FILE_DOWNLOAD,        # would bypass project restriction
+            Permission.SETTING_UPDATE,
+        ):
+            assert excluded not in sa
+
+    def test_manifest_operator_holds_exactly_the_manifest_permissions(self):
+        """
+        Manifest handling is global-only -- a manifest names an arbitrary S3 URI
+        and no resolver maps it to a project -- so it cannot be project
+        membership and has to be a global role.
+        """
+        manifest = ROLE_DEFINITIONS["manifest_operator"].permissions
+
+        assert manifest == {
+            Permission.MANIFEST_READ,
+            Permission.MANIFEST_UPLOAD,
+            Permission.MANIFEST_VALIDATE,
+        }
+
+    def test_manifest_operator_is_narrower_than_lab_manager(self):
+        """
+        lab_manager was the off-the-shelf alternative, at sixteen permissions
+        beyond member including run:create and project:ingest -- none of which a
+        person uploading a manifest needs.
+        """
+        lab = ROLE_DEFINITIONS["lab_manager"].permissions
+        manifest = ROLE_DEFINITIONS["manifest_operator"].permissions
+
+        assert manifest < lab
+        assert Permission.RUN_CREATE not in manifest
+        assert Permission.PROJECT_INGEST not in manifest
+
+    def test_workflow_publisher_cannot_delete(self):
+        """
+        Publishing a workflow and destroying one are different privileges.
+
+        The role exists because one caller needed create/update/deploy and held
+        only `member`; `workflow:delete` was never among the refusals and stays
+        out until it is. workflow_admin is the role that has it.
+        """
+        publisher = ROLE_DEFINITIONS["workflow_publisher"].permissions
+
+        assert Permission.WORKFLOW_CREATE in publisher
+        assert Permission.WORKFLOW_UPDATE in publisher
+        assert Permission.WORKFLOW_DEPLOY in publisher
+        assert Permission.WORKFLOW_DELETE not in publisher
+        assert publisher < ROLE_DEFINITIONS["workflow_admin"].permissions
+
+    def test_workflow_admin_covers_every_workflow_permission(self):
+        """
+        Derived from the catalog, not enumerated, so a new workflow:* permission
+        joins it automatically. For a role whose stated scope is "owns the
+        workflow catalog outright", silently narrowing when the catalog grows
+        would be the bug.
+        """
+        every_workflow_permission = {
+            p for p in Permission if str(p).startswith("workflow:")
+        }
+
+        assert ROLE_DEFINITIONS["workflow_admin"].permissions == \
+            every_workflow_permission
+
+    def test_the_workflow_roles_are_narrower_than_platform_admin(self):
+        """
+        The alternative to these roles was granting platform_admin, which would
+        have conferred setting:update, system:reindex and vendor:delete to fix a
+        workflow-registration refusal.
+        """
+        platform_admin = ROLE_DEFINITIONS["platform_admin"].permissions
+
+        for name in ("workflow_publisher", "workflow_admin"):
+            role = ROLE_DEFINITIONS[name].permissions
+            assert len(role) < len(platform_admin)
+            assert Permission.SETTING_UPDATE not in role
+            assert Permission.SYSTEM_REINDEX not in role
+            assert Permission.VENDOR_DELETE not in role
+
+    def test_every_global_role_beyond_member_adds_a_write(self):
+        """
+        The justification rule, as an assertion. A global role that adds only
+        reads is re-implementing project scoping in the global plane, which is
+        what this design exists to avoid. `auditor` is the documented exception:
+        read-everything is its entire purpose.
+        """
+        member = ROLE_DEFINITIONS["member"].permissions
+        reads_only = set()
+        for name, role in ROLE_DEFINITIONS.items():
+            if role.scope is not RoleScope.GLOBAL or name in ("member", "auditor"):
+                continue
+            added = {str(p) for p in role.permissions - member}
+            if added and all(
+                p.endswith((":read", ":read_all", ":query")) for p in added
+            ):
+                reads_only.add(name)
+        assert reads_only == set(), (
+            f"{sorted(reads_only)} add only read permissions beyond member. "
+            f"If the persona differs by which projects it touches, that is "
+            f"project membership, not a global role."
+        )
+
     def test_all_referenced_permissions_exist(self):
         for name, role in ROLE_DEFINITIONS.items():
             assert role.permissions <= ALL_PERMISSIONS, name

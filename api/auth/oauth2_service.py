@@ -22,6 +22,8 @@ from api.rbac.services import assign_default_roles
 from core.config import get_settings
 from core.security import generate_secure_token
 
+from api.auth.services import is_bootstrap_admin
+
 logger = logging.getLogger(__name__)
 
 
@@ -462,11 +464,14 @@ def find_or_create_oauth_user(
             counter += 1
 
         # If this is the first user, make them admin
-        is_admin = False
-        statement = select(User)
-        if session.exec(statement).first() is None:
-            logger.info(f"First user registered, granting admin rights to {username}")
-            is_admin = True
+        # Same rule as register_user, from the same function -- see
+        # is_bootstrap_admin. Previously this site carried its own copy.
+        is_admin = is_bootstrap_admin(username)
+        if is_admin:
+            logger.warning(
+                "creating %s as a superuser: listed in BOOTSTRAP_ADMIN_USERNAMES",
+                username,
+            )
 
         user = User(
             email=email,
