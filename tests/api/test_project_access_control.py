@@ -13,15 +13,25 @@ project.
 What these tests establish, and it is worth stating precisely because the two
 halves differ:
 
-* **Writes and actions are project-scoped today.** `member` — which every user
-  holds via the bootstrap backfill — carries no global `sample:create`,
-  `project:update`, `project:ingest`, `project:submit_action` or
-  `project:manage_members`. So the project plane is the only way to obtain them,
-  and non-members are genuinely refused.
+* **Writes are project-scoped today.** `member` — which every user holds via the
+  bootstrap backfill — carries no global `sample:create`, `project:update`,
+  `project:ingest` or `project:manage_members`. So the project plane is the only
+  way to obtain them, and non-members are genuinely refused.
+* **`project:submit_action` is the exception, since 2026-10-07.** It is in
+  `member`, so it is *not* project-scoped in production any more. The tests
+  below still exercise it through a caller holding no global roles, which is the
+  only way to reach the project-plane branch now — they pin the resolver's
+  behaviour rather than the live posture for a real user. If `require_project_permission`
+  ever stops honouring a global grant, those are the tests that should fail.
 * **Reads are not, by decision.** `member` carries global `project:read`,
   `sample:read`, `file:read` and `qcrecord:read`, and `has_in_project`
   short-circuits on a global grant, so those reach every project. That is the
   transitional choice recorded in docs/RBAC.md and is being kept.
+* **One write is global too, by decision.** `project:submit_action` was added to
+  `member` on 2026-10-07, after measurement showed every refusal came from a
+  non-member and no project member was ever refused. It is the only
+  project-scopable write `member` holds, so submitting an action is no longer
+  project-scoped at all.
 * **Downloads are scoped.** `file:download` was removed from `member` for exactly
   the reason above — while it was there the project check on
   `GET /files/download-url` was vacuous. See
@@ -121,6 +131,19 @@ class TestWritesAreScopedToTheProject:
     def test_the_same_contributor_cannot_submit_an_action_on_another_project(
         self, contributor, theirs
     ):
+        """
+        Still true for this caller, and no longer true for a real one.
+
+        `contributor` holds no global roles at all, which is now the only way to
+        reach the project-plane branch for this permission -- `member` carries
+        `project:submit_action` globally as of 2026-10-07, and
+        `has_in_project` short-circuits on a global grant. So this asserts that
+        the project plane still scopes correctly when nothing global satisfies
+        it, not that a logged-in scientist is confined to their own projects.
+
+        Kept rather than deleted because that resolver behaviour is what the
+        permission would fall back to if it ever left `member` again.
+        """
         response = contributor.post(
             f"/api/v1/projects/{theirs.project_id}/actions/submit",
             json={"action_name": "noop", "arguments": {}},
@@ -274,11 +297,32 @@ class TestReadsRemainGlobalByDecision:
             "deliberate, this test should be inverted, not deleted"
         )
 
-    def test_member_keeps_exactly_the_four_transitional_reads(self):
+    def test_member_holds_four_scopable_reads_and_one_scopable_write(self):
         """
-        The list, as an assertion. Shrinking it is how reads would become
-        project-scoped too, and it should be a one-line reviewed change rather
-        than a surprise.
+        The list, as an assertion. Changing it should be a reviewed one-line
+        edit rather than a surprise, in either direction.
+
+        Renamed and extended on 2026-10-07, when `project:submit_action` joined
+        the set. That is more than an assertion bump: it is the first *write* on
+        this list. Until then every project-scopable permission `member` held
+        was a read, and the project plane was the only way to obtain a scopable
+        write.
+
+        Why it was added: across 28 days of production dry-run, all 44 refusals
+        on `project:submit_action` came from callers with no membership of the
+        target project, and no project member was ever refused. The project
+        roles were not the problem, so widening them would have fixed nothing.
+
+        What it costs, and the reason this test now says it out loud:
+        `has_in_project` short-circuits on a global grant, so while this
+        permission sits in `member` there is no way to restrict submitting an
+        action on a particular project. That lever is gone until it leaves
+        again. It is the same mechanism that keeps `file:download` off this list
+        -- see `test_download_is_not_among_them` -- and the difference between
+        them is a decision about compute spend, not an inconsistency.
+
+        If a second scopable write is proposed here, the question to ask is
+        whether per-project control over it is being given up knowingly.
         """
         from api.rbac.permissions import PROJECT_SCOPABLE
         from api.rbac.roles import ROLE_DEFINITIONS
@@ -287,7 +331,13 @@ class TestReadsRemainGlobalByDecision:
         scopable = {str(p) for p in PROJECT_SCOPABLE}
         assert member & scopable == {
             "project:read", "sample:read", "qcrecord:read", "file:read",
+            "project:submit_action",
         }
+
+        # The reads/writes split, asserted separately so another write cannot
+        # arrive unnoticed inside the set above.
+        writes = {p for p in member & scopable if not p.endswith(":read")}
+        assert writes == {"project:submit_action"}
 
     def test_download_is_not_among_them(self):
         """
