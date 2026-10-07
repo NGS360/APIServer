@@ -85,6 +85,38 @@ _MEMBER = frozenset({
     # could submit but not prepare.
     Permission.RUN_DEMUX,
     Permission.RUN_UPDATE,
+    # Submitting a pipeline action, open to every authenticated user as of
+    # 2026-10-07. Like run:demux this spends compute, and like run:demux the
+    # grant follows a measurement rather than a principle.
+    #
+    # The measurement is the part worth keeping. Over 28 days every one of the
+    # 44 refusals came from a caller with *no membership of the target project*,
+    # and no project member was ever refused. So the project plane was not
+    # mis-scoped, and widening project_viewer -- the obvious reading of "members
+    # should be able to submit" -- would have fixed exactly nothing.
+    #
+    # Who was being refused also matters: not outsiders. The ten people involved
+    # hold 182, 147, 90, 81, 58, 36, 24, 14, 11 and 0 project memberships
+    # respectively. The user with 182 was refused on the two or three projects
+    # they happen not to belong to. That is cross-project analysis work on an
+    # open platform, not an access-control violation.
+    #
+    # A targeted role was the alternative and was worked up: it loses on the
+    # holder list. The only existing role it fits is lab_manager, which carries
+    # thirteen permissions beyond member including global file:download -- and
+    # global file:download bypasses download_restricted on every project, so
+    # granting it to ten analysts to fix one permission would quietly undo the
+    # project download restrictions shipped in #425. A new narrow role avoids
+    # that but needs ten grants plus a grant per new analyst, forever, for a
+    # permission nobody has been refused *within* their own projects.
+    #
+    # The cost, stated because it is permanent and easy to miss: has_in_project
+    # short-circuits on a global grant, so while this sits in `member` there is
+    # no way to restrict submitting an action on a particular project. Weighed
+    # against building an actions_restricted flag mirroring downloads, and that
+    # lost on the evidence that download_restricted is set on 0 of 11,156
+    # projects -- a second unused lever is not worth a column and a guard.
+    Permission.PROJECT_SUBMIT_ACTION,
     # Transitional global reads -- see above.
     Permission.PROJECT_READ,
     Permission.SAMPLE_READ,

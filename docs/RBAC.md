@@ -331,7 +331,7 @@ Roles are database rows so that administrators can compose custom ones. The **bu
 
 | Role | Purpose | Permissions |
 |------|---------|-------------|
-| `member` | Default for every authenticated user | `action:read`, `platform:read`, `vendor:read`, `workflow:read`, `pipeline:read`, `run:read`, `job:read`, `job:submit`, `setting:read`, `search:query`, `chat:use`, `user:read`, `project:create`, `run:demux`, `run:update`, plus the transitional global reads: `project:read`, `sample:read`, `qcrecord:read`, `file:read`. `run:demux` and `run:update` added 2026-09-28 — see [Demultiplexing became a default](#demultiplexing-became-a-default). **Not** `file:download` — downloads from unrestricted projects consult no permission, and granting it globally would make every project restriction vacuous |
+| `member` | Default for every authenticated user | `action:read`, `platform:read`, `vendor:read`, `workflow:read`, `pipeline:read`, `run:read`, `job:read`, `job:submit`, `setting:read`, `search:query`, `chat:use`, `user:read`, `project:create`, `run:demux`, `run:update`, `project:submit_action`, plus the transitional global reads: `project:read`, `sample:read`, `qcrecord:read`, `file:read`. `run:demux` and `run:update` added 2026-09-28 — see [Demultiplexing became a default](#demultiplexing-became-a-default). `project:submit_action` added 2026-10-07 — see [Submitting an action is no longer project-scoped](#submitting-an-action-is-no-longer-project-scoped). **Not** `file:download` — downloads from unrestricted projects consult no permission, and granting it globally would make every project restriction vacuous |
 | `demux_operator` | **Subsumed by `member` as of 2026-09-28** — grants nothing its holders do not already have. Retained, not deleted: `sync_rbac_catalog` only iterates `ROLE_DEFINITIONS`, so removing it from code would orphan the row and its 14 grants rather than clean them up, and it is where the grants should fall back to if `member` is ever tightened | `run:demux`, `run:update` — the samplesheet write and run update are part of the same job; see the worked example below |
 | `manifest_operator` | May read, upload and validate sample manifests | `manifest:read`, `manifest:upload`, `manifest:validate`. Global-only by necessity — a manifest names an arbitrary S3 URI |
 | `run_registrar` | May register sequencing runs, and nothing else | `run:create` — granted alongside `service_account`, which still supplies `run:read` and the job writeback |
@@ -773,6 +773,24 @@ Direct associations are tried before the run, so a file both in a project and on
 
 Still outstanding, and both are defence in depth rather than the policy: an explicit bucket allowlist inside `generate_presigned_url`, so signing is constrained even when authorization has already passed; and surfacing restriction in the UI, since with an opt-in control the dangerous state is a project nobody remembered to restrict.
 
+
+### Submitting an action is no longer project-scoped
+
+**Policy decision, 2026-10-07.** `project:submit_action` moved into `member`, so any authenticated user may submit a pipeline action on any project.
+
+**What the measurement showed, and why the obvious fix was wrong.** Across 28 days of dry-run, `project:submit_action` produced 44 refusals. Every single one came from a caller with **no membership of the target project**, and **no project member was ever refused** — 40 of the allowed requests came from `project_owner`, 4 from `project_contributor`, and the remaining 16 from admins. So the project plane was working exactly as specified.
+
+That rules out the first reading of "members should be able to submit": adding `project:submit_action` to `project_viewer` would have fixed **zero** of the 44, because none of the refused callers were viewers — or members of any kind.
+
+**Who was refused also matters.** These were not outsiders. The ten people involved hold 182, 147, 90, 81, 58, 36, 24, 14, 11 and 0 project memberships respectively; the one with 182 was refused on the two or three projects they happen not to belong to. Two further refusals came from personal API keys belonging to an eleventh user — the third time a human has turned up driving pipeline work through a personal token, after `seq2s3` and the `run:associate` key. This is cross-project analysis on an open platform, not an access-control violation.
+
+**Why not a targeted role.** It was worked up and lost on the collateral. The only existing role it fits is `lab_manager`, which already carries global `project:ingest` and would have become coherent by gaining this — but it is thirteen permissions beyond `member`, including global `file:download`. Global `file:download` satisfies every project's restriction, so granting `lab_manager` to ten analysts in order to fix one permission would have quietly undone the project download restrictions shipped in #425. A new narrow role avoids that, at the price of ten grants now and one per new analyst forever, for a permission nobody has ever been refused *within* their own projects.
+
+Worth recording separately: **`lab_manager` holds global `project:ingest` but not `project:submit_action`.** That asymmetry is real — a sequencing-core operator can ingest vendor data into any project but cannot submit a pipeline job on one — and it is left in place deliberately rather than fixed as a side effect here. It is the same shape as the `run:create`/`run:update` pairing corrected in #447.
+
+**The cost.** `has_in_project` short-circuits on a global grant, so while this sits in `member` there is no way to restrict submitting an action on a particular project. That lever is gone until the permission leaves `member` again. The alternative was an `actions_restricted` flag mirroring downloads; it lost on the evidence that `download_restricted` is set on **0 of 11,156 projects**, so a second unused lever did not justify a column, a migration and a guard.
+
+This makes `project:submit_action` the first project-scopable **write** in `member` — every other scopable permission it holds is a read. `tests/api/test_project_access_control.py::test_member_holds_four_scopable_reads_and_one_scopable_write` pins that, and asserts the reads/writes split separately so a second write cannot arrive unnoticed.
 
 ### Run folders are open to authenticated callers
 
