@@ -350,3 +350,95 @@ class TestReadsRemainGlobalByDecision:
 
         member = {str(p) for p in ROLE_DEFINITIONS["member"].permissions}
         assert "file:download" not in member
+
+
+class TestRestrictedProjectsRequireMembership:
+    """
+    Added 2026-10-08 with `Project.restricted`, covering the *project-plane*
+    guard rather than downloads (see tests/api/test_file_download_scope.py for
+    that half).
+
+    `require_project_permission` now applies membership as an additional
+    precondition on a restricted project. Additional, not instead of: today the
+    permission check still runs, so this can only refuse something previously
+    allowed, and no project in production sets the flag. Once the default role
+    carries the project-scopable permissions globally, the permission half goes
+    vacuous and this becomes the entire gate -- with no further change to
+    api/rbac/deps.py.
+
+    That sequencing is the reason this lands first and alone.
+    """
+
+    def test_a_global_grant_does_not_reach_a_restricted_project(
+        self, session, client_with_permissions
+    ):
+        """
+        The property the whole design rests on.
+
+        This caller holds `sample:create` globally, which `has_in_project`
+        honours for every project. Before the gate it was allowed here; it is a
+        member of nothing, so now it is not.
+        """
+        from api.rbac.permissions import Permission
+
+        project = make_project(session, "P-20260301-0001", "Locked")
+        project.restricted = True
+        session.add(project)
+        session.commit()
+
+        api = client_with_permissions([Permission.SAMPLE_CREATE], username="globalsc")
+        response = api.post(
+            f"/api/v1/projects/{project.project_id}/samples",
+            json={"sample_id": "S-R1"},
+        )
+        assert response.status_code == 403
+
+    def test_a_member_with_the_permission_is_allowed(
+        self, session, restricted_client
+    ):
+        """Membership plus permission: the intended path into a restricted project."""
+        project = make_project(session, "P-20260301-0002", "Locked but mine")
+        project.restricted = True
+        session.add(project)
+        session.commit()
+        grant_project_role(session, project, "norole", "project_contributor")
+
+        response = restricted_client.post(
+            f"/api/v1/projects/{project.project_id}/samples",
+            json={"sample_id": "S-R2"},
+        )
+        assert response.status_code in (200, 201)
+
+    def test_membership_of_another_project_does_not_carry(
+        self, session, restricted_client
+    ):
+        project = make_project(session, "P-20260301-0003", "Locked")
+        project.restricted = True
+        session.add(project)
+        session.commit()
+        elsewhere = make_project(session, "P-20260301-0004", "Elsewhere")
+        grant_project_role(session, elsewhere, "norole", "project_contributor")
+
+        response = restricted_client.post(
+            f"/api/v1/projects/{project.project_id}/samples",
+            json={"sample_id": "S-R3"},
+        )
+        assert response.status_code == 403
+
+    def test_an_unrestricted_project_is_unaffected(
+        self, session, client_with_permissions
+    ):
+        """
+        The no-op half, and the reason this change is safe to deploy ahead of
+        the rest: with the flag unset -- which is every project in production --
+        behaviour is exactly as before.
+        """
+        from api.rbac.permissions import Permission
+
+        project = make_project(session, "P-20260301-0005", "Open")
+        api = client_with_permissions([Permission.SAMPLE_CREATE], username="globalsc2")
+        response = api.post(
+            f"/api/v1/projects/{project.project_id}/samples",
+            json={"sample_id": "S-R4"},
+        )
+        assert response.status_code in (200, 201)

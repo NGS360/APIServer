@@ -730,10 +730,12 @@ So the rule is now:
 download(caller, uri):
   1. caller is not authenticated                      -> DENY
   2. project = resolve(uri); project is unrestricted  -> ALLOW, no permission consulted
-  3. project is restricted                            -> require file:download in that project
+  3. project is restricted                            -> require MEMBERSHIP of that project
   4. unresolved, but inside a registered run folder   -> ALLOW, no permission consulted
   5. unresolved otherwise                             -> require global file:download
 ```
+
+Step 3 changed from a permission check to a membership check on 2026-10-08; see [Restriction is membership, not permission](#restriction-is-membership-not-permission).
 
 Step 4 was added 2026-10-06; see [Run folders are open to authenticated callers](#run-folders-are-open-to-authenticated-callers). It sits *after* project resolution on purpose.
 
@@ -769,10 +771,41 @@ Direct associations are tried before the run, so a file both in a project and on
 - **Reads were already unaffected** and remain so. `file:read`, `project:read`, `sample:read`, `qcrecord:read` are global.
 - **`GET /files/download` is no longer a bypass at all.** It was guarded in place on 2026-09-09 — same dependency, unchanged 307-to-S3 response — so the two routes agree in every case, including anonymous callers and restricted projects. This is what makes a restriction actually enforceable; while that route was open, restriction was the only control protecting the data and it could be walked around by changing the URL. `TestTheOldRouteIsTheBypass` is inverted rather than narrowed, as its own docstring asked.
 
-**Implemented** by `project.download_restricted` (migration `c9f4b7e28a13`), the rework of `require_file_download`, and `tests/api/test_file_download_scope.py`. Seven tests there asserted the withdrawn requirement and were rewritten rather than preserved.
+**Implemented** by `project.restricted` (added as `download_restricted` in `c9f4b7e28a13`, renamed in `f3a7c01d9e45`), the rework of `require_file_download`, and `tests/api/test_file_download_scope.py`. Seven tests there asserted the withdrawn requirement and were rewritten rather than preserved.
 
 Still outstanding, and both are defence in depth rather than the policy: an explicit bucket allowlist inside `generate_presigned_url`, so signing is constrained even when authorization has already passed; and surfacing restriction in the UI, since with an opt-in control the dangerous state is a project nobody remembered to restrict.
 
+
+### Restriction is membership, not permission
+
+**Changed 2026-10-08.** A project marked `restricted` now requires *membership* — a `project_member` row — rather than a permission on the project plane. `download_restricted` is renamed to `restricted`, because the flag no longer governs downloads alone.
+
+**Why the permission form could not survive.** `AuthzContext.has_in_project()` returns true immediately on a **global** grant:
+
+```python
+if self.has(permission):
+    return True
+return str(permission) in self.permissions_in_project(project_id)
+```
+
+So "requires `file:download` on this project" was already satisfied by anyone holding `file:download` anywhere — `lab_manager`, `auditor`, `admin`, superusers. That was tolerable while those were four roles. It stops being tolerable under the three-tier model, where the default role holds the project-scopable permissions globally: every user would satisfy every restriction, the guard would stay in place, and it would refuse nobody. The failure is silent, which is the dangerous part — nothing in the logs distinguishes "allowed because unrestricted" from "allowed because the restriction is void".
+
+A `project_member` row cannot be conjured by a role. That is the entire reason membership is the gate.
+
+**Where it applies.** Two places, and they differ deliberately:
+
+| Guard | On a restricted project |
+|---|---|
+| `require_file_download` | membership **replaces** the permission check |
+| `require_project_permission` | membership is an **additional** precondition; the permission check still runs |
+
+The second is additive on purpose. Today it can only refuse something currently allowed, and since no project sets the flag, production behaviour is unchanged. When the default role is widened the permission half goes vacuous on its own and membership becomes the whole gate — without `api/rbac/deps.py` changing again.
+
+**Superuser is not exempt**, and this is the one place in the codebase where that holds. `restricted` is meant to mean restricted; an administrator who needs the data enrols themselves, which leaves a row behind as the audit trail. Silent administrative access to a locked-down project is what the flag exists to prevent. The superuser flag still bypasses every *permission* check, so this costs an enrolment and nothing more.
+
+**Rename rather than a second flag.** A project whose data may not be downloaded but may be deleted is not a coherent state, and two flags would invite exactly that. Safe to rename because the column is set on **0 of 11,156** projects — no data to migrate, no caller depending on it. It is a breaking API change in principle (`download_restricted` → `restricted` on `ProjectPublic` and `ProjectUpdate`); in practice nothing sets it and the frontend does not read it.
+
+**This is step 1 of the three-tier role model** recorded on NWP-2213, and it is deliberately first: nothing depends on `restricted` yet, so the gate can be exercised on a real project before any permission is widened. Widening the default role first would leave a window in which nothing protects a restricted project.
 
 ### Submitting an action is no longer project-scoped
 
@@ -814,7 +847,7 @@ Neither option could cover more than about half of recent run traffic. Project r
 
 **It opens raw base calls, and that was the choice made.** A run folder holds `Data/Intensities/BaseCalls/**.cbcl` next to the QC reports, and cbcl decodes into reads — so this opens instrument-level sequence data to every platform user. The narrower option was an allowlist of report subpaths (`Reports/`, `Stats/`, `InterOp/`, the XMLs, the sample sheets), which covered **100% of the observed traffic**. The whole folder was chosen instead, on the grounds that it matches what the run page already offers and leaves no allowlist to maintain. `test_raw_base_calls_are_included` pins it so the cost is visible in the test suite rather than discovered later.
 
-**Ordering is what keeps `download_restricted` alive.** The opening is evaluated only after every project-resolving strategy has failed. A file that is both associated with a restricted project and sitting under a run folder resolves strictly, through the project, and stays refused. Checking the run folder first would have made restriction unenforceable for precisely the files most likely to warrant it. `test_a_restricted_project_still_wins` pins the ordering.
+**Ordering is what keeps `restricted` alive.** The opening is evaluated only after every project-resolving strategy has failed. A file that is both associated with a restricted project and sitting under a run folder resolves strictly, through the project, and stays refused. Checking the run folder first would have made restriction unenforceable for precisely the files most likely to warrant it. `test_a_restricted_project_still_wins` pins the ordering.
 
 **Measured effect.** Replaying 28 days of real download URIs through the new resolver against the production database: 38 requests move from refused to open, 1,271 continue to resolve to a project, and **83 remain refused**. Those 83 are a different family — vendor inbound buckets of the form `.../incoming/<project-id>/...` whose buckets are not in `DATA_BUCKET_URI`/`RESULTS_BUCKET_URI`, so path inference does not reach them. They carry project ids and would resolve if those buckets were recognised, which is the next thing to look at and is not addressed here.
 

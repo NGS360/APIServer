@@ -204,9 +204,26 @@ def require_project_permission(
         request: Request, project: ProjectDep, authz: AuthzDep
     ) -> Project:
         check = all if mode == "all" else any
+        granted = check(authz.has_in_project(p, project.id) for p in permissions)
+
+        # A restricted project additionally requires membership. This is an
+        # extra precondition rather than a replacement for the permission
+        # check, which matters for the order the role collapse lands in: today
+        # it can only ever refuse something that is currently allowed, and
+        # since no project sets the flag it changes nothing in production. Once
+        # the default role carries the project-scopable permissions globally,
+        # the permission half becomes vacuous and membership becomes the whole
+        # gate -- without this file changing again.
+        #
+        # It has to be membership and not a permission: has_in_project returns
+        # true on a global grant, so "needs file:download here" is satisfied by
+        # anyone holding it anywhere. See AuthzContext.is_member_of.
+        if granted and project.restricted and not authz.is_member_of(project.id):
+            granted = False
+
         decide(
             request,
-            check(authz.has_in_project(p, project.id) for p in permissions),
+            granted,
             permissions,
             scope=f"project {project.project_id}",
         )
