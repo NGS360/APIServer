@@ -170,8 +170,13 @@ def test_guard_count_is_recorded():
     """
     Pins the size of the guarded surface so growth is visible in review rather
     than incidental.
+
+    86 -> 87: GET /jobs/submitters, which backs the Submitted By filter on the
+    jobs tables. Guarded on job:read from the start -- the unguarded GET /jobs
+    next to it is backlog, not precedent, and a route whose only caller is the
+    authenticated UI never needs to join it.
     """
-    assert len(GUARDED) == 86
+    assert len(GUARDED) == 87
 
 
 def test_the_authentication_backlog_only_shrinks():
