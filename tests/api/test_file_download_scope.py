@@ -2,8 +2,8 @@
 Downloads: may this caller download *this* file?
 
 Open unless the project says otherwise. Downloads are permitted for any
-authenticated caller; a project opts out by setting `download_restricted`, and
-only then is `file:download` consulted.
+authenticated caller; a project opts out by setting `restricted`, and only then
+is membership consulted.
 
 This inverts what these tests originally asserted. The earlier policy required
 project membership for every download, and seven tests here encoded that -- they
@@ -17,8 +17,10 @@ What is under test now:
 
 * **Unrestricted is open.** A non-member downloads freely. No permission is
   consulted at all on this path.
-* **Restricted requires `file:download` on that project**, which project_viewer
-  and above carry -- so a restricted project's members are its allowlist.
+* **Restricted requires membership of that project.** Changed from a
+  `file:download` project-plane check on 2026-10-08 -- `has_in_project` honours
+  a global grant, so the permission form was forgeable by any role carrying it.
+  A restricted project's members are its allowlist, literally.
 * **The resolver is unchanged**, and its ordering is still the policy. It now
   answers "whose restriction applies" instead of "whose membership is required",
   so the ordering tests express themselves through a restriction rather than
@@ -85,7 +87,7 @@ def put_sample_on_run(session, project: Project, run: SequencingRun, name: str):
 
 def restrict(session, project: Project):
     """Opt a project out of open downloads."""
-    project.download_restricted = True
+    project.restricted = True
     session.add(project)
     session.commit()
     session.refresh(project)
@@ -765,7 +767,7 @@ class TestRunFoldersAreOpenToAuthenticatedCallers:
 
     def test_a_restricted_project_still_wins(self, session, scoped_client):
         """
-        The ordering that makes `download_restricted` survive this change.
+        The ordering that makes `restricted` survive this change.
 
         A file that is both associated with a restricted project and sitting
         inside a run folder resolves strictly, through the project, and is
@@ -810,3 +812,107 @@ class TestRunFoldersAreOpenToAuthenticatedCallers:
         uri = f"{self.RUN_FOLDER}/Stats/Stats.json"
 
         assert anon.get(URL, params={"path": uri}).status_code in (401, 403)
+
+
+class TestRestrictionIsMembershipNotPermission:
+    """
+    Added 2026-10-08 with `Project.restricted`.
+
+    A restricted project consults *membership*, not `file:download` on the
+    project plane. The change exists because `has_in_project` short-circuits on
+    a global grant, so the permission form of the rule is satisfied by anyone
+    holding `file:download` anywhere -- and would be satisfied by every user
+    once the default role is widened, leaving the guard in place and refusing
+    nobody.
+
+    These tests are the proof that the rule cannot be forged by a role. They
+    matter most *before* the role collapse lands: at that point the permission
+    half of every project check becomes vacuous, and membership is the only
+    thing still refusing anyone.
+    """
+
+    def test_a_global_download_grant_does_not_open_a_restricted_project(
+        self, session, client_with_permissions
+    ):
+        """
+        The regression this change exists to prevent.
+
+        Under the previous rule this caller was allowed: it holds
+        `file:download` globally, `has_in_project` returns true on a global
+        grant, and the restriction was expressed as a project-plane permission
+        check. It is a member of nothing.
+        """
+        project = restrict(session, make_project(session, "0301"))
+        f = make_file(session, "s3://bucket/p301/secret.bam")
+        session.add(FileProject(file_id=f.id, project_id=project.id))
+        session.commit()
+
+        api = client_with_permissions([Permission.FILE_DOWNLOAD], username="globaldl")
+        assert api.get(URL, params={"path": f.uri}).status_code == 403
+
+    def test_membership_alone_opens_it_whatever_the_role_says(
+        self, session, scoped_client
+    ):
+        """
+        The other half: the gate is the `project_member` row, and
+        `is_member_of` deliberately ignores its `role_id`.
+
+        Enrolled here with a role carrying no file permissions at all, to show
+        that access comes from membership rather than from what the role
+        grants. That is the semantic the role collapse depends on -- once
+        `role_id` stops meaning anything, this is what still works.
+        """
+        from sqlmodel import select
+
+        from api.auth.models import User
+        from api.rbac.models import GrantSource, ProjectMember, Role
+
+        project = restrict(session, make_project(session, "0302"))
+        f = make_file(session, "s3://bucket/p302/data.bam")
+        session.add(FileProject(file_id=f.id, project_id=project.id))
+        session.commit()
+
+        user = session.exec(select(User).where(User.username == "scoped")).one()
+        irrelevant = session.exec(
+            select(Role).where(Role.name == "demux_operator")
+        ).one()
+        session.add(ProjectMember(project_id=project.id, user_id=user.id,
+                                  role_id=irrelevant.id, source=GrantSource.MANUAL))
+        session.commit()
+
+        assert scoped_client.get(URL, params={"path": f.uri}).status_code == 200
+
+    def test_a_superuser_is_not_exempt_from_a_restriction(
+        self, session, superuser_client
+    ):
+        """
+        Deliberate, and the one place in the codebase where superuser does not
+        short-circuit.
+
+        `restricted` is meant to mean restricted. An administrator who needs
+        the data enrols themselves, which leaves a `project_member` row as the
+        audit trail; silent administrative access to a locked-down project is
+        precisely what the flag exists to prevent. The superuser flag still
+        bypasses every *permission* check, so this costs an enrolment and
+        nothing else.
+
+        If this is ever relaxed, it should be a deliberate edit here rather
+        than a side effect of touching the resolver.
+        """
+        project = restrict(session, make_project(session, "0303"))
+        f = make_file(session, "s3://bucket/p303/locked.bam")
+        session.add(FileProject(file_id=f.id, project_id=project.id))
+        session.commit()
+
+        assert superuser_client.get(URL, params={"path": f.uri}).status_code == 403
+
+    def test_an_unrestricted_project_still_consults_nothing(
+        self, session, scoped_client
+    ):
+        """The common path is untouched: no membership, no permission, allowed."""
+        project = make_project(session, "0304")
+        f = make_file(session, "s3://bucket/p304/open.bam")
+        session.add(FileProject(file_id=f.id, project_id=project.id))
+        session.commit()
+
+        assert scoped_client.get(URL, params={"path": f.uri}).status_code == 200

@@ -270,7 +270,7 @@ def _unresolved(session: Session, uri: str, origin: Origin) -> FileScope:
 
     Deliberately reached only *after* every project-resolving strategy has
     failed. Checking the run folder earlier would let it override a
-    `download_restricted` project for any file that happens to sit under a run
+    `restricted` project for any file that happens to sit under a run
     folder, which would make the restriction unenforceable exactly where raw
     data lives. Restriction first, opening second.
     """
