@@ -271,7 +271,7 @@ def _restricted_projects(session, project_ids) -> list:
         session.exec(
             select(Project.id).where(
                 col(Project.id).in_(list(project_ids)),
-                Project.download_restricted.is_(True),
+                Project.restricted.is_(True),
             )
         ).all()
     )
@@ -287,7 +287,7 @@ def require_file_download(
     May this caller download *this* file? Open unless the project says otherwise.
 
     Downloads are open to any authenticated caller. A project opts out by setting
-    `download_restricted`, and only then is `file:download` consulted. Absence of
+    `restricted`, and only then is membership consulted. Absence of
     a restriction is permission -- see docs/RBAC.md, "Downloads: open by default,
     restricted by exception".
 
@@ -315,13 +315,17 @@ def require_file_download(
       workload read 66 projects 33M times in a month, and requiring a grant per
       project made project membership mean "reads everything".
 
-    - **Resolved and restricted.** Requires `file:download` on the project plane,
-      which project_viewer and above carry -- so a restricted project's members
-      are its allowlist. `has_in_project` also honours a *global* grant, so
-      lab_manager, auditor, admin and superusers pass regardless. That is
-      intended for cross-project operation, and it is exactly why `member` must
-      **not** be given global `file:download`: it would satisfy every restriction
-      for every user and make this branch unreachable.
+    - **Resolved and restricted.** Requires *membership* of the project. Changed
+      from a `file:download` project-plane check on 2026-10-08: `has_in_project`
+      honours a global grant, so the old form was satisfied by anyone holding
+      `file:download` anywhere -- lab_manager, auditor, admin and superusers --
+      and would have been satisfied by *everyone* once the default role is
+      widened. A restricted project's members are its allowlist, and membership
+      is the only form of that statement a global grant cannot forge.
+
+      Superuser is not exempt. An administrator who needs a restricted
+      project's data enrols themselves, which leaves a row behind; silent
+      administrative access is what the flag exists to prevent.
 
     - **Unresolved.** Requires *global* `file:download`, unchanged. "Belongs to
       no project" is not evidence of permission, and this case is load-bearing
@@ -346,9 +350,14 @@ def require_file_download(
             # project is ever resolved in practice -- measured 0 multi-project
             # files in production -- so this is the safe reading of a case that
             # does not currently occur, not a considered conflict policy.
+            # Membership, not permission. `file:download` held globally
+            # satisfies has_in_project for every project, so expressing the
+            # restriction as a permission check makes it void for any role
+            # carrying it -- lab_manager, auditor and admin today, and every
+            # user once the default role is widened. A project_member row
+            # cannot be granted by a role, which is what makes it hold.
             granted = all(
-                authz.has_in_project(Permission.FILE_DOWNLOAD, project_id)
-                for project_id in restricted
+                authz.is_member_of(project_id) for project_id in restricted
             )
     else:
         granted = authz.has(Permission.FILE_DOWNLOAD)
