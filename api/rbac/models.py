@@ -216,3 +216,117 @@ class ProjectMemberPublic(SQLModel):
     role: str
     granted_at: datetime
     source: str
+
+
+# --- Administration read models -------------------------------------------
+# The roster and the per-user access view exist so an administrator does not
+# have to reconstruct one user's access from three endpoints and a JOIN they
+# cannot express -- project membership in particular is only listable per
+# project, so "which projects is this person on" has no answer without this.
+
+class UserAdminPublic(SQLModel):
+    """
+    One row of the administrative user roster.
+
+    A superset of UserSearchResult, which exists for the user *picker*: that one
+    is a directory lookup that may answer from LDAP and deliberately hides
+    deactivated accounts. This one is the local users table only, including the
+    deactivated, and carries the status flags and grants an administrator is
+    looking at the page to see.
+    """
+
+    username: str
+    email: str | None
+    full_name: str | None
+    is_active: bool
+    is_verified: bool
+    is_superuser: bool
+    created_at: datetime
+    last_login: datetime | None
+
+    #: Global role names, alphabetical. Project roles are not included: a user
+    #: may hold one per project, so this field would be unbounded.
+    global_roles: list[str]
+
+
+class UsersAdminPublic(SQLModel):
+    """A page of the user roster, in the shape the other list endpoints use."""
+
+    data: list[UserAdminPublic]
+    total_items: int
+    skip: int
+    limit: int
+    has_next: bool
+    has_prev: bool
+
+
+class ProjectMembershipPublic(SQLModel):
+    """One project-scoped grant, seen from the user's side."""
+
+    #: The business key, not the surrogate: it is what the UI routes on and what
+    #: a human recognises.
+    project_id: str
+    project_name: str | None
+    role: str
+    granted_at: datetime
+    source: str
+
+
+class UserAccessPublic(SQLModel):
+    """
+    Everything that decides what one user may do.
+
+    Both planes plus the break-glass flag, in one response, because the question
+    an administrator actually asks is "what can this person do", and answering it
+    from parts is how the answer starts being wrong.
+    """
+
+    username: str
+    email: str | None
+    full_name: str | None
+    is_active: bool
+    is_verified: bool
+    is_superuser: bool
+    global_roles: list[str]
+
+    #: Effective global permissions, from the one resolver the route guards use.
+    #: For a superuser this is the whole catalog, since that is what the flag
+    #: means -- reporting an empty list would read as "no access".
+    global_permissions: list[str]
+
+    project_memberships: list[ProjectMembershipPublic]
+
+
+class MyAccessPublic(SQLModel):
+    """
+    The calling user's own effective access, as returned by GET /rbac/me.
+
+    Declared as a schema rather than returned as a dict because this is the one
+    RBAC endpoint the SPA calls on every page load: it decides which controls to
+    render. Without a response model the generated client types it as an opaque
+    map, and every permission check in the UI becomes a cast -- which is exactly
+    the kind of place a silently renamed field should be a compile error.
+
+    Global permissions only, deliberately. Project-scoped permissions belong on
+    the project detail response: with a five-figure project count this payload
+    would otherwise be unbounded.
+    """
+
+    username: str
+    is_superuser: bool
+    global_roles: list[str]
+    global_permissions: list[str]
+
+
+class UserFlagsUpdate(SQLModel):
+    """
+    Request body for PATCH /users/{username}.
+
+    Every field optional and omission means "leave alone", so a client that only
+    wants to verify an account cannot accidentally clear the other two by
+    sending a partially populated object.
+    """
+
+    is_active: bool | None = None
+    is_verified: bool | None = None
+    is_superuser: bool | None = None

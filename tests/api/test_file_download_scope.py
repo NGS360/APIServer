@@ -31,7 +31,7 @@ What is under test now:
   proxy.
 * **Authentication is still required.** "Open" means open to platform users.
 
-RBAC_MODE is `enforce` in tests, so refusals are 403s.
+A failed permission check is a 403, here and in production.
 """
 from datetime import date
 

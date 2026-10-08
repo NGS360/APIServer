@@ -978,6 +978,15 @@ New router `api/rbac/routes.py` at `/api/v1/rbac`:
 | GET | `/rbac/users/{username}/roles` | `role:read` |
 | POST | `/rbac/users/{username}/roles` | `role:manage` |
 | DELETE | `/rbac/users/{username}/roles/{role_name}` | `role:manage` |
+| GET | `/rbac/users` | `role:read` — the user roster: status flags and global roles, paginated, filterable on name, role and status |
+| GET | `/rbac/users/{username}/access` | `role:read` — both grant planes for one user, including project memberships |
+
+`GET /rbac/users` exists rather than reusing `GET /users/search` because those are two different endpoints wearing the same name. Search backs the user *picker*: it may answer from LDAP, it requires a query of at least two characters, and it filters to `is_active`. All three are right for choosing somebody to grant a role to, and all three are wrong for administering accounts — the deactivated account is the one the administrator came to find.
+
+Both take `role:read` rather than `user:read`: the latter is the directory-search permission every `member` holds, and it does not describe reading the whole roster's status flags and grants.
+
+`GET /rbac/me` carries the global plane only. Project-scoped permissions are not inlined there — with a five-figure project count the payload would be unbounded — so `GET /projects/{project_id}` carries a per-caller `permissions` list for the project in hand instead. It is `None` when the request was anonymous and `[]` when a real caller was evaluated and holds nothing, which are different facts.
+
 
 Project membership lives on the project router so that owners can self-serve:
 
