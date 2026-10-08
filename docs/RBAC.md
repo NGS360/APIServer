@@ -729,10 +729,11 @@ So the rule is now:
 ```
 download(caller, uri):
   1. caller is not authenticated                      -> DENY
-  2. project = resolve(uri); project is unrestricted  -> ALLOW, no permission consulted
-  3. project is restricted                            -> require MEMBERSHIP of that project
-  4. unresolved, but inside a registered run folder   -> ALLOW, no permission consulted
-  5. unresolved otherwise                             -> require global file:download
+  2. uri is malformed                                 -> 400, not 403
+  3. project = resolve(uri); project is unrestricted  -> ALLOW, no permission consulted
+  4. project is restricted                            -> require MEMBERSHIP of that project
+  5. a registered run folder, or the upload store     -> ALLOW, no permission consulted
+  6. anything else                                    -> DENY, for everyone
 ```
 
 Step 3 changed from a permission check to a membership check on 2026-10-08; see [Restriction is membership, not permission](#restriction-is-membership-not-permission).
@@ -775,6 +776,39 @@ Direct associations are tried before the run, so a file both in a project and on
 
 Still outstanding, and both are defence in depth rather than the policy: an explicit bucket allowlist inside `generate_presigned_url`, so signing is constrained even when authorization has already passed; and surfacing restriction in the UI, since with an opt-in control the dangerous state is a project nobody remembered to restrict.
 
+
+### Signing is confined to four locations
+
+**Changed 2026-10-08.** `generate_presigned_url` will sign, and `GET /files/list` will enumerate, only a URI in one of four places:
+
+| Location | Resolved by |
+|---|---|
+| A project | any `scope_for_uri` strategy — association, sample, run fallback, or project-id path inference |
+| A registered run folder | prefix match against `sequencingrun.run_folder_uri` |
+| A registered vendor inbound prefix | prefix match against `vendor.bucket` |
+| The platform's own upload store | prefix match against `STORAGE_ROOT_PATH` |
+
+Anything else is refused **for every caller, superuser included**.
+
+**What this replaced, and why it was not good enough.** The old rule was "an unresolved URI requires global `file:download`". That is a privilege, not a boundary: `lab_manager`, `auditor`, `admin` and every superuser hold the permission, so for those principals the endpoint was an arbitrary-S3-read proxy over everything the API's own IAM role can reach. There is no principal for whom signing a stranger's bucket is correct, which is exactly what makes this a property of the location rather than of the caller. An allowlist an administrator can step outside is not an allowlist.
+
+**The two new locations were added on measurement.**
+
+*Vendor prefixes.* All 89 download requests into vendor buckets over 28 days named a project id that **exists** — none lacked one. So vendor paths resolve to their project through ordinary path inference and inherit that project's restriction, rather than needing a category that is signable without a project. These were the last outstanding `file:download` refusals after #453.
+
+*The upload store.* This one was a bug caught by the test suite, and the lesson is worth keeping. Production's `STORAGE_URI` is a **third** bucket, distinct from both `DATA_BUCKET_URI` and `RESULTS_BUCKET_URI`. A `may_sign` check built from the data and results buckets alone rejected every upload — the rule is applied to the write path too. It also cannot rely on project-id inference, because an upload against a run, sample or QC record is stored under that entity's UUID with no project id anywhere in the key.
+
+Note `STORAGE_ROOT_PATH` is read from `get_settings()`, not from `get_setting_value()`. The two look interchangeable and are not: the bucket URIs are database settings, while this comes from an environment variable and has no row. Looking it up in the database returns `None`, which silently makes the file store unsignable.
+
+**Listing needed a different well-formedness test, and this is the subtle part.** Signing needs an object, so `s3://bucket` alone is malformed there. Listing does not — `s3://bucket/` is a perfectly well-formed request to enumerate an entire bucket. If the listing guard used the signing-shaped check, a bare bucket would be dismissed as malformed and let through, and **dropping the key would be enough to enumerate any bucket the API can read**. Hence `is_wellformed(uri, require_key=False)` on that path, and `test_a_bare_bucket_cannot_either` to pin it.
+
+**A malformed URI is a 400, not a 403.** Answering 403 for `""` or `not-a-uri` tells a caller they lack access to something that is not a location, and makes the two cases indistinguishable while they fix the request. Malformed URIs are passed through to the handler's own validation.
+
+**On the upload path this is defence in depth, not a hole being closed.** The destination is server-computed — `generate_uri(STORAGE_ROOT_PATH, entity_type, entity_id, filename, relative_path)` — and `validate_relative_path` already rejects absolute paths, `..`, `//` and anything outside `[a-zA-Z0-9_\-/]`. A caller cannot name an arbitrary destination today. The check is worth making anyway because that safety is emergent from three functions agreeing rather than stated anywhere: a change to `STORAGE_ROOT_PATH` or `generate_uri`, or a bypass of the path validation, would silently widen where the platform writes.
+
+**Measured before shipping.** Replaying 28 days of production traffic: all 1,415 `download-url` requests and all 342 distinct `/files/list` URIs fall inside the four locations. Nothing legitimate is refused.
+
+**One ordering dependency, recorded because it is load-bearing.** The vendor allowlist is database-backed, so whoever can write `vendor.bucket` decides what the platform will sign. `vendor:create` and `vendor:update` move to `vendor_admin` in step 3 of the role model; until then this inference widens signing to anyone who can edit a vendor row.
 
 ### Restriction is membership, not permission
 

@@ -33,7 +33,7 @@ from api.files.models import (
 )
 from api.files import services
 from api.auth.deps import OptionalUser
-from api.files.scope import scope_for_uri
+from api.files.scope import is_wellformed, may_sign, scope_for_uri
 from api.rbac.deps import AuthzDep, decide, require_permission
 from api.rbac.permissions import Permission
 from core.deps import get_s3_client, SessionDep
@@ -246,6 +246,7 @@ def list_files(
     summary="Browse S3 bucket/folder",
 )
 def browse_s3(
+    session: SessionDep,
     uri: str = Query(
         ...,
         description="S3 URI to list (e.g., s3://bucket/folder/)"
@@ -257,7 +258,29 @@ def browse_s3(
 
     Returns a list of folders and files at the given path.
     For S3, the full s3:// URI is required.
+
+    Confined to the three locations the platform will sign for -- a project, a
+    registered run folder, or a registered vendor inbound prefix -- since
+    2026-10-08. Enumerating a bucket and signing a key in it are the same class
+    of problem, and this route had neither constraint: it would list any prefix
+    the API's IAM role could read.
+
+    Verified against production before the constraint was added: all 342
+    distinct URIs this route received over 28 days resolve to a project, so
+    nothing legitimate is refused.
+
+    This is a *location* check, not an authorization check. The route remains
+    unauthenticated -- closing that is consumer work tracked separately -- so
+    the constraint deliberately does not depend on who is asking.
     """
+    if is_wellformed(uri, require_key=False) and not may_sign(session, uri):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(
+                "This URI is not in a project, a registered sequencing run "
+                "folder, or a registered vendor prefix, so it cannot be listed."
+            ),
+        )
     return services.list_s3_files(uri=uri, s3_client=s3_client)
 
 
@@ -327,12 +350,17 @@ def require_file_download(
       project's data enrols themselves, which leaves a row behind; silent
       administrative access is what the flag exists to prevent.
 
-    - **Unresolved.** Requires *global* `file:download`, unchanged. "Belongs to
-      no project" is not evidence of permission, and this case is load-bearing
-      for a reason beyond authorization: generate_presigned_url signs whatever
-      bucket and key it is handed, so an unresolved URI can name any object the
-      API's own IAM role can read. Keeping it privileged is what stops the
-      endpoint being an arbitrary-S3-read proxy. Do not "simplify" this to allow.
+    - **Unresolved.** Refused, for everyone, superuser included. Changed
+      2026-10-08: it previously required *global* `file:download`, which four
+      roles and every superuser held, so the protection was a privilege rather
+      than a boundary.
+
+      This case is load-bearing for a reason beyond authorization:
+      generate_presigned_url signs whatever bucket and key it is handed, so an
+      unresolved URI can name any object the API's own IAM role can read. That
+      is what makes it a property of the location rather than of the caller --
+      there is no principal for whom signing an arbitrary bucket is correct. Do
+      not "simplify" this to allow, and do not add a role that overrides it.
 
     A dependency may take the same query parameter as its handler; both receive it
     and the OpenAPI schema is unchanged.
@@ -360,7 +388,16 @@ def require_file_download(
                 authz.is_member_of(project_id) for project_id in restricted
             )
     else:
-        granted = authz.has(Permission.FILE_DOWNLOAD)
+        # Not a project, not a run folder, not a vendor inbound prefix, not the
+        # upload store: the platform will not sign it, for anyone. Changed
+        # 2026-10-08 from "requires global file:download", which lab_manager,
+        # auditor, admin and every superuser satisfied -- an allowlist four
+        # roles can step outside is not an allowlist.
+        #
+        # A *malformed* URI is let through to the handler, which answers 400.
+        # Refusing it here would report "forbidden" for a typo, and would make
+        # the two cases indistinguishable to a caller fixing their request.
+        granted = not is_wellformed(path)
 
     # The origin is on the decision record so the mix of project-, sample- and
     # run-resolved downloads is measurable, and so the unregistered surface can be

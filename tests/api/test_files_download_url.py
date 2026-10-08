@@ -4,7 +4,13 @@ import pytest
 from api.files.routes import DOWNLOAD_URL_TTL_SECONDS
 
 URL = "/api/v1/files/download-url"
-PATH = "s3://test-data-bucket/project/P-1/reads.fastq.gz"
+# Under the configured upload store, which is a signable location as of
+# 2026-10-08. An arbitrary bucket is no longer signable by anyone, so a
+# test of the signing mechanics has to name somewhere the platform owns.
+PATH = "s3://my-storage-bucket/project/P-1/reads.fastq.gz"
+
+#: Well formed, and none of the platform's business. Signable by nobody.
+FOREIGN = "s3://someone-elses-bucket/private/file.txt"
 
 
 class TestPresignedURL:
@@ -48,31 +54,45 @@ class TestPresignedURL:
 
 class TestAuthorization:
 
-    def test_a_caller_without_file_download_is_refused(self, restricted_client):
-        r = restricted_client.get(URL, params={"path": PATH})
-        assert r.status_code == 403
-        assert "file:download" in r.json()["detail"]
-
-    def test_the_default_role_is_no_longer_enough(self, client_with_permissions):
+    def test_a_foreign_bucket_is_refused_whatever_the_caller_holds(
+        self, restricted_client
+    ):
         """
-        This asserted the opposite until downloads became project-scoped.
+        Rewritten 2026-10-08. It previously asserted that this caller was
+        refused *because it lacked file:download* -- a permission rule. There is
+        no longer any URI that a permission opens: a URI is either one of the
+        platform's locations, in which case the project's restriction decides,
+        or it is not, in which case nobody may have it signed.
+        """
+        r = restricted_client.get(URL, params={"path": FOREIGN})
+        assert r.status_code == 403
 
-        `member` deliberately no longer holds file:download: while it did, the
-        project check was vacuous, because has_in_project short-circuits on a
-        global grant. A caller now needs the permission through a project role on
-        the file's project, or globally through one of the cross-project roles.
+    def test_holding_file_download_does_not_help(self, client_with_permissions):
+        """
+        The half that changed, and the reason the rule moved off permissions.
 
-        Scoping behaviour itself lives in tests/api/test_file_download_scope.py;
-        this is only the "member alone does not open it" half.
+        Granting `file:download` globally used to make every unresolved URI
+        signable, which meant lab_manager, auditor, admin and every superuser
+        could have any key in any bucket the API's IAM role can read signed for
+        them. The protection was a privilege, so it was only ever as narrow as
+        the narrowest role that held it.
+        """
+        from api.rbac.permissions import Permission
+
+        api = client_with_permissions([Permission.FILE_DOWNLOAD], username="dl")
+        assert api.get(URL, params={"path": FOREIGN}).status_code == 403
+
+    def test_member_still_does_not_hold_file_download(self):
+        """
+        Kept from the previous version of this class, because it is still true
+        and still load-bearing: while `member` held it, the project check was
+        vacuous -- has_in_project short-circuits on a global grant.
         """
         from api.rbac.roles import DEFAULT_ROLE_NAME, ROLE_DEFINITIONS
 
         member = {str(p) for p in ROLE_DEFINITIONS[DEFAULT_ROLE_NAME].permissions}
         assert "file:download" not in member
         assert "file:read" in member, "reads stay global; only downloading moved"
-
-        api = client_with_permissions(sorted(member), username="plainmember")
-        assert api.get(URL, params={"path": PATH}).status_code == 403
 
     def test_an_anonymous_caller_is_refused(self, unauthenticated_client):
         assert unauthenticated_client.get(

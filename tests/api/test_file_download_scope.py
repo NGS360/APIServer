@@ -311,24 +311,41 @@ class TestUnresolvableURIs:
         r = scoped_client.get(URL, params={"path": "s3://bucket/orphan/file.txt"})
         assert r.status_code == 403
 
-    def test_a_global_holder_can_still_reach_raw_storage(
+    def test_a_global_holder_no_longer_reaches_raw_storage(
         self, client_with_permissions
     ):
         """
-        The counterpart. lab_manager, auditor and admin hold global file:download
-        for cross-project operation, and has_in_project honours a global grant, so
-        project scoping does not restrict them. That is deliberate: a sequencing
-        core operator enrolled in no projects still has to be able to work.
+        Inverted 2026-10-08, and the inversion is the point of the change.
+
+        This previously asserted the opposite, on the reasoning that
+        lab_manager, auditor and admin hold global file:download for
+        cross-project operation and so should not be scoped. That reasoning was
+        sound for *project* scoping and wrong for this branch: an unresolved URI
+        is not a project, it is any bucket and key the API's own IAM role can
+        read. Treating it as a privilege made four roles into an
+        arbitrary-S3-read proxy.
+
+        Cross-project operation is unaffected -- projects, run folders, vendor
+        prefixes and the upload store all remain reachable. What is gone is
+        reaching *outside* those.
         """
         api = client_with_permissions([Permission.FILE_DOWNLOAD], username="global")
         assert api.get(
             URL, params={"path": "s3://bucket/loose/file.txt"}
-        ).status_code == 200
+        ).status_code == 403
 
-    def test_a_superuser_is_unaffected(self, superuser_client):
+    def test_a_superuser_is_not_exempt_either(self, superuser_client):
+        """
+        Also inverted. The signing allowlist is a property of the location, so
+        there is no principal for whom signing an arbitrary bucket is correct --
+        and an allowlist the superuser can step outside is not an allowlist.
+
+        This is the second place superuser does not short-circuit, after the
+        restricted-project membership gate.
+        """
         assert superuser_client.get(
             URL, params={"path": "s3://bucket/loose/file.txt"}
-        ).status_code == 200
+        ).status_code == 403
 
 
 class TestTheOldRouteIsNoLongerTheBypass:
