@@ -43,14 +43,14 @@ This document describes the Workflow and Pipeline systems — how workflows are 
 The system provides:
 
 - **Platform-agnostic workflow identity**: Define a workflow once by name
-- **Versioning**: Each version carries its own `definition_uri` (WDL/CWL/Nextflow file) and auto-increment version number.  semantic version string can be associated using an attribute on the workflow version.
+- **Versioning**: Each version carries its own `definition_uri` (WDL/CWL/Nextflow file) and auto-increment version number. A semantic version string can be associated using an attribute on the workflow version.
 - **Input/output descriptors**: A version can record its parameter signature (`inputs`/`outputs`) so callers can discover what a workflow takes and produces without parsing the definition file
 - **Aliases**: Assign an alias to a specific version, e.g. `production` or `development` — like AWS Lambda aliases
 - **Cross-platform deployment**: Register a specific workflow version on multiple execution engines (Arvados, SevenBridges, AWS HealthOmics, etc.). For AWS HealthOmics the API server can perform the registration itself — see [Deploying to AWS HealthOmics](#deploying-to-aws-healthomics)
 - **Pipeline grouping**: Organise related workflows into named groups called pipelines
 - **Flexible metadata**: Key-value attributes on workflows and pipelines
 - **Provenance**: All entities track `created_at` and `created_by` for audit trails
-- **Pagination**: List endpoints support pagination with configurable sorting
+- **Pagination**: The top-level `GET /workflows` and `GET /pipelines` endpoints support pagination with configurable sorting. Nested lists (versions, aliases, deployments) return all rows.
 
 ## Architecture
 
@@ -155,18 +155,18 @@ erDiagram
 
 **Why separate Workflow and WorkflowVersion?**
 
-A workflow definition evolves over time. The `Workflow` table captures the logical identity (e.g., "Alignment") while `WorkflowVersion` captures each revision with its own version string and definition URI. This means:
+A workflow definition evolves over time. The `Workflow` table captures the logical identity (e.g., "Alignment") while `WorkflowVersion` captures each revision with its own version number and definition URI. This means:
 
 - Creating a new version doesn't create a new workflow — it adds a row to `WorkflowVersion`
 - Pipelines reference the logical workflow, not a specific version
 
 **Why a separate alias table?**
 
-Aliases like `production` and `development` let teams mark which version should be used without hardcoding version strings. The `WorkflowVersionAlias` table stores a free-text alias name with a `UNIQUE(workflow_id, alias)` constraint — each workflow can have at most one pointer per alias name. Moving an alias is an upsert, recording who changed it last — though not when, since `created_at` is not refreshed on a move.
+Aliases like `production` and `development` let teams mark which version should be used without hardcoding version numbers. The `WorkflowVersionAlias` table stores a free-text alias name with a `UNIQUE(workflow_id, alias)` constraint — each workflow can have at most one pointer per alias name. Moving an alias is an upsert, recording who changed it last — though not when, since `created_at` is not refreshed on a move.
 
 **Why does WorkflowDeployment point to WorkflowVersion?**
 
-You register and execute a *specific version* of a workflow on a platform. Different versions may have different external IDs on the same platform. The FK to `workflow_version.id` captures this precisely. You can still navigate to the parent workflow via `WorkflowVersion.workflow_id`.
+You register and execute a *specific version* of a workflow on a platform. Different versions may have different external IDs on the same platform. The FK to `workflowversion.id` captures this precisely. You can still navigate to the parent workflow via `WorkflowVersion.workflow_id`.
 
 **Why a separate PipelineWorkflow junction table (not a direct FK)?**
 
@@ -265,7 +265,7 @@ Named pointer to a specific workflow version.
 
 ### Platform
 
-A registered workflow execution engine. A reference table — where `name` is the unique. Must be created before workflows can be deployed or run on a given engine.
+A registered workflow execution engine. A reference table — `name` is unique. Must be created before workflows can be deployed or run on a given engine.
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
@@ -362,8 +362,8 @@ POST /api/v1/workflows
     {"key": "category", "value": "genomics"},
     {"key": "author", "value": "bioinformatics-team"}
   ],
-  "versions": [],
-  "aliases": []
+  "versions": null,
+  "aliases": null
 }
 ```
 
@@ -423,7 +423,7 @@ Only `definition_uri` is required. `attributes`, `inputs` and `outputs` are all 
   "definition_uri": "s3://workflows/variant-calling-v2.1.cwl",
   "created_at": "2026-03-01T12:05:00Z",
   "created_by": "jdoe",
-  "deployments": [],
+  "deployments": null,
   "attributes": [
     {"key": "git_commit", "value": "abcd1234"},
     {"key": "semantic_version", "value": "v1.2.3"}
