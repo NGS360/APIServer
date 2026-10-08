@@ -2,6 +2,42 @@
 
 This document describes the Workflow and Pipeline systems — how workflows are defined, versioned, deployed on compute platforms, and organised into named collections.
 
+## Table of Contents
+
+- [Workflows \& Pipelines](#workflows--pipelines)
+  - [Table of Contents](#table-of-contents)
+  - [Overview](#overview)
+  - [Architecture](#architecture)
+    - [Entity Relationship Diagram](#entity-relationship-diagram)
+    - [Design Decisions](#design-decisions)
+  - [Database Models](#database-models)
+    - [Workflow](#workflow)
+    - [WorkflowAttribute](#workflowattribute)
+    - [WorkflowVersion](#workflowversion)
+    - [WorkflowVersionAttribute](#workflowversionattribute)
+    - [WorkflowVersionAlias](#workflowversionalias)
+    - [Platform](#platform)
+    - [WorkflowDeployment](#workflowdeployment)
+    - [Pipeline](#pipeline)
+    - [PipelineAttribute](#pipelineattribute)
+    - [PipelineWorkflow](#pipelineworkflow)
+  - [API Endpoints](#api-endpoints)
+    - [Workflow CRUD](#workflow-crud)
+    - [WorkflowVersion Endpoints](#workflowversion-endpoints)
+    - [WorkflowVersionAlias Endpoints](#workflowversionalias-endpoints)
+    - [WorkflowDeployment Endpoints](#workflowdeployment-endpoints)
+    - [Deployment across platforms](#deployment-across-platforms)
+    - [Deploying to AWS HealthOmics](#deploying-to-aws-healthomics)
+    - [Pipeline CRUD](#pipeline-crud)
+    - [Pipeline ↔ Workflow Association](#pipeline--workflow-association)
+  - [Use Cases](#use-cases)
+    - [Onboarding a new workflow](#onboarding-a-new-workflow)
+    - [Releasing a new revision](#releasing-a-new-revision)
+    - [Running a workflow](#running-a-workflow)
+    - [Configuring a pipeline launcher](#configuring-a-pipeline-launcher)
+    - [Discovering a version's parameters](#discovering-a-versions-parameters)
+  - [Source Files](#source-files)
+
 ## Overview
 
 The system provides:
@@ -234,9 +270,7 @@ A registered workflow execution engine. A reference table — where `name` is th
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `id` | UUID | auto | Primary key |
-| `name` | string | yes | Unique — e.g., `"Arvados"`, `"SevenBridges"`, `"AWSHealthOmics (us-east)"` |
-
-> **Names are matched exactly.** `engine` values on deployments are compared to `platform.name` as literal strings, and the HealthOmics auto-registration path keys off the exact name `AWSHealthOmics (us-east)`. A platform named `AWS HealthOmics (us-east-1)` is a *different* platform as far as this API is concerned, and would not auto-register. Call `GET /api/v1/platforms` to get the spelling in use rather than guessing.
+| `name` | string | yes | Unique — e.g., `"Arvados"`, `"SevenBridges"`, `"AWS HealthOmics (us-east-1)"`, `"AWS HealthOmics (eu-central-1)"` |
 
 ### WorkflowDeployment
 
