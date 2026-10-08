@@ -816,6 +816,16 @@ This API is the workflow **catalog** — the system of record for what a workflo
 
 One consequence is worth stating up front: **this API never picks a version for you.** Every endpoint here takes an explicit `version_num` or an explicit `?alias=`. The convenience of "just give me the current one" belongs to clients, and the rules they apply are described in [Running a workflow](#running-a-workflow).
 
+> **Which id do I use?** These responses contain several identifiers and only some are accepted back as input, which is a common source of confusion.
+>
+> - **To run a workflow, use the workflow id** (`workflow.id`) — optionally suffixed with an alias or version number. Never a version id, a deployment id, or an `external_id`.
+> - **To address a version, use its number, not its UUID.** Version ids are returned inside version summaries, alias responses and deployment responses, but no endpoint anywhere accepts one. Version numbers are small integers starting at 1 and scoped to their workflow, so `version 3` only means something alongside a workflow id.
+> - **Platforms are referenced by name** (`platform.name`) in the `engine` field. `platform.id` exists but the workflow API never uses it.
+> - **A deployment id is only good for deleting that deployment.** It addresses nothing else.
+> - **`external_id` is normally an output** — you read it to learn what a version is called on its platform. You supply it only when you registered the workflow there yourself. The GA4GH WES service calls this same value the **engine id**.
+>
+> Unrelated despite the similar look: an `ngs360://<file-id>` inside a `definition_uri` is a **file** id from the files API.
+
 ### Onboarding a new workflow
 
 Getting a workflow from nothing to runnable. The order matters: a platform cannot be a deployment target until it is registered, and a version is not runnable until it has been deployed.
