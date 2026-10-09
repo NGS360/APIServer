@@ -366,6 +366,44 @@ def require_file_download(
     and the OpenAPI schema is unchanged.
     """
     scope = scope_for_uri(session, path)
+
+    # The location rule is settled here, *before* and outside the RBAC decision
+    # machinery, and that separation is the whole point.
+    #
+    # It was not, when this shipped in #459: the refusal was folded into the
+    # `granted` flag and handed to decide(), which applies RBAC_MODE. Production
+    # runs dry_run, so an unsignable URI was logged `would_deny` and served a
+    # 200 -- the protection the change describes was inert in the only tier that
+    # matters. Caught by probing prod with a superuser token after the deploy.
+    #
+    # Whether a URI is one of the platform's locations is a property of the URI.
+    # It is not an authorisation question, so no enforcement mode, role or
+    # superuser flag may soften it. Authorisation -- a restricted project's
+    # membership check below -- stays mode-aware, because that one genuinely is
+    # a permission decision and is still being rolled out.
+    #
+    # A malformed URI is let through to the handler, which answers 400. Refusing
+    # it here would report "forbidden" for a typo and make the two cases
+    # indistinguishable to a caller fixing their request.
+    if is_wellformed(path) and not may_sign(session, path):
+        # Still emitted through decide(), so the refusal lands in the access log
+        # beside every other decision and carries the URI as its subject -- the
+        # measurement that distinguishes "these files are unregistered" from
+        # "the resolver failed to match a URI it should have". decide() will not
+        # stop the request in dry_run, which is why the raise below is
+        # unconditional rather than left to it.
+        decide(request, False, (Permission.FILE_DOWNLOAD,),
+               scope=f"file via {scope.origin}, not a platform location",
+               subject=path)
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(
+                "This URI is not in a project, a registered sequencing run "
+                "folder, a registered vendor prefix, or the platform's file "
+                "store, so it cannot be downloaded."
+            ),
+        )
+
     if scope.open_to_authenticated:
         # Run-folder contents. No project to consult, and none required.
         granted = True
@@ -388,16 +426,10 @@ def require_file_download(
                 authz.is_member_of(project_id) for project_id in restricted
             )
     else:
-        # Not a project, not a run folder, not a vendor inbound prefix, not the
-        # upload store: the platform will not sign it, for anyone. Changed
-        # 2026-10-08 from "requires global file:download", which lab_manager,
-        # auditor, admin and every superuser satisfied -- an allowlist four
-        # roles can step outside is not an allowlist.
-        #
-        # A *malformed* URI is let through to the handler, which answers 400.
-        # Refusing it here would report "forbidden" for a typo, and would make
-        # the two cases indistinguishable to a caller fixing their request.
-        granted = not is_wellformed(path)
+        # Only reachable for a malformed URI now -- anything well formed and
+        # unsignable was refused above. Left as an allow so the handler can
+        # answer 400 rather than this dependency answering 403.
+        granted = True
 
     # The origin is on the decision record so the mix of project-, sample- and
     # run-resolved downloads is measurable, and so the unregistered surface can be
