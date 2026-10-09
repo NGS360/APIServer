@@ -181,3 +181,61 @@ class TestNoPrincipalOverridesIt:
         r = superuser_client.get("/api/v1/files/download-url",
                                  params={"path": "s3://someone-elses-bucket/x.bam"})
         assert r.status_code == 403
+
+
+class TestTheLocationRuleIgnoresTheEnforcementMode:
+    """
+    The regression that shipped in #459 and was caught by probing production.
+
+    The refusal was folded into the guard's `granted` flag and handed to
+    `decide()`, which applies RBAC_MODE. Production runs `dry_run`, so an
+    unsignable URI was recorded `would_deny` and served a **200** -- the
+    protection was inert in the only tier that mattered, while every test passed
+    because the suite runs in `enforce`.
+
+    Whether a URI is one of the platform's locations is a property of the URI.
+    It is not an authorisation question, so no enforcement mode may soften it.
+    That is what these tests pin, and they are written in the mode that hid the
+    bug.
+
+    Authorisation -- a restricted project's membership check -- stays
+    mode-aware, because that one genuinely is a permission decision and is still
+    being rolled out. See tests/api/test_file_download_scope.py.
+    """
+
+    @pytest.fixture
+    def mode(self, monkeypatch):
+        from core.config import get_settings
+
+        def _set(value: str):
+            monkeypatch.setenv("RBAC_MODE", value)
+            monkeypatch.setenv("ENVIRONMENT", "dev")
+            get_settings.cache_clear()
+        yield _set
+        get_settings.cache_clear()
+
+    @pytest.mark.parametrize("mode_value", ["dry_run", "off", "enforce"])
+    def test_a_foreign_bucket_is_refused_in_every_mode(
+        self, client, mode, mode_value
+    ):
+        mode(mode_value)
+        r = client.get("/api/v1/files/download-url",
+                       params={"path": "s3://someone-elses-bucket/x.bam"})
+        assert r.status_code == 403, mode_value
+
+    @pytest.mark.parametrize("mode_value", ["dry_run", "off", "enforce"])
+    def test_listing_a_foreign_bucket_is_refused_in_every_mode(
+        self, client, mode, mode_value
+    ):
+        mode(mode_value)
+        r = client.get(LIST, params={"uri": "s3://someone-elses-bucket/"})
+        assert r.status_code == 403, mode_value
+
+    def test_a_platform_location_is_still_served_in_dry_run(
+        self, client, mode, storage_root
+    ):
+        """The other half: the rule refuses foreign URIs, not everything."""
+        mode("dry_run")
+        r = client.get("/api/v1/files/download-url",
+                       params={"path": storage_root + "/run/u/report.html"})
+        assert r.status_code == 200
