@@ -104,7 +104,7 @@ class TestProjectPlane:
         """Forced by the data model: a flowcell spans projects and the writeback
         account cannot be enrolled in every one."""
         user = _user(seeded, "lab")
-        _grant_global(seeded, user, "lab_manager")
+        _grant_global(seeded, user, "member")
         ctx = AuthzContext.for_user(seeded, user)
         assert ctx.has_in_project(Permission.SAMPLE_CREATE, test_project.id)
         assert ctx.has_in_project(Permission.SAMPLE_CREATE, uuid.uuid4())

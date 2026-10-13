@@ -18,63 +18,46 @@ sufficient rather than merely minimal.
 import pytest
 
 from api.rbac.permissions import Permission
-from api.rbac.roles import ROLE_DEFINITIONS, RoleScope
+from api.rbac.roles import ROLE_DEFINITIONS
 
 
-class TestTheRoleItself:
+class TestDemuxIsNowPartOfTheUserTier:
+    """
+    Replaces `TestTheRoleItself`, which pinned the contents of
+    `demux_operator` and its relationship to `lab_manager`. Both roles were
+    retired in the role collapse (NWP-2213, step 3), so those assertions had
+    nothing left to describe.
 
-    def test_it_holds_exactly_the_demux_flow(self):
+    The history is worth keeping, because this role's two corrections are the
+    reason the collapse happened. It shipped one permission wide and had to be
+    widened when ten of its eleven holders turned out to need `run:update` on
+    the same flow. It then reached fourteen holders through purely reactive
+    grants, none ever refused -- which is what made the argument that a
+    permission granted to everyone who asks is not restricted, merely queued.
+
+    What survives is the behaviour: demultiplexing is available to any
+    authenticated user, and the route-level tests below exercise that
+    unchanged.
+    """
+
+    def test_demux_is_in_the_default_role(self):
+        from api.rbac.roles import DEFAULT_ROLE_NAME
+
+        member = ROLE_DEFINITIONS[DEFAULT_ROLE_NAME].permissions
+        assert Permission.RUN_DEMUX in member
+        assert Permission.RUN_UPDATE in member, (
+            "the samplesheet write is the other half of the same flow -- "
+            "granting demux without it reproduced the 2026-09-11 incident"
+        )
+
+    def test_the_role_is_gone(self):
         """
-        run:demux *and* run:update, as of 2026-09-11.
-
-        This test previously asserted run:demux alone, and that assertion was
-        the bug rather than the guard: demultiplexing also writes a samplesheet
-        and updates the run, so ten of the eleven operators held nothing for
-        POST /runs/{id}/samplesheet or PUT /runs/{id} and would have received
-        403s as soon as those routes were guarded. run:update is not
-        project-scopable, so membership could not have covered it.
-
-        The role is still deliberately narrow -- the point was never "one
-        permission", it was "only what this job needs". Measuring the whole flow
-        is what distinguishes those two, and it was not done the first time.
+        Pinned so that re-adding it is a deliberate act. A narrow role whose
+        permissions are already universal grants nothing and reads as though it
+        restricts something.
         """
-        assert ROLE_DEFINITIONS["demux_operator"].permissions == frozenset({
-            Permission.RUN_DEMUX,
-            Permission.RUN_UPDATE,
-        })
-
-    def test_it_is_global(self):
-        """A run reaches projects only many-to-many -- a flowcell spans projects --
-        so demux cannot be a project-scoped permission."""
-        assert ROLE_DEFINITIONS["demux_operator"].scope is RoleScope.GLOBAL
-
-    def test_it_does_not_carry_global_file_download(self):
-        """
-        The whole reason this role exists instead of lab_manager. has_in_project
-        honours a global grant, so global file:download would exempt the holder
-        from project-scoped downloads entirely.
-        """
-        perms = {str(p) for p in ROLE_DEFINITIONS["demux_operator"].permissions}
-        assert "file:download" not in perms
-
-    def test_it_is_a_strict_subset_of_lab_manager(self):
-        """
-        Not an alternative to lab_manager but a slice of it, so someone who
-        genuinely is sequencing core still gets demux from lab_manager and nobody
-        needs both.
-        """
-        assert (ROLE_DEFINITIONS["demux_operator"].permissions
-                < ROLE_DEFINITIONS["lab_manager"].permissions)
-
-    def test_member_plus_demux_operator_is_enough_for_the_whole_flow(self):
-        """
-        The claim that makes one permission sufficient: everything else demux
-        needs, every user already has.
-        """
-        member = {str(p) for p in ROLE_DEFINITIONS["member"].permissions}
-        demux = {str(p) for p in ROLE_DEFINITIONS["demux_operator"].permissions}
-        for needed in ("run:read", "job:submit", "job:read", "run:demux"):
-            assert needed in member | demux, needed
+        assert "demux_operator" not in ROLE_DEFINITIONS
+        assert "lab_manager" not in ROLE_DEFINITIONS
 
 
 class TestItWorksOnTheRoute:

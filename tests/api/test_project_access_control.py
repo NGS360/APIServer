@@ -329,27 +329,47 @@ class TestReadsRemainGlobalByDecision:
 
         member = {str(p) for p in ROLE_DEFINITIONS["member"].permissions}
         scopable = {str(p) for p in PROJECT_SCOPABLE}
-        assert member & scopable == {
-            "project:read", "sample:read", "qcrecord:read", "file:read",
-            "project:submit_action",
+        # Every project-scopable permission except the two reserved ones. The
+        # role collapse (NWP-2213 step 3) made the user tier the complement of
+        # what is reserved, so this set is now defined by its two absences
+        # rather than by its contents.
+        assert member & scopable == scopable - {
+            "project:delete", "project:manage_members",
         }
 
-        # The reads/writes split, asserted separately so another write cannot
-        # arrive unnoticed inside the set above.
-        writes = {p for p in member & scopable if not p.endswith(":read")}
-        assert writes == {"project:submit_action"}
+        # What is *not* here, which is the part worth pinning:
+        #
+        # project:delete -- 11,168 projects, and one mistake is unrecoverable.
+        # project:manage_members -- membership is a restricted project's
+        # allowlist, so managing it is checked as "admin, or an existing
+        # member" rather than granted by a role. It is also the exemption that
+        # keeps `restricted` from being a one-way door.
+        assert "project:delete" not in member
+        assert "project:manage_members" not in member
 
-    def test_download_is_not_among_them(self):
+    def test_download_is_among_them_now_and_what_replaced_the_protection(self):
         """
-        Stated separately because it is the one permission the project/global
-        split rests on. Putting it back re-opens every file in the product to
+        Inverted 2026-10-13. This asserted that `file:download` must stay out of
+        `member`, because putting it back "re-opens every file in the product to
         every authenticated user, and does so silently: the guard stays in place
-        and simply stops refusing anything.
+        and simply stops refusing anything".
+
+        That was exactly right while the restricted-project branch was a
+        permission check. It is not an argument against the permission; it is an
+        argument against expressing a restriction as something a role can grant.
+        So the restriction moved to membership (#461) and the arbitrary-S3 case
+        moved to a location allowlist (#459, #460), and only then did the
+        permission become safe to universalise.
+
+        The assertion is therefore about the mechanism, not the role: downloads
+        from a restricted project must still refuse a non-member, whatever
+        `member` holds. tests/api/test_file_download_scope.py proves that end to
+        end.
         """
         from api.rbac.roles import ROLE_DEFINITIONS
 
         member = {str(p) for p in ROLE_DEFINITIONS["member"].permissions}
-        assert "file:download" not in member
+        assert "file:download" in member
 
 
 class TestRestrictedProjectsRequireMembership:

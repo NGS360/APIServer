@@ -121,9 +121,9 @@ class TestGlobalGrants:
     def test_grants_and_lists(self, superuser_client, seeded):
         _user(seeded, "alice")
         r = superuser_client.post("/api/v1/rbac/users/alice/roles",
-                                  json={"role": "lab_manager"})
+                                  json={"role": "auditor"})
         assert r.status_code == 200
-        assert "lab_manager" in r.json()
+        assert "auditor" in r.json()
 
     def test_granting_twice_is_idempotent(self, superuser_client, seeded):
         _user(seeded, "bob")
@@ -223,7 +223,7 @@ class TestProjectMembership:
         _user(seeded, "heidi")
         r = superuser_client.post(
             f"/api/v1/projects/{test_project.project_id}/members",
-            json={"username": "heidi", "role": "lab_manager"},
+            json={"username": "heidi", "role": "auditor"},
         )
         assert r.status_code == 400
         assert "global role" in r.json()["detail"]
