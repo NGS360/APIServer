@@ -1516,3 +1516,145 @@ def test_ingest_vendor_data(
     assert response.status_code == 201
     response_json = response.json()
     assert response_json["id"] == "aws-batch-job-123"
+
+
+# ---------------------------------------------------------------------------
+# Project.restricted is settable through the API
+# ---------------------------------------------------------------------------
+#
+# Added 2026-10-13. The field has been on ProjectUpdate since the flag was
+# introduced in #425, and neither update_project nor patch_project persisted
+# it, so a request setting it returned 200 and changed nothing. An ignored
+# field is indistinguishable from an applied one in the response, which is why
+# it went unnoticed for five weeks.
+#
+# It also made "0 of 11,156 projects are restricted" misleading. That figure
+# was quoted repeatedly as evidence that nobody wanted restricted projects
+# while the open-by-default download policy was argued; it actually meant
+# nobody could create one. Found by trying to set it in production in order to
+# prove the membership gate.
+
+
+def _project(session: Session, name: str = "Restrictable") -> Project:
+    project = Project(name=name, created_by="testuser")
+    project.project_id = generate_project_id(session=session)
+    session.add(project)
+    session.commit()
+    session.refresh(project)
+    return project
+
+
+def test_patch_can_restrict_a_project(client: TestClient, session: Session):
+    project = _project(session)
+    assert project.restricted is False
+
+    response = client.patch(
+        f"/api/v1/projects/{project.project_id}", json={"restricted": True}
+    )
+
+    assert response.status_code == 200
+    assert response.json()["restricted"] is True
+    session.refresh(project)
+    assert project.restricted is True, (
+        "the response said 200 but nothing was written -- this is the bug this "
+        "test exists for, not a stale assertion"
+    )
+
+
+def test_unrestricting_needs_membership_and_enrolment_is_the_way_in(
+    superuser_client: TestClient, session: Session
+):
+    """
+    The recovery path, in full, because it is two steps and not obvious.
+
+    Every project-plane route applies the membership gate, `PATCH` included --
+    so a restricted project cannot be unlocked by someone who is not a member.
+    That is a one-way door unless something is exempt, and if nothing is, a
+    project restricted with nobody in it is unreachable through the API
+    entirely, including to an administrator. This was found by restricting a
+    real project in production and discovering there was no way back.
+
+    What is exempt is `project:manage_members`, because membership *is* the
+    restriction's allowlist and managing the allowlist cannot require being on
+    it. So the way in is: enrol, then act. It leaves a `project_member` row
+    behind, which is the point -- an administrator reaching into a locked-down
+    project should leave a trace.
+    """
+    from api.rbac.seed import sync_rbac_catalog
+
+    # The superuser fixture holds no grant, so it does not seed the builtin
+    # catalog the way the ordinary client fixture does -- and project_owner has
+    # to exist to be granted.
+    sync_rbac_catalog(session)
+
+    project = _project(session)
+    project.restricted = True
+    session.add(project)
+    session.commit()
+
+    # Step 0: refused, even as a superuser, because membership is the gate and
+    # the superuser flag deliberately does not short-circuit it.
+    assert superuser_client.patch(
+        f"/api/v1/projects/{project.project_id}", json={"restricted": False}
+    ).status_code == 403
+
+    # Step 1: enrol. Permitted on a restricted project by design -- and note
+    # the actor needs project:manage_members to do it, which is `critical` and
+    # so held by admins rather than by an ordinary authenticated caller.
+    assert superuser_client.post(
+        f"/api/v1/projects/{project.project_id}/members",
+        json={"username": "admin", "role": "project_owner"},
+    ).status_code in (200, 201)
+
+    # Step 2: now a member, so the project is reachable again.
+    response = superuser_client.patch(
+        f"/api/v1/projects/{project.project_id}", json={"restricted": False}
+    )
+    assert response.status_code == 200, response.text
+    session.refresh(project)
+    assert project.restricted is False
+
+
+def test_put_can_restrict_a_project(client: TestClient, session: Session):
+    project = _project(session)
+
+    response = client.put(
+        f"/api/v1/projects/{project.project_id}",
+        json={"name": project.name, "restricted": True},
+    )
+
+    assert response.status_code == 200
+    session.refresh(project)
+    assert project.restricted is True
+
+
+def test_omitting_restricted_leaves_it_alone(client: TestClient, session: Session):
+    """
+    `None` means "not supplied", not "set to false" -- otherwise any client
+    patching an attribute would silently unlock the project.
+    """
+    project = _project(session)
+    project.restricted = True
+    session.add(project)
+    session.commit()
+    # Enrolled directly, so the membership gate is satisfied and this test is
+    # about the None semantics rather than about the gate.
+    from sqlmodel import select as _select
+
+    from api.auth.models import User
+    from api.rbac.models import GrantSource, ProjectMember, Role
+
+    user = session.exec(_select(User).where(User.username == "testuser")).one()
+    role = session.exec(_select(Role).where(Role.name == "project_owner")).one()
+    session.add(ProjectMember(project_id=project.id, user_id=user.id,
+                              role_id=role.id, source=GrantSource.MANUAL))
+    session.commit()
+
+    response = client.patch(
+        f"/api/v1/projects/{project.project_id}",
+        json={"attributes": [{"key": "pi", "value": "Dr. Smith"}]},
+    )
+
+    assert response.status_code == 200, response.text
+    session.refresh(project)
+    assert project.restricted is True

@@ -362,6 +362,21 @@ def update_project(
     if update_request.name is not None:
         project.name = update_request.name
 
+    # Lock the project down, or open it back up.
+    #
+    # Added 2026-10-13. The field has been on ProjectUpdate since the flag was
+    # introduced in #425 and was never persisted here, so a request setting it
+    # returned 200 and changed nothing -- silently, because an ignored field is
+    # indistinguishable from an applied one in the response.
+    #
+    # That is why "0 of 11,156 projects are restricted" kept turning up as
+    # evidence while the downloads-open-by-default policy was argued: it was
+    # read as nobody wanting a restricted project, and it meant nobody could
+    # make one. Found by trying to set it in production in order to prove the
+    # membership gate.
+    if update_request.restricted is not None:
+        project.restricted = update_request.restricted
+
     # Handle attributes if provided
     if update_request.attributes is not None:
         check_duplicate_attribute_keys(
@@ -448,6 +463,21 @@ def patch_project(
     if update_request.name is not None:
         project.name = update_request.name
 
+    # Lock the project down, or open it back up.
+    #
+    # Added 2026-10-13. The field has been on ProjectUpdate since the flag was
+    # introduced in #425 and was never persisted here, so a request setting it
+    # returned 200 and changed nothing -- silently, because an ignored field is
+    # indistinguishable from an applied one in the response.
+    #
+    # That is why "0 of 11,156 projects are restricted" kept turning up as
+    # evidence while the downloads-open-by-default policy was argued: it was
+    # read as nobody wanting a restricted project, and it meant nobody could
+    # make one. Found by trying to set it in production in order to prove the
+    # membership gate.
+    if update_request.restricted is not None:
+        project.restricted = update_request.restricted
+
     # Merge/upsert attributes (does NOT remove unmentioned attributes)
     if (
         update_request.attributes is not None
@@ -512,6 +542,12 @@ def patch_project(
         ),
         attributes=project.attributes,
         sequencing_runs=None,
+        # Omitted until 2026-10-13, so these two responses always reported the
+        # project as unrestricted whatever the row said. Four of the six
+        # ProjectPublic constructions in this module passed it and two did not,
+        # which is the hazard of building the model field by field rather than
+        # from the row.
+        restricted=project.restricted,
     )
 
 
@@ -579,6 +615,7 @@ def search_projects(
                         results_folder_uri=f"{results_bucket}/{project.project_id}/",
                         attributes=project.attributes,
                         sequencing_runs=None,  # Not included for performance (matches get_projects)
+                        restricted=project.restricted,
                     )
                 )
 

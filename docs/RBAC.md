@@ -814,6 +814,24 @@ Note `STORAGE_ROOT_PATH` is read from `get_settings()`, not from `get_setting_va
 
 **One ordering dependency, recorded because it is load-bearing.** The vendor allowlist is database-backed, so whoever can write `vendor.bucket` decides what the platform will sign. `vendor:create` and `vendor:update` move to `vendor_admin` in step 3 of the role model; until then this inference widens signing to anyone who can edit a vendor row.
 
+### The restriction flag was unsettable, and the gate was advisory
+
+**Corrected 2026-10-13, after proving the gate against production.** Three defects, all found by setting the flag on a real project and probing it rather than by reading the code.
+
+**1. `restricted` could not be set through the API.** `update_project` and `patch_project` persisted only `name` and `attributes`; the field had been on `ProjectUpdate` since #425 and was never written. A `PATCH {"restricted": true}` returned **200 and changed nothing** — an ignored field is indistinguishable from an applied one in the response. Two of the six `ProjectPublic` constructions in that module also omitted the field, so those responses reported every project as unrestricted whatever the row said.
+
+> **This invalidates a figure quoted repeatedly in the sections above.** "0 of 11,156 projects set `download_restricted`" was used as evidence that nobody wanted restricted projects — in the argument for opening downloads by default, and again for declining an `actions_restricted` flag. It actually meant **nobody could create one**. The conclusions may still be right, but that particular support for them was an artefact, and the sections above are left as written with this correction rather than quietly amended.
+
+**2. The membership gate was mode-aware.** Folded into the guard's `granted` flag and handed to `decide()`, which applies `RBAC_MODE`. With the flag set, a **superuser who was not a member** still received 200 on every route whose permission had not been graduated — including `GET /projects/{id}/samples` and `GET /files/download-url`, since `file:download` has never been graduated. `dry_run` turned the refusal into a log line. The whole test suite missed it because tests run in `enforce`, where the distinction does not exist.
+
+A project being locked down is a property of the project, not an authorisation decision mid-rollout, so no mode, role or superuser flag may soften it. The check now runs before the permission check and raises unconditionally; the permission check stays mode-aware.
+
+**3. The flag was a one-way door.** Every project-plane route applies the gate, `PATCH` included, so a restricted project could not be unlocked by a non-member — and `POST .../members` was gated too, so nobody could enrol themselves to become one. A project restricted with the wrong people in it was unreachable through the API entirely, including to an administrator. Recovery required a direct database write.
+
+`project:manage_members` is now exempt from the gate, because membership *is* the restriction's allowlist and managing the allowlist cannot require being on it. The recovery path is two steps — enrol, then act — and it leaves a `project_member` row behind, which is the point: an administrator reaching into a locked-down project should leave a trace. `project:manage_members` is `critical`, so this is an admin capability rather than something an ordinary caller holds.
+
+**What the gate still does not cover.** It only runs where `require_project_permission` is used — 13 routes. `GET /projects/{id}` and `GET /projects/{id}/samples` have no guard at all, so a restricted project's metadata and sample list remain readable. Closing those means closing routes in the awaiting-credentials set, which has a consumer dependency and is a separate decision.
+
 ### Restriction is membership, not permission
 
 **Changed 2026-10-08.** A project marked `restricted` now requires *membership* — a `project_member` row — rather than a permission on the project plane. `download_restricted` is renamed to `restricted`, because the flag no longer governs downloads alone.

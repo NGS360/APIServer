@@ -203,23 +203,54 @@ def require_project_permission(
     def dependency(
         request: Request, project: ProjectDep, authz: AuthzDep
     ) -> Project:
-        check = all if mode == "all" else any
-        granted = check(authz.has_in_project(p, project.id) for p in permissions)
-
-        # A restricted project additionally requires membership. This is an
-        # extra precondition rather than a replacement for the permission
-        # check, which matters for the order the role collapse lands in: today
-        # it can only ever refuse something that is currently allowed, and
-        # since no project sets the flag it changes nothing in production. Once
-        # the default role carries the project-scopable permissions globally,
-        # the permission half becomes vacuous and membership becomes the whole
-        # gate -- without this file changing again.
+        # A restricted project requires membership, and that check is settled
+        # here -- before the permission check and outside the enforcement mode.
+        #
+        # It was mode-aware when this shipped in #457, folded into `granted` and
+        # handed to decide(). Proving the gate in production showed what that
+        # cost: with the flag set, a superuser who was not a member still got a
+        # 200 on every route whose permission had not been graduated, because
+        # dry_run turns a refusal into a log line. A project being locked down
+        # is a property of the project, not an authorisation decision being
+        # rolled out, so no mode, role or superuser flag may soften it. The
+        # permission check below stays mode-aware, because that one genuinely is
+        # still being rolled out.
         #
         # It has to be membership and not a permission: has_in_project returns
         # true on a global grant, so "needs file:download here" is satisfied by
         # anyone holding it anywhere. See AuthzContext.is_member_of.
-        if granted and project.restricted and not authz.is_member_of(project.id):
-            granted = False
+        # Managing membership is the one thing a restriction must not block,
+        # because membership *is* the restriction's allowlist. Blocking it makes
+        # the flag a one-way door: every other project-plane route needs
+        # membership, so a project restricted with nobody in it -- or with the
+        # wrong people in it -- cannot be repaired through the API at all, not
+        # even by an administrator. Found by doing exactly that in production.
+        #
+        # So a global holder of project:manage_members can always reach the
+        # membership routes, and the recovery path is: enrol yourself, then act.
+        # That is two steps rather than one, and it leaves a project_member row
+        # behind -- which is the point. An administrator reaching into a
+        # locked-down project should leave a trace, and silent access is what
+        # the flag exists to prevent.
+        managing_membership = Permission.PROJECT_MANAGE_MEMBERS in permissions
+
+        if (
+            project.restricted
+            and not managing_membership
+            and not authz.is_member_of(project.id)
+        ):
+            decide(request, False, permissions,
+                   scope=f"project {project.project_id} (restricted, not a member)")
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=(
+                    f"Project {project.project_id} is restricted to its "
+                    f"members."
+                ),
+            )
+
+        check = all if mode == "all" else any
+        granted = check(authz.has_in_project(p, project.id) for p in permissions)
 
         decide(
             request,

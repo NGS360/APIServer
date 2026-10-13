@@ -412,19 +412,34 @@ def require_file_download(
         if not restricted:
             granted = True
         else:
+            # Settled here, outside the enforcement mode, for the reason the
+            # project-plane gate is: `file:download` has not been graduated, so
+            # while this was folded into `granted` a restricted project's files
+            # stayed downloadable in dry_run -- by anyone, superuser included.
+            # Measured in production, not reasoned about.
+            #
             # Every restricted project in the set has to be satisfied. Only one
             # project is ever resolved in practice -- measured 0 multi-project
             # files in production -- so this is the safe reading of a case that
             # does not currently occur, not a considered conflict policy.
-            # Membership, not permission. `file:download` held globally
+            #
+            # Membership, not permission: `file:download` held globally
             # satisfies has_in_project for every project, so expressing the
             # restriction as a permission check makes it void for any role
-            # carrying it -- lab_manager, auditor and admin today, and every
-            # user once the default role is widened. A project_member row
-            # cannot be granted by a role, which is what makes it hold.
-            granted = all(
-                authz.is_member_of(project_id) for project_id in restricted
-            )
+            # carrying it. A project_member row cannot be granted by a role.
+            if not all(authz.is_member_of(pid) for pid in restricted):
+                decide(request, False, (Permission.FILE_DOWNLOAD,),
+                       scope=(f"file via {scope.origin}, restricted project, "
+                              f"not a member"),
+                       subject=path)
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail=(
+                        "This file belongs to a project that is restricted to "
+                        "its members."
+                    ),
+                )
+            granted = True
     else:
         # Only reachable for a malformed URI now -- anything well formed and
         # unsignable was refused above. Left as an allow so the handler can

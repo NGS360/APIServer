@@ -933,3 +933,66 @@ class TestRestrictionIsMembershipNotPermission:
         session.commit()
 
         assert scoped_client.get(URL, params={"path": f.uri}).status_code == 200
+
+
+class TestTheDownloadRestrictionIgnoresTheEnforcementMode:
+    """
+    The download half of the same defect, fixed 2026-10-13.
+
+    `file:download` has never been graduated, so while the membership check was
+    folded into `granted` and handed to `decide()`, a restricted project's files
+    stayed downloadable in `dry_run` -- by any authenticated caller, superuser
+    included. That is the one thing `restricted` exists to prevent, and it was
+    the last thing it actually did.
+
+    Measured in production, not reasoned about: with the flag set on a real
+    project, `GET /files/download-url` returned 200 to a superuser who was not
+    a member.
+    """
+
+    @pytest.fixture
+    def mode(self, monkeypatch):
+        from core.config import get_settings
+
+        def _set(value: str):
+            monkeypatch.setenv("RBAC_MODE", value)
+            monkeypatch.setenv("ENVIRONMENT", "dev")
+            get_settings.cache_clear()
+        yield _set
+        get_settings.cache_clear()
+
+    def _restricted_file(self, session, suffix: str):
+        project = restrict(session, make_project(session, suffix))
+        f = make_file(session, f"s3://bucket/p{suffix}/locked.bam")
+        session.add(FileProject(file_id=f.id, project_id=project.id))
+        session.commit()
+        return project, f
+
+    @pytest.mark.parametrize("mode_value", ["dry_run", "off", "enforce"])
+    def test_a_non_member_is_refused_in_every_mode(
+        self, session, scoped_client, mode, mode_value
+    ):
+        _, f = self._restricted_file(session, "040%s" % mode_value[0])
+        mode(mode_value)
+        assert scoped_client.get(
+            URL, params={"path": f.uri}
+        ).status_code == 403, mode_value
+
+    @pytest.mark.parametrize("mode_value", ["dry_run", "off"])
+    def test_a_superuser_is_refused_in_the_permissive_modes(
+        self, session, superuser_client, mode, mode_value
+    ):
+        """The exact combination that was serving 200s in production."""
+        _, f = self._restricted_file(session, "041%s" % mode_value[0])
+        mode(mode_value)
+        assert superuser_client.get(
+            URL, params={"path": f.uri}
+        ).status_code == 403, mode_value
+
+    def test_a_member_is_still_served_in_dry_run(
+        self, session, scoped_client, mode
+    ):
+        project, f = self._restricted_file(session, "0420")
+        enrol(session, project, "scoped")
+        mode("dry_run")
+        assert scoped_client.get(URL, params={"path": f.uri}).status_code == 200
