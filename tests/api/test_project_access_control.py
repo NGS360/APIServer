@@ -442,3 +442,98 @@ class TestRestrictedProjectsRequireMembership:
             json={"sample_id": "S-R4"},
         )
         assert response.status_code in (200, 201)
+
+
+class TestTheRestrictionIgnoresTheEnforcementMode:
+    """
+    Added 2026-10-13, after proving the gate against production showed it was
+    advisory there.
+
+    As shipped in #457 the membership check was folded into the guard's
+    `granted` flag and handed to `decide()`, which applies RBAC_MODE. With the
+    flag set on a real project, a **superuser who was not a member** still got a
+    200 on every route whose permission had not been graduated -- including
+    `GET /projects/{id}/samples` and the download routes -- because `dry_run`
+    turns a refusal into a log line. The suite missed it entirely: tests run in
+    `enforce`, where the distinction does not exist.
+
+    A project being locked down is a property of the project, not an
+    authorisation decision mid-rollout, so no mode may soften it. The
+    *permission* check stays mode-aware, because that one genuinely is still
+    being rolled out.
+    """
+
+    @pytest.fixture
+    def mode(self, monkeypatch):
+        from core.config import get_settings
+
+        def _set(value: str):
+            monkeypatch.setenv("RBAC_MODE", value)
+            monkeypatch.setenv("ENVIRONMENT", "dev")
+            get_settings.cache_clear()
+        yield _set
+        get_settings.cache_clear()
+
+    @pytest.fixture(name="locked")
+    def locked_fixture(self, session):
+        project = make_project(session, "P-20260501-0001", "Locked")
+        project.restricted = True
+        session.add(project)
+        session.commit()
+        session.refresh(project)
+        return project
+
+    @pytest.mark.parametrize("mode_value", ["dry_run", "off", "enforce"])
+    def test_a_non_member_is_refused_in_every_mode(
+        self, client_with_permissions, locked, mode, mode_value
+    ):
+        from api.rbac.permissions import Permission
+
+        mode(mode_value)
+        api = client_with_permissions([Permission.SAMPLE_CREATE], username="nm")
+        response = api.post(
+            f"/api/v1/projects/{locked.project_id}/samples",
+            json={"sample_id": "S-M1"},
+        )
+        assert response.status_code == 403, mode_value
+
+    @pytest.mark.parametrize("mode_value", ["dry_run", "off"])
+    def test_a_superuser_is_refused_in_the_permissive_modes_too(
+        self, superuser_client, locked, mode, mode_value
+    ):
+        """
+        The combination that was serving 200s in production: the most
+        privileged caller, on the most permissive mode.
+        """
+        mode(mode_value)
+        response = superuser_client.post(
+            f"/api/v1/projects/{locked.project_id}/samples",
+            json={"sample_id": "S-M2"},
+        )
+        assert response.status_code == 403, mode_value
+
+    def test_a_member_is_still_served_in_dry_run(
+        self, session, restricted_client, locked, mode
+    ):
+        """The other half: the gate refuses non-members, not everyone."""
+        grant_project_role(session, locked, "norole", "project_contributor")
+        mode("dry_run")
+        response = restricted_client.post(
+            f"/api/v1/projects/{locked.project_id}/samples",
+            json={"sample_id": "S-M3"},
+        )
+        assert response.status_code in (200, 201), response.text
+
+    def test_an_unrestricted_project_is_unaffected_in_dry_run(
+        self, session, client_with_permissions, mode
+    ):
+        from api.rbac.permissions import Permission
+
+        project = make_project(session, "P-20260501-0002", "Open")
+        mode("dry_run")
+        api = client_with_permissions([Permission.SAMPLE_CREATE], username="nm2")
+        response = api.post(
+            f"/api/v1/projects/{project.project_id}/samples",
+            json={"sample_id": "S-M4"},
+        )
+        assert response.status_code in (200, 201)
