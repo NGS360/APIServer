@@ -554,13 +554,13 @@ class TestJobsAPI:
         response = client.get("/api/v1/jobs/stats/submitters?project_id=P-19900109-0001")
         assert response.json()["data"] == [{"username": "alice", "job_count": 3}]
 
-    def test_get_job_submitters_filtered_by_q(self, client: TestClient, session: Session):
+    def test_get_job_submitters_filtered_by_username(self, client: TestClient, session: Session):
         """q is a substring match on the username, anywhere in it"""
         self._submit(session, "alice", 2)
         self._submit(session, "alicia", 1)
         self._submit(session, "bob", 3)
 
-        response = client.get("/api/v1/jobs/stats/submitters?q=ali")
+        response = client.get("/api/v1/jobs/stats/submitters?username=ali")
         assert response.status_code == 200
         data = response.json()
         assert [row["username"] for row in data["data"]] == ["alice", "alicia"]
@@ -569,17 +569,17 @@ class TestJobsAPI:
         assert data["total_items"] == 2
 
         # Matches mid-username, not just the start
-        response = client.get("/api/v1/jobs/stats/submitters?q=lic")
+        response = client.get("/api/v1/jobs/stats/submitters?username=lic")
         assert [row["username"] for row in response.json()["data"]] == ["alice", "alicia"]
 
         # And composes with the scope
         self._submit(session, "alice", 1, project_id="P-19900109-0001")
         response = client.get(
-            "/api/v1/jobs/stats/submitters?q=ali&project_id=P-19900109-0001"
+            "/api/v1/jobs/stats/submitters?username=ali&project_id=P-19900109-0001"
         )
         assert response.json()["data"] == [{"username": "alice", "job_count": 1}]
 
-    def test_get_job_submitters_q_escapes_like_wildcards(
+    def test_get_job_submitters_username_escapes_like_wildcards(
         self, client: TestClient, session: Session
     ):
         """A literal % must not widen the match to everyone"""
@@ -591,11 +591,11 @@ class TestJobsAPI:
             "has_next": False, "has_prev": False,
         }
 
-        response = client.get("/api/v1/jobs/stats/submitters?q=%25")
+        response = client.get("/api/v1/jobs/stats/submitters?username=%25")
         assert response.status_code == 200
         assert response.json() == empty
 
-        response = client.get("/api/v1/jobs/stats/submitters?q=_")
+        response = client.get("/api/v1/jobs/stats/submitters?username=_")
         assert response.json() == empty
 
     def test_get_job_submitters_pages(self, client: TestClient, session: Session):
