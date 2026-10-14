@@ -219,6 +219,7 @@ def get_jobs(
     "/stats/submitters",
     response_model=JobSubmittersPublic,
     tags=["Job Endpoints"],
+    # job:read, not job:read_all, on purpose: read_all guards no route yet, so isn't enforced.
     dependencies=[Depends(require_permission(Permission.JOB_READ))],
 )
 def get_job_submitters(
