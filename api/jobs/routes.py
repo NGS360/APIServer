@@ -258,8 +258,8 @@ def get_job_submitters(
         limit: Maximum number of submitters to return
 
     Returns:
-        A page of submitters, busiest first, and the total matching in the
-        scope -- which is how a caller knows whether more remain
+        A page of submitters, busiest first, in the offset-based envelope the
+        other skip/limit endpoints use
     """
     submitters, total = services.get_job_submitters(
         session=session,
@@ -274,7 +274,11 @@ def get_job_submitters(
             JobSubmitter(username=username, job_count=job_count)
             for username, job_count in submitters
         ],
-        count=total,
+        total_items=total,
+        skip=skip,
+        limit=limit,
+        has_next=(skip + limit) < total,
+        has_prev=skip > 0,
     )
 
 

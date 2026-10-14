@@ -492,7 +492,7 @@ class TestJobsAPI:
             {"username": "carol", "job_count": 2},
             {"username": "alice", "job_count": 1},
         ]
-        assert data["count"] == 3
+        assert data["total_items"] == 3
 
     def test_get_job_submitters_ties_break_on_username(
         self, client: TestClient, session: Session
@@ -511,7 +511,10 @@ class TestJobsAPI:
         """No jobs means no submitters, not an error"""
         response = client.get("/api/v1/jobs/stats/submitters")
         assert response.status_code == 200
-        assert response.json() == {"data": [], "count": 0}
+        assert response.json() == {
+            "data": [], "total_items": 0, "skip": 0, "limit": 10,
+            "has_next": False, "has_prev": False,
+        }
 
     def test_get_job_submitters_scoped(self, client: TestClient, session: Session):
         """Scoping matches GET /jobs, so every option offered returns rows"""
@@ -563,7 +566,7 @@ class TestJobsAPI:
         assert [row["username"] for row in data["data"]] == ["alice", "alicia"]
         # The total reflects the filter, so "load more" cannot offer a page
         # of results the filter has excluded
-        assert data["count"] == 2
+        assert data["total_items"] == 2
 
         # Matches mid-username, not just the start
         response = client.get("/api/v1/jobs/stats/submitters?q=lic")
@@ -583,15 +586,26 @@ class TestJobsAPI:
         self._submit(session, "alice", 1)
         self._submit(session, "bob", 1)
 
+        empty = {
+            "data": [], "total_items": 0, "skip": 0, "limit": 10,
+            "has_next": False, "has_prev": False,
+        }
+
         response = client.get("/api/v1/jobs/stats/submitters?q=%25")
         assert response.status_code == 200
-        assert response.json() == {"data": [], "count": 0}
+        assert response.json() == empty
 
         response = client.get("/api/v1/jobs/stats/submitters?q=_")
-        assert response.json() == {"data": [], "count": 0}
+        assert response.json() == empty
 
     def test_get_job_submitters_pages(self, client: TestClient, session: Session):
-        """limit and skip page through the ranking, count stays the total"""
+        """
+        limit and skip page through the ranking.
+
+        total_items stays the whole matching set on every page, and has_next
+        and has_prev say where in it the page sits -- so a caller can offer
+        "load more" without recomputing it from the page length.
+        """
         for position, user in enumerate(["alice", "bob", "carol", "dave"]):
             # Descending counts, so the ranking is unambiguous
             self._submit(session, user, 4 - position)
@@ -600,16 +614,33 @@ class TestJobsAPI:
         assert response.status_code == 200
         data = response.json()
         assert [row["username"] for row in data["data"]] == ["alice", "bob"]
-        # Not the length of the page -- this is what tells the caller to offer
-        # another one
-        assert data["count"] == 4
+        # Not the length of the page -- together with has_next this is what
+        # tells the caller to offer another one
+        assert data["total_items"] == 4
+        # Echoed back, so a response is self-describing without its request
+        assert (data["skip"], data["limit"]) == (0, 2)
+        assert data["has_next"] is True
+        assert data["has_prev"] is False
 
         response = client.get("/api/v1/jobs/stats/submitters?limit=2&skip=2")
-        assert [row["username"] for row in response.json()["data"]] == ["carol", "dave"]
+        data = response.json()
+        assert [row["username"] for row in data["data"]] == ["carol", "dave"]
+        # The last page: more behind it, none ahead
+        assert data["total_items"] == 4
+        assert data["has_next"] is False
+        assert data["has_prev"] is True
+
+        # A page that holds the whole set has neither neighbour
+        data = client.get("/api/v1/jobs/stats/submitters?limit=4").json()
+        assert data["has_next"] is False
+        assert data["has_prev"] is False
 
         # Past the end is empty, not an error
         response = client.get("/api/v1/jobs/stats/submitters?limit=2&skip=99")
-        assert response.json() == {"data": [], "count": 4}
+        assert response.json() == {
+            "data": [], "total_items": 4, "skip": 99, "limit": 2,
+            "has_next": False, "has_prev": True,
+        }
 
     def test_get_job_submitters_limit_is_capped(self, client: TestClient):
         """An unbounded page is the thing paging exists to prevent"""

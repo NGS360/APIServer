@@ -102,11 +102,20 @@ class JobSubmitter(SQLModel):
 
 
 class JobSubmittersPublic(SQLModel):
-    """Schema for returning a page of the submitters of a set of jobs"""
+    """
+    Schema for returning a page of the submitters of a set of jobs.
+
+    Offset-based, shaped like the other skip/limit endpoints (SamplesPublic,
+    VendorsPublic) rather than the bare {data, count} of BatchJobsPublic next
+    door, so a caller reading one paginated response can read them all.
+    """
     data: list[JobSubmitter]
-    # Submitters matching in the scope, not the length of this page, so a
-    # caller can tell whether another page exists.
-    count: int
+    # Submitters matching in the scope, not the length of this page.
+    total_items: int
+    skip: int
+    limit: int
+    has_next: bool
+    has_prev: bool
 
 
 class AwsBatchEnvironment(SQLModel):
