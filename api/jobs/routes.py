@@ -1,13 +1,13 @@
 """
 Routes/endpoints for the Jobs API
 
-HTTP   URI                       Action
-----   ---                       ------
-GET    /api/v1/jobs              Retrieve a list of batch jobs
-POST   /api/v1/jobs              Submit a new batch job to AWS Batch
-GET    /api/v1/jobs/submitters   Retrieve the submitters of those jobs
-GET    /api/v1/jobs/[id]         Retrieve info about a specific job
-PUT    /api/v1/jobs/[id]         Update a batch job
+HTTP   URI                            Action
+----   ---                            ------
+GET    /api/v1/jobs                   Retrieve a list of batch jobs
+POST   /api/v1/jobs                   Submit a new batch job to AWS Batch
+GET    /api/v1/jobs/[id]              Retrieve info about a specific job
+PUT    /api/v1/jobs/[id]              Update a batch job
+GET    /api/v1/jobs/stats/submitters  Retrieve the submitters of those jobs
 """
 
 from typing import Optional, Literal
@@ -206,8 +206,17 @@ def get_jobs(
     )
 
 
+###############################################################################
+# Job Stats Endpoints /api/v1/jobs/stats/
+#
+# Aggregates over a set of jobs rather than the jobs themselves. Nesting them
+# under /stats keeps that distinction in the path, and keeps the names out of
+# the /jobs/{job_id} namespace, where every new one would have to be checked
+# against the chance of it being read as a job id instead.
+###############################################################################
+
 @router.get(
-    "/submitters",
+    "/stats/submitters",
     response_model=JobSubmittersPublic,
     tags=["Job Endpoints"],
     dependencies=[Depends(require_permission(Permission.JOB_READ))],

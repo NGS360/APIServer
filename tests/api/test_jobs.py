@@ -484,7 +484,7 @@ class TestJobsAPI:
         self._submit(session, "bob", 3)
         self._submit(session, "carol", 2)
 
-        response = client.get("/api/v1/jobs/submitters")
+        response = client.get("/api/v1/jobs/stats/submitters")
         assert response.status_code == 200
         data = response.json()
         assert data["data"] == [
@@ -502,14 +502,14 @@ class TestJobsAPI:
         self._submit(session, "alice", 2)
         self._submit(session, "bob", 2)
 
-        response = client.get("/api/v1/jobs/submitters")
+        response = client.get("/api/v1/jobs/stats/submitters")
         assert [row["username"] for row in response.json()["data"]] == [
             "alice", "bob", "carol",
         ]
 
     def test_get_job_submitters_empty(self, client: TestClient):
         """No jobs means no submitters, not an error"""
-        response = client.get("/api/v1/jobs/submitters")
+        response = client.get("/api/v1/jobs/stats/submitters")
         assert response.status_code == 200
         assert response.json() == {"data": [], "count": 0}
 
@@ -524,18 +524,18 @@ class TestJobsAPI:
             sequencing_run_id="240101_VH00000_1_EXAMPLE01",
         )
 
-        response = client.get("/api/v1/jobs/submitters?project_id=P-19900109-0001")
+        response = client.get("/api/v1/jobs/stats/submitters?project_id=P-19900109-0001")
         assert response.status_code == 200
         assert [row["username"] for row in response.json()["data"]] == ["alice", "carol"]
 
         response = client.get(
-            "/api/v1/jobs/submitters?sequencing_run_id=240101_VH00000_1_EXAMPLE01"
+            "/api/v1/jobs/stats/submitters?sequencing_run_id=240101_VH00000_1_EXAMPLE01"
         )
         assert [row["username"] for row in response.json()["data"]] == ["carol"]
 
         # Both scopes together narrow to their intersection
         response = client.get(
-            "/api/v1/jobs/submitters"
+            "/api/v1/jobs/stats/submitters"
             "?project_id=P-19900109-0001"
             "&sequencing_run_id=240101_VH00000_1_EXAMPLE01"
         )
@@ -548,7 +548,7 @@ class TestJobsAPI:
         self._submit(session, "alice", 3, project_id="P-19900109-0001")
         self._submit(session, "alice", 5, project_id="P-19900109-0002")
 
-        response = client.get("/api/v1/jobs/submitters?project_id=P-19900109-0001")
+        response = client.get("/api/v1/jobs/stats/submitters?project_id=P-19900109-0001")
         assert response.json()["data"] == [{"username": "alice", "job_count": 3}]
 
     def test_get_job_submitters_filtered_by_q(self, client: TestClient, session: Session):
@@ -557,7 +557,7 @@ class TestJobsAPI:
         self._submit(session, "alicia", 1)
         self._submit(session, "bob", 3)
 
-        response = client.get("/api/v1/jobs/submitters?q=ali")
+        response = client.get("/api/v1/jobs/stats/submitters?q=ali")
         assert response.status_code == 200
         data = response.json()
         assert [row["username"] for row in data["data"]] == ["alice", "alicia"]
@@ -566,13 +566,13 @@ class TestJobsAPI:
         assert data["count"] == 2
 
         # Matches mid-username, not just the start
-        response = client.get("/api/v1/jobs/submitters?q=lic")
+        response = client.get("/api/v1/jobs/stats/submitters?q=lic")
         assert [row["username"] for row in response.json()["data"]] == ["alice", "alicia"]
 
         # And composes with the scope
         self._submit(session, "alice", 1, project_id="P-19900109-0001")
         response = client.get(
-            "/api/v1/jobs/submitters?q=ali&project_id=P-19900109-0001"
+            "/api/v1/jobs/stats/submitters?q=ali&project_id=P-19900109-0001"
         )
         assert response.json()["data"] == [{"username": "alice", "job_count": 1}]
 
@@ -583,11 +583,11 @@ class TestJobsAPI:
         self._submit(session, "alice", 1)
         self._submit(session, "bob", 1)
 
-        response = client.get("/api/v1/jobs/submitters?q=%25")
+        response = client.get("/api/v1/jobs/stats/submitters?q=%25")
         assert response.status_code == 200
         assert response.json() == {"data": [], "count": 0}
 
-        response = client.get("/api/v1/jobs/submitters?q=_")
+        response = client.get("/api/v1/jobs/stats/submitters?q=_")
         assert response.json() == {"data": [], "count": 0}
 
     def test_get_job_submitters_pages(self, client: TestClient, session: Session):
@@ -596,7 +596,7 @@ class TestJobsAPI:
             # Descending counts, so the ranking is unambiguous
             self._submit(session, user, 4 - position)
 
-        response = client.get("/api/v1/jobs/submitters?limit=2")
+        response = client.get("/api/v1/jobs/stats/submitters?limit=2")
         assert response.status_code == 200
         data = response.json()
         assert [row["username"] for row in data["data"]] == ["alice", "bob"]
@@ -604,28 +604,46 @@ class TestJobsAPI:
         # another one
         assert data["count"] == 4
 
-        response = client.get("/api/v1/jobs/submitters?limit=2&skip=2")
+        response = client.get("/api/v1/jobs/stats/submitters?limit=2&skip=2")
         assert [row["username"] for row in response.json()["data"]] == ["carol", "dave"]
 
         # Past the end is empty, not an error
-        response = client.get("/api/v1/jobs/submitters?limit=2&skip=99")
+        response = client.get("/api/v1/jobs/stats/submitters?limit=2&skip=99")
         assert response.json() == {"data": [], "count": 4}
 
     def test_get_job_submitters_limit_is_capped(self, client: TestClient):
         """An unbounded page is the thing paging exists to prevent"""
-        assert client.get("/api/v1/jobs/submitters?limit=100").status_code == 200
-        assert client.get("/api/v1/jobs/submitters?limit=101").status_code == 422
-        assert client.get("/api/v1/jobs/submitters?limit=0").status_code == 422
+        assert client.get("/api/v1/jobs/stats/submitters?limit=100").status_code == 200
+        assert client.get("/api/v1/jobs/stats/submitters?limit=101").status_code == 422
+        assert client.get("/api/v1/jobs/stats/submitters?limit=0").status_code == 422
 
-    def test_get_job_submitters_is_not_read_as_a_job_id(
+    def test_stats_does_not_collide_with_a_job_id(
         self, client: TestClient, session: Session
     ):
-        """The literal path wins over GET /jobs/{job_id}, which would 404 it"""
-        self._submit(session, "alice", 1)
+        """
+        The /stats segment is what keeps the two namespaces apart.
 
-        response = client.get("/api/v1/jobs/submitters")
+        A one-segment name under /jobs has to win a match against
+        GET /jobs/{job_id} to be reachable at all, so it is only ever one
+        plausible job id away from being swallowed. Nesting puts the aggregates
+        at a depth that route cannot reach -- including when a real job is
+        called "stats".
+        """
+        self._submit(session, "alice", 1)
+        session.add(BatchJob(
+            id="stats", name="stats", command="echo hello", user="bob",
+            status=JobStatus.SUBMITTED,
+        ))
+        session.commit()
+
+        response = client.get("/api/v1/jobs/stats/submitters")
         assert response.status_code == 200
-        assert response.json()["data"] == [{"username": "alice", "job_count": 1}]
+        assert [row["username"] for row in response.json()["data"]] == ["alice", "bob"]
+
+        # And the job keeps its own route rather than being shadowed by it
+        response = client.get("/api/v1/jobs/stats")
+        assert response.status_code == 200
+        assert response.json()["id"] == "stats"
 
     def test_get_jobs_filtered_by_sequencing_run(self, client: TestClient, session: Session):
         """Test filtering jobs by the sequencing run they were submitted against"""
