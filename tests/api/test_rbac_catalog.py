@@ -121,18 +121,40 @@ class TestRoleDefinitions:
         it is project membership and not a global role.
         """
         assert set(ROLE_DEFINITIONS) == {
-            # global
-            "member", "demux_operator", "lab_manager", "platform_admin",
-            "service_account", "auditor", "admin",
-            "workflow_publisher", "workflow_admin", "manifest_operator",
-            "run_registrar", "run_associator",
+            # user tier
+            "member",
+            # administrative
+            "admin", "vendor_admin", "workflow_admin",
+            # service
+            "service_account", "run_registrar", "run_associator", "auditor",
             # project
             "project_viewer", "project_contributor", "project_owner",
         }
 
-    def test_member_does_not_hold_global_file_download(self):
+    def test_member_now_holds_global_file_download_safely(self):
         """
-        Granting this to `member` would make every project restriction vacuous.
+        Inverted 2026-10-13, and why it is now safe is the whole point.
+
+        This asserted the opposite for a month, on sound reasoning: while the
+        restricted-project branch of `require_file_download` was a *permission*
+        check, `has_in_project` returned true on a global grant, so a universal
+        `file:download` satisfied it for every user -- the feature would have
+        looked implemented and done nothing.
+
+        Two changes removed that coupling, and neither of them is this role:
+
+        * the restricted branch now checks **membership** (#461), which a global
+          grant cannot satisfy -- that is the entire reason membership was
+          chosen over a permission; and
+        * an unresolved URI is refused by **location** rather than by privilege
+          (#459, #460), so holding the permission no longer reaches arbitrary
+          S3.
+
+        The permission has stopped being the protection, so keeping it out of
+        `member` stopped buying anything. If either mechanism is reverted this
+        test should be inverted back: it is the canary for both.
+
+        Superseded reasoning, kept because it was right at the time:
 
         `has_in_project` returns true on a *global* grant (api/rbac/resolver.py),
         so a universal `file:download` satisfies the restricted-project branch of
@@ -146,21 +168,7 @@ class TestRoleDefinitions:
         them open; the permission is only for restricted projects and for URIs
         that resolve to no project.
         """
-        assert Permission.FILE_DOWNLOAD not in ROLE_DEFINITIONS["member"].permissions
-
-    def test_the_roles_that_bypass_a_restriction_are_a_closed_set(self):
-        """
-        Global file:download bypasses project restriction by design. That is the
-        cross-project escape hatch, so who holds it is a decision and not an
-        accident -- pin the set.
-        """
-        holders = {
-            name for name, role in ROLE_DEFINITIONS.items()
-            if role.scope is RoleScope.GLOBAL
-            and Permission.FILE_DOWNLOAD in role.permissions
-        }
-
-        assert holders == {"lab_manager", "auditor", "admin"}
+        assert Permission.FILE_DOWNLOAD in ROLE_DEFINITIONS["member"].permissions
 
     def test_service_account_can_both_create_and_update_what_it_writes(self):
         """
@@ -191,63 +199,6 @@ class TestRoleDefinitions:
                 f"{create} and {update} should be held together or not at all"
             )
 
-    def test_run_registration_is_separated_from_run_writeback(self):
-        """
-        The exception to the pairing rule above, asserted rather than left as a
-        gap so that "re-add run:create to service_account" has to argue with a
-        test instead of looking like a tidy-up.
-
-        Over 2026-08-18..09-28, exactly two principals called POST /runs: the
-        NGS360-SequencersToS3 service account, and a personal API key belonging
-        to an administrator that was doing the same job by hand and has since
-        been revoked. No lab_manager holder has ever registered a run.
-        """
-        sa = ROLE_DEFINITIONS["service_account"].permissions
-        lab = ROLE_DEFINITIONS["lab_manager"].permissions
-        registrar = ROLE_DEFINITIONS["run_registrar"].permissions
-
-        assert Permission.RUN_CREATE not in sa
-        assert Permission.RUN_CREATE not in lab
-        assert Permission.RUN_CREATE in registrar
-
-        # Writeback stays where the accounts that do it already are.
-        assert Permission.RUN_UPDATE in sa
-
-        # And the new role grants nothing else -- run:read and the job
-        # writeback still come from service_account alongside it.
-        assert registrar == {Permission.RUN_CREATE}
-
-    def test_sample_run_association_is_separated_from_the_shared_role(self):
-        """
-        The second instance of the same finding, pinned for the same reason as
-        run:create above.
-
-        On DELETE /runs/{run_id}/samples across 2026-09-01..29 there were two
-        callers: the NGS360-CollectRunMetrics-lambda service account, recorded
-        as would_deny on all 64 attempts, and a personal API key belonging to
-        an administrator, revoked on 2026-09-04.
-
-        run:associate stays out of service_account for the reason run:create
-        did -- nine accounts share that role and one needs this permission.
-        lab_manager keeps it despite no holder ever having used the route;
-        removing that is a separate decision, not a side effect of this fix.
-        """
-        sa = ROLE_DEFINITIONS["service_account"].permissions
-        associator = ROLE_DEFINITIONS["run_associator"].permissions
-
-        assert Permission.RUN_ASSOCIATE not in sa
-        assert associator == {Permission.RUN_ASSOCIATE}
-
-        holders = {n for n, r in ROLE_DEFINITIONS.items()
-                   if Permission.RUN_ASSOCIATE in r.permissions}
-        assert holders == {"run_associator", "lab_manager", "admin"}
-
-    def test_only_admin_and_run_registrar_can_register_a_run(self):
-        """`member` must not pick this up the way run:demux did."""
-        holders = {n for n, r in ROLE_DEFINITIONS.items()
-                   if Permission.RUN_CREATE in r.permissions}
-        assert holders == {"run_registrar", "admin"}
-
     def test_service_account_is_still_not_a_human_role(self):
         """
         Widening it must not turn it into a general write role. It exists for
@@ -264,49 +215,6 @@ class TestRoleDefinitions:
         ):
             assert excluded not in sa
 
-    def test_manifest_operator_holds_exactly_the_manifest_permissions(self):
-        """
-        Manifest handling is global-only -- a manifest names an arbitrary S3 URI
-        and no resolver maps it to a project -- so it cannot be project
-        membership and has to be a global role.
-        """
-        manifest = ROLE_DEFINITIONS["manifest_operator"].permissions
-
-        assert manifest == {
-            Permission.MANIFEST_READ,
-            Permission.MANIFEST_UPLOAD,
-            Permission.MANIFEST_VALIDATE,
-        }
-
-    def test_manifest_operator_is_narrower_than_lab_manager(self):
-        """
-        lab_manager was the off-the-shelf alternative, at sixteen permissions
-        beyond member including run:create and project:ingest -- none of which a
-        person uploading a manifest needs.
-        """
-        lab = ROLE_DEFINITIONS["lab_manager"].permissions
-        manifest = ROLE_DEFINITIONS["manifest_operator"].permissions
-
-        assert manifest < lab
-        assert Permission.RUN_CREATE not in manifest
-        assert Permission.PROJECT_INGEST not in manifest
-
-    def test_workflow_publisher_cannot_delete(self):
-        """
-        Publishing a workflow and destroying one are different privileges.
-
-        The role exists because one caller needed create/update/deploy and held
-        only `member`; `workflow:delete` was never among the refusals and stays
-        out until it is. workflow_admin is the role that has it.
-        """
-        publisher = ROLE_DEFINITIONS["workflow_publisher"].permissions
-
-        assert Permission.WORKFLOW_CREATE in publisher
-        assert Permission.WORKFLOW_UPDATE in publisher
-        assert Permission.WORKFLOW_DEPLOY in publisher
-        assert Permission.WORKFLOW_DELETE not in publisher
-        assert publisher < ROLE_DEFINITIONS["workflow_admin"].permissions
-
     def test_workflow_admin_covers_every_workflow_permission(self):
         """
         Derived from the catalog, not enumerated, so a new workflow:* permission
@@ -320,21 +228,6 @@ class TestRoleDefinitions:
 
         assert ROLE_DEFINITIONS["workflow_admin"].permissions == \
             every_workflow_permission
-
-    def test_the_workflow_roles_are_narrower_than_platform_admin(self):
-        """
-        The alternative to these roles was granting platform_admin, which would
-        have conferred setting:update, system:reindex and vendor:delete to fix a
-        workflow-registration refusal.
-        """
-        platform_admin = ROLE_DEFINITIONS["platform_admin"].permissions
-
-        for name in ("workflow_publisher", "workflow_admin"):
-            role = ROLE_DEFINITIONS[name].permissions
-            assert len(role) < len(platform_admin)
-            assert Permission.SETTING_UPDATE not in role
-            assert Permission.SYSTEM_REINDEX not in role
-            assert Permission.VENDOR_DELETE not in role
 
     def test_every_global_role_beyond_member_adds_a_write(self):
         """
@@ -378,19 +271,8 @@ class TestRoleDefinitions:
         owner = ROLE_DEFINITIONS["project_owner"].permissions
         assert viewer < contributor < owner
 
-    def test_member_is_contained_in_the_elevated_global_roles(self):
-        member = ROLE_DEFINITIONS["member"].permissions
-        assert member < ROLE_DEFINITIONS["lab_manager"].permissions
-        assert member < ROLE_DEFINITIONS["platform_admin"].permissions
-
     def test_admin_holds_every_permission(self):
         assert ROLE_DEFINITIONS["admin"].permissions == ALL_PERMISSIONS
-
-    def test_job_update_is_reserved_for_machines_and_platform_admin(self):
-        """It writes another user's job status, so no ordinary human role gets it."""
-        holders = {n for n, r in ROLE_DEFINITIONS.items()
-                   if Permission.JOB_UPDATE in r.permissions}
-        assert holders == {"service_account", "platform_admin", "admin"}
 
     def test_service_account_cannot_manage_roles_or_users(self):
         """A machine identity must never be able to escalate itself."""
@@ -418,28 +300,31 @@ class TestRoleDefinitions:
                            Permission.QCRECORD_READ, Permission.FILE_READ):
             assert permission in member, permission
 
-    def test_member_does_not_hold_file_download(self):
+    def test_what_still_protects_a_restricted_project_is_not_a_permission(self):
         """
-        Reads stay global; downloading does not. This is the one permission the
-        distinction rests on, so it is asserted separately from the four above.
+        Replaces `test_member_does_not_hold_file_download`, which asserted that
+        `member` must not hold the permission. It does now, so the property
+        worth pinning is the one that made that safe rather than the absence
+        itself.
 
-        While `member` held file:download globally, the project-scoped check on
-        GET /files/download-url was vacuous -- has_in_project short-circuits on a
-        global grant, so every authenticated user could download every file in the
-        product. Putting it back here silently re-opens that.
+        `file:download` being universal is harmless precisely because nothing
+        consults it to decide a restricted project: that branch asks for a
+        `project_member` row, which no role can grant. Were the restriction ever
+        expressed as a permission again, a universal `file:download` would
+        satisfy it for everybody -- so this asserts the shape of the mechanism,
+        not the contents of a role.
         """
-        assert Permission.FILE_DOWNLOAD not in ROLE_DEFINITIONS["member"].permissions
+        import inspect
 
-    def test_the_cross_project_download_roles_are_a_closed_set(self):
-        """
-        Global file:download defeats project scoping for whoever holds it, which
-        is correct for a cross-project operator and wrong for anyone else. The set
-        is small on purpose, so growing it is a reviewed decision.
-        """
-        holders = {n for n, r in ROLE_DEFINITIONS.items()
-                   if Permission.FILE_DOWNLOAD in r.permissions
-                   and r.scope == RoleScope.GLOBAL}
-        assert holders == {"lab_manager", "auditor", "admin"}
+        from api.files import routes
+
+        source = inspect.getsource(routes.require_file_download)
+        restricted_branch = source[source.index("restricted = _restricted_projects"):]
+        assert "is_member_of" in restricted_branch, (
+            "the restricted-project branch no longer checks membership; if it "
+            "checks a permission again, file:download must leave `member`"
+        )
+        assert "has_in_project(Permission.FILE_DOWNLOAD" not in restricted_branch
 
 
 class TestSeeding:
@@ -619,3 +504,148 @@ class TestGrantConstraints:
         session.add(grant)
         session.commit()
         assert grant.source == GrantSource.MANUAL
+
+
+class TestTheCollapsedRoster:
+    """
+    The three-tier model, as assertions. Replaces eleven tests that pinned the
+    relationships between roles that no longer exist (NWP-2213, step 3).
+
+    What was removed and why: `lab_manager`, `demux_operator`,
+    `manifest_operator`, `workflow_publisher` and `platform_admin` are gone, so
+    tests like "manifest_operator is narrower than lab_manager" assert nothing.
+    The properties worth keeping are not relationships between roles but the
+    two boundaries the design actually rests on -- what is reserved, and what
+    `member` therefore holds.
+    """
+
+    def test_the_reserved_sets_are_exactly_as_designed(self):
+        """
+        The whole design, in one assertion.
+
+        `member` is derived as the complement of these, so a permission added
+        to the catalogue lands in the user tier unless somebody reserves it.
+        That is the intended default for a platform whose stance is
+        "permissible unless the project is restricted", and it is the reason
+        this test exists: adding a permission fails here until someone decides
+        which side of the line it belongs on.
+        """
+        from api.rbac.roles import (_ADMIN_ONLY, _MEMBERSHIP_GATED, _RESERVED,
+                                    _VENDOR_ADMIN_ONLY, _WORKFLOW_ADMIN_ONLY)
+
+        assert {str(p) for p in _ADMIN_ONLY} == {
+            "role:manage", "user:manage", "setting:update", "system:reindex",
+            "project:delete", "job:update",
+        }
+        assert {str(p) for p in _VENDOR_ADMIN_ONLY} == {
+            "vendor:create", "vendor:update", "vendor:delete",
+        }
+        assert {str(p) for p in _WORKFLOW_ADMIN_ONLY} == {
+            "workflow:create", "workflow:update", "workflow:delete",
+            "workflow:deploy",
+        }
+        assert {str(p) for p in _MEMBERSHIP_GATED} == {"project:manage_members"}
+        assert len(_RESERVED) == 14
+
+    def test_member_is_everything_not_reserved(self):
+        from api.rbac.roles import _RESERVED
+
+        member = ROLE_DEFINITIONS["member"].permissions
+        assert member == ALL_PERMISSIONS - _RESERVED
+        assert len(member) == len(ALL_PERMISSIONS) - 14 == 43
+
+    def test_admin_still_holds_everything(self):
+        assert ROLE_DEFINITIONS["admin"].permissions == ALL_PERMISSIONS
+
+    def test_job_update_is_the_machine_tier_s_alone(self):
+        """
+        The one permission that kept a service tier from being merged into the
+        user tier. It writes *another user's* job status, which cannot be
+        expressed as "the owner may update it" because the Batch poller is not
+        the owner.
+        """
+        holders = {n for n, r in ROLE_DEFINITIONS.items()
+                   if Permission.JOB_UPDATE in r.permissions}
+        assert holders == {"admin", "service_account"}
+
+    def test_the_resource_catalogues_write_surfaces_are_reserved(self):
+        for permission, owner in (
+            (Permission.VENDOR_CREATE, "vendor_admin"),
+            (Permission.VENDOR_UPDATE, "vendor_admin"),
+            (Permission.VENDOR_DELETE, "vendor_admin"),
+            (Permission.WORKFLOW_CREATE, "workflow_admin"),
+            (Permission.WORKFLOW_UPDATE, "workflow_admin"),
+            (Permission.WORKFLOW_DEPLOY, "workflow_admin"),
+            (Permission.WORKFLOW_DELETE, "workflow_admin"),
+        ):
+            holders = {n for n, r in ROLE_DEFINITIONS.items()
+                       if permission in r.permissions}
+            assert holders == {"admin", owner}, permission
+
+    def test_vendor_writes_are_reserved_because_they_move_the_signing_allowlist(
+        self
+    ):
+        """
+        Not tidiness. `vendor.bucket` drives which S3 locations the platform
+        will sign for (api/files/scope.py), so a user who can write that column
+        decides what is signable. With these in `member` the allowlist would be
+        user-editable, which is no allowlist.
+        """
+        member = ROLE_DEFINITIONS["member"].permissions
+        assert Permission.VENDOR_CREATE not in member
+        assert Permission.VENDOR_UPDATE not in member
+        assert Permission.VENDOR_READ in member, "reading the catalogue is fine"
+
+    def test_the_reads_only_role_is_narrower_than_the_user_tier(self):
+        """
+        `auditor` survived the collapse rather than being folded in, because
+        merging it would have *granted* its holder write access to everything
+        -- the opposite of what an auditor is.
+        """
+        auditor = ROLE_DEFINITIONS["auditor"].permissions
+        member = ROLE_DEFINITIONS["member"].permissions
+        assert auditor < member | {Permission.ROLE_READ}
+        writes = {p for p in auditor
+                  if not str(p).endswith(":read")
+                  and p not in (Permission.FILE_DOWNLOAD, Permission.SEARCH_QUERY,
+                                Permission.JOB_READ_ALL)}
+        assert not writes
+
+    def test_the_machine_roles_stay_separate_and_narrow(self):
+        """
+        run:create and run:associate were narrowed out of service_account in
+        #447 and #451, on evidence that 16 of 17 accounts holding run:create had
+        never registered a run. The collapse does not undo that for machines:
+        the two one-permission roles remain, and service_account still does not
+        carry either.
+
+        It *does* make them redundant for humans -- both permissions are in
+        `member` now, so any authenticated user can register a run. That is the
+        stated design ("non-administrative actions are permissible"), and the
+        roles persist for the service accounts that hold them, so no grant is
+        lost. Recorded here because it is easy to read the surviving roles as
+        still restricting something they no longer restrict.
+        """
+        sa = ROLE_DEFINITIONS["service_account"].permissions
+        assert Permission.RUN_CREATE not in sa
+        assert Permission.RUN_ASSOCIATE not in sa
+        assert ROLE_DEFINITIONS["run_registrar"].permissions == {
+            Permission.RUN_CREATE}
+        assert ROLE_DEFINITIONS["run_associator"].permissions == {
+            Permission.RUN_ASSOCIATE}
+
+        member = ROLE_DEFINITIONS["member"].permissions
+        assert Permission.RUN_CREATE in member
+        assert Permission.RUN_ASSOCIATE in member
+
+    def test_no_global_role_grants_project_manage_members(self):
+        """
+        Membership is a restricted project's allowlist, so managing the
+        allowlist is checked as "admin, or an existing member" in
+        api/rbac/deps.py rather than granted by a role. `admin` holds it only
+        because admin holds everything.
+        """
+        holders = {n for n, r in ROLE_DEFINITIONS.items()
+                   if r.scope is RoleScope.GLOBAL
+                   and Permission.PROJECT_MANAGE_MEMBERS in r.permissions}
+        assert holders == {"admin"}

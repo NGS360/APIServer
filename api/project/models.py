@@ -47,7 +47,12 @@ class Project(SQLModel, table=True):
     # deliberate trade recorded in docs/RBAC.md: the previous default-deny model
     # made every project safe and made one legitimate 33M-request genomics
     # workload require 66 project grants.
-    download_restricted: bool = Field(default=False)
+    # Renamed from download_restricted on 2026-10-08. The flag was introduced for
+    # downloads alone; it now marks a project locked down for *every* action, so
+    # the narrower name was actively misleading. Safe to rename rather than add a
+    # second flag because it is set on 0 of 11,156 projects -- there is no data
+    # to migrate and no caller relying on the old behaviour.
+    restricted: bool = Field(default=False)
 
     last_modified: datetime = Field(
         default_factory=lambda: datetime.now(timezone.utc),
@@ -76,7 +81,7 @@ class ProjectUpdate(SQLModel):
     # Guarded by `project:update` like the rest of this model. That is a
     # project-scoped permission, so restricting a project requires authority
     # over that project -- project_owner, or a global holder.
-    download_restricted: bool | None = None
+    restricted: bool | None = None
 
 
 class ProjectPublic(SQLModel):
@@ -90,7 +95,7 @@ class ProjectPublic(SQLModel):
     # Surfaced deliberately: with an opt-in control, the dangerous state is a
     # project nobody remembered to restrict, and that is only discoverable if
     # the flag is visible rather than implied by its absence.
-    download_restricted: bool = False
+    restricted: bool = False
     attributes: List[Attribute] | None
     sequencing_runs: List[SequencingRunPublic] | None = None
 

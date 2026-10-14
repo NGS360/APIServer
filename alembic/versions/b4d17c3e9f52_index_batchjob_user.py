@@ -1,7 +1,7 @@
 """index batchjob.user
 
 Revision ID: b4d17c3e9f52
-Revises: d5e8a3f9b1c2
+Revises: a71c4e08b2f6
 Create Date: 2026-10-06
 
 The Submitted By filter on the jobs tables pages through
@@ -30,7 +30,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision = 'b4d17c3e9f52'
-down_revision = 'd5e8a3f9b1c2'
+down_revision = 'a71c4e08b2f6'
 branch_labels = None
 depends_on = None
 

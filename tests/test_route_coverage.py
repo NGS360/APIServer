@@ -9,6 +9,7 @@ equality, so adding an unguarded route fails (an unexpected entry) and guarding
 one also fails (a stale entry). Both directions have to be a deliberate edit.
 """
 import os
+import re
 
 import pytest
 
@@ -49,17 +50,22 @@ SELF_SERVICE = {
     "POST /api/v1/auth/password/change",
 }
 
-# Anonymous today, and cannot be guarded until authentication is closed on them.
+# Authenticated, but carrying no permission guard yet.
 #
-# require_permission depends on get_current_active_user, so attaching a guard to
-# one of these returns 401 to today's anonymous callers -- before any mode check
-# runs. RBAC_MODE=dry_run does not soften that, which is why these are Phase 1
-# work (close authentication, with the consumer migrations that implies) and not
-# Phase 4 work. See docs/RBAC.md.
+# Renamed from AUTHENTICATED_BUT_UNGUARDED on 2026-10-14. Authentication is no
+# longer what these are waiting for: every feature router now requires a caller
+# (see main.py), so each of these returns 401 to an anonymous request. What they
+# still lack is a *permission* guard, which is the remaining work and is now
+# ordinary Phase 4 work rather than blocked on consumer migrations.
 #
-# This set only ever shrinks. Removing an entry means that route now requires a
-# caller to authenticate, which is a breaking change for whoever calls it today.
-AWAITING_AUTHENTICATION = {
+# The old name encoded a real constraint while it lasted: require_permission
+# depends on get_current_active_user, so attaching a guard to an anonymous route
+# returned 401 before any mode check ran, and RBAC_MODE=dry_run did not soften
+# it. Closing authentication first is what removed that ordering problem.
+#
+# This set only ever shrinks. Removing an entry means that route now has a
+# permission guard.
+AUTHENTICATED_BUT_UNGUARDED = {
     "GET /api/v1/actions/configs",
     "GET /api/v1/actions/options",
     "GET /api/v1/actions/platforms",
@@ -139,7 +145,7 @@ def test_every_route_is_classified():
     The exhaustive check. Adding a route without a guard fails here, and so does
     guarding one without removing it from the list below.
     """
-    expected = PUBLIC | SELF_SERVICE | AWAITING_AUTHENTICATION
+    expected = PUBLIC | SELF_SERVICE | AUTHENTICATED_BUT_UNGUARDED
     unexpected = UNGUARDED - expected
     stale = expected - UNGUARDED
 
@@ -156,13 +162,13 @@ def test_every_route_is_classified():
 
 def test_the_three_classifications_do_not_overlap():
     assert not PUBLIC & SELF_SERVICE
-    assert not PUBLIC & AWAITING_AUTHENTICATION
-    assert not SELF_SERVICE & AWAITING_AUTHENTICATION
+    assert not PUBLIC & AUTHENTICATED_BUT_UNGUARDED
+    assert not SELF_SERVICE & AUTHENTICATED_BUT_UNGUARDED
 
 
 def test_no_classified_route_is_also_guarded():
     """A guarded route must not linger in a list that says it is not."""
-    overlap = GUARDED & (PUBLIC | SELF_SERVICE | AWAITING_AUTHENTICATION)
+    overlap = GUARDED & (PUBLIC | SELF_SERVICE | AUTHENTICATED_BUT_UNGUARDED)
     assert not overlap, sorted(overlap)
 
 
@@ -279,7 +285,7 @@ def test_the_authentication_backlog_only_shrinks():
     refusing caller (a run-metrics service account), so guarding
     DELETE /runs/{run_id}/samples/{sample_id} on it must not enforce yet.
     """
-    assert len(AWAITING_AUTHENTICATION) == 28
+    assert len(AUTHENTICATED_BUT_UNGUARDED) == 28
 
 
 @pytest.mark.parametrize("key", sorted(GUARDED))
@@ -328,3 +334,65 @@ def test_project_scoped_paths_use_the_project_plane():
                 continue
             wrong.append((key, plane, [str(p) for p in perms]))
     assert not wrong, wrong
+
+
+def test_only_the_authentication_routes_are_reachable_anonymously():
+    """
+    The partition, asserted by *behaviour* rather than by introspection.
+
+    This is deliberately not a walk of the dependency graph, and the reason is
+    worth recording. FastAPI does not flatten included routers in this version,
+    so `include_router(dependencies=...)` attaches to the wrapper while
+    `effective_route_contexts()` hands back the inner route -- which still looks
+    unauthenticated. A graph walk written the obvious way reported all 39
+    anonymous routes as *still* anonymous after they had been closed, and the
+    only thing that showed otherwise was sending a request.
+
+    So: send requests. One per route, with no credentials, asserting that
+    everything outside PUBLIC refuses. A 401 or 403 is a pass; anything that
+    reaches the handler -- including a 422 for a bad body, or a 404 for a
+    missing id -- means the route ran for an anonymous caller.
+    """
+    from fastapi.testclient import TestClient
+
+    from main import app
+
+    client = TestClient(app, raise_server_exceptions=False)
+    reached_handler = []
+
+    for key in sorted(ROUTES):
+        if key in PUBLIC:
+            continue
+        method, path = key.split(" ", 1)
+        # Any placeholder will do; authentication is checked before the handler
+        # resolves a path parameter.
+        concrete = re.sub(r"\{[^}]+\}", "x", path)
+        response = client.request(method, concrete)
+        if response.status_code not in (401, 403):
+            reached_handler.append("%s %s -> %s" % (method, concrete,
+                                                    response.status_code))
+
+    assert not reached_handler, (
+        "these routes ran for an anonymous caller:\n  "
+        + "\n  ".join(reached_handler)
+    )
+
+
+def test_the_public_routes_are_still_public():
+    """The other half: closing everything else must not close the front door."""
+    from fastapi.testclient import TestClient
+
+    from main import app
+
+    client = TestClient(app, raise_server_exceptions=False)
+    refused = []
+    for key in sorted(PUBLIC):
+        method, path = key.split(" ", 1)
+        concrete = re.sub(r"\{[^}]+\}", "x", path)
+        response = client.request(method, concrete)
+        if response.status_code in (401, 403):
+            refused.append("%s %s -> %s" % (method, concrete,
+                                            response.status_code))
+    assert not refused, (
+        "the authentication surface must stay reachable:\n  " + "\n  ".join(refused)
+    )
