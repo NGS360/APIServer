@@ -318,7 +318,7 @@ class TestUnresolvableURIs:
         Inverted 2026-10-08, and the inversion is the point of the change.
 
         This previously asserted the opposite, on the reasoning that
-        lab_manager, auditor and admin hold global file:download for
+        auditor and admin hold global file:download for
         cross-project operation and so should not be scoped. That reasoning was
         sound for *project* scoping and wrong for this branch: an unresolved URI
         is not a project, it is any bucket and key the API's own IAM role can
@@ -890,8 +890,10 @@ class TestRestrictionIsMembershipNotPermission:
         session.commit()
 
         user = session.exec(select(User).where(User.username == "scoped")).one()
+        # A role carrying no file permissions at all, to show access comes
+        # from the membership row rather than from what the role grants.
         irrelevant = session.exec(
-            select(Role).where(Role.name == "demux_operator")
+            select(Role).where(Role.name == "run_registrar")
         ).one()
         session.add(ProjectMember(project_id=project.id, user_id=user.id,
                                   role_id=irrelevant.id, source=GrantSource.MANUAL))

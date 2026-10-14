@@ -82,17 +82,22 @@ class TestAuthorization:
         api = client_with_permissions([Permission.FILE_DOWNLOAD], username="dl")
         assert api.get(URL, params={"path": FOREIGN}).status_code == 403
 
-    def test_member_still_does_not_hold_file_download(self):
+    def test_member_now_holds_file_download(self):
         """
-        Kept from the previous version of this class, because it is still true
-        and still load-bearing: while `member` held it, the project check was
-        vacuous -- has_in_project short-circuits on a global grant.
+        Inverted 2026-10-13 with the role collapse.
+
+        This asserted the absence, on the reasoning that while `member` held
+        the permission the project check was vacuous -- `has_in_project`
+        short-circuits on a global grant. That was true of a *permission*
+        check. The restricted branch now asks for a `project_member` row, which
+        no role can grant, so the permission is no longer what protects
+        anything and no longer needs withholding.
         """
         from api.rbac.roles import DEFAULT_ROLE_NAME, ROLE_DEFINITIONS
 
         member = {str(p) for p in ROLE_DEFINITIONS[DEFAULT_ROLE_NAME].permissions}
-        assert "file:download" not in member
-        assert "file:read" in member, "reads stay global; only downloading moved"
+        assert "file:download" in member
+        assert "file:read" in member
 
     def test_an_anonymous_caller_is_refused(self, unauthenticated_client):
         assert unauthenticated_client.get(

@@ -329,20 +329,45 @@ Roles are database rows so that administrators can compose custom ones. The **bu
 
 ### Global roles
 
-| Role | Purpose | Permissions |
-|------|---------|-------------|
-| `member` | Default for every authenticated user | `action:read`, `platform:read`, `vendor:read`, `workflow:read`, `pipeline:read`, `run:read`, `job:read`, `job:submit`, `setting:read`, `search:query`, `chat:use`, `user:read`, `project:create`, `run:demux`, `run:update`, `project:submit_action`, plus the transitional global reads: `project:read`, `sample:read`, `qcrecord:read`, `file:read`. `run:demux` and `run:update` added 2026-09-28 — see [Demultiplexing became a default](#demultiplexing-became-a-default). `project:submit_action` added 2026-10-07 — see [Submitting an action is no longer project-scoped](#submitting-an-action-is-no-longer-project-scoped). **Not** `file:download` — downloads from unrestricted projects consult no permission, and granting it globally would make every project restriction vacuous |
-| `demux_operator` | **Subsumed by `member` as of 2026-09-28** — grants nothing its holders do not already have. Retained, not deleted: `sync_rbac_catalog` only iterates `ROLE_DEFINITIONS`, so removing it from code would orphan the row and its 14 grants rather than clean them up, and it is where the grants should fall back to if `member` is ever tightened | `run:demux`, `run:update` — the samplesheet write and run update are part of the same job; see the worked example below |
-| `manifest_operator` | May read, upload and validate sample manifests | `manifest:read`, `manifest:upload`, `manifest:validate`. Global-only by necessity — a manifest names an arbitrary S3 URI |
-| `run_registrar` | May register sequencing runs, and nothing else | `run:create` — granted alongside `service_account`, which still supplies `run:read` and the job writeback |
-| `run_associator` | May associate and dissociate samples and runs, and nothing else | `run:associate` — granted alongside `service_account`, which still supplies `run:read`, `run:update` and `sample:create` |
-| `lab_manager` | Sequencing core — registers runs, demultiplexes, ingests vendor deliveries | `member` + `run:create`, `run:update`, `run:associate`, `run:demux`, `manifest:read`, `manifest:upload`, `manifest:validate`, `file:browse`, `file:create`, `file:update`, `sample:create`, `sample:update`, `qcrecord:create`, `project:ingest`, `job:read_all`. `run:create` removed 2026-09-28 — five holders, none of whom had ever registered a run; see [Run registration was narrowed to one service](#run-registration-was-narrowed-to-one-service) |
-| `workflow_publisher` | May register workflows, add versions, and deploy them — but not delete | `workflow:create`, `workflow:update`, `workflow:deploy`. `workflow:read` comes from `member` |
-| `workflow_admin` | Owns the workflow catalog outright, including deletion | Every `workflow:*` permission, derived from the catalog so a new one joins automatically |
-| `platform_admin` | Owns the executable catalog and platform configuration | `member` + `platform:create`, `vendor:create`, `vendor:update`, `vendor:delete`, `workflow:create`, `workflow:update`, `workflow:delete`, `workflow:deploy`, `pipeline:create`, `pipeline:update`, `action:validate`, `setting:update`, `system:reindex`, `job:read_all`, `job:update` |
-| `service_account` | Machine writeback — pipeline results and Batch job-status updates only (**not** MCP, which acts as the invoking user) | `project:read`, `run:read`, `run:create`, `run:update`, `sample:read`, `sample:create`, `sample:update`, `qcrecord:create`, `file:create`, `file:update`, `job:read_all`, `job:update`, `workflow:read`. `run:create` and `sample:update` added 2026-09-12 — the role held each verb's update without its create, or vice versa, which describes no real workflow. `workflow:read` added 2026-09-28 — a writeback identity has to resolve the workflow and version it is recording results for, and a machine account created with `--role service_account` never receives `member`, which is where every human role gets it. `run:create` removed 2026-09-28 and moved to `run_registrar` — nine accounts hold this role, exactly one registers runs |
-| `auditor` | Compliance, QA, read-only agents | Every `*:read` permission, plus `file:download`, `search:query`, `role:read` |
-| `admin` | Platform administrator | `ALL_PERMISSIONS`, recomputed at each sync so new permissions are picked up automatically |
+Collapsed to three tiers on 2026-10-13 (NWP-2213, step 3). Eleven global roles became six, and `member` became the complement of what is reserved rather than a hand-maintained list.
+
+| Tier | Role | Purpose | Permissions |
+|---|---|---|---|
+| User | `member` | Default for every authenticated user | **43** — everything not reserved below |
+| Admin | `admin` | Platform administrator | `ALL_PERMISSIONS`, recomputed at each sync |
+| Admin | `vendor_admin` | Owns the vendor catalogue | `vendor:create`, `vendor:update`, `vendor:delete`, `vendor:read` |
+| Admin | `workflow_admin` | Owns the workflow catalogue | every `workflow:*`, derived from the catalogue |
+| Service | `service_account` | Machine writeback — pipeline results and Batch job status | 12, including the only `job:update` outside `admin` |
+| Service | `run_registrar` | Registers sequencing runs | `run:create` |
+| Service | `run_associator` | Associates samples and runs | `run:associate` |
+| Service | `auditor` | Compliance, QA, read-only agents | every `*:read`, plus `file:download`, `search:query`, `role:read` |
+
+**What is reserved, which is the whole design.** `member` is derived as `ALL_PERMISSIONS - reserved`, so a permission added to the catalogue lands in the user tier unless somebody reserves it:
+
+| Reserved to | Permissions |
+|---|---|
+| `admin` | `role:manage`, `user:manage`, `setting:update`, `system:reindex`, `project:delete`, `job:update` |
+| `vendor_admin` | `vendor:create`, `vendor:update`, `vendor:delete` |
+| `workflow_admin` | `workflow:create`, `workflow:update`, `workflow:delete`, `workflow:deploy` |
+| Nobody — membership-gated | `project:manage_members` |
+
+That is 14 of 57. `tests/api/test_rbac_catalog.py::TestTheCollapsedRoster` pins all four sets and `member`'s size, so adding a permission fails the suite until someone decides which side of the line it belongs on.
+
+**Retired:** `lab_manager`, `demux_operator`, `manifest_operator`, `workflow_publisher`, `platform_admin`. Their holders are covered by the widened `member`, except `workflow_publisher` — its permissions are reserved to `workflow_admin`, so migration `a71c4e08b2f6` grants that role to its holders rather than letting them lose access silently.
+
+**Why.** Five of those roles were created reactively over two weeks, and **every grant request ever made was approved**. A permission granted to everyone who asks is not a restricted permission; it is an unrestricted one with a ticket queue in front of it. The decisive measurement: of 44 refusals on `project:submit_action` over 28 days, *all 44* came from callers with no membership of the target project, and no project member was ever refused. The role model kept turning out to be a poor predictor of who needs what.
+
+**Deliberate consequences, recorded because they are easy to misread.**
+
+`run:create` and `run:associate` are now in `member`, so any authenticated user can register a run or associate a sample. That makes `run_registrar` and `run_associator` redundant *for humans*, though they remain the grant their service accounts hold, so nothing is lost. The narrowing those roles came from (#447, #451) still holds for machines — `service_account` carries neither — but it no longer restricts people.
+
+`file:delete`, `sample:delete` and `qcrecord:delete` are in `member`. `project:delete` is not: with 11,168 projects, one mistake there is unrecoverable.
+
+`file:download` is in `member`. That was forbidden for a month, correctly, because while the restricted-project branch was a *permission* check a universal grant satisfied it for everyone. Two changes removed the coupling — the restriction now checks **membership** (#461), which no role can grant, and an unresolved URI is refused by **location** (#459, #460) rather than by privilege. The permission stopped being the protection, so withholding it stopped buying anything.
+
+**`auditor` survived the collapse** rather than being folded into `member`, because it is *narrower* than the user tier, not wider. Merging it would have granted its holder write access to everything, which is the opposite of what an auditor is.
+
+**What `restricted` protects, as of this step — the narrow reading.** Writes, downloads and member management. It does **not** protect reads: `GET /projects/{id}` and `GET /projects/{id}/samples` carry no guard at all, so a restricted project's metadata and sample list remain readable. Closing those means closing routes in the awaiting-credentials set, which has a consumer dependency. The role collapse does not worsen this — `member` has held global `project:read` and `sample:read` throughout — but a project marked `restricted` today is not fully private, and that is a known gap rather than an oversight.
 
 ### Project roles
 
