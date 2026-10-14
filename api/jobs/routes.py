@@ -233,7 +233,7 @@ def get_job_submitters(
             "e.g. 240101_VH00000_1_EXAMPLE01)"
         ),
     ),
-    q: Optional[str] = Query(None, description="Substring match on the username"),
+    username: Optional[str] = Query(None, description="Substring match on the username"),
     skip: int = Query(0, ge=0),
     limit: int = Query(10, ge=1, le=100),
 ) -> JobSubmittersPublic:
@@ -253,7 +253,7 @@ def get_job_submitters(
         session: Database session
         project_id: Optional project filter
         sequencing_run_id: Optional sequencing run filter
-        q: Optional substring match on the username
+        username: Optional substring match on the username
         skip: Number of submitters to skip
         limit: Maximum number of submitters to return
 
@@ -265,7 +265,7 @@ def get_job_submitters(
         session=session,
         project_id=project_id,
         sequencing_run_id=sequencing_run_id,
-        q=q,
+        username=username,
         skip=skip,
         limit=limit,
     )

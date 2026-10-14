@@ -128,7 +128,7 @@ def get_job_submitters(
     session: Session,
     project_id: str | None = None,
     sequencing_run_id: str | None = None,
-    q: str | None = None,
+    username: str | None = None,
     skip: int = 0,
     limit: int = 10,
 ) -> tuple[List[tuple[str, int]], int]:
@@ -144,7 +144,7 @@ def get_job_submitters(
     only the first page: the busiest submitters are the ones worth defaulting
     to, and a username tie-break keeps that order stable across pages.
 
-    `q` matches the username only. Matching a display name would mean joining
+    `username` matches the username only. Matching a display name would mean joining
     directory data that is not held locally, and the ids are derived from
     surnames anyway, so a surname fragment finds its submitter.
 
@@ -152,7 +152,7 @@ def get_job_submitters(
         session: Database session
         project_id: Optional project filter (Project.project_id business key)
         sequencing_run_id: Optional run filter (SequencingRun.run_id business key)
-        q: Optional substring match on the username
+        username: Optional substring match on the username
         skip: Number of submitters to skip
         limit: Maximum number of submitters to return
 
@@ -168,7 +168,7 @@ def get_job_submitters(
         query = query.where(BatchJob.project_id == project_id)
     if sequencing_run_id:
         query = query.where(BatchJob.sequencing_run_id == sequencing_run_id)
-    term = q.strip() if q else ""
+    term = username.strip() if username else ""
     if term:
         query = query.where(BatchJob.user.like(_like_pattern(term), escape="\\"))
 
