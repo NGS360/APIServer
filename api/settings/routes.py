@@ -5,7 +5,7 @@ HTTP   URI                          Action
 ----   ---                          ------
 GET    /api/v1/settings             Get settings filtered by tag
 GET    /api/v1/settings/[key]       Retrieve info about a specific setting
-PUT    /api/v1/settings/[key]       Update info about a setting (superuser only)
+PUT    /api/v1/settings/[key]       Update info about a setting (setting:update)
 """
 
 from fastapi import APIRouter, Depends, Query, status
@@ -60,7 +60,7 @@ def get_setting(session: SessionDep, key: str) -> Setting:
     response_model=Setting,
     status_code=status.HTTP_200_OK,
     tags=["Settings Endpoints"],
-    summary="Update a setting (superuser only)",
+    summary="Update a setting",
     dependencies=[Depends(require_permission(Permission.SETTING_UPDATE))],
 )
 def update_setting(
@@ -73,8 +73,10 @@ def update_setting(
     The key cannot be changed as it's the primary identifier.
 
     Settings control platform-wide behaviour — including the data and results bucket
-    URIs and the manifest validation Lambda ARN — so writes require superuser
-    privileges.
+    URIs and the manifest validation Lambda ARN — so writes require
+    setting:update. That permission is the whole guard; there is no
+    CurrentSuperuser dependency on top, which is what lets a platform_admin use
+    the settings pages their role is for.
     """
     return services.update_setting(
         session=session,

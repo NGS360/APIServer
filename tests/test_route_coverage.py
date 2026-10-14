@@ -53,7 +53,7 @@ SELF_SERVICE = {
 #
 # require_permission depends on get_current_active_user, so attaching a guard to
 # one of these returns 401 to today's anonymous callers -- before any mode check
-# runs. RBAC_MODE=dry_run does not soften that, which is why these are Phase 1
+# runs. A permission guard does not soften that, which is why these are Phase 1
 # work (close authentication, with the consumer migrations that implies) and not
 # Phase 4 work. See docs/RBAC.md.
 #
@@ -170,8 +170,11 @@ def test_guard_count_is_recorded():
     """
     Pins the size of the guarded surface so growth is visible in review rather
     than incidental.
+
+    86 -> 89 with the user administration API: GET /rbac/users, GET
+    /rbac/users/{username}/access and PATCH /users/{username}.
     """
-    assert len(GUARDED) == 86
+    assert len(GUARDED) == 89
 
 
 def test_the_authentication_backlog_only_shrinks():

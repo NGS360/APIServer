@@ -12,7 +12,11 @@ from api.rbac import services as rbac_services
 from api.rbac.models import ProjectMember, ProjectMemberPublic, ProjectMemberRequest, Role
 from api.jobs.models import BatchJobPublic
 from api.project.deps import ProjectDep
-from api.rbac.deps import require_permission, require_project_permission
+from api.rbac.deps import (
+    OptionalAuthzDep,
+    require_permission,
+    require_project_permission,
+)
 from api.rbac.permissions import Permission
 from api.project.models import (
     ProjectCreate,
@@ -185,12 +189,24 @@ def reindex_projects(
     response_model=ProjectPublic,
     tags=["Project Endpoints"]
 )
-def get_project_by_project_id(session: SessionDep, project: ProjectDep) -> ProjectPublic:
+def get_project_by_project_id(
+    session: SessionDep, project: ProjectDep, authz: OptionalAuthzDep
+) -> ProjectPublic:
     """
     Returns a single project by its project_id.
     Note: This is different from its internal "id".
+
+    Carries `permissions`: what the calling user may do in this project. The
+    project plane is the only place that answer exists -- /rbac/me reports global
+    grants only -- so without it a UI has no way to gate a project control
+    except by making the request and handling the refusal.
     """
-    return services.get_project_by_project_id(session=session, project_id=project.project_id)
+    result = services.get_project_by_project_id(
+        session=session, project_id=project.project_id
+    )
+    if authz is not None:
+        result.permissions = authz.effective_project_permissions(project.id)
+    return result
 
 
 @router.put(
@@ -576,11 +592,15 @@ def ingest_vendor_data(
 ###############################################################################
 # Project membership /api/v1/projects/{project_id}/members
 #
-# Guarded on project:manage_members alone, as of 2026-09-18. These carried
-# CurrentSuperuser as well, which is now removed -- see the module docstring in
-# api/rbac/routes.py for why the flag was redundant over the permission guard,
-# and why removing it is the prerequisite for taking is_superuser off the three
-# personal accounts that hold it.
+# Guarded by require_project_permission(PROJECT_MANAGE_MEMBERS) alone, which is
+# the point of the project plane: an owner adds their own collaborators without
+# needing an administrator. There is no CurrentSuperuser dependency on top --
+# that would defeat the self-serve case entirely.
+#
+# The read carries the same permission as the writes, deliberately. Membership is
+# who can see the project, so it is not less sensitive than changing it, and it
+# lets a successful response stand as evidence the caller may edit -- which is
+# what the UI relies on, since project-scoped permissions are not on /rbac/me.
 ###############################################################################
 
 @router.get(

@@ -14,8 +14,8 @@ still had a live anonymous python-requests caller. There is no test for those
 here, deliberately -- they are listed in AWAITING_AUTHENTICATION, and the
 coverage guard is what holds that line.
 
-RBAC_MODE is `enforce` in tests (see isolate_test_environment), so a refusal here
-is a 403 rather than the `would_deny` it currently logs in production.
+A refusal is a 403. There is no enforcement mode any more, so what these
+assert is what production does.
 """
 import pytest
 from fastapi.testclient import TestClient
@@ -41,8 +41,8 @@ def test_anonymous_is_refused(
 
     401 rather than 403: the guard depends on get_current_active_user, so
     authentication resolves first and an anonymous caller never reaches a
-    permission check. RBAC_MODE=dry_run does not soften this, which is why these
-    could not ride the dry-run flag and needed every caller authenticated first.
+    permission check. No authorization setting could have softened this, which is
+    why these needed every caller authenticated first rather than a guard.
     """
     response = unauthenticated_client.get(path)
     assert response.status_code == 401
@@ -67,8 +67,7 @@ def test_the_permission_alone_is_enough(
 
     Every real caller on these routes holds the permission through `member` or
     `auditor`, so granting exactly it must be sufficient. If a route ever needs a
-    second permission, this fails rather than surfacing as a production 403 at
-    the moment RBAC_MODE flips to enforce.
+    second permission, this fails here rather than as a production 403.
     """
     api = client_with_permissions([permission])
     response = api.get(path)
