@@ -4,7 +4,7 @@ Main entrypoint for the FastAPI server
 
 import logging
 
-from fastapi import FastAPI, Request, status
+from fastapi import Depends, FastAPI, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -15,6 +15,7 @@ from core.config import get_settings
 from core.deps import SessionDep
 from core.middleware import RequestContextMiddleware
 
+from api.auth.deps import get_current_active_user
 from api.auth.routes import router as auth_router
 from api.auth.oauth_routes import router as oauth_router
 from api.actions.routes import router as actions_router
@@ -165,24 +166,42 @@ API_PREFIX = "/api/v1"
 app.include_router(auth_router, prefix=API_PREFIX)
 app.include_router(oauth_router, prefix=API_PREFIX)
 
-# Feature routers
-app.include_router(actions_router, prefix=API_PREFIX)
-app.include_router(chat_router, prefix=API_PREFIX)
-app.include_router(files_router, prefix=API_PREFIX)
-app.include_router(jobs_router, prefix=API_PREFIX)
-app.include_router(manifest_router, prefix=API_PREFIX)
-app.include_router(project_router, prefix=API_PREFIX)
-app.include_router(qcmetrics_router, prefix=API_PREFIX)
-app.include_router(runs_router, prefix=API_PREFIX)
-app.include_router(samples_router, prefix=API_PREFIX)
-app.include_router(search_router, prefix=API_PREFIX)
-app.include_router(settings_router, prefix=API_PREFIX)
-app.include_router(vendors_router, prefix=API_PREFIX)
-app.include_router(workflow_router, prefix=API_PREFIX)
-app.include_router(pipeline_router, prefix=API_PREFIX)
-app.include_router(platforms_router, prefix=API_PREFIX)
-app.include_router(users_router, prefix=API_PREFIX)
-app.include_router(rbac_router, prefix=API_PREFIX)
+# Feature routers.
+#
+# Every one of these requires an authenticated caller, applied here at the
+# include rather than on each route. 2026-10-14: 28 data routes carried no
+# authentication dependency at all -- among them GET /runs/{run_id} at 393,818
+# requests a week, GET /projects/{project_id}/samples, and POST
+# /files/upload, which is a *write*. They were 99.8% authenticated in practice,
+# so the exposure was latent rather than exercised, but nothing enforced it.
+#
+# Applied at the router because the alternative is twenty-eight separate
+# decorators that a twenty-ninth route can silently fail to copy. The split
+# above is the whole policy: an endpoint is reachable anonymously if and only if
+# it sits in the authentication routers, and tests/test_route_coverage.py
+# asserts exactly that.
+#
+# Routes already carrying CurrentUser or a permission guard are unaffected --
+# FastAPI resolves a dependency once per request, so the duplicate is free.
+AUTHENTICATED = [Depends(get_current_active_user)]
+
+app.include_router(actions_router, prefix=API_PREFIX, dependencies=AUTHENTICATED)
+app.include_router(chat_router, prefix=API_PREFIX, dependencies=AUTHENTICATED)
+app.include_router(files_router, prefix=API_PREFIX, dependencies=AUTHENTICATED)
+app.include_router(jobs_router, prefix=API_PREFIX, dependencies=AUTHENTICATED)
+app.include_router(manifest_router, prefix=API_PREFIX, dependencies=AUTHENTICATED)
+app.include_router(project_router, prefix=API_PREFIX, dependencies=AUTHENTICATED)
+app.include_router(qcmetrics_router, prefix=API_PREFIX, dependencies=AUTHENTICATED)
+app.include_router(runs_router, prefix=API_PREFIX, dependencies=AUTHENTICATED)
+app.include_router(samples_router, prefix=API_PREFIX, dependencies=AUTHENTICATED)
+app.include_router(search_router, prefix=API_PREFIX, dependencies=AUTHENTICATED)
+app.include_router(settings_router, prefix=API_PREFIX, dependencies=AUTHENTICATED)
+app.include_router(vendors_router, prefix=API_PREFIX, dependencies=AUTHENTICATED)
+app.include_router(workflow_router, prefix=API_PREFIX, dependencies=AUTHENTICATED)
+app.include_router(pipeline_router, prefix=API_PREFIX, dependencies=AUTHENTICATED)
+app.include_router(platforms_router, prefix=API_PREFIX, dependencies=AUTHENTICATED)
+app.include_router(users_router, prefix=API_PREFIX, dependencies=AUTHENTICATED)
+app.include_router(rbac_router, prefix=API_PREFIX, dependencies=AUTHENTICATED)
 
 
 if __name__ == "__main__":

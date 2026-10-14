@@ -181,18 +181,24 @@ class TestSubmittedByComesFromTheCaller:
         assert response.json()["submitted_by"] == "testuser"
         assert response.json()["submitted_by"] != response.json()["created_by"]
 
-    def test_an_anonymous_caller_leaves_it_null(self, unauthenticated_client, test_project):
+    def test_an_anonymous_caller_is_now_refused(self, unauthenticated_client,
+                                                test_project):
         """
-        Recording an unknown submitter as null is honest; the alternative is
-        putting a value nobody asserted into an accountability column.
+        Inverted 2026-10-14, exactly as the previous version of this test said
+        it should be. Its docstring read: "When that route closes too, this test
+        should assert 401 and the null case becomes unreachable, which is the
+        outcome to want."
 
-        Moved from POST /files to POST /files/upload on 2026-09-11: the JSON
-        route was guarded on `file:create`, so anonymous registration is no
-        longer possible there and the property is not observable. The upload
-        route is still open -- it has three anonymous requests in the clean
-        window -- so it is where this still applies. When that route closes too,
-        this test should assert 401 and the null case becomes unreachable, which
-        is the outcome to want.
+        The route closed when authentication became a requirement of every
+        feature router. So the honest-null behaviour it used to pin -- recording
+        an unknown submitter as null rather than inventing a value for an
+        accountability column -- is still the right behaviour for the rows that
+        have it, and is no longer reachable for new ones.
+
+        `submitted_by` can still be null in the database, for rows written
+        before the column existed and for the anonymous uploads this route
+        accepted until today. Nothing backfills them, because there is nothing
+        to backfill them *from*; that is the point of the column.
         """
         response = unauthenticated_client.post(
             f"{BASE}/upload",
@@ -203,8 +209,7 @@ class TestSubmittedByComesFromTheCaller:
             files={"content": ("anon.txt", b"contents", "text/plain")},
         )
 
-        assert response.status_code == 201, response.text
-        assert response.json()["submitted_by"] is None
+        assert response.status_code == 401, response.text
 
     def test_the_json_route_no_longer_admits_anonymous_callers(
         self, unauthenticated_client, test_project
