@@ -85,7 +85,7 @@ Alternatives considered:
 
 ### Data model (API server)
 
-New table `projectworkflowversion`, following the existing lower-case naming:
+New table `projectworkflowversion`, following the existing lower-case naming. Pins are **per workflow**, not per pipeline: each workflow a launcher uses gets its own row.
 
 | Field | Type | Required | Description |
 |---|---|---|---|
@@ -178,13 +178,13 @@ DELETE /projects/{project_id}/workflow-versions/{workflow_id}?engine=
 
 This returns 204. The next run pins to the current `prod`.
 
-**Permissions** (to confirm with the RBAC owners):
+**Permissions:**
 
 | Route | Proposed guard | Reason |
 |---|---|---|
 | `resolve` | `require_project_permission(PROJECT_SUBMIT_ACTION)` | Anyone allowed to process the project must be able to pin on first run |
 | `GET` | Project read permission | Read-only |
-| `PUT` / `DELETE` | `WORKFLOW_UPDATE` (admin / pipeline owner) | Changing a pin changes scientific output and must be deliberate |
+| `PUT` / `DELETE` | `WORKFLOW_CREATE`, the same permission as registering a workflow | Whoever can register workflows can change a project's pin manually. Changing a pin changes scientific output, so it is not open to every user |
 
 ### PAML change
 
@@ -239,9 +239,9 @@ def prepare_workflow(self, src_workflow, project):
 Pinning is always on and always pins from `prod`. There is no setting to turn it off or to pin from another alias. Running a project with a different version is a deliberate manual change, just as on SBG and Arvados, where you replace the workflow copy in the project. On NGS360 there are two ways:
 
 - Put an explicit `uuid:<n>` in the launcher config for a one-off run. This bypasses the pin and writes nothing.
-- Change the project's pin with `PUT /projects/{id}/workflow-versions/{workflow_id}` (admin). Every later run uses the new version.
+- Change the project's pin with `PUT /projects/{id}/workflow-versions/{workflow_id}` (admin). Every later run uses the new version. This needs the same permission as registering a workflow.
 
-The engine is fixed too: a module constant `OMICS_ENGINE = "AWSHealthOmics (us-east)"`, the same value WES uses to select deployments. PAML gets no new settings or environment variables. `--platform NGS360` currently runs only on HealthOmics us-east-1. If NGS360 gains more engines or regions, the engine becomes configuration at that point.
+The engine is fixed too: a module constant `OMICS_ENGINE = "AWSHealthOmics (us-east)"`, the platform name exactly as the code uses it (WES deployment selection and the API server's Omics registration), not the `AWS HealthOmics (us-east-1)` spelling in older docs. PAML gets no new settings or environment variables. `--platform NGS360` currently runs only on HealthOmics us-east-1. If NGS360 gains more engines or regions, the engine becomes configuration at that point.
 
 Related PAML fix: the NGS360 API calls (`get_project_by_id`, `get_project_by_name`, file upload) currently send **no auth header**. The resolve call must send `Authorization: Bearer $NGS360_AUTH_TOKEN`. Add the header to all NGS360 API calls in the same change.
 
@@ -305,7 +305,7 @@ sequenceDiagram
 
 - **This changes NGS360 behaviour for new runs:** first runs use `prod` instead of "highest version". That is the intended outcome, but announce it.
 - **Projects processed on NGS360 before rollout have no pin.** Without action, their next run pins to the current `prod`, which may differ from what they ran before. Options:
-  1. **Backfill (recommended).** A one-off script reads WES `workflow_runs` grouped by `(project, workflow_uuid)`, takes the version from `resolved_workflow_version` of the most recent successful run, and writes pins with `pinned_from_alias = NULL` and `created_by = "backfill"`. Flag any project that ran more than one version for manual review.
+  1. **Backfill (recommended).** A one-off script reads WES `workflow_runs` grouped by `(project, workflow_uuid)`, takes the version from `resolved_workflow_version` of the most recent successful run, and writes pins with `pinned_from_alias = NULL` and `created_by = "backfill"`. Flag any project that ran more than one version of a workflow for manual review (see open question 1).
   2. Accept pinning to current `prod` on the next run. Simpler, but projects may silently mix versions.
 - Rollout order:
   1. Deploy the API server and run the migration.
@@ -378,8 +378,9 @@ sequenceDiagram
 
 ## Open questions
 
-1. **Pin granularity:** per workflow (as proposed) or per pipeline? Per workflow is simpler, but a pipeline can end up with workflows pinned at different times. For a pipeline-level guarantee we could pin all of a launcher's workflows in one call.
-2. **Permissions:** who may override or delete a pin? Proposed: `WORKFLOW_UPDATE`.
-3. **Backfill policy** for projects that already ran several versions on NGS360.
-4. **Engine name:** the code uses `AWSHealthOmics (us-east)`, while existing docs say `AWS HealthOmics (us-east-1)`. Confirm the canonical platform name before it is hard-coded in PAML.
-5. **UI:** should the project page show the pinned versions?
+1. **Backfill policy for projects that already ran several versions of the same workflow on NGS360.** After rollout a project holds exactly one version per workflow, but history may already be mixed. Options:
+   - Pin the version of the most recent successful run.
+   - Pin the version used by most samples.
+   - Leave the project unpinned and flag it for manual review before its next run.
+
+   Each option has a cost. Whichever version is pinned, earlier samples run on other versions remain mixed unless they are re-run.
