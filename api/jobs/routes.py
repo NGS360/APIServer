@@ -7,7 +7,7 @@ GET    /api/v1/jobs                   Retrieve a list of batch jobs
 POST   /api/v1/jobs                   Submit a new batch job to AWS Batch
 GET    /api/v1/jobs/[id]              Retrieve info about a specific job
 PUT    /api/v1/jobs/[id]              Update a batch job
-GET    /api/v1/jobs/stats/submitters  Retrieve the submitters of those jobs
+GET    /api/v1/jobs/stats/submitters  Retrieve the submitters of jobs being fetched
 """
 
 from typing import Optional, Literal
