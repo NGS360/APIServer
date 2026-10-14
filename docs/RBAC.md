@@ -1271,7 +1271,31 @@ The four that enforce immediately are `pipeline:update`, `qcrecord:delete`, `ven
 
 **`run:associate` is deliberately among the seven that log.** It has a live refusing caller — a run-metrics service account, 12 refusals in the window and still going — so guarding `DELETE /runs/{run_id}/samples/{sample_id}` on it must not enforce. Closing the route while its permission stays in dry-run is exactly the sequencing that #434 got wrong.
 
+> **Closed 2026-10-14 — see [Authentication is now a property of the router](#authentication-is-now-a-property-of-the-router) below. The paragraph that follows is left as written, and its central claim did not survive measurement.**
+
 **What remains is 28 routes, none of them ours.** Every one carries anonymous or invalid-JWT traffic from a consumer another team owns. The largest is `GET /workflows/{workflow_id}` at 23,443 anonymous requests (WES bearer-token forwarding), then `/jobs` and `/jobs/{job_id}` (ngs-observe), `/runs/{id}/metrics` and `/runs/search` (RStudio), `/actions/configs` (the Batch event trigger), and `/files` and `/files/list`.
+
+### Authentication is now a property of the router
+
+**Closed 2026-10-14.** Every feature router requires an authenticated caller, applied once at `app.include_router(...)` in `main.py` rather than route by route. An endpoint is reachable anonymously if and only if it sits in the authentication routers.
+
+**What the measurement actually showed, and it is not what the section above says.** Asked which routes did not *require* authentication — as opposed to which carried anonymous traffic — the answer was 39 of 134, of which 11 are the login and OAuth surface and **28 were data routes**. Among them: `GET /runs/{run_id}` at 393,818 requests a week, `GET /projects/{project_id}/samples`, `GET /jobs`, the whole workflow catalogue, and `POST /files/upload`, which is a **write**.
+
+But they were **99.8% authenticated in practice** — 738 anonymous requests against 444,485 authenticated ones over seven days, with anonymous traffic on only 9 of the 28. So the framing carried through this document, that these routes were blocked on consumer migrations, was wrong in an important way: the consumers had largely migrated. The routes simply never started requiring what the consumers were already sending.
+
+That inverted the cost. Closing them was not five consumer systems and a phased rollout; it was one line and 738 requests a week of breakage, concentrated in three identified callers.
+
+**Why at the router.** The alternative is twenty-eight decorators that a twenty-ninth route can silently fail to copy — which is how this situation arose. At the router, the split in `main.py` *is* the policy, and a new endpoint is authenticated by default.
+
+**Two findings worth keeping.**
+
+*A dependency-graph walk lies here.* This FastAPI version does not flatten included routers, so `include_router(dependencies=...)` attaches to the wrapper while `effective_route_contexts()` returns the inner route — which still looks unauthenticated. A graph walk reported all 39 routes as still open *after* they were closed. Only sending a request showed otherwise, which is why `test_only_the_authentication_routes_are_reachable_anonymously` is behavioural: one unauthenticated request per route, asserting 401 or 403 for everything outside `PUBLIC`. A 422 for a bad body is a *failure* — it means the handler ran.
+
+*`auth_method` is the string `"none"`, not null.* A first tally that treated only a missing field as anonymous reported zero anonymous requests across all 28 routes — a clean result that was pure artefact. The same failure mode as the `auth_valid` and `http_method` parse errors recorded earlier: a measurement shaped so it can only return the expected answer.
+
+**Consequence for `submitted_by`.** `POST /files/upload` was the last route that could record a file with no submitter. It cannot now. Existing null values stay null — there is nothing to backfill them *from*, which is the point of the column.
+
+**What this does not do.** These 28 routes still carry no *permission* guard; they are authenticated and unguarded, which is ordinary Phase 4 work now rather than blocked on anyone else. `tests/test_route_coverage.py` renames the set from `AWAITING_AUTHENTICATION` to `AUTHENTICATED_BUT_UNGUARDED` to say so.
 
 ### Verified Phase 1 blockers
 
