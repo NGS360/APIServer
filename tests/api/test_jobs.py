@@ -230,7 +230,7 @@ class TestJobsAPI:
         response = client.get("/api/v1/jobs")
         assert response.status_code == 200
         data = response.json()
-        assert data["count"] == 0
+        assert data["total_items"] == 0
         assert data["data"] == []
 
     def test_get_jobs_with_data(self, client: TestClient, session: Session):
@@ -251,7 +251,7 @@ class TestJobsAPI:
         response = client.get("/api/v1/jobs")
         assert response.status_code == 200
         data = response.json()
-        assert data["count"] == 3
+        assert data["total_items"] == 3
         assert len(data["data"]) == 3
 
     def test_get_jobs_with_filters(self, client: TestClient, session: Session):
@@ -280,7 +280,7 @@ class TestJobsAPI:
         response = client.get("/api/v1/jobs?user=user1")
         assert response.status_code == 200
         data = response.json()
-        assert data["count"] == 1
+        assert data["total_items"] == 1
         assert data["data"][0]["user"] == "user1"
 
     def test_get_jobs_filtered_by_project(self, client: TestClient, session: Session):
@@ -314,16 +314,16 @@ class TestJobsAPI:
         response = client.get("/api/v1/jobs?project_id=P-19900109-0001")
         assert response.status_code == 200
         data = response.json()
-        assert data["count"] == 1
+        assert data["total_items"] == 1
         assert data["data"][0]["id"] == "job-p1"
         assert data["data"][0]["project_id"] == "P-19900109-0001"
 
         # Unattributed jobs are excluded rather than leaking into every project
         response = client.get("/api/v1/jobs")
-        assert response.json()["count"] == 3
+        assert response.json()["total_items"] == 3
 
         response = client.get("/api/v1/jobs?project_id=P-00000000-0000")
-        assert response.json()["count"] == 0
+        assert response.json()["total_items"] == 0
 
     def test_get_jobs_search(self, client: TestClient, session: Session):
         """Test free-text search across job id, name and user"""
@@ -354,30 +354,30 @@ class TestJobsAPI:
         response = client.get("/api/v1/jobs?search=align")
         assert response.status_code == 200
         data = response.json()
-        assert data["count"] == 1
+        assert data["total_items"] == 1
         assert data["data"][0]["id"] == "job-align-1"
 
         # Id match
-        assert client.get("/api/v1/jobs?search=quant-2").json()["count"] == 1
+        assert client.get("/api/v1/jobs?search=quant-2").json()["total_items"] == 1
 
         # User match
         response = client.get("/api/v1/jobs?search=carol")
-        assert response.json()["count"] == 1
+        assert response.json()["total_items"] == 1
         assert response.json()["data"][0]["id"] == "job-fastqc-3"
 
         # Substring spanning several rows
-        assert client.get("/api/v1/jobs?search=batch7").json()["count"] == 2
+        assert client.get("/api/v1/jobs?search=batch7").json()["total_items"] == 2
 
         # The command column is deliberately not searched
-        assert client.get("/api/v1/jobs?search=mentioned").json()["count"] == 0
+        assert client.get("/api/v1/jobs?search=mentioned").json()["total_items"] == 0
 
         # No match
-        assert client.get("/api/v1/jobs?search=nosuchthing").json()["count"] == 0
+        assert client.get("/api/v1/jobs?search=nosuchthing").json()["total_items"] == 0
 
         # Absent, empty and whitespace-only terms are all "no filter"
-        assert client.get("/api/v1/jobs").json()["count"] == 3
-        assert client.get("/api/v1/jobs?search=").json()["count"] == 3
-        assert client.get("/api/v1/jobs?search=%20%20").json()["count"] == 3
+        assert client.get("/api/v1/jobs").json()["total_items"] == 3
+        assert client.get("/api/v1/jobs?search=").json()["total_items"] == 3
+        assert client.get("/api/v1/jobs?search=%20%20").json()["total_items"] == 3
 
     def test_get_jobs_search_escapes_like_wildcards(self, client: TestClient, session: Session):
         """A literal % or _ in the term must not widen the match"""
@@ -401,12 +401,12 @@ class TestJobsAPI:
         response = client.get("/api/v1/jobs?search=%25")
         assert response.status_code == 200
         data = response.json()
-        assert data["count"] == 1
+        assert data["total_items"] == 1
         assert data["data"][0]["id"] == "job-pct"
 
         # "_" is LIKE's single-character wildcard
-        assert client.get("/api/v1/jobs?search=a_i").json()["count"] == 0
-        assert client.get("/api/v1/jobs?search=ali").json()["count"] == 2
+        assert client.get("/api/v1/jobs?search=a_i").json()["total_items"] == 0
+        assert client.get("/api/v1/jobs?search=ali").json()["total_items"] == 2
 
     def test_get_jobs_search_combines_with_filters(self, client: TestClient, session: Session):
         """Search narrows within the other filters rather than replacing them"""
@@ -431,12 +431,12 @@ class TestJobsAPI:
         response = client.get("/api/v1/jobs?project_id=P-19900109-0001&search=align")
         assert response.status_code == 200
         data = response.json()
-        assert data["count"] == 1
+        assert data["total_items"] == 1
         assert data["data"][0]["id"] == "job-a"
 
         # Count reflects the search, so pagination stays correct
         response = client.get("/api/v1/jobs?search=align&limit=1")
-        assert response.json()["count"] == 2
+        assert response.json()["total_items"] == 2
         assert len(response.json()["data"]) == 1
 
     def _submit(self, session: Session, user: str, count: int, **scope):
@@ -462,12 +462,12 @@ class TestJobsAPI:
         response = client.get("/api/v1/jobs?user=alice&user=carol")
         assert response.status_code == 200
         data = response.json()
-        assert data["count"] == 2
+        assert data["total_items"] == 2
         assert {row["user"] for row in data["data"]} == {"alice", "carol"}
 
         # One is still one, so a single-select caller is unaffected
         response = client.get("/api/v1/jobs?user=alice")
-        assert response.json()["count"] == 1
+        assert response.json()["total_items"] == 1
 
         # And it narrows within the other filters rather than replacing them
         self._submit(session, "alice", 1, project_id="P-19900109-0001")
@@ -475,7 +475,7 @@ class TestJobsAPI:
             "/api/v1/jobs?user=alice&user=carol&project_id=P-19900109-0001"
         )
         data = response.json()
-        assert data["count"] == 1
+        assert data["total_items"] == 1
         assert data["data"][0]["user"] == "alice"
 
     def test_get_job_submitters(self, client: TestClient, session: Session):
@@ -718,14 +718,14 @@ class TestJobsAPI:
         response = client.get("/api/v1/jobs?sequencing_run_id=240101_VH00000_1_EXAMPLE01")
         assert response.status_code == 200
         data = response.json()
-        assert data["count"] == 2
+        assert data["total_items"] == 2
         assert {job["id"] for job in data["data"]} == {"job-r1", "job-r1-project"}
 
         response = client.get("/api/v1/jobs?sequencing_run_id=240102_VH00000_2_EXAMPLE02")
-        assert response.json()["count"] == 1
+        assert response.json()["total_items"] == 1
 
         response = client.get("/api/v1/jobs?sequencing_run_id=000000_NOSUCHRUN_0_X")
-        assert response.json()["count"] == 0
+        assert response.json()["total_items"] == 0
 
     def test_run_and_project_filters_are_independent(
         self, client: TestClient, session: Session
@@ -756,7 +756,7 @@ class TestJobsAPI:
         )
         assert response.status_code == 200
         data = response.json()
-        assert data["count"] == 1
+        assert data["total_items"] == 1
         assert data["data"][0]["id"] == "job-both"
 
     @patch("api.jobs.services.boto3.client")
@@ -894,14 +894,60 @@ class TestJobsAPI:
         response = client.get("/api/v1/jobs")
         assert response.status_code == 200
         data = response.json()
-        assert data["count"] == 25
+        assert data["total_items"] == 25
 
         # Get with custom limit
         response = client.get("/api/v1/jobs?limit=10")
         assert response.status_code == 200
         data = response.json()
         assert len(data["data"]) == 10
-        assert data["count"] == 25
+        assert data["total_items"] == 25
+
+    def test_jobs_pagination_envelope(self, client: TestClient, session: Session):
+        """
+        skip and limit come back with the page, and has_next/has_prev say
+        where in the matching set it sits -- so a caller can page without
+        recomputing either from the page length.
+        """
+        for position in range(5):
+            session.add(BatchJob(
+                id=f"job-{position}",
+                name=f"test-job-{position}",
+                command="echo hello",
+                user="alice",
+                status=JobStatus.SUBMITTED,
+            ))
+        session.commit()
+
+        # First page: more ahead, none behind
+        data = client.get("/api/v1/jobs?limit=2").json()
+        assert data["total_items"] == 5
+        # Echoed back, so a response is self-describing without its request
+        assert (data["skip"], data["limit"]) == (0, 2)
+        assert data["has_next"] is True
+        assert data["has_prev"] is False
+
+        # Middle page: neighbours on both sides
+        data = client.get("/api/v1/jobs?limit=2&skip=2").json()
+        assert data["has_next"] is True
+        assert data["has_prev"] is True
+
+        # Last page, partially filled: nothing ahead
+        data = client.get("/api/v1/jobs?limit=2&skip=4").json()
+        assert len(data["data"]) == 1
+        assert data["has_next"] is False
+        assert data["has_prev"] is True
+
+        # A page holding the whole set has neither neighbour
+        data = client.get("/api/v1/jobs?limit=5").json()
+        assert data["has_next"] is False
+        assert data["has_prev"] is False
+
+        # Past the end is empty, not an error, and the total still stands
+        data = client.get("/api/v1/jobs?limit=2&skip=99").json()
+        assert data["data"] == []
+        assert data["total_items"] == 5
+        assert data["has_next"] is False
 
     def test_jobs_sorting(self, client: TestClient, session: Session):
         """Test job list sorting by different fields"""

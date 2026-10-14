@@ -90,9 +90,19 @@ class BatchJobPublic(SQLModel):
 
 
 class BatchJobsPublic(SQLModel):
-    """Schema for returning multiple batch jobs"""
+    """
+    Schema for returning a page of batch jobs.
+
+    Offset-based, matching the skip/limit the endpoint actually takes and the
+    envelope the other skip/limit endpoints use (SamplesPublic, VendorsPublic).
+    """
     data: list[BatchJobPublic]
-    count: int
+    # Jobs matching the filters, not the length of this page.
+    total_items: int
+    skip: int
+    limit: int
+    has_next: bool
+    has_prev: bool
 
 
 class JobSubmitter(SQLModel):

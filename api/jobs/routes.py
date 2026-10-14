@@ -186,7 +186,8 @@ def get_jobs(
         sort_order: Sort order 'asc' or 'desc' (defaults to 'desc')
 
     Returns:
-        List of jobs and total count
+        A page of jobs in the offset-based envelope the other skip/limit
+        endpoints use
     """
     jobs, total_count = services.get_batch_jobs(
         session=session,
@@ -202,7 +203,11 @@ def get_jobs(
     )
     return BatchJobsPublic(
         data=[BatchJobPublic.model_validate(job) for job in jobs],
-        count=total_count
+        total_items=total_count,
+        skip=skip,
+        limit=limit,
+        has_next=(skip + limit) < total_count,
+        has_prev=skip > 0,
     )
 
 
