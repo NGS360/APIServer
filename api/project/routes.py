@@ -183,12 +183,20 @@ def reindex_projects(
 @router.get(
     "/{project_id}",
     response_model=ProjectPublic,
-    tags=["Project Endpoints"]
+    tags=["Project Endpoints"],
+    dependencies=[Depends(require_project_permission(Permission.PROJECT_READ))],
 )
 def get_project_by_project_id(session: SessionDep, project: ProjectDep) -> ProjectPublic:
     """
     Returns a single project by its project_id.
     Note: This is different from its internal "id".
+
+    Guarded 2026-10-15. `project:read` is in the default role, so this refuses
+    nobody who could reach it yesterday -- the guard is here for the *other*
+    thing require_project_permission does: a project marked `restricted`
+    requires membership, and that check lives in the guard. Without it a
+    locked-down project still handed its metadata to any authenticated caller,
+    which made `restricted` a half-measure.
     """
     return services.get_project_by_project_id(session=session, project_id=project.project_id)
 
@@ -377,6 +385,7 @@ def bulk_create_samples(
     "/{project_id}/samples",
     tags=["Project Endpoints"],
     response_model=SamplesWithFilesPublic | SamplesPublic,
+    dependencies=[Depends(require_project_permission(Permission.SAMPLE_READ))],
 )
 def get_project_samples(
     session: SessionDep,

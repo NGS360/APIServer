@@ -367,7 +367,7 @@ That is 14 of 57. `tests/api/test_rbac_catalog.py::TestTheCollapsedRoster` pins 
 
 **`auditor` survived the collapse** rather than being folded into `member`, because it is *narrower* than the user tier, not wider. Merging it would have granted its holder write access to everything, which is the opposite of what an auditor is.
 
-**What `restricted` protects, as of this step — the narrow reading.** Writes, downloads and member management. It does **not** protect reads: `GET /projects/{id}` and `GET /projects/{id}/samples` carry no guard at all, so a restricted project's metadata and sample list remain readable. Closing those means closing routes in the awaiting-credentials set, which has a consumer dependency. The role collapse does not worsen this — `member` has held global `project:read` and `sample:read` throughout — but a project marked `restricted` today is not fully private, and that is a known gap rather than an oversight.
+**What `restricted` protects.** Writes, downloads, member management — and, since 2026-10-15, reads. The narrow reading taken at the role collapse left `GET /projects/{id}` and `GET /projects/{id}/samples` unguarded, so a locked-down project still handed its metadata and sample list to any authenticated caller. Both are now guarded on `project:read` and `sample:read`, which is what gives the flag effect over reads — the membership check lives inside `require_project_permission`, so a route without a guard never consults it. See [Guarding the two project reads](#guarding-the-two-project-reads).
 
 ### Project roles
 
@@ -855,7 +855,7 @@ A project being locked down is a property of the project, not an authorisation d
 
 `project:manage_members` is now exempt from the gate, because membership *is* the restriction's allowlist and managing the allowlist cannot require being on it. The recovery path is two steps — enrol, then act — and it leaves a `project_member` row behind, which is the point: an administrator reaching into a locked-down project should leave a trace. `project:manage_members` is `critical`, so this is an admin capability rather than something an ordinary caller holds.
 
-**What the gate still does not cover.** It only runs where `require_project_permission` is used — 13 routes. `GET /projects/{id}` and `GET /projects/{id}/samples` have no guard at all, so a restricted project's metadata and sample list remain readable. Closing those means closing routes in the awaiting-credentials set, which has a consumer dependency and is a separate decision.
+**What the gate did not cover, and now does.** It only runs where `require_project_permission` is used. When this was written that was 13 routes, excluding `GET /projects/{id}` and `GET /projects/{id}/samples` — so a restricted project's metadata and sample list remained readable. Both were guarded on 2026-10-15 once authentication was closed on them; see [Guarding the two project reads](#guarding-the-two-project-reads).
 
 ### Restriction is membership, not permission
 
@@ -1274,6 +1274,18 @@ The four that enforce immediately are `pipeline:update`, `qcrecord:delete`, `ven
 > **Closed 2026-10-14 — see [Authentication is now a property of the router](#authentication-is-now-a-property-of-the-router) below. The paragraph that follows is left as written, and its central claim did not survive measurement.**
 
 **What remains is 28 routes, none of them ours.** Every one carries anonymous or invalid-JWT traffic from a consumer another team owns. The largest is `GET /workflows/{workflow_id}` at 23,443 anonymous requests (WES bearer-token forwarding), then `/jobs` and `/jobs/{job_id}` (ngs-observe), `/runs/{id}/metrics` and `/runs/search` (RStudio), `/actions/configs` (the Batch event trigger), and `/files` and `/files/list`.
+
+### Guarding the two project reads
+
+**2026-10-15.** `GET /projects/{project_id}` is guarded on `project:read`, and `GET /projects/{project_id}/samples` on `sample:read`.
+
+**Neither guard refuses anyone who could reach those routes the day before.** Both permissions are in the default role, which all 258 users hold. They are not here to restrict reads.
+
+They are here for the other thing `require_project_permission` does: **a project marked `restricted` requires membership, and that check lives in the guard.** A route without a guard never consults it, which is why `restricted` protected writes, downloads and member management but not reads. A locked-down project handed its metadata and its entire sample list to any authenticated caller — the sample list being the project's actual content. These two routes are what make the flag mean what it says.
+
+**It takes effect immediately, not at the enforce cutover.** The membership check is mode-independent, so the refusal holds in `dry_run` and in `off`. That is asserted directly, because the alternative failure — a change that looks complete and does nothing in production — has happened three times in this rollout: the signing rule, the membership gate and the `restricted` flag were each inert in `dry_run` while every test passed.
+
+**Guarded surface: 87 → 89. Authenticated-but-unguarded: 28 → 26.** The remaining 26 are global-plane reads whose permissions `member` already holds, so guarding them adds the decision record rather than a restriction. They are now ordinary work rather than blocked on anyone.
 
 ### Authentication is now a property of the router
 
