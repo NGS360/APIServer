@@ -79,8 +79,6 @@ AUTHENTICATED_BUT_UNGUARDED = {
     "GET /api/v1/jobs/{job_id}/log/paginated",
     "GET /api/v1/platforms",
     "GET /api/v1/projects/search",
-    "GET /api/v1/projects/{project_id}",
-    "GET /api/v1/projects/{project_id}/samples",
     "GET /api/v1/runs",
     "GET /api/v1/runs/demultiplex",
     "GET /api/v1/runs/search",
@@ -181,8 +179,17 @@ def test_guard_count_is_recorded():
     the jobs tables. Guarded on job:read from the start -- the unguarded GET /jobs
     next to it is backlog, not precedent, and a route whose only caller is the
     authenticated UI never needs to join it.
+
+    87 -> 89: GET /projects/{project_id} on project:read and
+    GET /projects/{project_id}/samples on sample:read. Both permissions are in
+    the default role, so neither refuses anyone who could reach them before.
+    They are guarded for the other thing require_project_permission does --
+    a project marked `restricted` requires membership, and that check lives in
+    the guard. Until now a locked-down project still handed its metadata and
+    sample list to any authenticated caller, which made `restricted` a
+    half-measure. These two are the routes that make it whole.
     """
-    assert len(GUARDED) == 87
+    assert len(GUARDED) == 89
 
 
 def test_the_authentication_backlog_only_shrinks():
@@ -284,8 +291,13 @@ def test_the_authentication_backlog_only_shrinks():
     run:associate is deliberately among the seven that log: it has a live
     refusing caller (a run-metrics service account), so guarding
     DELETE /runs/{run_id}/samples/{sample_id} on it must not enforce yet.
+
+    28 -> 26 on 2026-10-15: the two project reads are guarded, which is what
+    gives `restricted` effect over reads. The remaining 26 are global-plane
+    reads whose permissions `member` already holds, so guarding them adds the
+    decision record rather than a restriction.
     """
-    assert len(AUTHENTICATED_BUT_UNGUARDED) == 28
+    assert len(AUTHENTICATED_BUT_UNGUARDED) == 26
 
 
 @pytest.mark.parametrize("key", sorted(GUARDED))

@@ -557,3 +557,114 @@ class TestTheRestrictionIgnoresTheEnforcementMode:
             json={"sample_id": "S-M4"},
         )
         assert response.status_code in (200, 201)
+
+
+class TestRestrictedProjectsAreNowPrivateForReads:
+    """
+    Added 2026-10-15, and it is the point of guarding the two project reads.
+
+    `restricted` shipped protecting writes, downloads and member management.
+    Reads were not covered, because `GET /projects/{id}` and
+    `GET /projects/{id}/samples` carried no guard at all -- and the membership
+    check lives inside `require_project_permission`, so a route without a guard
+    never consults it. A locked-down project still handed its metadata and its
+    entire sample list to any authenticated caller. That was recorded as a known
+    gap when the narrow reading was agreed; this closes it.
+
+    The permissions chosen -- `project:read` and `sample:read` -- are both in
+    the default role, so these guards refuse nobody who could reach the routes
+    yesterday. That is deliberate: the guard is not here to restrict reads
+    generally, only to make `restricted` mean what it says.
+    """
+
+    @pytest.fixture(name="locked")
+    def locked_fixture(self, session):
+        project = make_project(session, "P-20260601-0001", "Locked")
+        project.restricted = True
+        session.add(project)
+        session.commit()
+        session.refresh(project)
+        return project
+
+    def test_a_non_member_cannot_read_a_restricted_project(
+        self, client_with_permissions, locked
+    ):
+        from api.rbac.permissions import Permission
+
+        api = client_with_permissions([Permission.PROJECT_READ], username="nr1")
+        assert api.get(f"/api/v1/projects/{locked.project_id}").status_code == 403
+
+    def test_a_non_member_cannot_list_its_samples(
+        self, client_with_permissions, locked
+    ):
+        """
+        The one that mattered most: the sample list is the project's actual
+        content, and it was readable by anyone with a login.
+        """
+        from api.rbac.permissions import Permission
+
+        api = client_with_permissions([Permission.SAMPLE_READ], username="nr2")
+        assert api.get(
+            f"/api/v1/projects/{locked.project_id}/samples"
+        ).status_code == 403
+
+    def test_a_member_can_read_it(self, session, restricted_client, locked):
+        grant_project_role(session, locked, "norole", "project_viewer")
+        assert restricted_client.get(
+            f"/api/v1/projects/{locked.project_id}"
+        ).status_code == 200
+        assert restricted_client.get(
+            f"/api/v1/projects/{locked.project_id}/samples"
+        ).status_code == 200
+
+    def test_a_superuser_is_not_exempt(self, superuser_client, locked):
+        """
+        Consistent with every other restricted-project check: an administrator
+        who needs the data enrols themselves, which leaves a row behind.
+        """
+        assert superuser_client.get(
+            f"/api/v1/projects/{locked.project_id}"
+        ).status_code == 403
+
+    def test_an_unrestricted_project_is_readable_by_anyone_authenticated(
+        self, session, client_with_permissions
+    ):
+        """
+        The half that must not change. `project:read` and `sample:read` are in
+        `member`, so an ordinary user reads any unrestricted project exactly as
+        before -- these guards are about `restricted`, not about reads.
+        """
+        from api.rbac.permissions import Permission
+
+        project = make_project(session, "P-20260601-0002", "Open")
+        api = client_with_permissions(
+            [Permission.PROJECT_READ, Permission.SAMPLE_READ], username="nr3")
+        assert api.get(f"/api/v1/projects/{project.project_id}").status_code == 200
+        assert api.get(
+            f"/api/v1/projects/{project.project_id}/samples"
+        ).status_code == 200
+
+    @pytest.mark.parametrize("mode_value", ["dry_run", "off"])
+    def test_the_refusal_holds_in_the_permissive_modes(
+        self, client_with_permissions, locked, monkeypatch, mode_value
+    ):
+        """
+        The membership gate is mode-independent, so guarding these routes gives
+        `restricted` effect *today*, in dry_run, rather than at some future
+        enforce cutover. Without this the change would look complete and do
+        nothing in production -- which has happened three times in this rollout.
+        """
+        from api.rbac.permissions import Permission
+        from core.config import get_settings
+
+        monkeypatch.setenv("RBAC_MODE", mode_value)
+        monkeypatch.setenv("ENVIRONMENT", "dev")
+        get_settings.cache_clear()
+        try:
+            api = client_with_permissions([Permission.PROJECT_READ],
+                                          username="nr4" + mode_value[0])
+            assert api.get(
+                f"/api/v1/projects/{locked.project_id}"
+            ).status_code == 403, mode_value
+        finally:
+            get_settings.cache_clear()
