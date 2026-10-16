@@ -1275,6 +1275,18 @@ The four that enforce immediately are `pipeline:update`, `qcrecord:delete`, `ven
 
 **What remains is 28 routes, none of them ours.** Every one carries anonymous or invalid-JWT traffic from a consumer another team owns. The largest is `GET /workflows/{workflow_id}` at 23,443 anonymous requests (WES bearer-token forwarding), then `/jobs` and `/jobs/{job_id}` (ngs-observe), `/runs/{id}/metrics` and `/runs/search` (RStudio), `/actions/configs` (the Batch event trigger), and `/files` and `/files/list`.
 
+### The guarded surface is complete
+
+**2026-10-15.** The remaining 26 routes are guarded, as one batch. **115 guarded, 0 unguarded** outside the public authentication surface and the self-service endpoints.
+
+Every permission involved — `action:read`, `file:read`, `job:read`, `run:read`, `workflow:read`, `vendor:read`, `platform:read`, `project:read`, `search:query`, `file:browse`, `file:create`, `job:read_all` — is in the default role. **The batch refuses nobody.** It exists to finish the decision record, so every route now emits an allow or a would_deny to the access log, and to empty the unguarded category so a new route arrives either guarded or listed in `PUBLIC`/`SELF_SERVICE` with a reason.
+
+Two are worth noting. `GET /files/list` is guarded on **`file:browse`**, which until now was an *inert permission* — defined in the catalogue, held by roles, and checked by no route. `POST /files/upload` takes `file:create`, matching the JSON `POST /files` beside it.
+
+**A note on how this was done, because it went wrong twice.** The batch was applied by script, and the script computed its insertion point from the next closing parenthesis. For the two routes whose decorators were written on a single line — `GET /search` and `GET /runs/demultiplex` — that point was inside the *handler signature*, so the guard became a parameter named `dependencies`. That is valid Python, does nothing, and adds a spurious query parameter to the route. **flake8 passed and the whole suite passed.**
+
+The route-coverage counts caught one of them. `test_no_guard_is_hiding_in_a_handler_signature` now catches the shape directly, via the AST — a first attempt at a textual detector reported 19 offenders, 18 of them false, because one-line `def`s left its state machine convinced it was still inside a signature.
+
 ### Guarding the two project reads
 
 **2026-10-15.** `GET /projects/{project_id}` is guarded on `project:read`, and `GET /projects/{project_id}/samples` on `sample:read`.
