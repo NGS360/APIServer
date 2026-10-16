@@ -150,6 +150,12 @@ _SERVICE_ACCOUNT = frozenset({
     Permission.JOB_READ_ALL,
     Permission.JOB_UPDATE,
     Permission.WORKFLOW_READ,
+    # Added 2026-10-16. GET /actions/configs was guarded in the final batch and
+    # the Batch event trigger reads it 32 times a week to dispatch jobs -- it had
+    # no action:read, so the guard recorded would_deny. Caught by auditing every
+    # API-key caller against the guards on the routes they use, which is the
+    # check that should have preceded the batch rather than followed it.
+    Permission.ACTION_READ,
 })
 
 # Run registration, one service's job. See #447: over 2026-08-18..09-28 exactly

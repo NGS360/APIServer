@@ -649,3 +649,59 @@ class TestTheCollapsedRoster:
                    if r.scope is RoleScope.GLOBAL
                    and Permission.PROJECT_MANAGE_MEMBERS in r.permissions}
         assert holders == {"admin"}
+
+
+class TestServiceAccountsCanReachWhatTheyCall:
+    """
+    Added 2026-10-16, after the final guard batch refused two service accounts.
+
+    The batch checked that every permission it used was in the *default* role,
+    which is true and was the wrong check. Service accounts do not hold the
+    default role -- they are created with `--role service_account` alone, which
+    calls grant_role directly and never goes through assign_default_roles. So a
+    permission can be universal among humans and absent from every machine
+    account.
+
+    Two routes were affected: GET /jobs/{job_id}, where NGS-Observe was taking a
+    real 403 160 times a week because service_account carries job:read_all and
+    not job:read; and GET /actions/configs, where the Batch event trigger was
+    recorded would_deny 32 times a week. Both were found by auditing API-key
+    callers against the guards on the routes they use -- the check that should
+    have preceded the batch.
+    """
+
+    def test_reading_one_job_accepts_either_job_permission(self):
+        """
+        `job:read_all` is strictly broader than `job:read`: a caller allowed to
+        read every user's jobs is allowed to read one of them. Guarding the
+        single-job routes on `job:read` alone made the broader permission
+        useless on them, which is how a holder of only `job:read_all` got a 403.
+        """
+        import inspect
+
+        from api.jobs import routes
+
+        source = inspect.getsource(routes)
+        assert source.count(
+            'Permission.JOB_READ, Permission.JOB_READ_ALL, mode="any"'
+        ) == 3, (
+            "the three single-job read routes should accept either permission"
+        )
+
+    def test_service_account_holds_what_the_batch_trigger_reads(self):
+        sa = ROLE_DEFINITIONS["service_account"].permissions
+        assert Permission.ACTION_READ in sa
+        assert Permission.JOB_READ_ALL in sa
+
+    def test_a_machine_account_is_not_assumed_to_hold_the_default_role(self):
+        """
+        The assumption that caused this. Stated as an assertion so that reading
+        `member` is never again mistaken for reading what a service account has.
+        """
+        sa = ROLE_DEFINITIONS["service_account"].permissions
+        member = ROLE_DEFINITIONS["member"].permissions
+        assert not member <= sa, (
+            "service_account is deliberately not a superset of member -- a "
+            "permission being universal among humans says nothing about "
+            "whether a machine account has it"
+        )
