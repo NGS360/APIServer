@@ -131,6 +131,7 @@ def get_project_attributes(session: SessionDep) -> TypingList[str]:
     status_code=status.HTTP_200_OK,
     tags=["Project Endpoints"],
     response_model=ProjectsPublic,
+    dependencies=[Depends(require_permission(Permission.PROJECT_READ))],
 )
 def search_projects(
     session: SessionDep,

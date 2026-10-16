@@ -51,6 +51,7 @@ def add_vendor(
     response_model=VendorsPublic,
     status_code=status.HTTP_200_OK,
     tags=["Vendor Endpoints"],
+    dependencies=[Depends(require_permission(Permission.VENDOR_READ))],
 )
 def get_vendors(
     session: SessionDep,

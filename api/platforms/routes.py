@@ -28,6 +28,7 @@ def create_platform(session: SessionDep, platform_in: PlatformCreate) -> Platfor
     "",
     response_model=list[PlatformPublic],
     tags=["Platform Endpoints"],
+    dependencies=[Depends(require_permission(Permission.PLATFORM_READ))],
 )
 def get_platforms(session: SessionDep) -> list[PlatformPublic]:
     """Returns all registered platforms."""

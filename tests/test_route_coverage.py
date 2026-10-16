@@ -65,34 +65,7 @@ SELF_SERVICE = {
 #
 # This set only ever shrinks. Removing an entry means that route now has a
 # permission guard.
-AUTHENTICATED_BUT_UNGUARDED = {
-    "GET /api/v1/actions/configs",
-    "GET /api/v1/actions/options",
-    "GET /api/v1/actions/platforms",
-    "GET /api/v1/actions/types",
-    "GET /api/v1/files",
-    "GET /api/v1/files/list",
-    "GET /api/v1/files/{file_id}",
-    "GET /api/v1/jobs",
-    "GET /api/v1/jobs/{job_id}",
-    "GET /api/v1/jobs/{job_id}/log",
-    "GET /api/v1/jobs/{job_id}/log/paginated",
-    "GET /api/v1/platforms",
-    "GET /api/v1/projects/search",
-    "GET /api/v1/runs",
-    "GET /api/v1/runs/demultiplex",
-    "GET /api/v1/runs/search",
-    "GET /api/v1/runs/{run_id}",
-    "GET /api/v1/runs/{run_id}/metrics",
-    "GET /api/v1/runs/{run_id}/samplesheet",
-    "GET /api/v1/search",
-    "GET /api/v1/vendors",
-    "GET /api/v1/workflows",
-    "GET /api/v1/workflows/{workflow_id}",
-    "GET /api/v1/workflows/{workflow_id}/versions",
-    "GET /api/v1/workflows/{workflow_id}/versions/{version_num}",
-    "POST /api/v1/files/upload",
-}
+AUTHENTICATED_BUT_UNGUARDED: set[str] = set()
 
 
 def _walk_routes():
@@ -180,6 +153,13 @@ def test_guard_count_is_recorded():
     next to it is backlog, not precedent, and a route whose only caller is the
     authenticated UI never needs to join it.
 
+    89 -> 115: the last 26, as one batch. Every permission involved is in the
+    default role, so none of them refuses anyone -- the batch exists to finish
+    the decision record and empty this category, not to restrict. Two are worth
+    noting: GET /files/list is guarded on file:browse, which until now was an
+    inert permission no route checked, and POST /files/upload on file:create,
+    matching the JSON POST /files beside it.
+
     87 -> 89: GET /projects/{project_id} on project:read and
     GET /projects/{project_id}/samples on sample:read. Both permissions are in
     the default role, so neither refuses anyone who could reach them before.
@@ -189,7 +169,7 @@ def test_guard_count_is_recorded():
     sample list to any authenticated caller, which made `restricted` a
     half-measure. These two are the routes that make it whole.
     """
-    assert len(GUARDED) == 89
+    assert len(GUARDED) == 115
 
 
 def test_the_authentication_backlog_only_shrinks():
@@ -292,12 +272,14 @@ def test_the_authentication_backlog_only_shrinks():
     refusing caller (a run-metrics service account), so guarding
     DELETE /runs/{run_id}/samples/{sample_id} on it must not enforce yet.
 
-    28 -> 26 on 2026-10-15: the two project reads are guarded, which is what
-    gives `restricted` effect over reads. The remaining 26 are global-plane
-    reads whose permissions `member` already holds, so guarding them adds the
-    decision record rather than a restriction.
+    28 -> 26 on 2026-10-15: the two project reads were guarded, which is what
+    gives `restricted` effect over reads.
+
+    26 -> 0 on 2026-10-15: the remainder, as one batch. The category is now
+    empty, and this assertion is what keeps it that way -- a new route arrives
+    either guarded, or listed in PUBLIC or SELF_SERVICE with a reason.
     """
-    assert len(AUTHENTICATED_BUT_UNGUARDED) == 26
+    assert len(AUTHENTICATED_BUT_UNGUARDED) == 0
 
 
 @pytest.mark.parametrize("key", sorted(GUARDED))
@@ -407,4 +389,44 @@ def test_the_public_routes_are_still_public():
                                             response.status_code))
     assert not refused, (
         "the authentication surface must stay reachable:\n  " + "\n  ".join(refused)
+    )
+
+
+def test_no_guard_is_hiding_in_a_handler_signature():
+    """
+    A guard written into the handler's parameters instead of the decorator is
+    valid Python, does nothing, and adds a bogus `dependencies` query parameter
+    to the route.
+
+    This is not hypothetical. Guarding the last 26 routes was done by script,
+    and two of them -- GET /search and GET /runs/demultiplex -- landed in the
+    signature because their decorators were single-line and the insertion point
+    was computed from the next closing paren. flake8 passed, the suite passed,
+    and the routes were unguarded. The route-coverage counts caught one of them;
+    this catches the shape directly.
+
+    Uses the AST rather than a line scan: a first attempt at a textual detector
+    reported 19 hits, 18 of them false, because one-line `def`s left its state
+    machine convinced it was still inside a signature.
+    """
+    import ast
+    import glob
+
+    offenders = []
+    for path in sorted(glob.glob("api/**/routes.py", recursive=True)):
+        with open(path) as handle:
+            tree = ast.parse(handle.read(), path)
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            args = node.args
+            names = [a.arg for a in
+                     list(args.posonlyargs) + list(args.args) + list(args.kwonlyargs)]
+            if "dependencies" in names:
+                offenders.append("%s:%d %s" % (path, node.lineno, node.name))
+
+    assert not offenders, (
+        "these handlers take `dependencies` as a parameter, which means the "
+        "guard is in the signature rather than the decorator and is doing "
+        "nothing:\n  " + "\n  ".join(offenders)
     )

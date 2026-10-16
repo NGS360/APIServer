@@ -2,8 +2,10 @@
 Routes/endpoints for the Search API
 """
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, Query
 
+from api.rbac.deps import require_permission
+from api.rbac.permissions import Permission
 from core.deps import OpenSearchDep, SessionDep
 from api.search.models import (
     SearchResponse,
@@ -13,7 +15,12 @@ from api.search import services
 router = APIRouter(prefix="/search", tags=["Search Endpoints"])
 
 
-@router.get("", response_model=SearchResponse, tags=["Search Endpoints"])
+@router.get(
+    "",
+    response_model=SearchResponse,
+    tags=["Search Endpoints"],
+    dependencies=[Depends(require_permission(Permission.SEARCH_QUERY))],
+)
 def search(
     client: OpenSearchDep,
     session: SessionDep,

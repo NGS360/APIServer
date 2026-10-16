@@ -141,6 +141,7 @@ def submit_job(
     "",
     response_model=BatchJobsPublic,
     tags=["Job Endpoints"],
+    dependencies=[Depends(require_permission(Permission.JOB_READ_ALL))],
 )
 def get_jobs(
     session: SessionDep,
@@ -298,7 +299,8 @@ def get_job_submitters(
     tags=["Job Endpoints"],
     responses={
         404: {"model": HTTPErrorResponse, "description": "Job not found"}
-    }
+    },
+    dependencies=[Depends(require_permission(Permission.JOB_READ))],
 )
 def get_job(
     session: SessionDep,
@@ -369,7 +371,8 @@ def update_job(
     tags=["Job Endpoints"],
     responses={
         404: {"model": HTTPErrorResponse, "description": "Job not found"}
-    }
+    },
+    dependencies=[Depends(require_permission(Permission.JOB_READ))],
 )
 def get_job_log(
     session: SessionDep,
@@ -395,7 +398,8 @@ def get_job_log(
     tags=["Job Endpoints"],
     responses={
         404: {"model": HTTPErrorResponse, "description": "Job not found"}
-    }
+    },
+    dependencies=[Depends(require_permission(Permission.JOB_READ))],
 )
 def get_job_log_paginated(
     session: SessionDep,

@@ -82,6 +82,7 @@ def add_run(
     response_model=SequencingRunsPublic,
     status_code=status.HTTP_200_OK,
     tags=["Run Endpoints"],
+    dependencies=[Depends(require_permission(Permission.RUN_READ))],
 )
 def get_runs(
     session: SessionDep,
@@ -113,6 +114,7 @@ def get_runs(
     response_model=SequencingRunsPublic,
     status_code=status.HTTP_200_OK,
     tags=["Run Endpoints"],
+    dependencies=[Depends(require_permission(Permission.RUN_READ))],
 )
 def search_runs(
     session: SessionDep,
@@ -162,7 +164,12 @@ def reindex_runs(
 ###############################################################################
 
 
-@router.get("/demultiplex", response_model=list[str], tags=["Run Endpoints"])
+@router.get(
+    "/demultiplex",
+    response_model=list[str],
+    tags=["Run Endpoints"],
+    dependencies=[Depends(require_permission(Permission.RUN_READ))],
+)
 def list_demultiplex_workflows(
     session: SessionDep,
     s3_client=Depends(get_s3_client),
@@ -237,7 +244,8 @@ def get_demultiplex_workflow_config(
     response_model=SequencingRunPublic,
     status_code=status.HTTP_200_OK,
     tags=["Run Endpoints"],
-    responses={404: {"description": "Run not found"}}
+    responses={404: {"description": "Run not found"}},
+    dependencies=[Depends(require_permission(Permission.RUN_READ))],
 )
 def get_run(session: SessionDep, run_id: str) -> SequencingRunPublic:
     """
@@ -281,6 +289,7 @@ def update_run(
     response_model=IlluminaSampleSheetResponseModel,
     status_code=status.HTTP_200_OK,
     tags=["Run Endpoints"],
+    dependencies=[Depends(require_permission(Permission.RUN_READ))],
 )
 def get_run_samplesheet(session: SessionDep, run_id: str) -> IlluminaSampleSheetResponseModel:
     """
@@ -316,6 +325,7 @@ def post_run_samplesheet(
     response_model=IlluminaMetricsResponseModel,
     status_code=status.HTTP_200_OK,
     tags=["Run Endpoints"],
+    dependencies=[Depends(require_permission(Permission.RUN_READ))],
 )
 def get_run_metrics(session: SessionDep, run_id: str) -> IlluminaMetricsResponseModel:
     """

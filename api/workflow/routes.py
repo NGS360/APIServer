@@ -59,6 +59,7 @@ def create_workflow(
     "",
     response_model=List[WorkflowPublic],
     tags=["Workflow Endpoints"],
+    dependencies=[Depends(require_permission(Permission.WORKFLOW_READ))],
 )
 def get_workflows(
     session: SessionDep,
@@ -90,6 +91,7 @@ def get_workflows(
     "/{workflow_id}",
     response_model=WorkflowPublic,
     tags=["Workflow Endpoints"],
+    dependencies=[Depends(require_permission(Permission.WORKFLOW_READ))],
 )
 def get_workflow_by_id(
     session: SessionDep, workflow_id: str,
@@ -132,6 +134,7 @@ def create_workflow_version(
     "/{workflow_id}/versions",
     response_model=List[WorkflowVersionPublic],
     tags=["Workflow Endpoints"],
+    dependencies=[Depends(require_permission(Permission.WORKFLOW_READ))],
 )
 def get_workflow_versions(
     session: SessionDep, workflow_id: str,
@@ -150,6 +153,7 @@ def get_workflow_versions(
     "/{workflow_id}/versions/{version_num}",
     response_model=WorkflowVersionPublic,
     tags=["Workflow Endpoints"],
+    dependencies=[Depends(require_permission(Permission.WORKFLOW_READ))],
 )
 def get_workflow_version(
     session: SessionDep,

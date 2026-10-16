@@ -16,6 +16,7 @@ router = APIRouter(prefix="/actions")
     response_model=ActionConfigsResponse,
     tags=["Action Endpoints"],
     status_code=status.HTTP_200_OK,
+    dependencies=[Depends(require_permission(Permission.ACTION_READ))],
 )
 def get_all_configs(
     session: SessionDep,
@@ -75,6 +76,7 @@ def validate_action_config(
     "/options",
     response_model=list[SelectOption],
     tags=["Action Endpoints"],
+    dependencies=[Depends(require_permission(Permission.ACTION_READ))],
 )
 def get_action_options() -> list[SelectOption]:
     """
@@ -106,6 +108,7 @@ def get_action_options() -> list[SelectOption]:
     "/platforms",
     response_model=list[SelectOption],
     tags=["Action Endpoints"],
+    dependencies=[Depends(require_permission(Permission.ACTION_READ))],
 )
 def get_action_platforms() -> list[SelectOption]:
     """
@@ -134,6 +137,7 @@ def get_action_platforms() -> list[SelectOption]:
     "/types",
     response_model=list[dict],
     tags=["Action Endpoints"],
+    dependencies=[Depends(require_permission(Permission.ACTION_READ))],
 )
 def get_action_types(
     session: SessionDep,

@@ -92,6 +92,7 @@ def create_file(
     response_model=FilePublic,
     status_code=status.HTTP_201_CREATED,
     summary="Upload a file",
+    dependencies=[Depends(require_permission(Permission.FILE_CREATE))],
 )
 def upload_file(
     session: SessionDep,
@@ -173,6 +174,7 @@ def upload_file(
     "",
     response_model=FilesPublic,
     summary="List/search files",
+    dependencies=[Depends(require_permission(Permission.FILE_READ))],
 )
 def list_files(
     session: SessionDep,
@@ -244,6 +246,7 @@ def list_files(
     "/list",
     response_model=FileBrowserData,
     summary="Browse S3 bucket/folder",
+    dependencies=[Depends(require_permission(Permission.FILE_BROWSE))],
 )
 def browse_s3(
     session: SessionDep,
@@ -607,6 +610,7 @@ def delete_file(
     "/{file_id}",
     response_model=FilePublic,
     summary="Get file by UUID",
+    dependencies=[Depends(require_permission(Permission.FILE_READ))],
 )
 def get_file(
     file_id: uuid.UUID,
