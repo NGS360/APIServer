@@ -300,7 +300,14 @@ def get_job_submitters(
     responses={
         404: {"model": HTTPErrorResponse, "description": "Job not found"}
     },
-    dependencies=[Depends(require_permission(Permission.JOB_READ))],
+    # job:read_all is strictly broader -- a caller allowed to read every
+    # user's jobs is allowed to read one of them. Written as `any` after the
+    # final guard batch refused NGS-Observe 160 times a week on this route:
+    # service_account carries job:read_all and not job:read, which the guard
+    # had no way to accept. Found by auditing API-key callers against the
+    # guards on the routes they use.
+    dependencies=[Depends(require_permission(
+        Permission.JOB_READ, Permission.JOB_READ_ALL, mode="any"))],
 )
 def get_job(
     session: SessionDep,
@@ -372,7 +379,14 @@ def update_job(
     responses={
         404: {"model": HTTPErrorResponse, "description": "Job not found"}
     },
-    dependencies=[Depends(require_permission(Permission.JOB_READ))],
+    # job:read_all is strictly broader -- a caller allowed to read every
+    # user's jobs is allowed to read one of them. Written as `any` after the
+    # final guard batch refused NGS-Observe 160 times a week on this route:
+    # service_account carries job:read_all and not job:read, which the guard
+    # had no way to accept. Found by auditing API-key callers against the
+    # guards on the routes they use.
+    dependencies=[Depends(require_permission(
+        Permission.JOB_READ, Permission.JOB_READ_ALL, mode="any"))],
 )
 def get_job_log(
     session: SessionDep,
@@ -399,7 +413,14 @@ def get_job_log(
     responses={
         404: {"model": HTTPErrorResponse, "description": "Job not found"}
     },
-    dependencies=[Depends(require_permission(Permission.JOB_READ))],
+    # job:read_all is strictly broader -- a caller allowed to read every
+    # user's jobs is allowed to read one of them. Written as `any` after the
+    # final guard batch refused NGS-Observe 160 times a week on this route:
+    # service_account carries job:read_all and not job:read, which the guard
+    # had no way to accept. Found by auditing API-key callers against the
+    # guards on the routes they use.
+    dependencies=[Depends(require_permission(
+        Permission.JOB_READ, Permission.JOB_READ_ALL, mode="any"))],
 )
 def get_job_log_paginated(
     session: SessionDep,
