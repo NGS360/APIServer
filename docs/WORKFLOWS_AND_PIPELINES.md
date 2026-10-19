@@ -10,17 +10,6 @@ This document describes the Workflow and Pipeline systems — how workflows are 
   - [Architecture](#architecture)
     - [Entity Relationship Diagram](#entity-relationship-diagram)
     - [Design Decisions](#design-decisions)
-  - [Database Models](#database-models)
-    - [Workflow](#workflow)
-    - [WorkflowAttribute](#workflowattribute)
-    - [WorkflowVersion](#workflowversion)
-    - [WorkflowVersionAttribute](#workflowversionattribute)
-    - [WorkflowVersionAlias](#workflowversionalias)
-    - [Platform](#platform)
-    - [WorkflowDeployment](#workflowdeployment)
-    - [Pipeline](#pipeline)
-    - [PipelineAttribute](#pipelineattribute)
-    - [PipelineWorkflow](#pipelineworkflow)
   - [API Endpoints](#api-endpoints)
     - [Workflow CRUD](#workflow-crud)
     - [WorkflowVersion Endpoints](#workflowversion-endpoints)
@@ -182,150 +171,6 @@ Pipelines are purely organisational — a pipeline references workflows, not spe
 
 For instance - a WES pipeline could be composed of an alignment workflow, a variant calling workflow, and a variant annotation workflow; updating the version of a tool in the alignment workflow would increment the version, but the high-level pipeline (and the workflows that comprise it) remains unchanged, while the workflow versions and deployments to platforms would be updated. The updated workflow version could be tested under a "Dev" alias, and then promoted to "Prod" once testing is complete.
 
-## Database Models
-
-### Workflow
-
-The core identity entity. Represents a platform-agnostic workflow.
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `id` | UUID | auto | Primary key |
-| `name` | string | yes | Human-readable workflow name |
-| `created_at` | datetime | auto | UTC timestamp of creation |
-| `created_by` | string | yes | Username of the creator |
-
-### WorkflowAttribute
-
-Key-value metadata for workflows. Extensible without schema changes.
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `id` | UUID | auto | Primary key |
-| `workflow_id` | UUID | yes | FK → `workflow.id` |
-| `key` | string | yes | Attribute name |
-| `value` | string | yes | Attribute value |
-
-### WorkflowVersion
-
-A versioned definition of a workflow.
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `id` | UUID | auto | Primary key |
-| `workflow_id` | UUID | yes | FK → `workflow.id` |
-| `version` | int | yes | auto-incremented numerical value for a workflow |
-| `definition_uri` | string | yes | URI to the workflow definition file (WDL, CWL, Nextflow, etc.). Either `s3://…` or `ngs360://<file-id>` |
-| `inputs` | JSON | no | List of input parameter descriptors (see below) |
-| `outputs` | JSON | no | List of output parameter descriptors (see below) |
-| `created_at` | datetime | auto | UTC timestamp |
-| `created_by` | string | yes | Username of the creator |
-
-**Constraints:** `UNIQUE(workflow_id, version)` — version numbers are unique within a workflow. The next number is computed as `MAX(version) + 1`, taken under `SELECT … FOR UPDATE` on PostgreSQL/MySQL so concurrent creates cannot collide.
-
-#### Input & output descriptors
-
-`inputs` and `outputs` are JSON arrays on the `workflowversion` row — no separate table. Each entry describes one parameter:
-
-| Field | Type | Applies to | Description |
-|-------|------|------------|-------------|
-| `id` | string | both | Parameter name as it appears in the definition |
-| `type` | string | both | CWL type string, e.g. `"File"`, `"string?"`, `"File[]"` |
-| `required` | bool | inputs | Pre-computed by the caller so consumers need not re-parse `type` |
-| `doc` | string | both | Optional description |
-| `default` | any | inputs | Optional default value |
-
-Callers derive `required` themselves: a `?` suffix, a `["null", T]` union, or a present `default` each imply `required: false`. Both fields are nullable, distinguishing "not recorded" (`null`) from "recorded as empty" (`[]`).
-
-### WorkflowVersionAttribute
-
-Key-value metadata for workflow versions. Extensible without schema changes.
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `id` | UUID | auto | Primary key |
-| `workflow_version_id` | UUID | yes | FK → `workflowversion.id` |
-| `key` | string | yes | Attribute name |
-| `value` | string | yes | Attribute value |
-
-### WorkflowVersionAlias
-
-Named pointer to a specific workflow version.
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `id` | UUID | auto | Primary key |
-| `workflow_id` | UUID | yes | FK → `workflow.id` — scopes the alias |
-| `alias` | string | yes | Free-text alias name (e.g. `production`, `staging`) |
-| `workflow_version_id` | UUID | yes | FK → `workflowversion.id` |
-| `created_at` | datetime | auto | UTC timestamp |
-| `created_by` | string | yes | Username who set the alias |
-
-**Constraints:** `UNIQUE(workflow_id, alias)` — one alias pointer per workflow per alias name.
-
-### Platform
-
-A registered workflow execution engine. A reference table — `name` is unique. Must be created before workflows can be deployed or run on a given engine.
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `id` | UUID | auto | Primary key |
-| `name` | string | yes | Unique — e.g., `"Arvados"`, `"SevenBridges"`, `"AWS HealthOmics (us-east-1)"`, `"AWS HealthOmics (eu-central-1)"` |
-
-### WorkflowDeployment
-
-Platform-specific deployment of a workflow version. The `engine` column is a FK to `platform.name`.
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `id` | UUID | auto | Primary key |
-| `workflow_version_id` | UUID | yes | FK → `workflowversion.id` |
-| `engine` | string | yes | FK → `platform.name` |
-| `external_id` | string | yes | Workflow identifier on the external platform |
-| `created_at` | datetime | auto | UTC timestamp of creation |
-| `created_by` | string | yes | Username of the creator |
-
-**Constraints:** `UNIQUE(workflow_version_id, engine)` — one deployment per engine per version.
-
-### Pipeline
-
-A named, versioned collection of workflows.
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `id` | UUID | auto | Primary key |
-| `name` | string | yes | Human-readable pipeline name |
-| `version` | string | no | Version string (e.g., `"1.0.0"`) |
-| `created_at` | datetime | auto | UTC timestamp of creation |
-| `created_by` | string | yes | Username of the creator |
-
-### PipelineAttribute
-
-Key-value metadata for pipelines.
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `id` | UUID | auto | Primary key |
-| `pipeline_id` | UUID | yes | FK → `pipeline.id` |
-| `key` | string | yes | Attribute name |
-| `value` | string | yes | Attribute value |
-
-**Constraints:** `UNIQUE(pipeline_id, key)` — one value per key per pipeline.
-
-### PipelineWorkflow
-
-Junction table linking workflows to pipelines. Each association records who created it and when.
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `id` | UUID | auto | Primary key |
-| `pipeline_id` | UUID | yes | FK → `pipeline.id` |
-| `workflow_id` | UUID | yes | FK → `workflow.id` |
-| `created_at` | datetime | auto | UTC timestamp of association |
-| `created_by` | string | yes | Username of the creator |
-
-**Constraints:** `UNIQUE(pipeline_id, workflow_id)` — a workflow can only appear once per pipeline.
-
 ## API Endpoints
 
 All endpoints require authentication. The authenticated user's username is recorded as `created_by`.
@@ -412,6 +257,21 @@ POST /api/v1/workflows/{workflow_id}/versions
 ```
 
 Only `definition_uri` is required. `attributes`, `inputs` and `outputs` are all optional; `version` is assigned by the server and cannot be supplied.
+
+- **`definition_uri`** points to the workflow definition file (WDL, CWL, Nextflow, etc.), either as `s3://…` or `ngs360://<file-id>`.
+- **Version numbering:** the next number is `MAX(version) + 1` within the workflow, computed under `SELECT … FOR UPDATE` on PostgreSQL/MySQL so concurrent creates cannot collide. Version numbers are unique per workflow.
+
+**Input & output descriptors.** Each entry in `inputs`/`outputs` describes one parameter:
+
+| Field | Type | Applies to | Description |
+|-------|------|------------|-------------|
+| `id` | string | both | Parameter name as it appears in the definition |
+| `type` | string | both | CWL type string, e.g. `"File"`, `"string?"`, `"File[]"` |
+| `required` | bool | inputs | Pre-computed by the caller so consumers need not re-parse `type` |
+| `doc` | string | both | Optional description |
+| `default` | any | inputs | Optional default value |
+
+Callers derive `required` themselves: a `?` suffix, a `["null", T]` union, or a present `default` each imply `required: false`. Omitting `inputs`/`outputs` stores `null` ("not recorded"), which is distinct from `[]` ("recorded as empty").
 
 **Response** (`201 Created`):
 
@@ -737,6 +597,8 @@ All fields except `name` are optional. `workflow_ids` associates existing workfl
   ]
 }
 ```
+
+Attribute keys must be unique within a pipeline (`UNIQUE(pipeline_id, key)`).
 
 #### List Pipelines (Paginated)
 
