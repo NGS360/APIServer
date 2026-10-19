@@ -2,6 +2,8 @@
 
 This document describes the Workflow and Pipeline systems — how workflows are defined, versioned, deployed on compute platforms, and organised into named collections.
 
+> **Proposed state.** This revision describes the system *after* [Project Workflow Version Pinning](PROJECT_WORKFLOW_VERSION_PINNING.md) is implemented: a new `ProjectWorkflowVersion` table and `/projects/{project_id}/workflow-versions` routes that fix which workflow version a project runs on NGS360. Existing workflow, alias, deployment and pipeline routes are unchanged. Remove this note once the change ships.
+
 ## Table of Contents
 
 - [Workflows \& Pipelines](#workflows--pipelines)
@@ -19,11 +21,13 @@ This document describes the Workflow and Pipeline systems — how workflows are 
     - [Deploying to AWS HealthOmics](#deploying-to-aws-healthomics)
     - [Pipeline CRUD](#pipeline-crud)
     - [Pipeline ↔ Workflow Association](#pipeline--workflow-association)
+    - [Project Workflow Version Pins](#project-workflow-version-pins)
   - [Use Cases](#use-cases)
     - [Onboarding a new workflow](#onboarding-a-new-workflow)
     - [Releasing a new revision](#releasing-a-new-revision)
     - [Running a workflow](#running-a-workflow)
     - [Configuring a pipeline launcher](#configuring-a-pipeline-launcher)
+    - [Keeping a project on one version](#keeping-a-project-on-one-version)
     - [Discovering a version's parameters](#discovering-a-versions-parameters)
   - [Source Files](#source-files)
 
@@ -36,6 +40,7 @@ The system provides:
 - **Input/output descriptors**: A version can record its parameter signature (`inputs`/`outputs`) so callers can discover what a workflow takes and produces without parsing the definition file
 - **Aliases**: Assign an alias to a specific version, e.g. `production` or `development` — like AWS Lambda aliases
 - **Cross-platform deployment**: Register a specific workflow version on multiple execution engines (Arvados, SevenBridges, AWS HealthOmics, etc.). For AWS HealthOmics the API server can perform the registration itself — see [Deploying to AWS HealthOmics](#deploying-to-aws-healthomics)
+- **Project version pinning**: The first time a project runs a workflow on NGS360, the version `prod` points at is recorded for that project. Later runs of that workflow for that project reuse it, even after `prod` moves on
 - **Pipeline grouping**: Organise related workflows into named groups called pipelines
 - **Flexible metadata**: Key-value attributes on workflows and pipelines
 - **Provenance**: All entities track `created_at` and `created_by` for audit trails
@@ -60,6 +65,11 @@ erDiagram
     Pipeline ||--o{ PipelineWorkflow : contains
     Workflow ||--o{ PipelineWorkflow : belongs_to
     Pipeline ||--o{ PipelineAttribute : has_attributes
+
+    Project ||--o{ ProjectWorkflowVersion : pins
+    Workflow ||--o{ ProjectWorkflowVersion : pinned_in
+    WorkflowVersion ||--o{ ProjectWorkflowVersion : pinned_version
+    Platform ||--o{ ProjectWorkflowVersion : engine_FK
 
     Platform {
         uuid id PK
@@ -138,7 +148,28 @@ erDiagram
         datetime created_at
         string created_by
     }
+
+    Project {
+        uuid id PK
+        string project_id UK
+        string name
+    }
+
+    ProjectWorkflowVersion {
+        uuid id PK
+        string project_id FK
+        uuid workflow_id FK
+        int version FK
+        string engine FK
+        string pinned_from_alias
+        datetime created_at
+        string created_by
+        datetime updated_at
+        string updated_by
+    }
 ```
+
+`Project` is owned by the projects API and is shown only for its link to pins. `ProjectWorkflowVersion` references the version by the composite key `(workflow_id, version)` rather than by `workflowversion.id`.
 
 ### Design Decisions
 
@@ -170,6 +201,16 @@ Pipeline membership is currently unordered — the workflows in a pipeline are a
 Pipelines are purely organisational — a pipeline references workflows, not specific workflow versions. They do not directly affect how workflow versions are deployed on platforms. A pipeline groups workflows; each workflow independently manages its own versions, aliases, and deployments.
 
 For instance - a WES pipeline could be composed of an alignment workflow, a variant calling workflow, and a variant annotation workflow; updating the version of a tool in the alignment workflow would increment the version, but the high-level pipeline (and the workflows that comprise it) remains unchanged, while the workflow versions and deployments to platforms would be updated. The updated workflow version could be tested under a "Dev" alias, and then promoted to "Prod" once testing is complete.
+
+**Why pin versions per project?**
+
+A project can be processed many times: launcher re-runs, or a new batch of samples weeks later. An alias is a single mutable pointer with no history, so without a pin, samples in one project could be processed by different versions as `prod` moves forward. `ProjectWorkflowVersion` records, per `(project, workflow, engine)`, the version the project uses.
+
+- **Pins are per workflow, not per pipeline.** A workflow added to a launcher later gets pinned on its first use, independently of the project's other pins.
+- **The version is stored as a number, not a version UUID.** The number is what GA4GH WES accepts (`<workflow_id>:<version>`). The composite FK `(workflow_id, version)` → `workflowversion(workflow_id, version)` gives the same integrity: a pin cannot name a missing version, and a pinned version cannot be deleted.
+- **`UNIQUE(project_id, workflow_id, engine)`** (`uq_project_workflow_engine`) makes the first-run resolve atomic, so concurrent launchers for the same project get the same pin.
+- **Scope is NGS360 only.** SevenBridges and Arvados already pin implicitly, because the launcher copies the app into the platform project once and reuses that copy.
+- **No history table.** Which version each run actually used is recorded by WES (`resolved_workflow_version`). The pin row records only the current choice and who last changed it.
 
 ## API Endpoints
 
@@ -670,13 +711,95 @@ DELETE /api/v1/pipelines/{pipeline_id}/workflows/{workflow_id}
 
 **Error** (`404 Not Found`): If the association does not exist.
 
+### Project Workflow Version Pins
+
+All routes sit under `/api/v1/projects/{project_id}/workflow-versions`, where `{project_id}` is the project business key (`P-YYYYMMDD-NNNN`). The `engine` must be a registered platform name; launchers always use `AWSHealthOmics (us-east)`.
+
+#### Resolve (Get or Create) a Pin
+
+```
+POST /api/v1/projects/{project_id}/workflow-versions/{workflow_id}/resolve
+```
+
+This is the endpoint launchers call before submitting. If a pin exists it is returned unchanged. Otherwise the alias is resolved, the version is checked for a deployment on `engine`, and the pin is stored.
+
+**Request Body:**
+
+```json
+{ "engine": "AWSHealthOmics (us-east)", "alias": "prod" }
+```
+
+**Response** (`200 OK` if the pin already existed, `201 Created` if it was just created):
+
+```json
+{
+  "project_id": "P-20261012-0001",
+  "workflow_id": "b6fd2ade-...",
+  "version": 3,
+  "engine": "AWSHealthOmics (us-east)",
+  "external_id": "arn:aws:omics:...:workflow/1234567/version/3",
+  "pinned_from_alias": "prod",
+  "created": true,
+  "created_at": "2026-10-12T09:00:00Z",
+  "created_by": "svc-launcher"
+}
+```
+
+`external_id` is looked up from the deployment at read time and returned for logging only; WES still does its own deployment selection.
+
+**Errors:**
+- `404 Not Found` — The project or workflow does not exist, or no pin exists yet and the alias is not set for the workflow. There is no fallback to the newest version.
+- `422 Unprocessable Entity` — The alias's version has no deployment for `engine`. No pin is written.
+
+Concurrent first-run calls for the same project are safe: the insert relies on `uq_project_workflow_engine`, and on a conflict the existing row is re-read and returned.
+
+#### List Pins
+
+```
+GET /api/v1/projects/{project_id}/workflow-versions?engine=
+GET /api/v1/projects/{project_id}/workflow-versions/{workflow_id}?engine=
+```
+
+Returns all pins for the project, or a single pin. The single-pin route returns `404 Not Found` if the workflow is not pinned.
+
+#### Override a Pin
+
+```
+PUT /api/v1/projects/{project_id}/workflow-versions/{workflow_id}
+```
+
+A deliberate upgrade or downgrade. Sets `updated_at`/`updated_by` and clears `pinned_from_alias`.
+
+```json
+{ "engine": "AWSHealthOmics (us-east)", "version": 4 }
+```
+
+**Errors:**
+- `422 Unprocessable Entity` — The version has no deployment for `engine`.
+
+#### Delete a Pin
+
+```
+DELETE /api/v1/projects/{project_id}/workflow-versions/{workflow_id}?engine=
+```
+
+**Response:** `204 No Content`. The project's next run pins to whatever `prod` points at then.
+
+**Permissions:**
+
+| Route | Required permission | Reason |
+|-------|---------------------|--------|
+| `resolve` | `project:submit_action` on the project | Anyone allowed to process the project must be able to pin on first run |
+| `GET` | Project read | Read-only |
+| `PUT` / `DELETE` | `workflow:create` | Changing a pin changes scientific output, so it needs the same permission as registering a workflow |
+
 ## Use Cases
 
 These walk through the order calls are made in and the fields that matter at each step; full request and response bodies are in [API Endpoints](#api-endpoints) above.
 
 This API is the workflow **catalog** — the system of record for what a workflow is, which versions exist, and where each version is registered. It does not execute anything. Its job ends by handing a client an `external_id`, which the client passes to an execution engine.
 
-One consequence is worth stating up front: **this API never picks a version for you.** Every endpoint here takes an explicit `version_num` or an explicit `?alias=`. The convenience of "just give me the current one" belongs to clients, and the rules they apply are described in [Running a workflow](#running-a-workflow).
+One consequence is worth stating up front: **the workflow endpoints never pick a version for you.** Every one takes an explicit `version_num` or an explicit `?alias=`. The convenience of "just give me the current one" belongs to clients, and the rules they apply are described in [Running a workflow](#running-a-workflow). The one exception is the project pin `resolve` endpoint, which resolves an alias **once** per project and stores the result — see [Keeping a project on one version](#keeping-a-project-on-one-version).
 
 > **Which id do I use?** These responses contain several identifiers and only some are accepted back as input, which is a common source of confusion.
 >
@@ -684,6 +807,7 @@ One consequence is worth stating up front: **this API never picks a version for 
 > - **To address a version, use its number, not its UUID.** Version ids are returned inside version summaries, alias responses and deployment responses, but no endpoint anywhere accepts one. Version numbers are small integers starting at 1 and scoped to their workflow, so `version 3` only means something alongside a workflow id.
 > - **Platforms are referenced by name** (`platform.name`) in the `engine` field. `platform.id` exists but the workflow API never uses it.
 > - **A deployment id is only good for deleting that deployment.** It addresses nothing else.
+> - **Pins are addressed by project business key and workflow id** (`P-YYYYMMDD-NNNN` and `workflow.id`), not by the project UUID or a pin id.
 > - **`external_id` is normally an output** — you read it to learn what a version is called on its platform. You supply it only when you registered the workflow there yourself. The GA4GH WES service calls this same value the **engine id**.
 >
 > Unrelated despite the similar look: an `ngs360://<file-id>` inside a `definition_uri` is a **file** id from the files API.
@@ -760,7 +884,9 @@ Having picked a version, the client selects that version's `AWSHealthOmics (us-e
 
 The last two are the common ones in practice, and they are catalog problems rather than client bugs: the first means somebody promoted an alias to a version that was never deployed, the second means somebody deployed to Arvados only.
 
-**Provenance.** Because a bare reference means "latest" and an alias can be re-pointed, the same reference can resolve differently tomorrow. The WES service therefore records the version number it actually resolved against each run, so a completed run always names the exact version it used even after the alias has moved on. If you need a reference that cannot drift at all, pin it with an explicit version number.
+These rules are WES's and do not change with project pinning: a bare reference sent straight to WES still means the highest version. Pinning happens one step earlier, in the launcher, which turns a bare id into `<workflow-id>:<pinned version>` before it reaches WES — see [Keeping a project on one version](#keeping-a-project-on-one-version).
+
+**Provenance.** Because a bare reference means "latest" and an alias can be re-pointed, the same reference can resolve differently tomorrow. The WES service therefore records the version number it actually resolved against each run, so a completed run always names the exact version it used even after the alias has moved on. For a whole project, the pin table is the authoritative record of which version it uses; for a single run, WES's `resolved_workflow_version` is.
 
 ### Configuring a pipeline launcher
 
@@ -783,17 +909,60 @@ PIPELINE_PLATFORM_CONFIG = {
 }
 ```
 
-The difference between the blocks is the point. For Arvados and SevenBridges the launcher stores **native platform identifiers**, so the config has to be hand-edited on every release, and each entry is pinned to one revision on one platform. For NGS360 it stores the **workflow UUID** and lets the catalog resolve the rest — one stable id per step, with the version chosen at submission time.
+The difference between the blocks is the point. For Arvados and SevenBridges the launcher stores **native platform identifiers**, so the config has to be hand-edited on every release, and each entry is pinned to one revision on one platform. For NGS360 it stores the **workflow UUID** and lets the catalog resolve the rest — one stable id per step. Before submitting, the launcher passes each id through `platform.prepare_workflow(id, project)`. On SevenBridges and Arvados that copies the app into the project, as before. On NGS360 it resolves the project's pin and returns `<workflow-id>:<version>`.
 
 That makes the reference format a release-policy decision:
 
 | Config stores | Behavior | Use when |
 |---------------|----------|----------|
-| `<workflow-id>` | Picks up the newest version automatically, with no config change | Development, or pipelines that should always track the newest build |
-| `<workflow-id>:production` | Follows whatever has been promoted; changes when someone promotes | Production pipelines, so releasing is an alias move rather than a config edit and a redeploy |
-| `<workflow-id>:3` | Pinned forever | Reproducing a past analysis, or validated pipelines that must not move |
+| `<workflow-id>` | **Pinned per project.** A project's first run uses the version `prod` points at then; every later run of that project reuses it. New projects pick up the current `prod` | The default for production launchers |
+| `<workflow-id>:prod` | Follows whatever has been promoted, on every run. Bypasses the pin, so one project can mix versions | Rarely; only if a project should deliberately track promotions |
+| `<workflow-id>:3` | Version 3 for every project. Bypasses the pin and writes nothing | Testing a new version on an existing project, or a one-off reproduction |
 
-The middle row is the one worth designing for: the launcher config stops changing per release, and promoting a revision becomes a single `PUT` on an alias, reviewable and reversible, instead of a config edit shipped through the launcher's own release process.
+The first row is the one worth designing for: the launcher config stops changing per release, promoting a revision is a single `PUT` on the `prod` alias, and that promotion only reaches projects that have not run yet. Any suffix (`:<alias>` or `:<n>`) means "explicit wins": no pin is read or written.
+
+### Keeping a project on one version
+
+What happens on NGS360 when a launcher prepares workflow `W` for project `P`:
+
+1. **Explicit reference** — if the config entry has a suffix (`W:<alias>` or `W:<n>`), it is submitted unchanged. No pin is read or written.
+2. **Existing pin** — otherwise the launcher calls `POST /api/v1/projects/P/workflow-versions/W/resolve` with `{"engine": "AWSHealthOmics (us-east)", "alias": "prod"}`. If `P` already has a pin for `W`, the call returns it (`200`).
+3. **First run** — if not, the server resolves `prod` to version `N`, checks that `N` has a HealthOmics deployment, stores the pin, and returns it (`201`).
+4. **Submit** — the launcher submits `W:N` to WES, which selects version `N` and its deployment as described in [Running a workflow](#running-a-workflow).
+
+```mermaid
+sequenceDiagram
+    participant L as Launcher (PAML)
+    participant A as NGS360 API
+    participant W as GA4GH WES
+    participant O as HealthOmics
+
+    L->>A: POST /projects/P/workflow-versions/W/resolve {alias: prod, engine}
+    alt pin exists
+        A-->>L: 200 {version: 3}
+    else first run
+        A->>A: resolve prod -> v3, check deployment, insert pin
+        A-->>L: 201 {version: 3}
+    end
+    L->>W: POST /runs workflow_url=W:3, tags.ProjectId=P
+    W->>A: GET /workflows/W
+    W->>W: select v3 and its Omics deployment
+    W->>O: start run (ARN .../version/3)
+```
+
+**Changing a project's version** is deliberate:
+
+- **One-off run on another version** — put `W:<n>` in the launcher config. The pin is bypassed and unchanged.
+- **Upgrade or downgrade the project** — `PUT /api/v1/projects/P/workflow-versions/W` with `{"engine": "AWSHealthOmics (us-east)", "version": 4}` (requires `workflow:create`). Every later run uses version 4. Samples already processed keep their reused results unless they are re-run.
+- **Re-pin to the current `prod`** — `DELETE` the pin; the next run pins again.
+
+**Expected behavior to know:**
+
+- If `prod` is not set when a project first runs a workflow, `resolve` returns `404` and the launcher fails fast. It never falls back to the newest version.
+- A version with no HealthOmics deployment is never pinned (`422`). If a pinned version's deployment is later deleted, WES fails at submission; redeploy that version or override the pin.
+- A project whose first run used an explicit `W:<n>` has no pin. If the config later goes back to a bare id, that run pins the `prod` of that moment, not `<n>`. `PUT` the pin to keep `<n>`.
+- Projects processed before pinning shipped have no pin until they are backfilled from WES run history, or until their next run pins the current `prod`.
+- Launchers reuse completed tasks by task name regardless of version. With a pin, a re-run either reuses a result or recomputes it on the same version.
 
 ### Discovering a version's parameters
 
@@ -818,6 +987,10 @@ Each entry carries `id`, `type`, `required` and an optional `default`, so a call
 | `api/pipeline/models.py` | Pipeline/PipelineAttribute/PipelineWorkflow tables and schemas |
 | `api/pipeline/services.py` | Pipeline business logic (create, list, add/remove workflow, response building) |
 | `api/pipeline/routes.py` | Pipeline endpoint handlers |
+| `api/project/models.py` | `ProjectWorkflowVersion` table and schemas (or a new `api/project/workflow_versions/` module) |
+| `api/project/services.py` | Pin resolve (atomic get-or-create), read, override and delete |
+| `api/project/routes.py` | `/projects/{project_id}/workflow-versions` endpoint handlers |
+| `alembic/versions/<rev>_add_project_workflow_version_table.py` | Migration creating the pin table, unique constraint and composite FK |
 | `tests/api/test_platforms.py` | Platform CRUD tests |
 | `tests/api/test_workflows.py` | Workflow CRUD tests |
 | `tests/api/test_workflow_versions.py` | Version CRUD tests |
@@ -825,3 +998,4 @@ Each entry carries `id`, `type`, `required` and an optional `default`, so a call
 | `tests/api/test_workflow_deployments.py` | Deployment endpoint tests (incl. engine validation) |
 | `tests/api/test_pipeline_entity.py` | Pipeline CRUD and workflow association tests |
 | `tests/api/test_pipelines.py` | Pipeline endpoint tests |
+| `tests/api/test_project_workflow_versions.py` | Project pin tests (create vs reuse, alias moved, 404/422, concurrency, override, delete, permissions) |
