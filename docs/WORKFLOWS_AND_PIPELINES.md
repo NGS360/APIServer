@@ -43,11 +43,11 @@ The launcher first asks the catalog for the project's pinned version (v2), then 
 Getting a workflow from scratch to runnable. A version is not runnable until it is deployed.
 
 ```mermaid
-flowchart TD
-    W["Create the workflow identity<br/>POST /workflows {name, attributes}"] --> V["Add the first version<br/>POST /workflows/{id}/versions {definition_uri, inputs, outputs}"]
-    V -->|"server assigns version 1"| D["Deploy version 1<br/>POST /versions/1/deployments {engine}"]
-    D --> AL["Point an alias at it<br/>PUT /aliases/dev {version_num: 1}"]
-    AL --> R(["Runnable as 'uuid:dev' or 'uuid:1'"])
+flowchart LR
+    W["Create the workflow<br/>POST /workflows<br/>{name, attributes}"] --> V["Add the first version<br/>POST /workflows/{id}/versions<br/>{definition_uri, inputs, outputs}"]
+    V -->|"server assigns<br/>version 1"| D["Deploy version 1<br/>POST /versions/1/deployments<br/>{engine}"]
+    D --> AL["Point an alias at it<br/>PUT /aliases/dev<br/>{version_num: 1}"]
+    AL --> R(["Runnable as<br/>'uuid:dev' or 'uuid:1'"])
 ```
 
 What happens at each step:
