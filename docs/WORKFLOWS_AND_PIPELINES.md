@@ -124,18 +124,19 @@ Each launcher prepares every workflow for the project before submitting, by call
 On NGS360 the decision is:
 
 ```mermaid
-flowchart TD
-    START["Launcher prepares workflow W for project P"] --> EXP{"Config entry has a suffix?<br/>('W:prod', 'W:4')"}
-    EXP -- yes --> USE["Submit it unchanged<br/>no ProjectWorkflowVersion record is read or written"]
-    EXP -- no --> CALL["POST /projects/P/workflow-versions/W/resolve<br/>{alias: prod, engine: AWSHealthOmics (us-east)}"]
-    CALL --> HAS{"ProjectWorkflowVersion record exists<br/>for (P, W, engine)?"}
-    HAS -- yes --> OLD["200: return pinned version"]
-    HAS -- no --> PROD{"'prod' alias set?"}
+%%{init: {"flowchart": {"wrappingWidth": 400}}}%%
+flowchart LR
+    START["Launcher prepares<br/>workflow W for project P"] --> EXP{"Config entry<br/>has a suffix?<br/>('W:prod', 'W:4')"}
+    EXP -- yes --> USE["Submit it unchanged<br/>no ProjectWorkflowVersion<br/>record read or written"]
+    EXP -- no --> CALL["POST /projects/P/<br/>workflow-versions/W/resolve<br/>{alias: prod, engine}"]
+    CALL --> HAS{"ProjectWorkflowVersion<br/>record exists<br/>for (P, W, engine)?"}
+    HAS -- yes --> OLD["200: return<br/>pinned version"]
+    HAS -- no --> PROD{"'prod' alias<br/>set?"}
     PROD -- no --> F404["404: launcher stops<br/>(no fallback to newest)"]
-    PROD -- yes --> DEPL{"prod's version deployed<br/>on HealthOmics?"}
-    DEPL -- no --> F422["422: launcher stops<br/>no ProjectWorkflowVersion record written"]
-    DEPL -- yes --> NEW["201: store ProjectWorkflowVersion record<br/>(P, W) → N"]
-    OLD & NEW --> SUB["Submit 'W:N' to WES"]
+    PROD -- yes --> DEPL{"prod's version<br/>deployed on<br/>HealthOmics?"}
+    DEPL -- no --> F422["422: launcher stops<br/>no record written"]
+    DEPL -- yes --> NEW["201: store<br/>ProjectWorkflowVersion<br/>(P, W) → N"]
+    OLD & NEW --> SUB["Submit 'W:N'<br/>to WES"]
 ```
 
 Each workflow in a launcher gets its own pinned version: a WGS launcher with five workflows has five ProjectWorkflowVersion records for the project.
