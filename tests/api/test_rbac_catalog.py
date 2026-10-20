@@ -693,6 +693,47 @@ class TestServiceAccountsCanReachWhatTheyCall:
         assert Permission.ACTION_READ in sa
         assert Permission.JOB_READ_ALL in sa
 
+    def test_service_account_holds_the_ingestion_writes(self):
+        """
+        Added 2026-10-20 for the NGS360 ingestion account: read project,
+        bulk-create samples, validate manifest, patch project. It was taking
+        real 403s on PATCH /projects/{project_id} and would_deny on
+        POST /manifest/validate.
+
+        Pinned together because they are one flow, and because adding them
+        widened the shared role for a single account -- the trade #447 argued
+        against. The reasoning is on the role definition; the short version is
+        that project:update is project-scopable, so a dedicated global role for
+        it would break the documented rule that new global roles are justified
+        only for writes on global resources.
+        """
+        sa = ROLE_DEFINITIONS["service_account"].permissions
+        assert Permission.MANIFEST_VALIDATE in sa
+        assert Permission.PROJECT_UPDATE in sa
+
+    def test_the_machine_role_still_excludes_what_spends_or_destroys(self):
+        """
+        The boundary that keeps this role from drifting into a general write
+        identity as permissions are added to it one request at a time. Every
+        entry here was deliberately kept out, and each addition to the role
+        should have to argue with this list.
+        """
+        sa = ROLE_DEFINITIONS["service_account"].permissions
+        for excluded in (
+            Permission.RUN_DEMUX,              # spends compute, deletes QC records
+            Permission.PROJECT_SUBMIT_ACTION,  # spends AWS Batch
+            Permission.PROJECT_INGEST,         # spends compute, writes S3
+            Permission.FILE_DOWNLOAD,          # cross-project data egress
+            Permission.FILE_BROWSE,
+            Permission.PROJECT_DELETE,
+            Permission.FILE_DELETE,
+            Permission.SAMPLE_DELETE,
+            Permission.SETTING_UPDATE,
+            Permission.ROLE_MANAGE,
+            Permission.USER_MANAGE,
+        ):
+            assert excluded not in sa, excluded
+
     def test_a_machine_account_is_not_assumed_to_hold_the_default_role(self):
         """
         The assumption that caused this. Stated as an assertion so that reading

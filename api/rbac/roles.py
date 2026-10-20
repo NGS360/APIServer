@@ -156,6 +156,34 @@ _SERVICE_ACCOUNT = frozenset({
     # API-key caller against the guards on the routes they use, which is the
     # check that should have preceded the batch rather than followed it.
     Permission.ACTION_READ,
+    # Added 2026-10-20 for the NGS360 ingestion account, whose measured flow is
+    # read project -> bulk-create samples -> validate manifest -> patch project.
+    # It was taking real 403s on PATCH /projects/{project_id} and would_deny on
+    # POST /manifest/validate.
+    #
+    # This widens the shared role for one account, which is the trade #447
+    # argued against when it took run:create *out* of here on the evidence that
+    # 16 of 17 holders had never used it. The reasoning for going the other way:
+    #
+    #   * project:update is project-scopable, and the documented rule above
+    #     says a new global role is justified only for a write on a *global*
+    #     resource. A role carrying project:update would break that rule --
+    #     project-scoped personas belong in project membership.
+    #   * service_account already carries six project-scopable writes globally
+    #     (sample:create, sample:update, file:create, file:update,
+    #     qcrecord:create, project:read) for the documented reason that a machine
+    #     cannot be enrolled in every project whose data it writes. project:update
+    #     is the same shape as those, not a new kind of grant.
+    #   * the role model was collapsed from eleven global roles to six four days
+    #     ago, specifically to stop one-account roles accumulating. An eighth
+    #     one a week later would undo that.
+    #
+    # The cost is real and worth naming: the other eight service accounts gain
+    # two permissions they do not use. If a second account ever needs
+    # project:update on a *specific* set of projects rather than all of them,
+    # the right answer is enrolling it per project, not widening this further.
+    Permission.MANIFEST_VALIDATE,
+    Permission.PROJECT_UPDATE,
 })
 
 # Run registration, one service's job. See #447: over 2026-08-18..09-28 exactly

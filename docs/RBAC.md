@@ -337,7 +337,7 @@ Collapsed to three tiers on 2026-10-13 (NWP-2213, step 3). Eleven global roles b
 | Admin | `admin` | Platform administrator | `ALL_PERMISSIONS`, recomputed at each sync |
 | Admin | `vendor_admin` | Owns the vendor catalogue | `vendor:create`, `vendor:update`, `vendor:delete`, `vendor:read` |
 | Admin | `workflow_admin` | Owns the workflow catalogue | every `workflow:*`, derived from the catalogue |
-| Service | `service_account` | Machine writeback — pipeline results and Batch job status | 12, including the only `job:update` outside `admin` |
+| Service | `service_account` | Machine writeback — pipeline results and Batch job status | 15, including the only `job:update` outside `admin` |
 | Service | `run_registrar` | Registers sequencing runs | `run:create` |
 | Service | `run_associator` | Associates samples and runs | `run:associate` |
 | Service | `auditor` | Compliance, QA, read-only agents | every `*:read`, plus `file:download`, `search:query`, `role:read` |
@@ -1274,6 +1274,22 @@ The four that enforce immediately are `pipeline:update`, `qcrecord:delete`, `ven
 > **Closed 2026-10-14 — see [Authentication is now a property of the router](#authentication-is-now-a-property-of-the-router) below. The paragraph that follows is left as written, and its central claim did not survive measurement.**
 
 **What remains is 28 routes, none of them ours.** Every one carries anonymous or invalid-JWT traffic from a consumer another team owns. The largest is `GET /workflows/{workflow_id}` at 23,443 anonymous requests (WES bearer-token forwarding), then `/jobs` and `/jobs/{job_id}` (ngs-observe), `/runs/{id}/metrics` and `/runs/search` (RStudio), `/actions/configs` (the Batch event trigger), and `/files` and `/files/list`.
+
+### What `service_account` has accumulated, and the rule that bounds it
+
+`service_account` has grown from 12 permissions to 15 in four days: `action:read` (#471), then `manifest:validate` and `project:update` (2026-10-20). Each addition had a measured caller behind it, and each widened a role shared by nine accounts to satisfy one.
+
+That is the trade #447 argued *against* when it took `run:create` out of this role on the evidence that 16 of 17 holders had never used it. The reasoning for going the other way here:
+
+- **`project:update` is project-scopable.** The documented rule for a new global role is that it must grant a write on a *global* resource; project-scoped personas belong in project membership. A role carrying `project:update` would break that rule.
+- **This role already carries six project-scopable writes globally** — `sample:create`, `sample:update`, `file:create`, `file:update`, `qcrecord:create`, `project:read` — for the documented reason that a machine cannot be enrolled in every project whose data it writes. `project:update` is the same shape, not a new kind of grant.
+- **The role model was collapsed from eleven global roles to six** four days earlier, specifically to stop one-account roles accumulating. An eighth a week later would undo that.
+
+The cost is real: the other eight service accounts hold three permissions they do not use. Two things bound the drift rather than leaving it to judgement each time:
+
+`test_the_machine_role_still_excludes_what_spends_or_destroys` lists what has been deliberately kept out — `run:demux`, `project:submit_action`, `project:ingest`, `file:download`, `file:browse`, and every delete, `setting:update`, `role:manage`, `user:manage`. Each addition to the role has to argue with that list.
+
+And if a second account ever needs `project:update` on a *specific* set of projects rather than all of them, the answer is enrolling it per project, not widening this further.
 
 ### The guarded surface is complete
 
