@@ -24,41 +24,7 @@ How workflows are registered, versioned, deployed and run on NGS360, and how a p
 
 The API server is the workflow **catalog**: it records what a workflow is, which versions exist, where each version is registered, and (new) which version each project uses.
 
-```mermaid
-flowchart TB
-    subgraph Exec["Execution"]
-        direction LR
-        L["Launcher<br/>(PAML)"] -- "submit 'uuid:2'" --> WES["GA4GH WES"]
-        WES -- "submit run with v2's ARN" --> LF["Omics Lambda function"]
-        LF -- "start run" --> O["AWS HealthOmics"]
-    end
-
-    subgraph Catalog["NGS360 API server (catalog)"]
-        direction LR
-        WF["Workflow<br/>e.g. 'Alignment'"]
-        V1["Version 1"]
-        V2["Version 2"]
-        V3["Version 3"]
-        D1["Deployment - Omics<br/>…/workflow/1234567"]
-        D2["Deployment - Omics<br/>…/workflow/1234567/version/2"]
-        PIN["ProjectWorkflowVersion<br/>P-20261012-0001 → v2"]
-        D3["Deployment - Omics<br/>…/workflow/1234567/version/3"]
-        A["Alias 'prod'"]
-        WF --> V1
-        WF --> V2
-        WF --> V3
-        V1 --> D1
-        V2 --> D2
-        PIN -.->|points to| V2
-        V3 --> D3
-        A -.->|points to| V3
-        D2 ~~~ PIN
-        D3 ~~~ A
-    end
-
-    Exec -- "1. launcher resolves pinned version" --> Catalog
-    Exec -- "2. GA4GH reads workflow ID" --> Catalog
-```
+![Big picture: the launcher and GA4GH WES call the NGS360 API server catalog, then the Omics Lambda function starts the run on AWS HealthOmics](images/WorkflowPipeline_bigpicture_diagram.png)
 
 The launcher first asks the catalog for the project's pinned version (v2), then submits `uuid:2` to WES. WES reads the workflow, picks version 2's Omics deployment, and passes its ARN to the Omics Lambda function, which starts the run on HealthOmics.
 
