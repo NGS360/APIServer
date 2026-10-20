@@ -1,6 +1,6 @@
 # Workflows & Pipelines
 
-How workflows are registered, versioned, deployed and run on NGS360, and how a project stays on the same workflow version across runs.
+This document describes the Workflow and Pipeline systems — how workflows are registered, versioned, deployed and run on NGS360, and how a project stays on the same workflow version across runs.
 
 ## Table of Contents
 
@@ -14,10 +14,10 @@ How workflows are registered, versioned, deployed and run on NGS360, and how a p
   - [6. Changing a project's version](#6-changing-a-projects-version)
   - [7. Edge cases](#7-edge-cases)
 - **Reference**
-  - [Data model](#data-model)
+  - [Entity Relationship Diagram](#entity-relationship-diagram)
   - [Which id do I use?](#which-id-do-i-use)
   - [API endpoints](#api-endpoints)
-  - [Table columns](#table-columns)
+  - [Database Models](#database-models)
   - [Source files](#source-files)
 
 ## The big picture
@@ -43,6 +43,7 @@ The launcher first asks the catalog for the project's pinned version (v2), then 
 Getting a workflow from scratch to runnable. A version is not runnable until it is deployed.
 
 ```mermaid
+%%{init: {"flowchart": {"wrappingWidth": 400}}}%%
 flowchart LR
     W["Create the workflow<br/>POST /workflows<br/>{name, attributes}"] --> V["Add the first version<br/>POST /workflows/{id}/versions<br/>{definition_uri, inputs, outputs}"]
     V -->|"server assigns<br/>version 1"| D["Deploy version 1<br/>POST /versions/1/deployments<br/>{engine}"]
@@ -100,13 +101,14 @@ What happens at each step:
 
 **Rolling back** is step 4 with the previous number. Nothing is deleted, and the old version's deployment is still there.
 
-**What promotion does and does not affect** *(new)*:
+**What promotion does and does not affect**:
 
 ```mermaid
+%%{init: {"flowchart": {"wrappingWidth": 400}}}%%
 flowchart LR
-    M["prod moves v2 → v3"] --> N["Projects that have never run this workflow<br/>→ will record v3 on first run"]
-    M --> E["Projects already pinned to v2<br/>→ stay on v2"]
-    M --> X["Configs with explicit 'uuid:prod' or 'uuid:3'<br/>→ get v3 on next run"]
+    M["prod moves<br/>v2 → v3"] --> N["Projects that have never<br/>run this workflow<br/>→ record v3 on first run"]
+    M --> E["Projects already<br/>pinned to v2<br/>→ stay on v2"]
+    M --> X["Configs with explicit<br/>'uuid:prod' or 'uuid:3'<br/>→ get v3 on next run"]
 ```
 
 ### 3. Running a launcher on a project
@@ -246,7 +248,7 @@ Things to know:
 
 ## Reference
 
-### Data model
+### Entity Relationship Diagram
 
 ```mermaid
 erDiagram
@@ -445,7 +447,7 @@ All paths are under `/api/v1` and require authentication; the caller's username 
 | `PUT` | `/projects/{project_id}/workflow-versions/{workflow_id}` | `engine`, `version` | Override to another version. `422` if it has no deployment on `engine` | `workflow:create` |
 | `DELETE` | `/projects/{project_id}/workflow-versions/{workflow_id}` | `engine` | `204`. The next run records the current `prod` | `workflow:create` |
 
-### Table columns
+### Database Models
 
 Columns in each table. **Required** is `yes` if the caller must supply it, `auto` if the server sets it (`created_by` is the authenticated user), and `no` if it is optional.
 
