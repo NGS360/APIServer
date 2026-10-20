@@ -29,6 +29,7 @@ from enum import Enum
 from pydantic import ConfigDict
 from sqlmodel import Field, SQLModel, UniqueConstraint
 
+from api.rbac.permissions import Permission
 from api.rbac.roles import RoleScope  # noqa: F401  (re-exported for convenience)
 
 
@@ -161,7 +162,7 @@ class ProjectMember(SQLModel, table=True):
 class PermissionPublic(SQLModel):
     """One catalog entry, as returned by GET /rbac/permissions."""
 
-    permission: str
+    permission: Permission
     resource: str
     description: str
     project_scopable: bool
@@ -177,7 +178,7 @@ class RolePublic(SQLModel):
     description: str | None
     scope: RoleScope
     is_builtin: bool
-    permissions: list[str]
+    permissions: list[Permission]
 
 
 class RoleCreate(SQLModel):
@@ -292,7 +293,7 @@ class UserAccessPublic(SQLModel):
     #: Effective global permissions, from the one resolver the route guards use.
     #: For a superuser this is the whole catalog, since that is what the flag
     #: means -- reporting an empty list would read as "no access".
-    global_permissions: list[str]
+    global_permissions: list[Permission]
 
     project_memberships: list[ProjectMembershipPublic]
 
@@ -315,7 +316,7 @@ class MyAccessPublic(SQLModel):
     username: str
     is_superuser: bool
     global_roles: list[str]
-    global_permissions: list[str]
+    global_permissions: list[Permission]
 
 
 class UserFlagsUpdate(SQLModel):

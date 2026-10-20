@@ -8,6 +8,7 @@ from sqlmodel import SQLModel, Field, Relationship, UniqueConstraint
 from typing import List
 from pydantic import ConfigDict, field_validator
 
+from api.rbac.permissions import Permission
 from api.runs.models import SequencingRunPublic
 from api.samples.models import Sample
 from api.qcmetrics.models import QCRecord
@@ -118,7 +119,7 @@ class ProjectPublic(SQLModel):
     # None once also covered an anonymous caller. It no longer can: the detail
     # route requires a caller and then project:read, so a request that reaches
     # the handler always has somebody to report on.
-    permissions: List[str] | None = None
+    permissions: List[Permission] | None = None
 
     @field_validator("created_at", "last_modified", mode="before")
     @classmethod
