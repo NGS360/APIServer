@@ -34,6 +34,7 @@ flowchart TB
     end
 
     subgraph Catalog["NGS360 API server (catalog)"]
+        direction LR
         WF["Workflow<br/>e.g. 'Alignment'"]
         PIN["ProjectWorkflowVersion<br/>P-20261012-0001 → v2"]
         A["Alias 'prod'"]
