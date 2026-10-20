@@ -36,20 +36,24 @@ flowchart TB
     subgraph Catalog["NGS360 API server (catalog)"]
         direction LR
         WF["Workflow<br/>e.g. 'Alignment'"]
-        PIN["ProjectWorkflowVersion<br/>P-20261012-0001 → v2"]
-        A["Alias 'prod'"]
         V1["Version 1"]
         V2["Version 2"]
         V3["Version 3"]
         D1["Deployment - Omics<br/>…/workflow/1234567"]
         D2["Deployment - Omics<br/>…/workflow/1234567/version/2"]
+        PIN["ProjectWorkflowVersion<br/>P-20261012-0001 → v2"]
         D3["Deployment - Omics<br/>…/workflow/1234567/version/3"]
-        WF --> V1 & V2 & V3
+        A["Alias 'prod'"]
+        WF --> V1
+        WF --> V2
+        WF --> V3
         V1 --> D1
         V2 --> D2
+        PIN -.->|points to| V2
         V3 --> D3
-        PIN -. points to .-> V2
-        A -. points to .-> V3
+        A -.->|points to| V3
+        D2 ~~~ PIN
+        D3 ~~~ A
     end
 
     Exec -- "1. launcher resolves pinned version" --> Catalog
