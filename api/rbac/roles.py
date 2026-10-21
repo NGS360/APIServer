@@ -112,8 +112,28 @@ _MEMBERSHIP_GATED = frozenset({
     Permission.PROJECT_MANAGE_MEMBERS,
 })
 
+#: Not granted to any *global* role below `admin`, but carried by the project
+#: role a creator receives, so the holders are exactly "administrators and the
+#: people who made the project".
+#:
+#: Reserved because it was not, and that was a hole. `restricted` is set through
+#: PUT/PATCH /projects/{id}, which is guarded on `project:update` -- a `member`
+#: permission -- so until this existed any of the authenticated users could lock
+#: any project, including one they had nothing to do with. Worse, locking it was
+#: close to irreversible for them: once `restricted` is true the membership gate
+#: applies, and unlocking requires being a member, so an accidental flip on
+#: somebody else's project had to be undone by an administrator.
+#:
+#: Note this is a *narrower* grant than `project:update` on the same route, which
+#: is the point: editing a project's metadata is ordinary work, changing who can
+#: see it at all is not.
+_PROJECT_OWNER_ONLY = frozenset({
+    Permission.PROJECT_RESTRICT,
+})
+
 _RESERVED = (
     _ADMIN_ONLY | _VENDOR_ADMIN_ONLY | _WORKFLOW_ADMIN_ONLY | _MEMBERSHIP_GATED
+    | _PROJECT_OWNER_ONLY
 )
 
 # The default role, and now the only one an ordinary user needs: everything that
@@ -252,6 +272,7 @@ _PROJECT_CONTRIBUTOR = _PROJECT_VIEWER | {
 _PROJECT_OWNER = _PROJECT_CONTRIBUTOR | {
     Permission.PROJECT_MANAGE_MEMBERS,
     Permission.PROJECT_DELETE,
+    Permission.PROJECT_RESTRICT,
 }
 
 

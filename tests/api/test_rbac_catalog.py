@@ -530,7 +530,8 @@ class TestTheCollapsedRoster:
         this test exists: adding a permission fails here until someone decides
         which side of the line it belongs on.
         """
-        from api.rbac.roles import (_ADMIN_ONLY, _MEMBERSHIP_GATED, _RESERVED,
+        from api.rbac.roles import (_ADMIN_ONLY, _MEMBERSHIP_GATED,
+                                    _PROJECT_OWNER_ONLY, _RESERVED,
                                     _VENDOR_ADMIN_ONLY, _WORKFLOW_ADMIN_ONLY)
 
         assert {str(p) for p in _ADMIN_ONLY} == {
@@ -545,14 +546,15 @@ class TestTheCollapsedRoster:
             "workflow:deploy",
         }
         assert {str(p) for p in _MEMBERSHIP_GATED} == {"project:manage_members"}
-        assert len(_RESERVED) == 14
+        assert {str(p) for p in _PROJECT_OWNER_ONLY} == {"project:restrict"}
+        assert len(_RESERVED) == 15
 
     def test_member_is_everything_not_reserved(self):
         from api.rbac.roles import _RESERVED
 
         member = ROLE_DEFINITIONS["member"].permissions
         assert member == ALL_PERMISSIONS - _RESERVED
-        assert len(member) == len(ALL_PERMISSIONS) - 14 == 43
+        assert len(member) == len(ALL_PERMISSIONS) - 15 == 43
 
     def test_admin_still_holds_everything(self):
         assert ROLE_DEFINITIONS["admin"].permissions == ALL_PERMISSIONS
