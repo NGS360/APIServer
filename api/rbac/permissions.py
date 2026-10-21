@@ -24,7 +24,7 @@ from typing import Literal
 
 
 class Permission(StrEnum):
-    """Every permission the API recognises. 57 across 18 resources."""
+    """Every permission the API recognises. 58 across 18 resources."""
 
     # --- Project-owned data ------------------------------------------------
     PROJECT_READ = "project:read"
