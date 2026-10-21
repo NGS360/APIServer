@@ -893,7 +893,7 @@ class TestRestrictionIsMembershipNotPermission:
         # A role carrying no file permissions at all, to show access comes
         # from the membership row rather than from what the role grants.
         irrelevant = session.exec(
-            select(Role).where(Role.name == "run_registrar")
+            select(Role).where(Role.name == "run_associator")
         ).one()
         session.add(ProjectMember(project_id=project.id, user_id=user.id,
                                   role_id=irrelevant.id, source=GrantSource.MANUAL))

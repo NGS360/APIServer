@@ -340,7 +340,6 @@ Collapsed to three tiers on 2026-10-13 (NWP-2213, step 3). Eleven global roles b
 | Admin | `vendor_admin` | Owns the vendor catalogue | `vendor:create`, `vendor:update`, `vendor:delete`, `vendor:read` |
 | Admin | `workflow_admin` | Owns the workflow catalogue | every `workflow:*`, derived from the catalogue |
 | Service | `service_account` | Machine writeback — pipeline results and Batch job status | 15, including the only `job:update` outside `admin` |
-| Service | `run_registrar` | Registers sequencing runs | `run:create` |
 | Service | `run_associator` | Associates samples and runs | `run:associate` |
 | Service | `auditor` | Compliance, QA, read-only agents | every `*:read`, plus `file:download`, `search:query`, `role:read` |
 
@@ -363,6 +362,17 @@ That is 15 of 58. `tests/api/test_rbac_catalog.py::TestTheCollapsedRoster` pins 
 **Deliberate consequences, recorded because they are easy to misread.**
 
 `run:create` and `run:associate` are now in `member`, so any authenticated user can register a run or associate a sample. That makes `run_registrar` and `run_associator` redundant *for humans*, though they remain the grant their service accounts hold, so nothing is lost. The narrowing those roles came from (#447, #451) still holds for machines — `service_account` carries neither — but it no longer restricts people.
+
+**`run_registrar` is no longer in the table above, because it is no longer a builtin.** It was converted to a custom role on 2026-10-21 ([#476](https://github.com/NGS360/APIServer/pull/476), migration `c8e4a1f72b93`): the same row, the same `run:create`, the same single grant, but `is_builtin = 0` and no definition in `api/rbac/roles.py`. Administrators now own it through `/rbac/roles`.
+
+The distinction worth drawing from this, because it decides where the next role should go: **a builtin role is the right shape for a persona the product asserts.** `member`, `admin`, `service_account` each describe a *kind of caller*, and re-deriving them from code on every deploy is exactly what keeps the code the source of truth about them. `run_registrar` was never that — it is one permission held by one machine account, which makes it an operational grant. Operational grants should be adjustable by the people running the platform without a pull request, and being builtin actively prevented that: `update_role_permissions()` and `delete_role()` both refuse a builtin outright.
+
+Two consequences, neither of them subtle once stated:
+
+- **Nothing re-derives it.** It will not be recreated in a database that does not have it, which is why the migration seeds it where missing rather than only flipping the flag. A tier that skips the migration has no `run_registrar` at all.
+- **Re-adding the name to `ROLE_DEFINITIONS` silently takes it back.** `sync_rbac_catalog()` forces `is_builtin = True` on every role it defines, so a one-line change that looks like tidying would make the row uneditable again at the next startup, with nothing in the diff to explain the 409s. `test_a_converted_role_is_not_reclaimed_by_a_later_sync` exists to fail in that case.
+
+`run_associator` is the obvious symmetric case — one permission, one lambda — and has deliberately been left alone for now.
 
 `file:delete`, `sample:delete` and `qcrecord:delete` are in `member`. `project:delete` is not: with 11,168 projects, one mistake there is unrecoverable.
 
@@ -421,9 +431,11 @@ No `lab_manager` holder has ever registered a run, and neither have the other ei
 
 This is the same shape as `demux_operator` and `manifest_operator`, reached from the opposite direction. Those roles exist because people were being refused something they needed; this one exists because accounts held something they never used. Both corrections require the same measurement, which is the point worth carrying forward: resolve every principal on the route before deciding the role is the right width — in either direction.
 
-**It makes runs an exception to the create/update pairing rule**, and that is deliberate. `service_account` keeps `run:update`. The pairing rule added on 2026-09-12 assumes one identity handles a resource's whole lifecycle, which holds for samples and files — whoever writes a record also corrects it. It does not hold for runs: the role is shared by nine accounts for job and result writeback, and pairing the verbs meant eight machine identities could create runs so that one could. `tests/api/test_rbac_catalog.py::test_run_registration_is_separated_from_run_writeback` pins the exception so that re-adding `run:create` has to argue with a test rather than look like a tidy-up.
+**It makes runs an exception to the create/update pairing rule**, and that is deliberate. `service_account` keeps `run:update`. The pairing rule added on 2026-09-12 assumes one identity handles a resource's whole lifecycle, which holds for samples and files — whoever writes a record also corrects it. It does not hold for runs: the role is shared by nine accounts for job and result writeback, and pairing the verbs meant eight machine identities could create runs so that one could. `tests/api/test_rbac_catalog.py::TestTheCollapsedRoster::test_the_machine_roles_stay_separate_and_narrow` pins the exception so that re-adding `run:create` has to argue with a test rather than look like a tidy-up. (It is the `run:create not in service_account` assertion that does the pinning; that is unaffected by `run_registrar` leaving the builtin catalogue.)
 
 Note the ordering constraint for deployment: `sync_rbac_catalog()` creates the `run_registrar` row at startup, so the role does not exist to be granted until the tier has been deployed. Removal and grant therefore cannot be simultaneous — deploy first, then grant, and `POST /runs` returns 403 for the registrar accounts in between.
+
+*Superseded 2026-10-21.* `run_registrar` is a custom role now, so nothing creates it at startup any more and that ordering constraint no longer applies to it — see *`run_registrar` is no longer in the table above* above. The constraint itself still holds for any role this file does define.
 
 ### Demultiplexing became a default
 
