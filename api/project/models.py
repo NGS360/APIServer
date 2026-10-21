@@ -78,9 +78,11 @@ class ProjectUpdate(SQLModel):
     """
     name: str | None = None
     attributes: List[Attribute] | None = None
-    # Guarded by `project:update` like the rest of this model. That is a
-    # project-scoped permission, so restricting a project requires authority
-    # over that project -- project_owner, or a global holder.
+    # The one field on this model that is not covered by `project:update`.
+    # Changing it requires `project:restrict`, which `member` does not hold --
+    # see require_project_restrict in api/project/routes.py for why, and note
+    # the check fires only when the value actually changes, so a client echoing
+    # the current value back is unaffected.
     restricted: bool | None = None
 
 

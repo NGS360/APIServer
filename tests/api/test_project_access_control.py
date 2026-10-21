@@ -329,12 +329,12 @@ class TestReadsRemainGlobalByDecision:
 
         member = {str(p) for p in ROLE_DEFINITIONS["member"].permissions}
         scopable = {str(p) for p in PROJECT_SCOPABLE}
-        # Every project-scopable permission except the two reserved ones. The
+        # Every project-scopable permission except the three reserved ones. The
         # role collapse (NWP-2213 step 3) made the user tier the complement of
-        # what is reserved, so this set is now defined by its two absences
-        # rather than by its contents.
+        # what is reserved, so this set is now defined by its absences rather
+        # than by its contents.
         assert member & scopable == scopable - {
-            "project:delete", "project:manage_members",
+            "project:delete", "project:manage_members", "project:restrict",
         }
 
         # What is *not* here, which is the part worth pinning:
@@ -344,8 +344,15 @@ class TestReadsRemainGlobalByDecision:
         # allowlist, so managing it is checked as "admin, or an existing
         # member" rather than granted by a role. It is also the exemption that
         # keeps `restricted` from being a one-way door.
+        # project:restrict -- the other half of manage_members: that one
+        # decides who is on the allowlist, this one decides whether the
+        # allowlist applies. Reserved 2026-10-20, because while it was in
+        # `member` any authenticated user could lock any project and then
+        # could not unlock it. Held by `project_owner`, which a creator
+        # receives with the project row, and by `admin`.
         assert "project:delete" not in member
         assert "project:manage_members" not in member
+        assert "project:restrict" not in member
 
     def test_download_is_among_them_now_and_what_replaced_the_protection(self):
         """

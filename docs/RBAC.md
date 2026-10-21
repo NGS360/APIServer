@@ -197,7 +197,7 @@ Two things generalise. **An unauthenticated write path cannot be made accountabl
 
 ## Permission Catalog
 
-57 permissions across 18 resources. **Scope** is `G` for global-only (may not appear in a project role) or `P` for project-scopable (may appear in either plane). **Risk** indicates blast radius, for the benefit of anyone composing a custom role.
+58 permissions across 18 resources. **Scope** is `G` for global-only (may not appear in a project role) or `P` for project-scopable (may appear in either plane). **Risk** indicates blast radius, for the benefit of anyone composing a custom role.
 
 ### Project-owned data
 
@@ -208,6 +208,7 @@ Two things generalise. **An unauthenticated write path cannot be made accountabl
 | `project:update` | P | low | `PUT /projects/{id}`, `PATCH /projects/{id}` |
 | `project:delete` | P | high | *reserved — no route today* |
 | `project:manage_members` | P | **critical** | `GET/POST/PATCH/DELETE /projects/{id}/members`. Raised from medium 2026-09-18: project membership *is* the project-level grant plane, so a caller who can add themselves has granted themselves every project-scoped permission on that project. `critical` puts it in `ALWAYS_ENFORCE`, which is what keeps these routes refused while the mode is `dry_run` — they previously leaned on a `CurrentSuperuser` check for that |
+| `project:restrict` | P | **critical** | the `restricted` field on `PUT`/`PATCH /projects/{id}`, checked only when the value changes. The other half of `project:manage_members`: that one decides who is on the allowlist, this one decides whether the allowlist is consulted at all. `critical` puts it in `ALWAYS_ENFORCE`, so it refuses rather than logs while the mode is `dry_run` — safe here because the permission is new and has no callers to discover |
 | `project:submit_action` | P | **high** | `POST /projects/{id}/actions/submit` — spends AWS Batch |
 | `project:ingest` | P | **high** | `POST /projects/{id}/ingest` — spends AWS Batch, writes S3 |
 | `sample:read` | P | low | `GET /projects/{id}/samples`, `GET/POST /samples/search` |
@@ -292,10 +293,11 @@ class Permission(StrEnum):
     PROJECT_UPDATE = "project:update"
     PROJECT_DELETE = "project:delete"
     PROJECT_MANAGE_MEMBERS = "project:manage_members"
+    PROJECT_RESTRICT = "project:restrict"
     PROJECT_SUBMIT_ACTION = "project:submit_action"
     PROJECT_INGEST = "project:ingest"
     SAMPLE_READ = "sample:read"
-    # ... 57 members total
+    # ... 58 members total
 
 
 Risk = Literal["low", "medium", "high", "critical"]
@@ -350,8 +352,9 @@ Collapsed to three tiers on 2026-10-13 (NWP-2213, step 3). Eleven global roles b
 | `vendor_admin` | `vendor:create`, `vendor:update`, `vendor:delete` |
 | `workflow_admin` | `workflow:create`, `workflow:update`, `workflow:delete`, `workflow:deploy` |
 | Nobody — membership-gated | `project:manage_members` |
+| `project_owner` (and `admin`) | `project:restrict` |
 
-That is 14 of 57. `tests/api/test_rbac_catalog.py::TestTheCollapsedRoster` pins all four sets and `member`'s size, so adding a permission fails the suite until someone decides which side of the line it belongs on.
+That is 15 of 58. `tests/api/test_rbac_catalog.py::TestTheCollapsedRoster` pins all five sets and `member`'s size, so adding a permission fails the suite until someone decides which side of the line it belongs on.
 
 **Retired:** `lab_manager`, `demux_operator`, `manifest_operator`, `workflow_publisher`, `platform_admin`. Their holders are covered by the widened `member`, except `workflow_publisher` — its permissions are reserved to `workflow_admin`, so migration `a71c4e08b2f6` grants that role to its holders rather than letting them lose access silently.
 
@@ -375,7 +378,7 @@ That is 14 of 57. `tests/api/test_rbac_catalog.py::TestTheCollapsedRoster` pins 
 |------|-------------|
 | `project_viewer` | `project:read`, `sample:read`, `qcrecord:read`, `file:read`, `file:download` |
 | `project_contributor` | `project_viewer` + `project:update`, `sample:create`, `sample:update`, `sample:delete`, `qcrecord:create`, `qcrecord:delete`, `file:create`, `file:update`, `file:delete`, `project:submit_action`, `project:ingest` |
-| `project_owner` | `project_contributor` + `project:manage_members`, `project:delete` |
+| `project_owner` | `project_contributor` + `project:manage_members`, `project:delete`, `project:restrict` |
 
 ### Why this set, and how to evaluate additions
 
