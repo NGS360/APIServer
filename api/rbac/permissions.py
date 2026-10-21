@@ -32,6 +32,7 @@ class Permission(StrEnum):
     PROJECT_UPDATE = "project:update"
     PROJECT_DELETE = "project:delete"
     PROJECT_MANAGE_MEMBERS = "project:manage_members"
+    PROJECT_RESTRICT = "project:restrict"
     PROJECT_SUBMIT_ACTION = "project:submit_action"
     PROJECT_INGEST = "project:ingest"
 
@@ -144,6 +145,21 @@ CATALOG: dict[Permission, PermissionSpec] = {
     # member management to every authenticated user.
     Permission.PROJECT_MANAGE_MEMBERS: PermissionSpec(
         "project", "Add, change and remove project members", True, "critical"),
+    # critical for the same reason as manage_members, which it is the other half
+    # of: that one decides who is on the allowlist, this one decides whether the
+    # allowlist is consulted at all. Flipping `restricted` on is how a project
+    # stops being readable and downloadable by everyone, and flipping it off
+    # undoes every restriction the other permission was used to express.
+    #
+    # The risk level is load-bearing, not documentation. ALWAYS_ENFORCE is
+    # derived from it, which is what makes this refuse rather than log while the
+    # mode is dry_run. That is safe here in a way it would not be for an existing
+    # permission: project:restrict is new, so it has no callers to discover, and
+    # the alternative -- an advisory check -- would leave the flag settable by
+    # anyone until the global flip, which is the gap this permission exists to
+    # close.
+    Permission.PROJECT_RESTRICT: PermissionSpec(
+        "project", "Lock a project to its members, or unlock it", True, "critical"),
     Permission.PROJECT_SUBMIT_ACTION: PermissionSpec(
         "project", "Submit a pipeline job for a project (spends compute)", True, "high"),
     Permission.PROJECT_INGEST: PermissionSpec(
