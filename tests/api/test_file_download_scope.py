@@ -883,6 +883,7 @@ class TestRestrictionIsMembershipNotPermission:
 
         from api.auth.models import User
         from api.rbac.models import GrantSource, ProjectMember, Role
+        from api.rbac.roles import RoleScope
 
         project = restrict(session, make_project(session, "0302"))
         f = make_file(session, "s3://bucket/p302/data.bam")
@@ -890,11 +891,19 @@ class TestRestrictionIsMembershipNotPermission:
         session.commit()
 
         user = session.exec(select(User).where(User.username == "scoped")).one()
-        # A role carrying no file permissions at all, to show access comes
-        # from the membership row rather than from what the role grants.
-        irrelevant = session.exec(
-            select(Role).where(Role.name == "run_associator")
-        ).one()
+        # A role carrying *nothing*, to show access comes from the membership
+        # row rather than from what the role grants.
+        #
+        # Built here rather than borrowed from the catalogue. This used to
+        # enrol the user as `run_registrar`, on the grounds that it held no
+        # file permissions -- which made the test quietly dependent on some
+        # builtin role staying narrow, and it broke when that role was
+        # converted to a custom one. An empty role cannot drift.
+        irrelevant = Role(name="holds_nothing", display_name="Holds Nothing",
+                          scope=RoleScope.GLOBAL, is_builtin=False)
+        session.add(irrelevant)
+        session.commit()
+        session.refresh(irrelevant)
         session.add(ProjectMember(project_id=project.id, user_id=user.id,
                                   role_id=irrelevant.id, source=GrantSource.MANUAL))
         session.commit()

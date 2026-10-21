@@ -126,7 +126,7 @@ class TestRoleDefinitions:
             # administrative
             "admin", "vendor_admin", "workflow_admin",
             # service
-            "service_account", "run_associator", "auditor",
+            "service_account", "auditor",
             # project
             "project_viewer", "project_contributor", "project_owner",
         }
@@ -412,35 +412,39 @@ class TestSeeding:
         ).all()
         assert len(perms) == 1
 
+    @pytest.mark.parametrize("name, display, permission", [
+        ("run_registrar", "Run Registrar", Permission.RUN_CREATE),
+        ("run_associator", "Run Associator", Permission.RUN_ASSOCIATE),
+    ])
     def test_a_converted_role_is_not_reclaimed_by_a_later_sync(
-        self, session: Session
+        self, session: Session, name, display, permission
     ):
         """
-        `run_registrar` stopped being builtin on 2026-10-21 (migration
-        c8e4a1f72b93) and became an ordinary administrator-owned row.
+        Both run roles stopped being builtin on 2026-10-21 (migration
+        c8e4a1f72b93) and became ordinary administrator-owned rows.
 
         The general case is covered by test_leaves_custom_roles_alone. This one
         is specific because the failure is specific and silent: sync forces
-        `is_builtin = True` on every role it defines, so re-adding this name to
-        ROLE_DEFINITIONS -- a one-line change that looks like tidying -- would
-        take the role back off the administrators at the next startup, and
-        update_role_permissions() and delete_role() would begin refusing again
-        with nothing in the diff to say why.
+        `is_builtin = True` on every role it defines, so re-adding either name
+        to ROLE_DEFINITIONS -- a one-line change that looks like tidying --
+        would take the role back off the administrators at the next startup,
+        and update_role_permissions() and delete_role() would begin refusing
+        again with nothing in the diff to say why.
 
         Asserts what a deploy must preserve: the row, the flag, the permission
         set it was given, and above all the grant. The grant is the part with
-        real consequences -- role deletion cascades, so a sync that decided this
-        row was stale would silently revoke a service account's access to
-        POST /runs.
+        real consequences -- role deletion cascades, so a sync that decided one
+        of these rows was stale would silently revoke a service account's
+        access to the route it exists to reach.
         """
         sync_rbac_catalog(session)
-        converted = Role(name="run_registrar", display_name="Run Registrar",
+        converted = Role(name=name, display_name=display,
                          scope=RoleScope.GLOBAL, is_builtin=False)
         session.add(converted)
         session.commit()
         session.add(RolePermission(role_id=converted.id,
-                                   permission=str(Permission.RUN_CREATE)))
-        holder = User(username="svc-sequencers", email="svc@example.com",
+                                   permission=str(permission)))
+        holder = User(username=f"svc-{name}", email=f"{name}@example.com",
                       is_active=True, is_verified=True)
         session.add(holder)
         session.commit()
@@ -451,9 +455,7 @@ class TestSeeding:
         sync_rbac_catalog(session)
         sync_rbac_catalog(session)  # a second deploy must be no different
 
-        role = session.exec(
-            select(Role).where(Role.name == "run_registrar")
-        ).first()
+        role = session.exec(select(Role).where(Role.name == name)).first()
         assert role is not None, "sync deleted a role it no longer defines"
         assert not role.is_builtin, (
             "sync reclaimed a converted role as builtin, which would make it "
@@ -461,7 +463,7 @@ class TestSeeding:
         )
         assert {rp.permission for rp in session.exec(
             select(RolePermission).where(RolePermission.role_id == role.id)
-        ).all()} == {str(Permission.RUN_CREATE)}
+        ).all()} == {str(permission)}
         assert len(session.exec(
             select(UserRole).where(UserRole.role_id == role.id)
         ).all()) == 1, "the service account's grant did not survive the sync"
@@ -685,14 +687,15 @@ class TestTheCollapsedRoster:
         sa = ROLE_DEFINITIONS["service_account"].permissions
         assert Permission.RUN_CREATE not in sa
         assert Permission.RUN_ASSOCIATE not in sa
-        assert ROLE_DEFINITIONS["run_associator"].permissions == {
-            Permission.RUN_ASSOCIATE}
 
-        # run_registrar is no longer here at all -- it became a custom role on
-        # 2026-10-21 (migration c8e4a1f72b93). The narrowing it came from still
-        # holds, which is what the service_account assertion above is for; what
-        # moved is who owns the role, not what it grants.
+        # Neither run role is defined here any more -- both became custom roles
+        # on 2026-10-21 (migration c8e4a1f72b93). The narrowing they came from
+        # still holds, and the two assertions above are what pin it: what moved
+        # is who owns the roles, not what they grant. Re-adding either name
+        # would also silently reclaim the row as builtin -- see
+        # TestSeeding::test_a_converted_role_is_not_reclaimed_by_a_later_sync.
         assert "run_registrar" not in ROLE_DEFINITIONS
+        assert "run_associator" not in ROLE_DEFINITIONS
 
         member = ROLE_DEFINITIONS["member"].permissions
         assert Permission.RUN_CREATE in member

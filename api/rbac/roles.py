@@ -206,33 +206,32 @@ _SERVICE_ACCOUNT = frozenset({
     Permission.PROJECT_UPDATE,
 })
 
-# `run_registrar` used to be defined here, carrying run:create alone. See #447:
-# over 2026-08-18..09-28 exactly two principals called POST /runs -- a service
+# `run_registrar` (run:create) and `run_associator` (run:associate) used to be
+# defined here. Both were converted to custom roles on 2026-10-21 -- ordinary
+# database rows that administrators own through /rbac/roles, which
+# sync_rbac_catalog() leaves alone. Nothing about what either grants changed;
+# what changed is who may change it. See migration c8e4a1f72b93.
+#
+# The line this draws, because it decides where the next role goes: a builtin
+# role is the right shape for a *persona* the product asserts. `member`,
+# `admin`, `service_account` each describe a kind of caller, and re-deriving
+# them from code on every deploy is what keeps this file the source of truth
+# about them.
+#
+# Neither of these was that. Each is a single permission held by a single
+# machine account -- an operational grant, not a persona -- and operational
+# grants should be adjustable by the people running the platform without a
+# deploy. Being builtin actively prevented that: update_role_permissions() and
+# delete_role() both refuse a builtin outright, so changing a one-account grant
+# meant a pull request.
+#
+# The measurements that created them are unaffected and still stand. #447: over
+# 2026-08-18..09-28 exactly two principals called POST /runs -- a service
 # account that still does it daily, and an administrator's personal key doing
-# the same job by hand, since revoked.
-#
-# Converted to a custom role on 2026-10-21. It is now an ordinary database row
-# that administrators own through /rbac/roles, not a code-defined one, and
-# sync_rbac_catalog() leaves it alone. Nothing about what it grants changed; what
-# changed is who may change it.
-#
-# Why this one and not the others: a builtin role is the right shape for a
-# *persona* the product asserts -- `member`, `admin`, `service_account` all
-# describe a kind of caller, and re-deriving them on deploy is what keeps the
-# code the source of truth. This was never that. It is one permission held by one
-# machine account, which makes it an operational grant, and operational grants
-# should be editable by the people running the platform without a deploy. Being
-# builtin actively got in the way: update_role_permissions() and delete_role()
-# both refuse a builtin outright, so adjusting it meant a PR.
-#
-# The reasoning in #447 is unaffected -- run:create still does not belong in
-# service_account, and the measurement that established that still stands.
-
-# Sample/run association, likewise one service's job. See #451: the metrics
-# lambda, refused on all 64 attempts, plus one administrator's personal key.
-_RUN_ASSOCIATOR = frozenset({
-    Permission.RUN_ASSOCIATE,
-})
+# the same job by hand, since revoked. #451: the metrics lambda, refused on all
+# 64 attempts, plus one administrator's personal key. run:create and
+# run:associate still do not belong in service_account, which is pinned by
+# TestTheCollapsedRoster::test_the_machine_roles_stay_separate_and_narrow.
 
 # Read-only across the platform, for compliance, QA and read-only agents. Kept
 # through the collapse rather than folded into `member`: it is narrower than the
@@ -323,17 +322,12 @@ ROLE_DEFINITIONS: dict[str, RoleDefinition] = {
         "Machine writeback for pipeline results and Batch job status. Not for humans.",
         frozenset(_SERVICE_ACCOUNT),
     ),
-    # No "run_registrar" here on purpose -- it is a custom role now, owned by
-    # administrators rather than by this file. See the note above _RUN_ASSOCIATOR
-    # and migration c8e4a1f72b93. Re-adding it here would take it back off them:
-    # sync_rbac_catalog() forces is_builtin=True on every role it defines, so the
-    # row would silently become uneditable again at the next startup.
-    "run_associator": RoleDefinition(
-        RoleScope.GLOBAL, "Run Associator",
-        "May associate and dissociate samples and runs. Grants nothing else -- "
-        "see the comment on _RUN_ASSOCIATOR for why this is not service_account.",
-        frozenset(_RUN_ASSOCIATOR),
-    ),
+    # No "run_registrar" or "run_associator" here on purpose -- both are custom
+    # roles now, owned by administrators rather than by this file. See the note
+    # above the service-role sets and migration c8e4a1f72b93. Re-adding either
+    # here would take it straight back off them: sync_rbac_catalog() forces
+    # is_builtin=True on every role it defines, so the row would silently become
+    # uneditable again at the next startup.
     "auditor": RoleDefinition(
         RoleScope.GLOBAL, "Auditor",
         "Read-only across the platform, for compliance, QA and read-only agents. "
