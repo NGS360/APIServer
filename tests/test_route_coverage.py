@@ -171,8 +171,14 @@ def test_guard_count_is_recorded():
 
     115 -> 118 with the user administration API: GET /rbac/users, GET
     /rbac/users/{username}/access and PATCH /users/{username}.
+
+    118 -> 119: PUT /projects/{project_id}/restriction, which moved the
+    `restricted` flag off the project update routes. Those two take
+    project:update, which is metadata authority; closing a project to everyone
+    outside its member list is not a metadata edit and takes
+    project:manage_members instead.
     """
-    assert len(GUARDED) == 118
+    assert len(GUARDED) == 119
 
 
 def test_the_authentication_backlog_only_shrinks():

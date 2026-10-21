@@ -152,7 +152,8 @@ def create_project(
     project = Project(
         project_id=generate_project_id(session=session),
         name=project_in.name,
-        created_by=current_user
+        created_by=current_user,
+        restricted=project_in.restricted,
     )
     session.add(project)
     session.flush()
@@ -362,21 +363,6 @@ def update_project(
     if update_request.name is not None:
         project.name = update_request.name
 
-    # Lock the project down, or open it back up.
-    #
-    # Added 2026-10-13. The field has been on ProjectUpdate since the flag was
-    # introduced in #425 and was never persisted here, so a request setting it
-    # returned 200 and changed nothing -- silently, because an ignored field is
-    # indistinguishable from an applied one in the response.
-    #
-    # That is why "0 of 11,156 projects are restricted" kept turning up as
-    # evidence while the downloads-open-by-default policy was argued: it was
-    # read as nobody wanting a restricted project, and it meant nobody could
-    # make one. Found by trying to set it in production in order to prove the
-    # membership gate.
-    if update_request.restricted is not None:
-        project.restricted = update_request.restricted
-
     # Handle attributes if provided
     if update_request.attributes is not None:
         check_duplicate_attribute_keys(
@@ -463,21 +449,6 @@ def patch_project(
     if update_request.name is not None:
         project.name = update_request.name
 
-    # Lock the project down, or open it back up.
-    #
-    # Added 2026-10-13. The field has been on ProjectUpdate since the flag was
-    # introduced in #425 and was never persisted here, so a request setting it
-    # returned 200 and changed nothing -- silently, because an ignored field is
-    # indistinguishable from an applied one in the response.
-    #
-    # That is why "0 of 11,156 projects are restricted" kept turning up as
-    # evidence while the downloads-open-by-default policy was argued: it was
-    # read as nobody wanting a restricted project, and it meant nobody could
-    # make one. Found by trying to set it in production in order to prove the
-    # membership gate.
-    if update_request.restricted is not None:
-        project.restricted = update_request.restricted
-
     # Merge/upsert attributes (does NOT remove unmentioned attributes)
     if (
         update_request.attributes is not None
@@ -548,6 +519,47 @@ def patch_project(
         # which is the hazard of building the model field by field rather than
         # from the row.
         restricted=project.restricted,
+    )
+
+
+def set_project_restriction(
+    *,
+    session: Session,
+    opensearch_client: OpenSearch,
+    project: Project,
+    restricted: bool,
+) -> ProjectPublic:
+    """
+    Lock the project to its members, or open it back up.
+
+    Separate from update_project and patch_project because it is a different
+    decision under a different permission, not a field of the project's
+    metadata -- see PUT /{project_id}/restriction.
+    """
+    project.restricted = restricted
+    project.last_modified = datetime.now(tz.utc)
+    session.add(project)
+    session.commit()
+    session.refresh(project)
+
+    if opensearch_client:
+        search_doc = SearchDocument(id=project.project_id, body=project)
+        add_object_to_index(opensearch_client, search_doc, index="projects")
+
+    data_bucket = get_setting_value(session, "DATA_BUCKET_URI")
+    results_bucket = get_setting_value(session, "RESULTS_BUCKET_URI")
+
+    return ProjectPublic(
+        project_id=project.project_id,
+        name=project.name,
+        created_at=project.created_at,
+        created_by=project.created_by,
+        last_modified=project.last_modified,
+        data_folder_uri=f"{data_bucket}/{project.project_id}/",
+        results_folder_uri=f"{results_bucket}/{project.project_id}/",
+        restricted=project.restricted,
+        attributes=project.attributes,
+        sequencing_runs=None,
     )
 
 

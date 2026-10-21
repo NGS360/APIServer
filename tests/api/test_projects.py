@@ -5,11 +5,12 @@ Test /projects endpoint
 
 from unittest.mock import patch, MagicMock
 from fastapi.testclient import TestClient
-from sqlmodel import Session
+from sqlmodel import Session, select
 import yaml
 
 from api.project.models import Project, ProjectAttribute
 from api.project.services import generate_project_id
+from api.rbac.permissions import Permission
 
 
 def _create_project(session: Session):
@@ -1522,17 +1523,17 @@ def test_ingest_vendor_data(
 # Project.restricted is settable through the API
 # ---------------------------------------------------------------------------
 #
-# Added 2026-10-13. The field has been on ProjectUpdate since the flag was
-# introduced in #425, and neither update_project nor patch_project persisted
-# it, so a request setting it returned 200 and changed nothing. An ignored
-# field is indistinguishable from an applied one in the response, which is why
-# it went unnoticed for five weeks.
+# It lives on PUT /{project_id}/restriction, not on the update routes. Closing
+# a project to everyone outside its member list is not a metadata edit and does
+# not take the same authority as one, so it is its own route under its own
+# permission rather than a field whose guard depends on the payload.
 #
-# It also made "0 of 11,156 projects are restricted" misleading. That figure
-# was quoted repeatedly as evidence that nobody wanted restricted projects
-# while the open-by-default download policy was argued; it actually meant
-# nobody could create one. Found by trying to set it in production in order to
-# prove the membership gate.
+# These tests exist because the flag was once a field on ProjectUpdate that
+# nothing persisted: a request setting it returned 200 and changed nothing, for
+# five weeks, because an ignored field is indistinguishable from an applied one
+# in the response. That is also why "0 of 11,156 projects are restricted" was
+# quoted as evidence nobody wanted a restricted project while the
+# open-by-default download policy was argued -- it meant nobody could make one.
 
 
 def _project(session: Session, name: str = "Restrictable") -> Project:
@@ -1544,15 +1545,21 @@ def _project(session: Session, name: str = "Restrictable") -> Project:
     return project
 
 
-def test_patch_can_restrict_a_project(client: TestClient, session: Session):
+def test_the_restriction_route_restricts_a_project(
+    client_with_permissions, session: Session
+):
+    # Not the default `client`: it holds the legacy set, which excludes
+    # project:manage_members, and that is what this route takes.
+    client = client_with_permissions([Permission.PROJECT_MANAGE_MEMBERS])
     project = _project(session)
     assert project.restricted is False
 
-    response = client.patch(
-        f"/api/v1/projects/{project.project_id}", json={"restricted": True}
+    response = client.put(
+        f"/api/v1/projects/{project.project_id}/restriction",
+        json={"restricted": True},
     )
 
-    assert response.status_code == 200
+    assert response.status_code == 200, response.text
     assert response.json()["restricted"] is True
     session.refresh(project)
     assert project.restricted is True, (
@@ -1561,30 +1568,31 @@ def test_patch_can_restrict_a_project(client: TestClient, session: Session):
     )
 
 
-def test_unrestricting_needs_membership_and_enrolment_is_the_way_in(
+def test_a_restricted_project_with_nobody_in_it_can_still_be_unlocked(
     superuser_client: TestClient, session: Session
 ):
     """
-    The recovery path, in full, because it is two steps and not obvious.
+    The recovery path, because a one-way door here would be unfixable.
 
-    Every project-plane route applies the membership gate, `PATCH` included --
-    so a restricted project cannot be unlocked by someone who is not a member.
-    That is a one-way door unless something is exempt, and if nothing is, a
-    project restricted with nobody in it is unreachable through the API
-    entirely, including to an administrator. This was found by restricting a
-    real project in production and discovering there was no way back.
+    Every project-plane route applies the membership gate, so a restricted
+    project refuses everyone who is not a member -- an administrator included,
+    since the superuser flag deliberately does not short-circuit it. If nothing
+    were exempt, a project restricted with nobody in it would be unreachable
+    through the API entirely. That is not hypothetical: it was found by
+    restricting a real project in production and discovering there was no way
+    back.
 
     What is exempt is `project:manage_members`, because membership *is* the
-    restriction's allowlist and managing the allowlist cannot require being on
-    it. So the way in is: enrol, then act. It leaves a `project_member` row
-    behind, which is the point -- an administrator reaching into a locked-down
-    project should leave a trace.
+    restriction's allowlist and managing an allowlist cannot require being on
+    it. This route carries that permission, so it is exempt too, and the way
+    back in is one step rather than enrol-then-act. That suits what this is
+    usually repairing: an ownerless project nobody should have to join
+    permanently in order to fix.
     """
     from api.rbac.seed import sync_rbac_catalog
 
     # The superuser fixture holds no grant, so it does not seed the builtin
-    # catalog the way the ordinary client fixture does -- and project_owner has
-    # to exist to be granted.
+    # catalog the way the ordinary client fixture does.
     sync_rbac_catalog(session)
 
     project = _project(session)
@@ -1592,69 +1600,131 @@ def test_unrestricting_needs_membership_and_enrolment_is_the_way_in(
     session.add(project)
     session.commit()
 
-    # Step 0: refused, even as a superuser, because membership is the gate and
-    # the superuser flag deliberately does not short-circuit it.
-    assert superuser_client.patch(
-        f"/api/v1/projects/{project.project_id}", json={"restricted": False}
+    # The gate is real: reading it is refused, superuser or not, because
+    # project:read earns no exemption.
+    assert superuser_client.get(
+        f"/api/v1/projects/{project.project_id}"
     ).status_code == 403
 
-    # Step 1: enrol. Permitted on a restricted project by design -- and note
-    # the actor needs project:manage_members to do it, which is `critical` and
-    # so held by admins rather than by an ordinary authenticated caller.
-    assert superuser_client.post(
-        f"/api/v1/projects/{project.project_id}/members",
-        json={"username": "admin", "role": "project_owner"},
-    ).status_code in (200, 201)
-
-    # Step 2: now a member, so the project is reachable again.
-    response = superuser_client.patch(
-        f"/api/v1/projects/{project.project_id}", json={"restricted": False}
+    # The way back, in one call and without joining the project.
+    response = superuser_client.put(
+        f"/api/v1/projects/{project.project_id}/restriction",
+        json={"restricted": False},
     )
     assert response.status_code == 200, response.text
     session.refresh(project)
     assert project.restricted is False
 
+    # And now it reads, which is what "recovered" means.
+    assert superuser_client.get(
+        f"/api/v1/projects/{project.project_id}"
+    ).status_code == 200
 
-def test_put_can_restrict_a_project(client: TestClient, session: Session):
+
+def test_the_update_routes_refuse_the_old_shape(client: TestClient, session: Session):
+    """
+    `restricted` was a field on ProjectUpdate. A caller still sending it there
+    has to hear about it: silently accepting the request and leaving the project
+    open is precisely how this flag spent five weeks doing nothing.
+    """
+    project = _project(session)
+
+    for method in (client.put, client.patch):
+        response = method(
+            f"/api/v1/projects/{project.project_id}",
+            json={"name": project.name, "restricted": True},
+        )
+        assert response.status_code == 422, response.text
+
+    session.refresh(project)
+    assert project.restricted is False
+
+
+# ---------------------------------------------------------------------------
+# Who may change `restricted`, and creating a project already restricted
+# ---------------------------------------------------------------------------
+
+
+def test_restricting_takes_more_than_project_update(
+    client_with_permissions, session: Session
+):
+    """
+    project:update is `low` risk and held by project_contributor, because what
+    it guards is metadata. Restriction is not metadata: it puts the project
+    behind the membership gate, and the only way back out is to enrol somebody,
+    which takes project:manage_members. A contributor who could restrict would
+    be able to close a door they cannot reopen.
+    """
+    client = client_with_permissions([Permission.PROJECT_UPDATE])
     project = _project(session)
 
     response = client.put(
-        f"/api/v1/projects/{project.project_id}",
-        json={"name": project.name, "restricted": True},
+        f"/api/v1/projects/{project.project_id}/restriction",
+        json={"restricted": True},
     )
 
-    assert response.status_code == 200
+    assert response.status_code == 403, response.text
+    assert "project:manage_members" in response.json()["detail"]
     session.refresh(project)
-    assert project.restricted is True
+    assert project.restricted is False
 
 
-def test_omitting_restricted_leaves_it_alone(client: TestClient, session: Session):
+def test_an_ordinary_edit_still_only_needs_project_update(
+    client_with_permissions, session: Session
+):
     """
-    `None` means "not supplied", not "set to false" -- otherwise any client
-    patching an attribute would silently unlock the project.
+    The other half of the split: moving restriction out must not drag the
+    permission for renaming a project up with it.
     """
+    client = client_with_permissions([Permission.PROJECT_UPDATE])
     project = _project(session)
-    project.restricted = True
-    session.add(project)
-    session.commit()
-    # Enrolled directly, so the membership gate is satisfied and this test is
-    # about the None semantics rather than about the gate.
-    from sqlmodel import select as _select
-
-    from api.auth.models import User
-    from api.rbac.models import GrantSource, ProjectMember, Role
-
-    user = session.exec(_select(User).where(User.username == "testuser")).one()
-    role = session.exec(_select(Role).where(Role.name == "project_owner")).one()
-    session.add(ProjectMember(project_id=project.id, user_id=user.id,
-                              role_id=role.id, source=GrantSource.MANUAL))
-    session.commit()
 
     response = client.patch(
-        f"/api/v1/projects/{project.project_id}",
-        json={"attributes": [{"key": "pi", "value": "Dr. Smith"}]},
+        f"/api/v1/projects/{project.project_id}", json={"name": "Renamed"}
     )
 
     assert response.status_code == 200, response.text
     session.refresh(project)
+    assert project.name == "Renamed"
+
+
+def test_a_project_can_be_created_already_restricted(
+    client: TestClient, session: Session
+):
+    """
+    The point of the flag on ProjectCreate: without it a project is open
+    between the POST that makes it and the PATCH that locks it, which is the
+    wrong window to leave for a project whose first act is an upload.
+
+    No extra permission is asked for here, unlike on update, and the second
+    half of this test is why: the creator is enrolled as project_owner before
+    the commit, so they hold project:manage_members on the result and could set
+    it on the very next request anyway. It also means the project is never born
+    locked out -- there is always somebody inside the allowlist.
+    """
+    response = client.post(
+        "/api/v1/projects", json={"name": "Born locked", "restricted": True}
+    )
+
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert body["restricted"] is True
+
+    project = session.exec(
+        select(Project).where(Project.project_id == body["project_id"])
+    ).one()
     assert project.restricted is True
+
+    # The membership gate refuses non-members on every project-plane route, so
+    # a 200 here is the allowlist being non-empty rather than the gate being off.
+    assert client.get(f"/api/v1/projects/{body['project_id']}").status_code == 200
+
+
+def test_a_project_is_created_unrestricted_by_default(
+    client: TestClient, session: Session
+):
+    """The resting posture stays permissive; restriction is opt-in."""
+    response = client.post("/api/v1/projects", json={"name": "Ordinary"})
+
+    assert response.status_code == 201, response.text
+    assert response.json()["restricted"] is False

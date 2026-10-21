@@ -20,6 +20,7 @@ from api.rbac.deps import (
 from api.rbac.permissions import Permission
 from api.project.models import (
     ProjectCreate,
+    ProjectRestrictionUpdate,
     ProjectUpdate,
     ProjectPublic,
     ProjectsPublic,
@@ -38,6 +39,7 @@ from api.samples import services as sample_services
 from api.actions.models import ActionSubmitRequest
 
 router = APIRouter(prefix="/projects")
+
 
 ###############################################################################
 # Projects Endpoints /api/v1/projects/
@@ -59,6 +61,11 @@ def create_project(
 ) -> ProjectPublic:
     """
     Create a new project with optional attributes.
+
+    Pass `restricted` to create it already closed to non-members, rather than
+    creating it open and restricting it on a second request. The creator is
+    enrolled as its owner either way, so a restricted project still has
+    somebody inside its allowlist.
     """
     return services.create_project(
         session=session,
@@ -597,6 +604,39 @@ def ingest_vendor_data(
         s3_client=s3_client
     )
     return BatchJobPublic.model_validate(batch_job)
+
+
+###############################################################################
+# Project restriction /api/v1/projects/{project_id}/restriction
+###############################################################################
+
+@router.put(
+    "/{project_id}/restriction",
+    response_model=ProjectPublic,
+    status_code=status.HTTP_200_OK,
+    tags=["Project Endpoints"],
+    dependencies=[Depends(require_project_permission(
+        Permission.PROJECT_MANAGE_MEMBERS))],
+)
+def set_project_restriction(
+    session: SessionDep,
+    opensearch_client: OpenSearchDep,
+    project: ProjectDep,
+    body: ProjectRestrictionUpdate,
+) -> ProjectPublic:
+    """
+    Lock this project to its members, or open it back up.
+
+    A restricted project refuses every other project route to anyone who is not
+    a member, so this decides who may reach it at all -- the same question the
+    member list answers, which is why it takes the same permission.
+    """
+    return services.set_project_restriction(
+        session=session,
+        opensearch_client=opensearch_client,
+        project=project,
+        restricted=body.restricted,
+    )
 
 
 ###############################################################################

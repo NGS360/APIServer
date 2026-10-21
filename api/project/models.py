@@ -70,6 +70,7 @@ class Project(SQLModel, table=True):
 class ProjectCreate(SQLModel):
     name: str
     attributes: List[Attribute] | None = None
+    restricted: bool = False
     model_config = ConfigDict(extra="forbid")
 
 
@@ -79,10 +80,12 @@ class ProjectUpdate(SQLModel):
     """
     name: str | None = None
     attributes: List[Attribute] | None = None
-    # Guarded by `project:update` like the rest of this model. That is a
-    # project-scoped permission, so restricting a project requires authority
-    # over that project -- project_owner, or a global holder.
-    restricted: bool | None = None
+    model_config = ConfigDict(extra="forbid")
+
+
+class ProjectRestrictionUpdate(SQLModel):
+    restricted: bool
+    model_config = ConfigDict(extra="forbid")
 
 
 class ProjectPublic(SQLModel):
