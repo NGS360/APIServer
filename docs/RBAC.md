@@ -1041,6 +1041,24 @@ New router `api/rbac/routes.py` at `/api/v1/rbac`:
 | GET | `/rbac/users/{username}/roles` | `role:read` |
 | POST | `/rbac/users/{username}/roles` | `role:manage` |
 | DELETE | `/rbac/users/{username}/roles/{role_name}` | `role:manage` |
+| GET | `/rbac/users` | `role:read` — the user roster: status flags and global roles, paginated, filterable on name, role and status |
+| GET | `/rbac/users/{username}/access` | `role:read` — both grant planes for one user, including project memberships |
+
+`GET /rbac/users` exists rather than reusing `GET /users/search` because those are two different endpoints wearing the same name. Search backs the user *picker*: it may answer from LDAP, it requires a query of at least two characters, and it filters to `is_active`. All three are right for choosing somebody to grant a role to, and all three are wrong for administering accounts — the deactivated account is the one the administrator came to find.
+
+Both take `role:read` rather than `user:read`: the latter is the directory-search permission every `member` holds, and it does not describe reading the whole roster's status flags and grants.
+
+`GET /rbac/me` carries the global plane only. Project-scoped permissions are not inlined there — with a five-figure project count the payload would be unbounded — so `GET /projects/{project_id}` carries a per-caller `permissions` list for the project in hand instead.
+
+`None` and `[]` are different facts, and the distinction is worth keeping straight:
+
+- **`None` means the field was not populated.** Only the detail route resolves it. The list, create, update and patch routes all return `ProjectPublic` without it, the same way they leave `sequencing_runs` unset — resolving it costs a membership lookup per project, which on a page of projects is an N+1 for something no list view needs, since there are no per-row controls to gate. One consequence for a UI: after a successful `PUT`/`PATCH` the field comes back `None`, so re-read the detail route rather than treating the response as a refreshed permission set.
+- **`[]` means a real caller was evaluated and holds nothing here.**
+
+`None` once also covered an anonymous request, and the field was built on `OptionalAuthzDep` for that reason. It no longer can: every feature router requires a caller, and the detail route additionally requires `project:read`, so a request that reaches the handler always has somebody to report on. The optional dependency is kept rather than folded into `load_authz`, because collapsing it is a change to the route and not to the helper — its docstring records the same thing.
+
+The list is restricted to `PROJECT_SCOPABLE` and is resolved through `has_in_project`, which means two things. A global grant is included, so an `admin` is not reported as holding nothing on a project and having every control hidden from the one account that can use all of them. And a permission added to the catalogue is reported without this code changing — `project:restrict` ([#475](https://github.com/NGS360/APIServer/pull/475)) is carried by `project_owner` and `admin` and withheld from `member`, which is exactly what a UI needs to decide whether to offer a restrict control.
+
 
 Project membership lives on the project router so that owners can self-serve:
 

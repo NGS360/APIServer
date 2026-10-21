@@ -8,6 +8,7 @@ from sqlmodel import SQLModel, Field, Relationship, UniqueConstraint
 from typing import List
 from pydantic import ConfigDict, field_validator
 
+from api.rbac.permissions import Permission
 from api.runs.models import SequencingRunPublic
 from api.samples.models import Sample
 from api.qcmetrics.models import QCRecord
@@ -100,6 +101,27 @@ class ProjectPublic(SQLModel):
     restricted: bool = False
     attributes: List[Attribute] | None
     sequencing_runs: List[SequencingRunPublic] | None = None
+
+    # What the *calling* user may do in this project, so a UI can decide which
+    # controls to render rather than rendering them all and absorbing 403s.
+    #
+    # Per-caller, unlike every other field here: two users get different values
+    # for the same project_id. This response must therefore never go into a
+    # shared or CDN cache.
+    #
+    # Populated on the detail route only, and left None by the list routes, the
+    # same way sequencing_runs is. Resolving it costs a membership lookup per
+    # project, which on a page of projects is an N+1 for something no list view
+    # needs -- there are no per-row actions to gate.
+    #
+    # None is not the same as []. None means the field was not populated -- the
+    # list, create, update and patch routes all return this model without
+    # resolving it; [] means this caller genuinely holds nothing here.
+    #
+    # None once also covered an anonymous caller. It no longer can: the detail
+    # route requires a caller and then project:read, so a request that reaches
+    # the handler always has somebody to report on.
+    permissions: List[Permission] | None = None
 
     @field_validator("created_at", "last_modified", mode="before")
     @classmethod

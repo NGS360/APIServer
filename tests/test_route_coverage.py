@@ -168,8 +168,11 @@ def test_guard_count_is_recorded():
     the guard. Until now a locked-down project still handed its metadata and
     sample list to any authenticated caller, which made `restricted` a
     half-measure. These two are the routes that make it whole.
+
+    115 -> 118 with the user administration API: GET /rbac/users, GET
+    /rbac/users/{username}/access and PATCH /users/{username}.
     """
-    assert len(GUARDED) == 115
+    assert len(GUARDED) == 118
 
 
 def test_the_authentication_backlog_only_shrinks():

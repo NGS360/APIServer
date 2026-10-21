@@ -15,7 +15,7 @@ from typing import Annotated, Literal
 
 from fastapi import Depends, HTTPException, Request, status
 
-from api.auth.deps import get_current_active_user
+from api.auth.deps import OptionalUser, get_current_active_user
 from api.auth.models import User
 from api.project.deps import ProjectDep
 from api.project.models import Project
@@ -51,6 +51,45 @@ def load_authz(
 
 
 AuthzDep = Annotated[AuthzContext, Depends(load_authz)]
+
+
+def load_authz_optional(
+    request: Request,
+    session: SessionDep,
+    user: OptionalUser,
+) -> AuthzContext | None:
+    """
+    The caller's access if there is a caller, None if the request is anonymous.
+
+    Built for routes that report what the caller may do without *requiring* a
+    caller, back when adding load_authz to one would have turned its anonymous
+    callers into 401s -- a decision about closing authentication, not one a
+    reporting field should make on its own.
+
+    That constraint is gone: every feature router now requires a caller, and the
+    one route using this helper also requires project:read, so the None branch
+    below is no longer reachable from it. The helper is kept rather than folded
+    into load_authz because that is a change to the route, not to this function.
+
+    The distinction this preserves, for any route that does reach the None
+    branch: None is "not evaluated, because nobody was asking"; an empty list is
+    "evaluated, and this caller holds nothing". Collapsing them would report an
+    anonymous request as a caller with no access, which is a different and more
+    specific claim.
+    """
+    if user is None:
+        return None
+
+    cached: AuthzContext | None = getattr(request.state, "authz", None)
+    if cached is not None and cached.user_id == user.id:
+        return cached
+
+    context = AuthzContext.for_user(session, user)
+    request.state.authz = context
+    return context
+
+
+OptionalAuthzDep = Annotated[AuthzContext | None, Depends(load_authz_optional)]
 
 
 def _denied(permissions: tuple[Permission, ...], scope: str | None = None) -> HTTPException:

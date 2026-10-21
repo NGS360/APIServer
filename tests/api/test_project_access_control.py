@@ -37,7 +37,7 @@ halves differ:
   `GET /files/download-url` was vacuous. See
   tests/api/test_file_download_scope.py.
 
-RBAC_MODE is `enforce` in tests, so refusals here are 403s.
+A failed permission check is a 403, here and in production.
 """
 import pytest
 from sqlmodel import select

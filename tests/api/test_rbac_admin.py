@@ -309,3 +309,103 @@ class TestGrantsSurviveSeeding:
         assert len(seeded.exec(select(UserRole)).all()) == 1
         assert len(seeded.exec(select(ProjectMember)).all()) == 1
         assert seeded.exec(select(Role).where(Role.name == "member")).first()
+
+
+class TestProjectResponseCarriesCallerPermissions:
+    """
+    GET /projects/{project_id} reports what the caller may do in that project.
+
+    This is the only place that answer exists: /rbac/me carries the global plane
+    only, so without this a UI has no way to gate a project control except by
+    making the request and handling the refusal.
+    """
+
+    def test_a_superuser_holds_every_scopable_permission(
+        self, superuser_client, test_project
+    ):
+        from api.rbac.permissions import PROJECT_SCOPABLE
+
+        body = superuser_client.get(
+            f"/api/v1/projects/{test_project.project_id}"
+        ).json()
+        assert set(body["permissions"]) == {str(p) for p in PROJECT_SCOPABLE}
+
+    def test_a_project_owner_holds_manage_members(
+        self, project_owner_client, test_project
+    ):
+        body = project_owner_client.get(
+            f"/api/v1/projects/{test_project.project_id}"
+        ).json()
+        assert "project:manage_members" in body["permissions"]
+
+    def test_a_project_grant_does_not_reach_another_project(
+        self, project_owner_client, other_project
+    ):
+        """
+        The grant is per project, so it does not generalise to the next one.
+
+        This client holds nothing globally, so once GET /projects/{project_id}
+        began requiring project:read the boundary moved a layer out: owning one
+        project no longer gets you the other's response to report permissions
+        from. Asserting the refusal is the same claim the empty report used to
+        make, at the point it is now enforced.
+        """
+        response = project_owner_client.get(
+            f"/api/v1/projects/{other_project.project_id}"
+        )
+        assert response.status_code == 403
+
+    def test_a_global_grant_is_included(self, client, test_project):
+        """
+        has_in_project is global OR project, so the report must be too.
+
+        Reporting only the membership-derived grants would show a caller holding
+        a global role as having nothing in the project, and a UI gating on this
+        would hide every control from them.
+        """
+        body = client.get(f"/api/v1/projects/{test_project.project_id}").json()
+        assert "sample:create" in body["permissions"]
+        assert "project:manage_members" not in body["permissions"]
+
+    def test_only_scopable_permissions_are_reported(
+        self, superuser_client, test_project
+    ):
+        """
+        A project role can never carry the rest, so reporting them per project
+        would invite reading the absence of `setting:update` as something the
+        project had to say about it.
+        """
+        body = superuser_client.get(
+            f"/api/v1/projects/{test_project.project_id}"
+        ).json()
+        assert "setting:update" not in body["permissions"]
+        assert "role:manage" not in body["permissions"]
+
+    def test_an_anonymous_caller_is_refused_outright(
+        self, unauthenticated_client, test_project
+    ):
+        """
+        Replaces a test that asserted an anonymous caller got `permissions:
+        null` rather than `[]` -- None for "nobody was asking", [] for
+        "evaluated, and holds nothing".
+
+        That distinction was reachable while the route was anonymous. It is not
+        any more: every feature router requires a caller, so an anonymous
+        request is 401 at the authentication layer before the project:read
+        guard is even reached, and never gets a body to carry either answer.
+        The field stays optional regardless, because the create, update and
+        patch routes return ProjectPublic without ever populating it.
+        """
+        response = unauthenticated_client.get(
+            f"/api/v1/projects/{test_project.project_id}"
+        )
+        assert response.status_code == 401
+
+    def test_the_list_route_does_not_populate_it(self, superuser_client, test_project):
+        """
+        Left None on the list, like sequencing_runs: resolving it per row is an
+        N+1 for something no list view needs.
+        """
+        rows = superuser_client.get("/api/v1/projects").json()["data"]
+        assert rows
+        assert all(row["permissions"] is None for row in rows)
