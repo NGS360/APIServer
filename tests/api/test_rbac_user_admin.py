@@ -12,7 +12,9 @@ from sqlmodel import Session
 
 from api.auth.models import User
 from api.rbac import services as rbac_services
-from api.rbac.models import ProjectMember, Role, UserRole
+from api.rbac.models import ProjectMember, Role, RolePermission, UserRole
+from api.rbac.permissions import Permission
+from api.rbac.roles import RoleScope
 from api.rbac.seed import sync_rbac_catalog
 
 
@@ -38,6 +40,35 @@ def _user(
 def _grant(session: Session, user: User, role_name: str) -> Role:
     role = rbac_services.get_role_or_404(session, role_name)
     session.add(UserRole(user_id=user.id, role_id=role.id))
+    session.commit()
+    return role
+
+
+def _custom_role(
+    session: Session, name: str, permission: Permission
+) -> Role:
+    """
+    An administrator-created global role, built here rather than borrowed from
+    the builtin catalogue.
+
+    These tests need *a* role carrying *a* permission; which one is immaterial
+    to what they assert. Borrowing a builtin for that looks harmless and is not:
+    it couples the test to whatever the catalogue happens to contain, and the
+    catalogue is not stable. `run_registrar` was used here until it and
+    `run_associator` both stopped being builtins (#476), at which point
+    get_role_or_404 would have begun raising and these tests would have failed
+    for a reason that has nothing to do with the roster endpoint they cover.
+
+    Building the role inline also makes the coverage slightly better than it
+    was: the roster and access endpoints are now shown reporting an
+    administrator-created role, not only the ones seeded from code.
+    """
+    role = Role(name=name, display_name=name.replace("_", " ").title(),
+                scope=RoleScope.GLOBAL, is_builtin=False)
+    session.add(role)
+    session.commit()
+    session.refresh(role)
+    session.add(RolePermission(role_id=role.id, permission=str(permission)))
     session.commit()
     return role
 
@@ -70,7 +101,8 @@ class TestUserRoster:
         self, superuser_client, seeded
     ):
         alice = _user(seeded, "alice", verified=False)
-        _grant(seeded, alice, "run_registrar")
+        _custom_role(seeded, "custom_registrar", Permission.RUN_CREATE)
+        _grant(seeded, alice, "custom_registrar")
         _grant(seeded, alice, "auditor")
 
         row = next(
@@ -80,7 +112,9 @@ class TestUserRoster:
         assert row["is_active"] is True
         assert row["is_verified"] is False
         assert row["is_superuser"] is False
-        assert row["global_roles"] == ["auditor", "run_registrar"]
+        # Sorted by name server-side, and a custom role sits in the same
+        # list as a builtin one.
+        assert row["global_roles"] == ["auditor", "custom_registrar"]
 
     def test_filters_on_username_email_or_full_name(
         self, superuser_client, seeded
@@ -160,14 +194,15 @@ class TestUserAccess:
         self, superuser_client, seeded, test_project
     ):
         alice = _user(seeded, "alice")
-        _grant(seeded, alice, "run_registrar")
+        _custom_role(seeded, "custom_registrar", Permission.RUN_CREATE)
+        _grant(seeded, alice, "custom_registrar")
         owner = rbac_services.get_role_or_404(seeded, "project_owner")
         seeded.add(ProjectMember(project_id=test_project.id, user_id=alice.id,
                                  role_id=owner.id))
         seeded.commit()
 
         body = superuser_client.get("/api/v1/rbac/users/alice/access").json()
-        assert body["global_roles"] == ["run_registrar"]
+        assert body["global_roles"] == ["custom_registrar"]
         assert "run:create" in body["global_permissions"]
         assert body["project_memberships"] == [{
             "project_id": test_project.project_id,
