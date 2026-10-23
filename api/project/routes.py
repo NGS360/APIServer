@@ -124,6 +124,9 @@ def create_project(
 ) -> ProjectPublic:
     """
     Create a new project with optional attributes.
+
+    Set `restricted` to lock the project to its members from the moment it
+    exists, rather than creating it open and closing it in a second request.
     """
     return services.create_project(
         session=session,

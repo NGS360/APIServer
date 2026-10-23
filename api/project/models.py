@@ -70,6 +70,7 @@ class Project(SQLModel, table=True):
 class ProjectCreate(SQLModel):
     name: str
     attributes: List[Attribute] | None = None
+    restricted: bool = False
     model_config = ConfigDict(extra="forbid")
 
 

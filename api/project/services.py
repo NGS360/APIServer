@@ -152,7 +152,8 @@ def create_project(
     project = Project(
         project_id=generate_project_id(session=session),
         name=project_in.name,
-        created_by=current_user
+        created_by=current_user,
+        restricted=project_in.restricted
     )
     session.add(project)
     session.flush()
