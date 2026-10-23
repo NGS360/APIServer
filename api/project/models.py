@@ -8,6 +8,7 @@ from sqlmodel import SQLModel, Field, Relationship, UniqueConstraint
 from typing import List
 from pydantic import ConfigDict, field_validator
 
+from api.rbac.permissions import Permission
 from api.runs.models import SequencingRunPublic
 from api.samples.models import Sample
 from api.qcmetrics.models import QCRecord
@@ -47,7 +48,12 @@ class Project(SQLModel, table=True):
     # deliberate trade recorded in docs/RBAC.md: the previous default-deny model
     # made every project safe and made one legitimate 33M-request genomics
     # workload require 66 project grants.
-    download_restricted: bool = Field(default=False)
+    # Renamed from download_restricted on 2026-10-08. The flag was introduced for
+    # downloads alone; it now marks a project locked down for *every* action, so
+    # the narrower name was actively misleading. Safe to rename rather than add a
+    # second flag because it is set on 0 of 11,156 projects -- there is no data
+    # to migrate and no caller relying on the old behaviour.
+    restricted: bool = Field(default=False)
 
     last_modified: datetime = Field(
         default_factory=lambda: datetime.now(timezone.utc),
@@ -73,10 +79,12 @@ class ProjectUpdate(SQLModel):
     """
     name: str | None = None
     attributes: List[Attribute] | None = None
-    # Guarded by `project:update` like the rest of this model. That is a
-    # project-scoped permission, so restricting a project requires authority
-    # over that project -- project_owner, or a global holder.
-    download_restricted: bool | None = None
+    # The one field on this model that is not covered by `project:update`.
+    # Changing it requires `project:restrict`, which `member` does not hold --
+    # see require_project_restrict in api/project/routes.py for why, and note
+    # the check fires only when the value actually changes, so a client echoing
+    # the current value back is unaffected.
+    restricted: bool | None = None
 
 
 class ProjectPublic(SQLModel):
@@ -90,9 +98,30 @@ class ProjectPublic(SQLModel):
     # Surfaced deliberately: with an opt-in control, the dangerous state is a
     # project nobody remembered to restrict, and that is only discoverable if
     # the flag is visible rather than implied by its absence.
-    download_restricted: bool = False
+    restricted: bool = False
     attributes: List[Attribute] | None
     sequencing_runs: List[SequencingRunPublic] | None = None
+
+    # What the *calling* user may do in this project, so a UI can decide which
+    # controls to render rather than rendering them all and absorbing 403s.
+    #
+    # Per-caller, unlike every other field here: two users get different values
+    # for the same project_id. This response must therefore never go into a
+    # shared or CDN cache.
+    #
+    # Populated on the detail route only, and left None by the list routes, the
+    # same way sequencing_runs is. Resolving it costs a membership lookup per
+    # project, which on a page of projects is an N+1 for something no list view
+    # needs -- there are no per-row actions to gate.
+    #
+    # None is not the same as []. None means the field was not populated -- the
+    # list, create, update and patch routes all return this model without
+    # resolving it; [] means this caller genuinely holds nothing here.
+    #
+    # None once also covered an anonymous caller. It no longer can: the detail
+    # route requires a caller and then project:read, so a request that reaches
+    # the handler always has somebody to report on.
+    permissions: List[Permission] | None = None
 
     @field_validator("created_at", "last_modified", mode="before")
     @classmethod

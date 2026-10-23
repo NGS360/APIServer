@@ -27,7 +27,7 @@ from dataclasses import dataclass, field
 from sqlmodel import Session, select
 
 from api.rbac.models import ProjectMember, Role, RolePermission, UserRole
-from api.rbac.permissions import Permission
+from api.rbac.permissions import PROJECT_SCOPABLE, Permission
 
 
 def global_permissions(session: Session, user_id: uuid.UUID) -> frozenset[str]:
@@ -66,6 +66,24 @@ def global_role_names(session: Session, user_id: uuid.UUID) -> list[str]:
     return list(rows)
 
 
+def session_has_membership(
+    session: Session, user_id: uuid.UUID, project_id: uuid.UUID
+) -> bool:
+    """
+    Is there a `project_member` row for this user and project?
+
+    Deliberately ignores the row's `role_id`. Membership answers "may this
+    caller touch a restricted project at all", which is a different question
+    from "what may they do once in" -- that is still the permission check.
+    """
+    return session.exec(
+        select(ProjectMember.id).where(
+            ProjectMember.user_id == user_id,
+            ProjectMember.project_id == project_id,
+        ).limit(1)
+    ).first() is not None
+
+
 @dataclass
 class AuthzContext:
     """
@@ -87,6 +105,7 @@ class AuthzContext:
     global_permissions: frozenset[str]
     session: Session
     _project_cache: dict[uuid.UUID, frozenset[str]] = field(default_factory=dict)
+    _membership_cache: dict[uuid.UUID, bool] = field(default_factory=dict)
 
     @classmethod
     def for_user(cls, session: Session, user) -> "AuthzContext":
@@ -116,6 +135,35 @@ class AuthzContext:
         if self.has(permission):
             return True
         return str(permission) in self.permissions_in_project(project_id)
+
+    def is_member_of(self, project_id: uuid.UUID) -> bool:
+        """
+        Does a `project_member` row exist for this caller and this project?
+
+        Membership, deliberately -- not a permission. This is the gate for
+        projects marked `restricted`, and it has to be something a *global*
+        grant cannot satisfy. `has_in_project` short-circuits on a global grant
+        (see above), so any restriction expressed as "needs permission X here"
+        is void for anyone holding X globally. That is not hypothetical: it is
+        why `file:download` was kept out of the default role, and the cost that
+        was accepted when `project:submit_action` went in.
+
+        A membership row cannot be conjured by a role, which is what makes it
+        usable as a restriction.
+
+        Superuser is *not* short-circuited here, unlike every other check in
+        this class. `restricted` means restricted, and an administrator who
+        needs access enrols themselves -- which leaves a `project_member` row
+        behind as the audit trail. Silent administrative access to a locked-down
+        project is exactly what the flag exists to prevent. The superuser flag
+        still bypasses the *permission* half of the check, so a superuser who is
+        a member needs nothing else.
+        """
+        cached = self._membership_cache.get(project_id)
+        if cached is None:
+            cached = session_has_membership(self.session, self.user_id, project_id)
+            self._membership_cache[project_id] = cached
+        return cached
 
     def permissions_in_project(self, project_id: uuid.UUID) -> frozenset[str]:
         cached = self._project_cache.get(project_id)
@@ -160,3 +208,26 @@ class AuthzContext:
         if self.is_superuser:
             return sorted(str(p) for p in Permission)
         return sorted(self.global_permissions)
+
+    def effective_project_permissions(self, project_id: uuid.UUID) -> list[str]:
+        """
+        What this caller may do *in one project*, for the project response.
+
+        The counterpart to effective_permissions, and it exists because the
+        global list cannot answer the question: /rbac/me carries the global
+        plane only, deliberately -- with a five-figure project count, inlining
+        every project's grants would make that payload unbounded.
+
+        Restricted to PROJECT_SCOPABLE because the rest are meaningless here: a
+        project role can never carry them, so reporting them per project would
+        invite a caller to read the absence of `setting:update` as something the
+        project had to say about it.
+
+        Goes through has_in_project rather than the membership rows, so a global
+        grant is included. Reporting only the project-role grants would show an
+        `admin` as holding nothing on the project, and hide every control from
+        the account that can use all of them.
+        """
+        return sorted(
+            str(p) for p in PROJECT_SCOPABLE if self.has_in_project(p, project_id)
+        )

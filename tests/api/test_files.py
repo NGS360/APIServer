@@ -44,7 +44,16 @@ class TestFileServices:
 
 
 class TestFileBrowserAPI:
-    """Test file browser API endpoints"""
+    """
+    Test file browser API endpoints.
+
+    URIs name the configured upload store rather than arbitrary buckets. Since
+    2026-10-08 GET /files/list is confined to the same three locations the
+    platform will sign for -- a project, a registered run folder, or its own
+    upload store -- because enumerating a bucket and signing a key in it are
+    the same class of problem. Verified against production first: all 342
+    distinct URIs this route received over 28 days resolve to a project.
+    """
 
     def test_list_s3(self, client: TestClient, mock_s3_client: MockS3Client):
         """Test S3 browsing with proper mocking"""
@@ -68,12 +77,12 @@ class TestFileBrowserAPI:
         ]
         folders = ["a_folder/folder_0/", "a_folder/folder_1/"]
 
-        mock_s3_client.setup_bucket("test-bucket", "a_folder/", files, folders)
+        mock_s3_client.setup_bucket("my-storage-bucket", "a_folder/", files, folders)
 
         # Make API call with storage_root parameter
         response = client.get(
-            "/api/v1/files/list?uri=s3://test-bucket/a_folder/&"
-            "storage_root=s3://test-bucket/a_folder/"
+            "/api/v1/files/list?uri=s3://my-storage-bucket/a_folder/&"
+            "storage_root=s3://my-storage-bucket/a_folder/"
         )
 
         # Verify response
@@ -111,10 +120,10 @@ class TestFileBrowserAPI:
         self, client: TestClient, mock_s3_client: MockS3Client
     ):
         """Test listing empty S3 bucket"""
-        mock_s3_client.setup_bucket("test-bucket", "", [], [])
+        mock_s3_client.setup_bucket("my-storage-bucket", "", [], [])
 
         response = client.get(
-            "/api/v1/files/list?uri=s3://test-bucket/"
+            "/api/v1/files/list?uri=s3://my-storage-bucket/data/"
         )
 
         assert response.status_code == 200
@@ -136,10 +145,10 @@ class TestFileBrowserAPI:
                 "Size": 200,
             },
         ]
-        mock_s3_client.setup_bucket("test-bucket", "", files, [])
+        mock_s3_client.setup_bucket("my-storage-bucket", "data/", files, [])
 
         response = client.get(
-            "/api/v1/files/list?uri=s3://test-bucket/"
+            "/api/v1/files/list?uri=s3://my-storage-bucket/data/"
         )
 
         assert response.status_code == 200
@@ -152,10 +161,10 @@ class TestFileBrowserAPI:
     ):
         """Test S3 bucket with only folders, no files"""
         folders = ["folder1/", "folder2/"]
-        mock_s3_client.setup_bucket("test-bucket", "", [], folders)
+        mock_s3_client.setup_bucket("my-storage-bucket", "data/", [], folders)
 
         response = client.get(
-            "/api/v1/files/list?uri=s3://test-bucket/"
+            "/api/v1/files/list?uri=s3://my-storage-bucket/data/"
         )
 
         assert response.status_code == 200
@@ -170,7 +179,7 @@ class TestFileBrowserAPI:
         mock_s3_client.simulate_error("NoSuchBucket")
 
         response = client.get(
-            "/api/v1/files/list?uri=s3://nonexistent-bucket/"
+            "/api/v1/files/list?uri=s3://my-storage-bucket/nonexistent/"
         )
 
         assert response.status_code == 404
@@ -183,7 +192,7 @@ class TestFileBrowserAPI:
         mock_s3_client.simulate_error("AccessDenied")
 
         response = client.get(
-            "/api/v1/files/list?uri=s3://test-bucket/"
+            "/api/v1/files/list?uri=s3://my-storage-bucket/data/"
         )
 
         assert response.status_code == 403
@@ -196,7 +205,7 @@ class TestFileBrowserAPI:
         mock_s3_client.simulate_error("NoCredentialsError")
 
         response = client.get(
-            "/api/v1/files/list?uri=s3://test-bucket/"
+            "/api/v1/files/list?uri=s3://my-storage-bucket/data/"
         )
 
         assert response.status_code == 401
@@ -214,10 +223,10 @@ class TestFileBrowserAPI:
             },
         ]
         folders = ["a/b/c/subfolder/"]
-        mock_s3_client.setup_bucket("test-bucket", "a/b/c/", files, folders)
+        mock_s3_client.setup_bucket("my-storage-bucket", "a/b/c/", files, folders)
 
         response = client.get(
-            "/api/v1/files/list?uri=s3://test-bucket/a/b/c/"
+            "/api/v1/files/list?uri=s3://my-storage-bucket/a/b/c/"
         )
 
         assert response.status_code == 200
@@ -247,10 +256,10 @@ class TestFileBrowserAPI:
             },
         ]
         folders = ["prefix/zoo/", "prefix/aardvark/", "prefix/middle/"]
-        mock_s3_client.setup_bucket("test-bucket", "prefix/", files, folders)
+        mock_s3_client.setup_bucket("my-storage-bucket", "prefix/", files, folders)
 
         response = client.get(
-            "/api/v1/files/list?uri=s3://test-bucket/prefix/"
+            "/api/v1/files/list?uri=s3://my-storage-bucket/prefix/"
         )
 
         assert response.status_code == 200

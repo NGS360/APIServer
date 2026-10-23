@@ -9,6 +9,7 @@ equality, so adding an unguarded route fails (an unexpected entry) and guarding
 one also fails (a stale entry). Both directions have to be a deliberate edit.
 """
 import os
+import re
 
 import pytest
 
@@ -49,46 +50,22 @@ SELF_SERVICE = {
     "POST /api/v1/auth/password/change",
 }
 
-# Anonymous today, and cannot be guarded until authentication is closed on them.
+# Authenticated, but carrying no permission guard yet.
 #
-# require_permission depends on get_current_active_user, so attaching a guard to
-# one of these returns 401 to today's anonymous callers -- before any mode check
-# runs. RBAC_MODE=dry_run does not soften that, which is why these are Phase 1
-# work (close authentication, with the consumer migrations that implies) and not
-# Phase 4 work. See docs/RBAC.md.
+# Renamed from AUTHENTICATED_BUT_UNGUARDED on 2026-10-14. Authentication is no
+# longer what these are waiting for: every feature router now requires a caller
+# (see main.py), so each of these returns 401 to an anonymous request. What they
+# still lack is a *permission* guard, which is the remaining work and is now
+# ordinary Phase 4 work rather than blocked on consumer migrations.
 #
-# This set only ever shrinks. Removing an entry means that route now requires a
-# caller to authenticate, which is a breaking change for whoever calls it today.
-AWAITING_AUTHENTICATION = {
-    "GET /api/v1/actions/configs",
-    "GET /api/v1/actions/options",
-    "GET /api/v1/actions/platforms",
-    "GET /api/v1/actions/types",
-    "GET /api/v1/files",
-    "GET /api/v1/files/list",
-    "GET /api/v1/files/{file_id}",
-    "GET /api/v1/jobs",
-    "GET /api/v1/jobs/{job_id}",
-    "GET /api/v1/jobs/{job_id}/log",
-    "GET /api/v1/jobs/{job_id}/log/paginated",
-    "GET /api/v1/platforms",
-    "GET /api/v1/projects/search",
-    "GET /api/v1/projects/{project_id}",
-    "GET /api/v1/projects/{project_id}/samples",
-    "GET /api/v1/runs",
-    "GET /api/v1/runs/demultiplex",
-    "GET /api/v1/runs/search",
-    "GET /api/v1/runs/{run_id}",
-    "GET /api/v1/runs/{run_id}/metrics",
-    "GET /api/v1/runs/{run_id}/samplesheet",
-    "GET /api/v1/search",
-    "GET /api/v1/vendors",
-    "GET /api/v1/workflows",
-    "GET /api/v1/workflows/{workflow_id}",
-    "GET /api/v1/workflows/{workflow_id}/versions",
-    "GET /api/v1/workflows/{workflow_id}/versions/{version_num}",
-    "POST /api/v1/files/upload",
-}
+# The old name encoded a real constraint while it lasted: require_permission
+# depends on get_current_active_user, so attaching a guard to an anonymous route
+# returned 401 before any mode check ran, and RBAC_MODE=dry_run did not soften
+# it. Closing authentication first is what removed that ordering problem.
+#
+# This set only ever shrinks. Removing an entry means that route now has a
+# permission guard.
+AUTHENTICATED_BUT_UNGUARDED: set[str] = set()
 
 
 def _walk_routes():
@@ -139,7 +116,7 @@ def test_every_route_is_classified():
     The exhaustive check. Adding a route without a guard fails here, and so does
     guarding one without removing it from the list below.
     """
-    expected = PUBLIC | SELF_SERVICE | AWAITING_AUTHENTICATION
+    expected = PUBLIC | SELF_SERVICE | AUTHENTICATED_BUT_UNGUARDED
     unexpected = UNGUARDED - expected
     stale = expected - UNGUARDED
 
@@ -156,13 +133,13 @@ def test_every_route_is_classified():
 
 def test_the_three_classifications_do_not_overlap():
     assert not PUBLIC & SELF_SERVICE
-    assert not PUBLIC & AWAITING_AUTHENTICATION
-    assert not SELF_SERVICE & AWAITING_AUTHENTICATION
+    assert not PUBLIC & AUTHENTICATED_BUT_UNGUARDED
+    assert not SELF_SERVICE & AUTHENTICATED_BUT_UNGUARDED
 
 
 def test_no_classified_route_is_also_guarded():
     """A guarded route must not linger in a list that says it is not."""
-    overlap = GUARDED & (PUBLIC | SELF_SERVICE | AWAITING_AUTHENTICATION)
+    overlap = GUARDED & (PUBLIC | SELF_SERVICE | AUTHENTICATED_BUT_UNGUARDED)
     assert not overlap, sorted(overlap)
 
 
@@ -170,8 +147,32 @@ def test_guard_count_is_recorded():
     """
     Pins the size of the guarded surface so growth is visible in review rather
     than incidental.
+
+    86 -> 87: GET /jobs/stats/submitters, which backs the Submitted By filter on
+    the jobs tables. Guarded on job:read from the start -- the unguarded GET /jobs
+    next to it is backlog, not precedent, and a route whose only caller is the
+    authenticated UI never needs to join it.
+
+    89 -> 115: the last 26, as one batch. Every permission involved is in the
+    default role, so none of them refuses anyone -- the batch exists to finish
+    the decision record and empty this category, not to restrict. Two are worth
+    noting: GET /files/list is guarded on file:browse, which until now was an
+    inert permission no route checked, and POST /files/upload on file:create,
+    matching the JSON POST /files beside it.
+
+    87 -> 89: GET /projects/{project_id} on project:read and
+    GET /projects/{project_id}/samples on sample:read. Both permissions are in
+    the default role, so neither refuses anyone who could reach them before.
+    They are guarded for the other thing require_project_permission does --
+    a project marked `restricted` requires membership, and that check lives in
+    the guard. Until now a locked-down project still handed its metadata and
+    sample list to any authenticated caller, which made `restricted` a
+    half-measure. These two are the routes that make it whole.
+
+    115 -> 118 with the user administration API: GET /rbac/users, GET
+    /rbac/users/{username}/access and PATCH /users/{username}.
     """
-    assert len(GUARDED) == 86
+    assert len(GUARDED) == 118
 
 
 def test_the_authentication_backlog_only_shrinks():
@@ -273,8 +274,15 @@ def test_the_authentication_backlog_only_shrinks():
     run:associate is deliberately among the seven that log: it has a live
     refusing caller (a run-metrics service account), so guarding
     DELETE /runs/{run_id}/samples/{sample_id} on it must not enforce yet.
+
+    28 -> 26 on 2026-10-15: the two project reads were guarded, which is what
+    gives `restricted` effect over reads.
+
+    26 -> 0 on 2026-10-15: the remainder, as one batch. The category is now
+    empty, and this assertion is what keeps it that way -- a new route arrives
+    either guarded, or listed in PUBLIC or SELF_SERVICE with a reason.
     """
-    assert len(AWAITING_AUTHENTICATION) == 28
+    assert len(AUTHENTICATED_BUT_UNGUARDED) == 0
 
 
 @pytest.mark.parametrize("key", sorted(GUARDED))
@@ -323,3 +331,105 @@ def test_project_scoped_paths_use_the_project_plane():
                 continue
             wrong.append((key, plane, [str(p) for p in perms]))
     assert not wrong, wrong
+
+
+def test_only_the_authentication_routes_are_reachable_anonymously():
+    """
+    The partition, asserted by *behaviour* rather than by introspection.
+
+    This is deliberately not a walk of the dependency graph, and the reason is
+    worth recording. FastAPI does not flatten included routers in this version,
+    so `include_router(dependencies=...)` attaches to the wrapper while
+    `effective_route_contexts()` hands back the inner route -- which still looks
+    unauthenticated. A graph walk written the obvious way reported all 39
+    anonymous routes as *still* anonymous after they had been closed, and the
+    only thing that showed otherwise was sending a request.
+
+    So: send requests. One per route, with no credentials, asserting that
+    everything outside PUBLIC refuses. A 401 or 403 is a pass; anything that
+    reaches the handler -- including a 422 for a bad body, or a 404 for a
+    missing id -- means the route ran for an anonymous caller.
+    """
+    from fastapi.testclient import TestClient
+
+    from main import app
+
+    client = TestClient(app, raise_server_exceptions=False)
+    reached_handler = []
+
+    for key in sorted(ROUTES):
+        if key in PUBLIC:
+            continue
+        method, path = key.split(" ", 1)
+        # Any placeholder will do; authentication is checked before the handler
+        # resolves a path parameter.
+        concrete = re.sub(r"\{[^}]+\}", "x", path)
+        response = client.request(method, concrete)
+        if response.status_code not in (401, 403):
+            reached_handler.append("%s %s -> %s" % (method, concrete,
+                                                    response.status_code))
+
+    assert not reached_handler, (
+        "these routes ran for an anonymous caller:\n  "
+        + "\n  ".join(reached_handler)
+    )
+
+
+def test_the_public_routes_are_still_public():
+    """The other half: closing everything else must not close the front door."""
+    from fastapi.testclient import TestClient
+
+    from main import app
+
+    client = TestClient(app, raise_server_exceptions=False)
+    refused = []
+    for key in sorted(PUBLIC):
+        method, path = key.split(" ", 1)
+        concrete = re.sub(r"\{[^}]+\}", "x", path)
+        response = client.request(method, concrete)
+        if response.status_code in (401, 403):
+            refused.append("%s %s -> %s" % (method, concrete,
+                                            response.status_code))
+    assert not refused, (
+        "the authentication surface must stay reachable:\n  " + "\n  ".join(refused)
+    )
+
+
+def test_no_guard_is_hiding_in_a_handler_signature():
+    """
+    A guard written into the handler's parameters instead of the decorator is
+    valid Python, does nothing, and adds a bogus `dependencies` query parameter
+    to the route.
+
+    This is not hypothetical. Guarding the last 26 routes was done by script,
+    and two of them -- GET /search and GET /runs/demultiplex -- landed in the
+    signature because their decorators were single-line and the insertion point
+    was computed from the next closing paren. flake8 passed, the suite passed,
+    and the routes were unguarded. The route-coverage counts caught one of them;
+    this catches the shape directly.
+
+    Uses the AST rather than a line scan: a first attempt at a textual detector
+    reported 19 hits, 18 of them false, because one-line `def`s left its state
+    machine convinced it was still inside a signature.
+    """
+    import ast
+    import glob
+
+    offenders = []
+    for path in sorted(glob.glob("api/**/routes.py", recursive=True)):
+        with open(path) as handle:
+            tree = ast.parse(handle.read(), path)
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            args = node.args
+            names = [a.arg for a in
+                     list(args.posonlyargs) + list(args.args) + list(args.kwonlyargs)]
+            if "dependencies" in names:
+                offenders.append("%s:%d %s" % (path, node.lineno, node.name))
+
+    assert not offenders, (
+        "these handlers take `dependencies` as a parameter, which means the "
+        "guard is in the signature rather than the decorator and is doing "
+        "nothing:\n  " + "\n  ".join(offenders)
+    )

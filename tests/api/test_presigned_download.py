@@ -103,7 +103,16 @@ class TestGeneratePresignedUrlService:
 
 
 class TestDownloadFileRoute:
-    """Integration tests for GET /api/v1/files/download endpoint."""
+    """
+    Integration tests for GET /api/v1/files/download endpoint.
+
+    URIs here name the configured upload store rather than arbitrary buckets.
+    Since 2026-10-08 the platform signs only three kinds of location -- a
+    project, a registered run folder, or its own upload store -- for every
+    caller including superusers, so a test exercising the *mechanics* of
+    signing has to name one of them. The error cases still work because the S3
+    mock is told which error to raise and does not key off the bucket name.
+    """
 
     def test_download_returns_307_redirect(
         self, client: TestClient, mock_s3_client: MockS3Client
@@ -111,12 +120,12 @@ class TestDownloadFileRoute:
         """Test that download endpoint returns 307 redirect."""
         response = client.get(
             "/api/v1/files/download",
-            params={"path": "s3://test-bucket/data/sample.fastq.gz"},
+            params={"path": "s3://my-storage-bucket/data/sample.fastq.gz"},
             follow_redirects=False,
         )
         assert response.status_code == 307
         location = response.headers["location"]
-        assert "test-bucket.s3.amazonaws.com" in location
+        assert "my-storage-bucket.s3.amazonaws.com" in location
         assert "data/sample.fastq.gz" in location
         assert "X-Amz-Signature" in location
 
@@ -126,7 +135,7 @@ class TestDownloadFileRoute:
         """Test that the Location header contains a valid presigned URL."""
         response = client.get(
             "/api/v1/files/download",
-            params={"path": "s3://my-bucket/path/to/report.html"},
+            params={"path": "s3://my-storage-bucket/path/to/report.html"},
             follow_redirects=False,
         )
         assert response.status_code == 307
@@ -156,7 +165,7 @@ class TestDownloadFileRoute:
         mock_s3_client.simulate_error("NoCredentialsError")
         response = client.get(
             "/api/v1/files/download",
-            params={"path": "s3://test-bucket/file.txt"},
+            params={"path": "s3://my-storage-bucket/file.txt"},
         )
         assert response.status_code == 401
 
@@ -167,7 +176,7 @@ class TestDownloadFileRoute:
         mock_s3_client.simulate_error("AccessDenied")
         response = client.get(
             "/api/v1/files/download",
-            params={"path": "s3://restricted-bucket/file.txt"},
+            params={"path": "s3://my-storage-bucket/restricted/file.txt"},
         )
         assert response.status_code == 403
 
@@ -178,7 +187,7 @@ class TestDownloadFileRoute:
         mock_s3_client.simulate_error("NoSuchBucket")
         response = client.get(
             "/api/v1/files/download",
-            params={"path": "s3://nonexistent-bucket/file.txt"},
+            params={"path": "s3://my-storage-bucket/nonexistent-bucket/file.txt"},
         )
         assert response.status_code == 404
 

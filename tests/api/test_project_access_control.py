@@ -13,21 +13,31 @@ project.
 What these tests establish, and it is worth stating precisely because the two
 halves differ:
 
-* **Writes and actions are project-scoped today.** `member` — which every user
-  holds via the bootstrap backfill — carries no global `sample:create`,
-  `project:update`, `project:ingest`, `project:submit_action` or
-  `project:manage_members`. So the project plane is the only way to obtain them,
-  and non-members are genuinely refused.
+* **Writes are project-scoped today.** `member` — which every user holds via the
+  bootstrap backfill — carries no global `sample:create`, `project:update`,
+  `project:ingest` or `project:manage_members`. So the project plane is the only
+  way to obtain them, and non-members are genuinely refused.
+* **`project:submit_action` is the exception, since 2026-10-07.** It is in
+  `member`, so it is *not* project-scoped in production any more. The tests
+  below still exercise it through a caller holding no global roles, which is the
+  only way to reach the project-plane branch now — they pin the resolver's
+  behaviour rather than the live posture for a real user. If `require_project_permission`
+  ever stops honouring a global grant, those are the tests that should fail.
 * **Reads are not, by decision.** `member` carries global `project:read`,
   `sample:read`, `file:read` and `qcrecord:read`, and `has_in_project`
   short-circuits on a global grant, so those reach every project. That is the
   transitional choice recorded in docs/RBAC.md and is being kept.
+* **One write is global too, by decision.** `project:submit_action` was added to
+  `member` on 2026-10-07, after measurement showed every refusal came from a
+  non-member and no project member was ever refused. It is the only
+  project-scopable write `member` holds, so submitting an action is no longer
+  project-scoped at all.
 * **Downloads are scoped.** `file:download` was removed from `member` for exactly
   the reason above — while it was there the project check on
   `GET /files/download-url` was vacuous. See
   tests/api/test_file_download_scope.py.
 
-RBAC_MODE is `enforce` in tests, so refusals here are 403s.
+A failed permission check is a 403, here and in production.
 """
 import pytest
 from sqlmodel import select
@@ -121,6 +131,19 @@ class TestWritesAreScopedToTheProject:
     def test_the_same_contributor_cannot_submit_an_action_on_another_project(
         self, contributor, theirs
     ):
+        """
+        Still true for this caller, and no longer true for a real one.
+
+        `contributor` holds no global roles at all, which is now the only way to
+        reach the project-plane branch for this permission -- `member` carries
+        `project:submit_action` globally as of 2026-10-07, and
+        `has_in_project` short-circuits on a global grant. So this asserts that
+        the project plane still scopes correctly when nothing global satisfies
+        it, not that a logged-in scientist is confined to their own projects.
+
+        Kept rather than deleted because that resolver behaviour is what the
+        permission would fall back to if it ever left `member` again.
+        """
         response = contributor.post(
             f"/api/v1/projects/{theirs.project_id}/actions/submit",
             json={"action_name": "noop", "arguments": {}},
@@ -274,29 +297,381 @@ class TestReadsRemainGlobalByDecision:
             "deliberate, this test should be inverted, not deleted"
         )
 
-    def test_member_keeps_exactly_the_four_transitional_reads(self):
+    def test_member_holds_four_scopable_reads_and_one_scopable_write(self):
         """
-        The list, as an assertion. Shrinking it is how reads would become
-        project-scoped too, and it should be a one-line reviewed change rather
-        than a surprise.
+        The list, as an assertion. Changing it should be a reviewed one-line
+        edit rather than a surprise, in either direction.
+
+        Renamed and extended on 2026-10-07, when `project:submit_action` joined
+        the set. That is more than an assertion bump: it is the first *write* on
+        this list. Until then every project-scopable permission `member` held
+        was a read, and the project plane was the only way to obtain a scopable
+        write.
+
+        Why it was added: across 28 days of production dry-run, all 44 refusals
+        on `project:submit_action` came from callers with no membership of the
+        target project, and no project member was ever refused. The project
+        roles were not the problem, so widening them would have fixed nothing.
+
+        What it costs, and the reason this test now says it out loud:
+        `has_in_project` short-circuits on a global grant, so while this
+        permission sits in `member` there is no way to restrict submitting an
+        action on a particular project. That lever is gone until it leaves
+        again. It is the same mechanism that keeps `file:download` off this list
+        -- see `test_download_is_not_among_them` -- and the difference between
+        them is a decision about compute spend, not an inconsistency.
+
+        If a second scopable write is proposed here, the question to ask is
+        whether per-project control over it is being given up knowingly.
         """
         from api.rbac.permissions import PROJECT_SCOPABLE
         from api.rbac.roles import ROLE_DEFINITIONS
 
         member = {str(p) for p in ROLE_DEFINITIONS["member"].permissions}
         scopable = {str(p) for p in PROJECT_SCOPABLE}
-        assert member & scopable == {
-            "project:read", "sample:read", "qcrecord:read", "file:read",
+        # Every project-scopable permission except the three reserved ones. The
+        # role collapse (NWP-2213 step 3) made the user tier the complement of
+        # what is reserved, so this set is now defined by its absences rather
+        # than by its contents.
+        assert member & scopable == scopable - {
+            "project:delete", "project:manage_members", "project:restrict",
         }
 
-    def test_download_is_not_among_them(self):
+        # What is *not* here, which is the part worth pinning:
+        #
+        # project:delete -- 11,168 projects, and one mistake is unrecoverable.
+        # project:manage_members -- membership is a restricted project's
+        # allowlist, so managing it is checked as "admin, or an existing
+        # member" rather than granted by a role. It is also the exemption that
+        # keeps `restricted` from being a one-way door.
+        # project:restrict -- the other half of manage_members: that one
+        # decides who is on the allowlist, this one decides whether the
+        # allowlist applies. Reserved 2026-10-20, because while it was in
+        # `member` any authenticated user could lock any project and then
+        # could not unlock it. Held by `project_owner`, which a creator
+        # receives with the project row, and by `admin`.
+        assert "project:delete" not in member
+        assert "project:manage_members" not in member
+        assert "project:restrict" not in member
+
+    def test_download_is_among_them_now_and_what_replaced_the_protection(self):
         """
-        Stated separately because it is the one permission the project/global
-        split rests on. Putting it back re-opens every file in the product to
+        Inverted 2026-10-13. This asserted that `file:download` must stay out of
+        `member`, because putting it back "re-opens every file in the product to
         every authenticated user, and does so silently: the guard stays in place
-        and simply stops refusing anything.
+        and simply stops refusing anything".
+
+        That was exactly right while the restricted-project branch was a
+        permission check. It is not an argument against the permission; it is an
+        argument against expressing a restriction as something a role can grant.
+        So the restriction moved to membership (#461) and the arbitrary-S3 case
+        moved to a location allowlist (#459, #460), and only then did the
+        permission become safe to universalise.
+
+        The assertion is therefore about the mechanism, not the role: downloads
+        from a restricted project must still refuse a non-member, whatever
+        `member` holds. tests/api/test_file_download_scope.py proves that end to
+        end.
         """
         from api.rbac.roles import ROLE_DEFINITIONS
 
         member = {str(p) for p in ROLE_DEFINITIONS["member"].permissions}
-        assert "file:download" not in member
+        assert "file:download" in member
+
+
+class TestRestrictedProjectsRequireMembership:
+    """
+    Added 2026-10-08 with `Project.restricted`, covering the *project-plane*
+    guard rather than downloads (see tests/api/test_file_download_scope.py for
+    that half).
+
+    `require_project_permission` now applies membership as an additional
+    precondition on a restricted project. Additional, not instead of: today the
+    permission check still runs, so this can only refuse something previously
+    allowed, and no project in production sets the flag. Once the default role
+    carries the project-scopable permissions globally, the permission half goes
+    vacuous and this becomes the entire gate -- with no further change to
+    api/rbac/deps.py.
+
+    That sequencing is the reason this lands first and alone.
+    """
+
+    def test_a_global_grant_does_not_reach_a_restricted_project(
+        self, session, client_with_permissions
+    ):
+        """
+        The property the whole design rests on.
+
+        This caller holds `sample:create` globally, which `has_in_project`
+        honours for every project. Before the gate it was allowed here; it is a
+        member of nothing, so now it is not.
+        """
+        from api.rbac.permissions import Permission
+
+        project = make_project(session, "P-20260301-0001", "Locked")
+        project.restricted = True
+        session.add(project)
+        session.commit()
+
+        api = client_with_permissions([Permission.SAMPLE_CREATE], username="globalsc")
+        response = api.post(
+            f"/api/v1/projects/{project.project_id}/samples",
+            json={"sample_id": "S-R1"},
+        )
+        assert response.status_code == 403
+
+    def test_a_member_with_the_permission_is_allowed(
+        self, session, restricted_client
+    ):
+        """Membership plus permission: the intended path into a restricted project."""
+        project = make_project(session, "P-20260301-0002", "Locked but mine")
+        project.restricted = True
+        session.add(project)
+        session.commit()
+        grant_project_role(session, project, "norole", "project_contributor")
+
+        response = restricted_client.post(
+            f"/api/v1/projects/{project.project_id}/samples",
+            json={"sample_id": "S-R2"},
+        )
+        assert response.status_code in (200, 201)
+
+    def test_membership_of_another_project_does_not_carry(
+        self, session, restricted_client
+    ):
+        project = make_project(session, "P-20260301-0003", "Locked")
+        project.restricted = True
+        session.add(project)
+        session.commit()
+        elsewhere = make_project(session, "P-20260301-0004", "Elsewhere")
+        grant_project_role(session, elsewhere, "norole", "project_contributor")
+
+        response = restricted_client.post(
+            f"/api/v1/projects/{project.project_id}/samples",
+            json={"sample_id": "S-R3"},
+        )
+        assert response.status_code == 403
+
+    def test_an_unrestricted_project_is_unaffected(
+        self, session, client_with_permissions
+    ):
+        """
+        The no-op half, and the reason this change is safe to deploy ahead of
+        the rest: with the flag unset -- which is every project in production --
+        behaviour is exactly as before.
+        """
+        from api.rbac.permissions import Permission
+
+        project = make_project(session, "P-20260301-0005", "Open")
+        api = client_with_permissions([Permission.SAMPLE_CREATE], username="globalsc2")
+        response = api.post(
+            f"/api/v1/projects/{project.project_id}/samples",
+            json={"sample_id": "S-R4"},
+        )
+        assert response.status_code in (200, 201)
+
+
+class TestTheRestrictionIgnoresTheEnforcementMode:
+    """
+    Added 2026-10-13, after proving the gate against production showed it was
+    advisory there.
+
+    As shipped in #457 the membership check was folded into the guard's
+    `granted` flag and handed to `decide()`, which applies RBAC_MODE. With the
+    flag set on a real project, a **superuser who was not a member** still got a
+    200 on every route whose permission had not been graduated -- including
+    `GET /projects/{id}/samples` and the download routes -- because `dry_run`
+    turns a refusal into a log line. The suite missed it entirely: tests run in
+    `enforce`, where the distinction does not exist.
+
+    A project being locked down is a property of the project, not an
+    authorisation decision mid-rollout, so no mode may soften it. The
+    *permission* check stays mode-aware, because that one genuinely is still
+    being rolled out.
+    """
+
+    @pytest.fixture
+    def mode(self, monkeypatch):
+        from core.config import get_settings
+
+        def _set(value: str):
+            monkeypatch.setenv("RBAC_MODE", value)
+            monkeypatch.setenv("ENVIRONMENT", "dev")
+            get_settings.cache_clear()
+        yield _set
+        get_settings.cache_clear()
+
+    @pytest.fixture(name="locked")
+    def locked_fixture(self, session):
+        project = make_project(session, "P-20260501-0001", "Locked")
+        project.restricted = True
+        session.add(project)
+        session.commit()
+        session.refresh(project)
+        return project
+
+    @pytest.mark.parametrize("mode_value", ["dry_run", "off", "enforce"])
+    def test_a_non_member_is_refused_in_every_mode(
+        self, client_with_permissions, locked, mode, mode_value
+    ):
+        from api.rbac.permissions import Permission
+
+        mode(mode_value)
+        api = client_with_permissions([Permission.SAMPLE_CREATE], username="nm")
+        response = api.post(
+            f"/api/v1/projects/{locked.project_id}/samples",
+            json={"sample_id": "S-M1"},
+        )
+        assert response.status_code == 403, mode_value
+
+    @pytest.mark.parametrize("mode_value", ["dry_run", "off"])
+    def test_a_superuser_is_refused_in_the_permissive_modes_too(
+        self, superuser_client, locked, mode, mode_value
+    ):
+        """
+        The combination that was serving 200s in production: the most
+        privileged caller, on the most permissive mode.
+        """
+        mode(mode_value)
+        response = superuser_client.post(
+            f"/api/v1/projects/{locked.project_id}/samples",
+            json={"sample_id": "S-M2"},
+        )
+        assert response.status_code == 403, mode_value
+
+    def test_a_member_is_still_served_in_dry_run(
+        self, session, restricted_client, locked, mode
+    ):
+        """The other half: the gate refuses non-members, not everyone."""
+        grant_project_role(session, locked, "norole", "project_contributor")
+        mode("dry_run")
+        response = restricted_client.post(
+            f"/api/v1/projects/{locked.project_id}/samples",
+            json={"sample_id": "S-M3"},
+        )
+        assert response.status_code in (200, 201), response.text
+
+    def test_an_unrestricted_project_is_unaffected_in_dry_run(
+        self, session, client_with_permissions, mode
+    ):
+        from api.rbac.permissions import Permission
+
+        project = make_project(session, "P-20260501-0002", "Open")
+        mode("dry_run")
+        api = client_with_permissions([Permission.SAMPLE_CREATE], username="nm2")
+        response = api.post(
+            f"/api/v1/projects/{project.project_id}/samples",
+            json={"sample_id": "S-M4"},
+        )
+        assert response.status_code in (200, 201)
+
+
+class TestRestrictedProjectsAreNowPrivateForReads:
+    """
+    Added 2026-10-15, and it is the point of guarding the two project reads.
+
+    `restricted` shipped protecting writes, downloads and member management.
+    Reads were not covered, because `GET /projects/{id}` and
+    `GET /projects/{id}/samples` carried no guard at all -- and the membership
+    check lives inside `require_project_permission`, so a route without a guard
+    never consults it. A locked-down project still handed its metadata and its
+    entire sample list to any authenticated caller. That was recorded as a known
+    gap when the narrow reading was agreed; this closes it.
+
+    The permissions chosen -- `project:read` and `sample:read` -- are both in
+    the default role, so these guards refuse nobody who could reach the routes
+    yesterday. That is deliberate: the guard is not here to restrict reads
+    generally, only to make `restricted` mean what it says.
+    """
+
+    @pytest.fixture(name="locked")
+    def locked_fixture(self, session):
+        project = make_project(session, "P-20260601-0001", "Locked")
+        project.restricted = True
+        session.add(project)
+        session.commit()
+        session.refresh(project)
+        return project
+
+    def test_a_non_member_cannot_read_a_restricted_project(
+        self, client_with_permissions, locked
+    ):
+        from api.rbac.permissions import Permission
+
+        api = client_with_permissions([Permission.PROJECT_READ], username="nr1")
+        assert api.get(f"/api/v1/projects/{locked.project_id}").status_code == 403
+
+    def test_a_non_member_cannot_list_its_samples(
+        self, client_with_permissions, locked
+    ):
+        """
+        The one that mattered most: the sample list is the project's actual
+        content, and it was readable by anyone with a login.
+        """
+        from api.rbac.permissions import Permission
+
+        api = client_with_permissions([Permission.SAMPLE_READ], username="nr2")
+        assert api.get(
+            f"/api/v1/projects/{locked.project_id}/samples"
+        ).status_code == 403
+
+    def test_a_member_can_read_it(self, session, restricted_client, locked):
+        grant_project_role(session, locked, "norole", "project_viewer")
+        assert restricted_client.get(
+            f"/api/v1/projects/{locked.project_id}"
+        ).status_code == 200
+        assert restricted_client.get(
+            f"/api/v1/projects/{locked.project_id}/samples"
+        ).status_code == 200
+
+    def test_a_superuser_is_not_exempt(self, superuser_client, locked):
+        """
+        Consistent with every other restricted-project check: an administrator
+        who needs the data enrols themselves, which leaves a row behind.
+        """
+        assert superuser_client.get(
+            f"/api/v1/projects/{locked.project_id}"
+        ).status_code == 403
+
+    def test_an_unrestricted_project_is_readable_by_anyone_authenticated(
+        self, session, client_with_permissions
+    ):
+        """
+        The half that must not change. `project:read` and `sample:read` are in
+        `member`, so an ordinary user reads any unrestricted project exactly as
+        before -- these guards are about `restricted`, not about reads.
+        """
+        from api.rbac.permissions import Permission
+
+        project = make_project(session, "P-20260601-0002", "Open")
+        api = client_with_permissions(
+            [Permission.PROJECT_READ, Permission.SAMPLE_READ], username="nr3")
+        assert api.get(f"/api/v1/projects/{project.project_id}").status_code == 200
+        assert api.get(
+            f"/api/v1/projects/{project.project_id}/samples"
+        ).status_code == 200
+
+    @pytest.mark.parametrize("mode_value", ["dry_run", "off"])
+    def test_the_refusal_holds_in_the_permissive_modes(
+        self, client_with_permissions, locked, monkeypatch, mode_value
+    ):
+        """
+        The membership gate is mode-independent, so guarding these routes gives
+        `restricted` effect *today*, in dry_run, rather than at some future
+        enforce cutover. Without this the change would look complete and do
+        nothing in production -- which has happened three times in this rollout.
+        """
+        from api.rbac.permissions import Permission
+        from core.config import get_settings
+
+        monkeypatch.setenv("RBAC_MODE", mode_value)
+        monkeypatch.setenv("ENVIRONMENT", "dev")
+        get_settings.cache_clear()
+        try:
+            api = client_with_permissions([Permission.PROJECT_READ],
+                                          username="nr4" + mode_value[0])
+            assert api.get(
+                f"/api/v1/projects/{locked.project_id}"
+            ).status_code == 403, mode_value
+        finally:
+            get_settings.cache_clear()

@@ -3,7 +3,9 @@ Routes/endpoints for the Project API
 """
 
 from typing import Literal, List as TypingList
-from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, status
+from fastapi import (
+    APIRouter, Depends, HTTPException, Query, Request, UploadFile, status,
+)
 from sqlmodel import select
 from core.deps import SessionDep, OpenSearchDep, S3ClientDep
 from api.auth.deps import CurrentUser
@@ -12,7 +14,13 @@ from api.rbac import services as rbac_services
 from api.rbac.models import ProjectMember, ProjectMemberPublic, ProjectMemberRequest, Role
 from api.jobs.models import BatchJobPublic
 from api.project.deps import ProjectDep
-from api.rbac.deps import require_permission, require_project_permission
+from api.rbac.deps import (
+    AuthzDep,
+    OptionalAuthzDep,
+    decide,
+    require_permission,
+    require_project_permission,
+)
 from api.rbac.permissions import Permission
 from api.project.models import (
     ProjectCreate,
@@ -34,6 +42,67 @@ from api.samples import services as sample_services
 from api.actions.models import ActionSubmitRequest
 
 router = APIRouter(prefix="/projects")
+
+
+def require_project_restrict(
+    request: Request,
+    authz: AuthzDep,
+    project: ProjectDep,
+    update_request: ProjectUpdate,
+) -> None:
+    """
+    Guard the `restricted` field on PUT/PATCH /projects/{project_id}.
+
+    The route as a whole is `project:update`, which `member` holds, because
+    editing a project's description is ordinary work. One field on it is not:
+    `restricted` is what takes a project out of the platform's default
+    "permissible unless restricted" stance, and before this guard existed any of
+    the authenticated users could set it on any project -- including one they had
+    never touched. The flag then locks the project behind membership, so the
+    person who set it by accident generally could not unset it, and recovery fell
+    to an administrator enrolling themselves (see require_project_permission).
+
+    So the field carries its own permission, `project:restrict`, reserved to
+    administrators and to the `project_owner` role a creator is granted in the
+    same transaction as the project row. Nothing else about the route changes,
+    which is deliberate: splitting `restricted` onto a route of its own would
+    have been tidier but would have moved a field the UI already sends.
+
+    **Checked only when the value actually changes.** A client that GETs a
+    project, edits one field and PUTs the whole object back echoes `restricted`
+    unchanged, and refusing that would break ordinary editing for everyone who
+    is not an owner. The condition matches what the service persists -- an unset
+    or null `restricted` is a no-op there too -- so the guard cannot drift from
+    the write.
+
+    `has_in_project` returns true on a global grant, which is correct here and
+    is the mechanism by which "administrators" holds: `admin` carries every
+    permission globally, `project_owner` carries this one on its own project,
+    and `member` carries it nowhere.
+
+    Note this does not exempt the holder from the membership gate in
+    require_project_permission, which runs first. Unlocking a restricted project
+    you are not a member of is still enrol-then-act, by the same reasoning
+    recorded there.
+    """
+    if update_request.restricted is None:
+        return
+    if update_request.restricted == project.restricted:
+        return
+
+    decide(
+        request,
+        authz.has_in_project(Permission.PROJECT_RESTRICT, project.id),
+        (Permission.PROJECT_RESTRICT,),
+        scope=f"project {project.project_id}",
+    )
+
+
+# Tagged like the require_* factories so the route-coverage test and any future
+# "what does this endpoint need" introspection see this possibility too.
+require_project_restrict.rbac_permissions = (Permission.PROJECT_RESTRICT,)
+require_project_restrict.rbac_plane = "project"
+
 
 ###############################################################################
 # Projects Endpoints /api/v1/projects/
@@ -131,6 +200,7 @@ def get_project_attributes(session: SessionDep) -> TypingList[str]:
     status_code=status.HTTP_200_OK,
     tags=["Project Endpoints"],
     response_model=ProjectsPublic,
+    dependencies=[Depends(require_permission(Permission.PROJECT_READ))],
 )
 def search_projects(
     session: SessionDep,
@@ -183,14 +253,34 @@ def reindex_projects(
 @router.get(
     "/{project_id}",
     response_model=ProjectPublic,
-    tags=["Project Endpoints"]
+    tags=["Project Endpoints"],
+    dependencies=[Depends(require_project_permission(Permission.PROJECT_READ))],
 )
-def get_project_by_project_id(session: SessionDep, project: ProjectDep) -> ProjectPublic:
+def get_project_by_project_id(
+    session: SessionDep, project: ProjectDep, authz: OptionalAuthzDep
+) -> ProjectPublic:
     """
     Returns a single project by its project_id.
     Note: This is different from its internal "id".
+
+    Guarded 2026-10-15. `project:read` is in the default role, so this refuses
+    nobody who could reach it yesterday -- the guard is here for the *other*
+    thing require_project_permission does: a project marked `restricted`
+    requires membership, and that check lives in the guard. Without it a
+    locked-down project still handed its metadata to any authenticated caller,
+    which made `restricted` a half-measure.
+
+    Carries `permissions`: what the calling user may do in this project. The
+    project plane is the only place that answer exists -- /rbac/me reports global
+    grants only -- so without it a UI has no way to gate a project control
+    except by making the request and handling the refusal.
     """
-    return services.get_project_by_project_id(session=session, project_id=project.project_id)
+    result = services.get_project_by_project_id(
+        session=session, project_id=project.project_id
+    )
+    if authz is not None:
+        result.permissions = authz.effective_project_permissions(project.id)
+    return result
 
 
 @router.put(
@@ -198,7 +288,10 @@ def get_project_by_project_id(session: SessionDep, project: ProjectDep) -> Proje
     status_code=status.HTTP_200_OK,
     tags=["Project Endpoints"],
     response_model=ProjectPublic,
-    dependencies=[Depends(require_project_permission(Permission.PROJECT_UPDATE))],
+    dependencies=[
+        Depends(require_project_permission(Permission.PROJECT_UPDATE)),
+        Depends(require_project_restrict),
+    ],
 )
 def update_project(
     session: SessionDep,
@@ -226,7 +319,10 @@ def update_project(
     status_code=status.HTTP_200_OK,
     tags=["Project Endpoints"],
     response_model=ProjectPublic,
-    dependencies=[Depends(require_project_permission(Permission.PROJECT_UPDATE))],
+    dependencies=[
+        Depends(require_project_permission(Permission.PROJECT_UPDATE)),
+        Depends(require_project_restrict),
+    ],
 )
 def patch_project(
     session: SessionDep,
@@ -377,6 +473,7 @@ def bulk_create_samples(
     "/{project_id}/samples",
     tags=["Project Endpoints"],
     response_model=SamplesWithFilesPublic | SamplesPublic,
+    dependencies=[Depends(require_project_permission(Permission.SAMPLE_READ))],
 )
 def get_project_samples(
     session: SessionDep,
@@ -576,11 +673,15 @@ def ingest_vendor_data(
 ###############################################################################
 # Project membership /api/v1/projects/{project_id}/members
 #
-# Guarded on project:manage_members alone, as of 2026-09-18. These carried
-# CurrentSuperuser as well, which is now removed -- see the module docstring in
-# api/rbac/routes.py for why the flag was redundant over the permission guard,
-# and why removing it is the prerequisite for taking is_superuser off the three
-# personal accounts that hold it.
+# Guarded by require_project_permission(PROJECT_MANAGE_MEMBERS) alone, which is
+# the point of the project plane: an owner adds their own collaborators without
+# needing an administrator. There is no CurrentSuperuser dependency on top --
+# that would defeat the self-serve case entirely.
+#
+# The read carries the same permission as the writes, deliberately. Membership is
+# who can see the project, so it is not less sensitive than changing it, and it
+# lets a successful response stand as evidence the caller may edit -- which is
+# what the UI relies on, since project-scoped permissions are not on /rbac/me.
 ###############################################################################
 
 @router.get(

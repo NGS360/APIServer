@@ -15,7 +15,7 @@ from typing import Annotated, Literal
 
 from fastapi import Depends, HTTPException, Request, status
 
-from api.auth.deps import get_current_active_user
+from api.auth.deps import OptionalUser, get_current_active_user
 from api.auth.models import User
 from api.project.deps import ProjectDep
 from api.project.models import Project
@@ -51,6 +51,45 @@ def load_authz(
 
 
 AuthzDep = Annotated[AuthzContext, Depends(load_authz)]
+
+
+def load_authz_optional(
+    request: Request,
+    session: SessionDep,
+    user: OptionalUser,
+) -> AuthzContext | None:
+    """
+    The caller's access if there is a caller, None if the request is anonymous.
+
+    Built for routes that report what the caller may do without *requiring* a
+    caller, back when adding load_authz to one would have turned its anonymous
+    callers into 401s -- a decision about closing authentication, not one a
+    reporting field should make on its own.
+
+    That constraint is gone: every feature router now requires a caller, and the
+    one route using this helper also requires project:read, so the None branch
+    below is no longer reachable from it. The helper is kept rather than folded
+    into load_authz because that is a change to the route, not to this function.
+
+    The distinction this preserves, for any route that does reach the None
+    branch: None is "not evaluated, because nobody was asking"; an empty list is
+    "evaluated, and this caller holds nothing". Collapsing them would report an
+    anonymous request as a caller with no access, which is a different and more
+    specific claim.
+    """
+    if user is None:
+        return None
+
+    cached: AuthzContext | None = getattr(request.state, "authz", None)
+    if cached is not None and cached.user_id == user.id:
+        return cached
+
+    context = AuthzContext.for_user(session, user)
+    request.state.authz = context
+    return context
+
+
+OptionalAuthzDep = Annotated[AuthzContext | None, Depends(load_authz_optional)]
 
 
 def _denied(permissions: tuple[Permission, ...], scope: str | None = None) -> HTTPException:
@@ -203,10 +242,58 @@ def require_project_permission(
     def dependency(
         request: Request, project: ProjectDep, authz: AuthzDep
     ) -> Project:
+        # A restricted project requires membership, and that check is settled
+        # here -- before the permission check and outside the enforcement mode.
+        #
+        # It was mode-aware when this shipped in #457, folded into `granted` and
+        # handed to decide(). Proving the gate in production showed what that
+        # cost: with the flag set, a superuser who was not a member still got a
+        # 200 on every route whose permission had not been graduated, because
+        # dry_run turns a refusal into a log line. A project being locked down
+        # is a property of the project, not an authorisation decision being
+        # rolled out, so no mode, role or superuser flag may soften it. The
+        # permission check below stays mode-aware, because that one genuinely is
+        # still being rolled out.
+        #
+        # It has to be membership and not a permission: has_in_project returns
+        # true on a global grant, so "needs file:download here" is satisfied by
+        # anyone holding it anywhere. See AuthzContext.is_member_of.
+        # Managing membership is the one thing a restriction must not block,
+        # because membership *is* the restriction's allowlist. Blocking it makes
+        # the flag a one-way door: every other project-plane route needs
+        # membership, so a project restricted with nobody in it -- or with the
+        # wrong people in it -- cannot be repaired through the API at all, not
+        # even by an administrator. Found by doing exactly that in production.
+        #
+        # So a global holder of project:manage_members can always reach the
+        # membership routes, and the recovery path is: enrol yourself, then act.
+        # That is two steps rather than one, and it leaves a project_member row
+        # behind -- which is the point. An administrator reaching into a
+        # locked-down project should leave a trace, and silent access is what
+        # the flag exists to prevent.
+        managing_membership = Permission.PROJECT_MANAGE_MEMBERS in permissions
+
+        if (
+            project.restricted
+            and not managing_membership
+            and not authz.is_member_of(project.id)
+        ):
+            decide(request, False, permissions,
+                   scope=f"project {project.project_id} (restricted, not a member)")
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=(
+                    f"Project {project.project_id} is restricted to its "
+                    f"members."
+                ),
+            )
+
         check = all if mode == "all" else any
+        granted = check(authz.has_in_project(p, project.id) for p in permissions)
+
         decide(
             request,
-            check(authz.has_in_project(p, project.id) for p in permissions),
+            granted,
             permissions,
             scope=f"project {project.project_id}",
         )

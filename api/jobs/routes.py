@@ -1,12 +1,13 @@
 """
 Routes/endpoints for the Jobs API
 
-HTTP   URI                  Action
-----   ---                  ------
-GET    /api/v1/jobs         Retrieve a list of batch jobs
-POST   /api/v1/jobs         Submit a new batch job to AWS Batch
-GET    /api/v1/jobs/[id]    Retrieve info about a specific job
-PUT    /api/v1/jobs/[id]    Update a batch job
+HTTP   URI                            Action
+----   ---                            ------
+GET    /api/v1/jobs                   Retrieve a list of batch jobs
+POST   /api/v1/jobs                   Submit a new batch job to AWS Batch
+GET    /api/v1/jobs/[id]              Retrieve info about a specific job
+PUT    /api/v1/jobs/[id]              Update a batch job
+GET    /api/v1/jobs/stats/submitters  Retrieve the submitters of jobs being fetched
 """
 
 from typing import Optional, Literal
@@ -19,6 +20,8 @@ from api.jobs.models import (
     BatchJobPublic,
     BatchJobsPublic,
     JobStatus,
+    JobSubmitter,
+    JobSubmittersPublic,
     LogResponse
 )
 from api.jobs import services
@@ -138,12 +141,19 @@ def submit_job(
     "",
     response_model=BatchJobsPublic,
     tags=["Job Endpoints"],
+    dependencies=[Depends(require_permission(Permission.JOB_READ_ALL))],
 )
 def get_jobs(
     session: SessionDep,
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=1000),
-    user: Optional[str] = Query(None, description="Filter by user"),
+    user: Optional[list[str]] = Query(
+        None,
+        description=(
+            "Filter by submitter. Repeat the parameter to match any of "
+            "several, e.g. ?user=alice&user=bob"
+        ),
+    ),
     status_filter: Optional[JobStatus] = Query(None, description="Filter by status"),
     project_id: Optional[str] = Query(
         None, description="Filter by owning project (Project.project_id, e.g. P-19900109-0001)"
@@ -152,8 +162,11 @@ def get_jobs(
         None,
         description=(
             "Filter by sequencing run (SequencingRun.run_id, "
-            "e.g. 260506_VH01208_93_222FCGLNX)"
+            "e.g. 240101_VH00000_1_EXAMPLE01)"
         ),
+    ),
+    search: Optional[str] = Query(
+        None, description="Free-text match across job id, name and user"
     ),
     sort_by: str = Query("submitted_on", description="Field to sort by"),
     sort_order: Literal["asc", "desc"] = Query("desc", description="Sort order (asc or desc)"),
@@ -165,15 +178,17 @@ def get_jobs(
         session: Database session
         skip: Number of records to skip
         limit: Maximum number of records to return
-        user: Optional user filter
+        user: Optional submitters to match; any one of them, not all
         status_filter: Optional status filter
         project_id: Optional project filter
         sequencing_run_id: Optional sequencing run filter
+        search: Optional free-text match across job id, name and user
         sort_by: Field to sort by (defaults to 'submitted_on')
         sort_order: Sort order 'asc' or 'desc' (defaults to 'desc')
 
     Returns:
-        List of jobs and total count
+        A page of jobs in the offset-based envelope the other skip/limit
+        endpoints use
     """
     jobs, total_count = services.get_batch_jobs(
         session=session,
@@ -183,12 +198,94 @@ def get_jobs(
         status_filter=status_filter,
         project_id=project_id,
         sequencing_run_id=sequencing_run_id,
+        search=search,
         sort_by=sort_by,
         sort_order=sort_order,
     )
     return BatchJobsPublic(
         data=[BatchJobPublic.model_validate(job) for job in jobs],
-        count=total_count
+        total_items=total_count,
+        skip=skip,
+        limit=limit,
+        has_next=(skip + limit) < total_count,
+        has_prev=skip > 0,
+    )
+
+
+###############################################################################
+# Job Stats Endpoints /api/v1/jobs/stats/
+#
+# Aggregates over a set of jobs rather than the jobs themselves. Nesting them
+# under /stats keeps that distinction in the path, and keeps the names out of
+# the /jobs/{job_id} namespace, where every new one would have to be checked
+# against the chance of it being read as a job id instead.
+###############################################################################
+
+@router.get(
+    "/stats/submitters",
+    response_model=JobSubmittersPublic,
+    tags=["Job Endpoints"],
+    # job:read, not job:read_all, on purpose: read_all guards no route yet, so isn't enforced.
+    dependencies=[Depends(require_permission(Permission.JOB_READ))],
+)
+def get_job_submitters(
+    session: SessionDep,
+    project_id: Optional[str] = Query(
+        None, description="Restrict to one project (Project.project_id, e.g. P-19900109-0001)"
+    ),
+    sequencing_run_id: Optional[str] = Query(
+        None,
+        description=(
+            "Restrict to one sequencing run (SequencingRun.run_id, "
+            "e.g. 240101_VH00000_1_EXAMPLE01)"
+        ),
+    ),
+    username: Optional[str] = Query(None, description="Substring match on the username"),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(10, ge=1, le=100),
+) -> JobSubmittersPublic:
+    """
+    Retrieve a page of the submitters of the jobs in a scope.
+
+    Supports the Submitted By filter on the jobs tables. GET /jobs matches `user`
+    exactly and usernames are opaque ids, so the filter offers the submitters
+    rather than asking for one to be typed. Scoped by the same project and run
+    arguments as GET /jobs, so every option offered returns rows.
+
+    Paged and ranked by job count, because the set only ever grows -- a
+    submitter stays one forever. The filter offers the busiest few and narrows
+    by `username` as the caller types.
+
+    Args:
+        session: Database session
+        project_id: Optional project filter
+        sequencing_run_id: Optional sequencing run filter
+        username: Optional substring match on the username
+        skip: Number of submitters to skip
+        limit: Maximum number of submitters to return
+
+    Returns:
+        A page of submitters, busiest first, in the offset-based envelope the
+        other skip/limit endpoints use
+    """
+    submitters, total = services.get_job_submitters(
+        session=session,
+        project_id=project_id,
+        sequencing_run_id=sequencing_run_id,
+        username=username,
+        skip=skip,
+        limit=limit,
+    )
+    return JobSubmittersPublic(
+        data=[
+            JobSubmitter(username=username, job_count=job_count)
+            for username, job_count in submitters
+        ],
+        total_items=total,
+        skip=skip,
+        limit=limit,
+        has_next=(skip + limit) < total,
+        has_prev=skip > 0,
     )
 
 
@@ -202,7 +299,15 @@ def get_jobs(
     tags=["Job Endpoints"],
     responses={
         404: {"model": HTTPErrorResponse, "description": "Job not found"}
-    }
+    },
+    # job:read_all is strictly broader -- a caller allowed to read every
+    # user's jobs is allowed to read one of them. Written as `any` after the
+    # final guard batch refused NGS-Observe 160 times a week on this route:
+    # service_account carries job:read_all and not job:read, which the guard
+    # had no way to accept. Found by auditing API-key callers against the
+    # guards on the routes they use.
+    dependencies=[Depends(require_permission(
+        Permission.JOB_READ, Permission.JOB_READ_ALL, mode="any"))],
 )
 def get_job(
     session: SessionDep,
@@ -273,7 +378,15 @@ def update_job(
     tags=["Job Endpoints"],
     responses={
         404: {"model": HTTPErrorResponse, "description": "Job not found"}
-    }
+    },
+    # job:read_all is strictly broader -- a caller allowed to read every
+    # user's jobs is allowed to read one of them. Written as `any` after the
+    # final guard batch refused NGS-Observe 160 times a week on this route:
+    # service_account carries job:read_all and not job:read, which the guard
+    # had no way to accept. Found by auditing API-key callers against the
+    # guards on the routes they use.
+    dependencies=[Depends(require_permission(
+        Permission.JOB_READ, Permission.JOB_READ_ALL, mode="any"))],
 )
 def get_job_log(
     session: SessionDep,
@@ -299,7 +412,15 @@ def get_job_log(
     tags=["Job Endpoints"],
     responses={
         404: {"model": HTTPErrorResponse, "description": "Job not found"}
-    }
+    },
+    # job:read_all is strictly broader -- a caller allowed to read every
+    # user's jobs is allowed to read one of them. Written as `any` after the
+    # final guard batch refused NGS-Observe 160 times a week on this route:
+    # service_account carries job:read_all and not job:read, which the guard
+    # had no way to accept. Found by auditing API-key callers against the
+    # guards on the routes they use.
+    dependencies=[Depends(require_permission(
+        Permission.JOB_READ, Permission.JOB_READ_ALL, mode="any"))],
 )
 def get_job_log_paginated(
     session: SessionDep,

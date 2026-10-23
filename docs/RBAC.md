@@ -197,7 +197,7 @@ Two things generalise. **An unauthenticated write path cannot be made accountabl
 
 ## Permission Catalog
 
-57 permissions across 18 resources. **Scope** is `G` for global-only (may not appear in a project role) or `P` for project-scopable (may appear in either plane). **Risk** indicates blast radius, for the benefit of anyone composing a custom role.
+58 permissions across 18 resources. **Scope** is `G` for global-only (may not appear in a project role) or `P` for project-scopable (may appear in either plane). **Risk** indicates blast radius, for the benefit of anyone composing a custom role.
 
 ### Project-owned data
 
@@ -208,6 +208,7 @@ Two things generalise. **An unauthenticated write path cannot be made accountabl
 | `project:update` | P | low | `PUT /projects/{id}`, `PATCH /projects/{id}` |
 | `project:delete` | P | high | *reserved — no route today* |
 | `project:manage_members` | P | **critical** | `GET/POST/PATCH/DELETE /projects/{id}/members`. Raised from medium 2026-09-18: project membership *is* the project-level grant plane, so a caller who can add themselves has granted themselves every project-scoped permission on that project. `critical` puts it in `ALWAYS_ENFORCE`, which is what keeps these routes refused while the mode is `dry_run` — they previously leaned on a `CurrentSuperuser` check for that |
+| `project:restrict` | P | **critical** | the `restricted` field on `PUT`/`PATCH /projects/{id}`, checked only when the value changes. The other half of `project:manage_members`: that one decides who is on the allowlist, this one decides whether the allowlist is consulted at all. `critical` puts it in `ALWAYS_ENFORCE`, so it refuses rather than logs while the mode is `dry_run` — safe here because the permission is new and has no callers to discover |
 | `project:submit_action` | P | **high** | `POST /projects/{id}/actions/submit` — spends AWS Batch |
 | `project:ingest` | P | **high** | `POST /projects/{id}/ingest` — spends AWS Batch, writes S3 |
 | `sample:read` | P | low | `GET /projects/{id}/samples`, `GET/POST /samples/search` |
@@ -292,10 +293,11 @@ class Permission(StrEnum):
     PROJECT_UPDATE = "project:update"
     PROJECT_DELETE = "project:delete"
     PROJECT_MANAGE_MEMBERS = "project:manage_members"
+    PROJECT_RESTRICT = "project:restrict"
     PROJECT_SUBMIT_ACTION = "project:submit_action"
     PROJECT_INGEST = "project:ingest"
     SAMPLE_READ = "sample:read"
-    # ... 57 members total
+    # ... 58 members total
 
 
 Risk = Literal["low", "medium", "high", "critical"]
@@ -329,20 +331,57 @@ Roles are database rows so that administrators can compose custom ones. The **bu
 
 ### Global roles
 
-| Role | Purpose | Permissions |
-|------|---------|-------------|
-| `member` | Default for every authenticated user | `action:read`, `platform:read`, `vendor:read`, `workflow:read`, `pipeline:read`, `run:read`, `job:read`, `job:submit`, `setting:read`, `search:query`, `chat:use`, `user:read`, `project:create`, `run:demux`, `run:update`, plus the transitional global reads: `project:read`, `sample:read`, `qcrecord:read`, `file:read`. `run:demux` and `run:update` added 2026-09-28 — see [Demultiplexing became a default](#demultiplexing-became-a-default). **Not** `file:download` — downloads from unrestricted projects consult no permission, and granting it globally would make every project restriction vacuous |
-| `demux_operator` | **Subsumed by `member` as of 2026-09-28** — grants nothing its holders do not already have. Retained, not deleted: `sync_rbac_catalog` only iterates `ROLE_DEFINITIONS`, so removing it from code would orphan the row and its 14 grants rather than clean them up, and it is where the grants should fall back to if `member` is ever tightened | `run:demux`, `run:update` — the samplesheet write and run update are part of the same job; see the worked example below |
-| `manifest_operator` | May read, upload and validate sample manifests | `manifest:read`, `manifest:upload`, `manifest:validate`. Global-only by necessity — a manifest names an arbitrary S3 URI |
-| `run_registrar` | May register sequencing runs, and nothing else | `run:create` — granted alongside `service_account`, which still supplies `run:read` and the job writeback |
-| `run_associator` | May associate and dissociate samples and runs, and nothing else | `run:associate` — granted alongside `service_account`, which still supplies `run:read`, `run:update` and `sample:create` |
-| `lab_manager` | Sequencing core — registers runs, demultiplexes, ingests vendor deliveries | `member` + `run:create`, `run:update`, `run:associate`, `run:demux`, `manifest:read`, `manifest:upload`, `manifest:validate`, `file:browse`, `file:create`, `file:update`, `sample:create`, `sample:update`, `qcrecord:create`, `project:ingest`, `job:read_all`. `run:create` removed 2026-09-28 — five holders, none of whom had ever registered a run; see [Run registration was narrowed to one service](#run-registration-was-narrowed-to-one-service) |
-| `workflow_publisher` | May register workflows, add versions, and deploy them — but not delete | `workflow:create`, `workflow:update`, `workflow:deploy`. `workflow:read` comes from `member` |
-| `workflow_admin` | Owns the workflow catalog outright, including deletion | Every `workflow:*` permission, derived from the catalog so a new one joins automatically |
-| `platform_admin` | Owns the executable catalog and platform configuration | `member` + `platform:create`, `vendor:create`, `vendor:update`, `vendor:delete`, `workflow:create`, `workflow:update`, `workflow:delete`, `workflow:deploy`, `pipeline:create`, `pipeline:update`, `action:validate`, `setting:update`, `system:reindex`, `job:read_all`, `job:update` |
-| `service_account` | Machine writeback — pipeline results and Batch job-status updates only (**not** MCP, which acts as the invoking user) | `project:read`, `run:read`, `run:create`, `run:update`, `sample:read`, `sample:create`, `sample:update`, `qcrecord:create`, `file:create`, `file:update`, `job:read_all`, `job:update`, `workflow:read`. `run:create` and `sample:update` added 2026-09-12 — the role held each verb's update without its create, or vice versa, which describes no real workflow. `workflow:read` added 2026-09-28 — a writeback identity has to resolve the workflow and version it is recording results for, and a machine account created with `--role service_account` never receives `member`, which is where every human role gets it. `run:create` removed 2026-09-28 and moved to `run_registrar` — nine accounts hold this role, exactly one registers runs |
-| `auditor` | Compliance, QA, read-only agents | Every `*:read` permission, plus `file:download`, `search:query`, `role:read` |
-| `admin` | Platform administrator | `ALL_PERMISSIONS`, recomputed at each sync so new permissions are picked up automatically |
+Collapsed to three tiers on 2026-10-13 (NWP-2213, step 3). Eleven global roles became six, and `member` became the complement of what is reserved rather than a hand-maintained list.
+
+| Tier | Role | Purpose | Permissions |
+|---|---|---|---|
+| User | `member` | Default for every authenticated user | **43** — everything not reserved below |
+| Admin | `admin` | Platform administrator | `ALL_PERMISSIONS`, recomputed at each sync |
+| Admin | `vendor_admin` | Owns the vendor catalogue | `vendor:create`, `vendor:update`, `vendor:delete`, `vendor:read` |
+| Admin | `workflow_admin` | Owns the workflow catalogue | every `workflow:*`, derived from the catalogue |
+| Service | `service_account` | Machine writeback — pipeline results and Batch job status | 15, including the only `job:update` outside `admin` |
+| Service | `auditor` | Compliance, QA, read-only agents | every `*:read`, plus `file:download`, `search:query`, `role:read` |
+
+**What is reserved, which is the whole design.** `member` is derived as `ALL_PERMISSIONS - reserved`, so a permission added to the catalogue lands in the user tier unless somebody reserves it:
+
+| Reserved to | Permissions |
+|---|---|
+| `admin` | `role:manage`, `user:manage`, `setting:update`, `system:reindex`, `project:delete`, `job:update` |
+| `vendor_admin` | `vendor:create`, `vendor:update`, `vendor:delete` |
+| `workflow_admin` | `workflow:create`, `workflow:update`, `workflow:delete`, `workflow:deploy` |
+| Nobody — membership-gated | `project:manage_members` |
+| `project_owner` (and `admin`) | `project:restrict` |
+
+That is 15 of 58. `tests/api/test_rbac_catalog.py::TestTheCollapsedRoster` pins all five sets and `member`'s size, so adding a permission fails the suite until someone decides which side of the line it belongs on.
+
+**Retired:** `lab_manager`, `demux_operator`, `manifest_operator`, `workflow_publisher`, `platform_admin`. Their holders are covered by the widened `member`, except `workflow_publisher` — its permissions are reserved to `workflow_admin`, so migration `a71c4e08b2f6` grants that role to its holders rather than letting them lose access silently.
+
+**Why.** Five of those roles were created reactively over two weeks, and **every grant request ever made was approved**. A permission granted to everyone who asks is not a restricted permission; it is an unrestricted one with a ticket queue in front of it. The decisive measurement: of 44 refusals on `project:submit_action` over 28 days, *all 44* came from callers with no membership of the target project, and no project member was ever refused. The role model kept turning out to be a poor predictor of who needs what.
+
+**Deliberate consequences, recorded because they are easy to misread.**
+
+`run:create` and `run:associate` are now in `member`, so any authenticated user can register a run or associate a sample. That makes `run_registrar` and `run_associator` redundant *for humans*, though they remain the grant their service accounts hold, so nothing is lost. The narrowing those roles came from (#447, #451) still holds for machines — `service_account` carries neither — but it no longer restricts people.
+
+**Neither run role is in the table above any more, because neither is a builtin.** Both were converted to custom roles on 2026-10-21 ([#476](https://github.com/NGS360/APIServer/pull/476), migration `c8e4a1f72b93`): the same rows, the same single permission each, the same single grant each, but `is_builtin = 0` and no definition in `api/rbac/roles.py`. Administrators now own them through `/rbac/roles`.
+
+The distinction worth drawing from this, because it decides where the next role should go: **a builtin role is the right shape for a persona the product asserts.** `member`, `admin`, `service_account` each describe a *kind of caller*, and re-deriving them from code on every deploy is exactly what keeps the code the source of truth about them.
+
+Neither of these was that. Each is one permission held by one machine account — `run_registrar` by the sequencer upload service, `run_associator` by the run metrics lambda — which makes them **operational grants**. Operational grants should be adjustable by the people running the platform without a pull request, and being builtin actively prevented that: `update_role_permissions()` and `delete_role()` both refuse a builtin outright.
+
+Two consequences, neither subtle once stated:
+
+- **Nothing re-derives them.** They will not be recreated in a database that does not have them, which is why the migration seeds them where missing rather than only flipping the flag. A tier that skips the migration has neither role at all.
+- **Re-adding either name to `ROLE_DEFINITIONS` silently takes it back.** `sync_rbac_catalog()` forces `is_builtin = True` on every role it defines, so a one-line change that looks like tidying would make the row uneditable again at the next startup, with nothing in the diff to explain the 409s. `test_a_converted_role_is_not_reclaimed_by_a_later_sync` is parametrised over both names to fail in that case, and asserts the grant survives too — role deletion cascades.
+
+What this does **not** change is the narrowing itself. `run:create` and `run:associate` still do not belong in `service_account`, for the reasons measured in #447 and #451, and `test_the_machine_roles_stay_separate_and_narrow` still pins that.
+
+`file:delete`, `sample:delete` and `qcrecord:delete` are in `member`. `project:delete` is not: with 11,168 projects, one mistake there is unrecoverable.
+
+`file:download` is in `member`. That was forbidden for a month, correctly, because while the restricted-project branch was a *permission* check a universal grant satisfied it for everyone. Two changes removed the coupling — the restriction now checks **membership** (#461), which no role can grant, and an unresolved URI is refused by **location** (#459, #460) rather than by privilege. The permission stopped being the protection, so withholding it stopped buying anything.
+
+**`auditor` survived the collapse** rather than being folded into `member`, because it is *narrower* than the user tier, not wider. Merging it would have granted its holder write access to everything, which is the opposite of what an auditor is.
+
+**What `restricted` protects.** Writes, downloads, member management — and, since 2026-10-15, reads. The narrow reading taken at the role collapse left `GET /projects/{id}` and `GET /projects/{id}/samples` unguarded, so a locked-down project still handed its metadata and sample list to any authenticated caller. Both are now guarded on `project:read` and `sample:read`, which is what gives the flag effect over reads — the membership check lives inside `require_project_permission`, so a route without a guard never consults it. See [Guarding the two project reads](#guarding-the-two-project-reads).
 
 ### Project roles
 
@@ -350,7 +389,7 @@ Roles are database rows so that administrators can compose custom ones. The **bu
 |------|-------------|
 | `project_viewer` | `project:read`, `sample:read`, `qcrecord:read`, `file:read`, `file:download` |
 | `project_contributor` | `project_viewer` + `project:update`, `sample:create`, `sample:update`, `sample:delete`, `qcrecord:create`, `qcrecord:delete`, `file:create`, `file:update`, `file:delete`, `project:submit_action`, `project:ingest` |
-| `project_owner` | `project_contributor` + `project:manage_members`, `project:delete` |
+| `project_owner` | `project_contributor` + `project:manage_members`, `project:delete`, `project:restrict` |
 
 ### Why this set, and how to evaluate additions
 
@@ -371,7 +410,7 @@ So `run:associate` was not added to `service_account`, for the reason `run:creat
 
 **`lab_manager` keeps `run:associate` even though no holder has ever called the route.** That grant is unused by the same measurement that condemned `run:create`, and it is deliberately left alone here: removing it is a separate decision rather than a side effect of unblocking a pipeline.
 
-Deployment has the same ordering constraint as `run_registrar` — the role row is created by `sync_rbac_catalog()` at startup, so deploy first, then grant:
+Deployment has the same ordering constraint as `run_registrar` — the role row is created by `sync_rbac_catalog()` at startup, so deploy first, then grant *(superseded 2026-10-21: `run_associator` is a custom role now and nothing creates it at startup, so this no longer applies to it — see* **Neither run role is in the table above** *)*:
 
 ```
 POST /api/v1/rbac/users/NGS360-CollectRunMetrics-lambda/roles
@@ -393,9 +432,11 @@ No `lab_manager` holder has ever registered a run, and neither have the other ei
 
 This is the same shape as `demux_operator` and `manifest_operator`, reached from the opposite direction. Those roles exist because people were being refused something they needed; this one exists because accounts held something they never used. Both corrections require the same measurement, which is the point worth carrying forward: resolve every principal on the route before deciding the role is the right width — in either direction.
 
-**It makes runs an exception to the create/update pairing rule**, and that is deliberate. `service_account` keeps `run:update`. The pairing rule added on 2026-09-12 assumes one identity handles a resource's whole lifecycle, which holds for samples and files — whoever writes a record also corrects it. It does not hold for runs: the role is shared by nine accounts for job and result writeback, and pairing the verbs meant eight machine identities could create runs so that one could. `tests/api/test_rbac_catalog.py::test_run_registration_is_separated_from_run_writeback` pins the exception so that re-adding `run:create` has to argue with a test rather than look like a tidy-up.
+**It makes runs an exception to the create/update pairing rule**, and that is deliberate. `service_account` keeps `run:update`. The pairing rule added on 2026-09-12 assumes one identity handles a resource's whole lifecycle, which holds for samples and files — whoever writes a record also corrects it. It does not hold for runs: the role is shared by nine accounts for job and result writeback, and pairing the verbs meant eight machine identities could create runs so that one could. `tests/api/test_rbac_catalog.py::TestTheCollapsedRoster::test_the_machine_roles_stay_separate_and_narrow` pins the exception so that re-adding `run:create` has to argue with a test rather than look like a tidy-up. (It is the `run:create not in service_account` assertion that does the pinning; that is unaffected by `run_registrar` leaving the builtin catalogue.)
 
 Note the ordering constraint for deployment: `sync_rbac_catalog()` creates the `run_registrar` row at startup, so the role does not exist to be granted until the tier has been deployed. Removal and grant therefore cannot be simultaneous — deploy first, then grant, and `POST /runs` returns 403 for the registrar accounts in between.
+
+*Superseded 2026-10-21.* `run_registrar` and `run_associator` are custom roles now, so nothing creates them at startup any more and that ordering constraint no longer applies to either — see *Neither run role is in the table above* above. The constraint itself still holds for any role the catalogue does define.
 
 ### Demultiplexing became a default
 
@@ -729,11 +770,14 @@ So the rule is now:
 ```
 download(caller, uri):
   1. caller is not authenticated                      -> DENY
-  2. project = resolve(uri); project is unrestricted  -> ALLOW, no permission consulted
-  3. project is restricted                            -> require file:download in that project
-  4. unresolved, but inside a registered run folder   -> ALLOW, no permission consulted
-  5. unresolved otherwise                             -> require global file:download
+  2. uri is malformed                                 -> 400, not 403
+  3. project = resolve(uri); project is unrestricted  -> ALLOW, no permission consulted
+  4. project is restricted                            -> require MEMBERSHIP of that project
+  5. a registered run folder, or the upload store     -> ALLOW, no permission consulted
+  6. anything else                                    -> DENY, for everyone
 ```
+
+Step 3 changed from a permission check to a membership check on 2026-10-08; see [Restriction is membership, not permission](#restriction-is-membership-not-permission).
 
 Step 4 was added 2026-10-06; see [Run folders are open to authenticated callers](#run-folders-are-open-to-authenticated-callers). It sits *after* project resolution on purpose.
 
@@ -769,10 +813,114 @@ Direct associations are tried before the run, so a file both in a project and on
 - **Reads were already unaffected** and remain so. `file:read`, `project:read`, `sample:read`, `qcrecord:read` are global.
 - **`GET /files/download` is no longer a bypass at all.** It was guarded in place on 2026-09-09 — same dependency, unchanged 307-to-S3 response — so the two routes agree in every case, including anonymous callers and restricted projects. This is what makes a restriction actually enforceable; while that route was open, restriction was the only control protecting the data and it could be walked around by changing the URL. `TestTheOldRouteIsTheBypass` is inverted rather than narrowed, as its own docstring asked.
 
-**Implemented** by `project.download_restricted` (migration `c9f4b7e28a13`), the rework of `require_file_download`, and `tests/api/test_file_download_scope.py`. Seven tests there asserted the withdrawn requirement and were rewritten rather than preserved.
+**Implemented** by `project.restricted` (added as `download_restricted` in `c9f4b7e28a13`, renamed in `f3a7c01d9e45`), the rework of `require_file_download`, and `tests/api/test_file_download_scope.py`. Seven tests there asserted the withdrawn requirement and were rewritten rather than preserved.
 
 Still outstanding, and both are defence in depth rather than the policy: an explicit bucket allowlist inside `generate_presigned_url`, so signing is constrained even when authorization has already passed; and surfacing restriction in the UI, since with an opt-in control the dangerous state is a project nobody remembered to restrict.
 
+
+### Signing is confined to four locations
+
+**Changed 2026-10-08.** `generate_presigned_url` will sign, and `GET /files/list` will enumerate, only a URI in one of four places:
+
+| Location | Resolved by |
+|---|---|
+| A project | any `scope_for_uri` strategy — association, sample, run fallback, or project-id path inference |
+| A registered run folder | prefix match against `sequencingrun.run_folder_uri` |
+| A registered vendor inbound prefix | prefix match against `vendor.bucket` |
+| The platform's own upload store | prefix match against `STORAGE_ROOT_PATH` |
+
+Anything else is refused **for every caller, superuser included**.
+
+**What this replaced, and why it was not good enough.** The old rule was "an unresolved URI requires global `file:download`". That is a privilege, not a boundary: `lab_manager`, `auditor`, `admin` and every superuser hold the permission, so for those principals the endpoint was an arbitrary-S3-read proxy over everything the API's own IAM role can reach. There is no principal for whom signing a stranger's bucket is correct, which is exactly what makes this a property of the location rather than of the caller. An allowlist an administrator can step outside is not an allowlist.
+
+**The rule ignores `RBAC_MODE`, and that took a second attempt to get right.** As first shipped in #459 the refusal was folded into the guard's `granted` flag and handed to `decide()`, which applies the enforcement mode. Production runs `dry_run`, so an unsignable URI was recorded `would_deny` and served a **200** — the protection was inert in the only tier that mattered, and every test passed because the suite runs in `enforce`. It was caught by probing production with a superuser token after the deploy, which is the check worth repeating for anything claiming to refuse a privileged caller.
+
+Whether a URI is one of the platform's locations is a property of the URI, so no mode, role or superuser flag may soften it. Authorisation — a restricted project's membership check — stays mode-aware, because that one genuinely is a permission decision and is still being rolled out. The refusal is still emitted through `decide()` first, so it lands in the access log beside every other decision and carries the URI as its subject; the raise afterwards is unconditional rather than left to the mode.
+
+**The two new locations were added on measurement.**
+
+*Vendor prefixes.* All 89 download requests into vendor buckets over 28 days named a project id that **exists** — none lacked one. So vendor paths resolve to their project through ordinary path inference and inherit that project's restriction, rather than needing a category that is signable without a project. These were the last outstanding `file:download` refusals after #453.
+
+*The upload store.* This one was a bug caught by the test suite, and the lesson is worth keeping. Production's `STORAGE_URI` is a **third** bucket, distinct from both `DATA_BUCKET_URI` and `RESULTS_BUCKET_URI`. A `may_sign` check built from the data and results buckets alone rejected every upload — the rule is applied to the write path too. It also cannot rely on project-id inference, because an upload against a run, sample or QC record is stored under that entity's UUID with no project id anywhere in the key.
+
+Note `STORAGE_ROOT_PATH` is read from `get_settings()`, not from `get_setting_value()`. The two look interchangeable and are not: the bucket URIs are database settings, while this comes from an environment variable and has no row. Looking it up in the database returns `None`, which silently makes the file store unsignable.
+
+**Listing needed a different well-formedness test, and this is the subtle part.** Signing needs an object, so `s3://bucket` alone is malformed there. Listing does not — `s3://bucket/` is a perfectly well-formed request to enumerate an entire bucket. If the listing guard used the signing-shaped check, a bare bucket would be dismissed as malformed and let through, and **dropping the key would be enough to enumerate any bucket the API can read**. Hence `is_wellformed(uri, require_key=False)` on that path, and `test_a_bare_bucket_cannot_either` to pin it.
+
+**A malformed URI is a 400, not a 403.** Answering 403 for `""` or `not-a-uri` tells a caller they lack access to something that is not a location, and makes the two cases indistinguishable while they fix the request. Malformed URIs are passed through to the handler's own validation.
+
+**On the upload path this is defence in depth, not a hole being closed.** The destination is server-computed — `generate_uri(STORAGE_ROOT_PATH, entity_type, entity_id, filename, relative_path)` — and `validate_relative_path` already rejects absolute paths, `..`, `//` and anything outside `[a-zA-Z0-9_\-/]`. A caller cannot name an arbitrary destination today. The check is worth making anyway because that safety is emergent from three functions agreeing rather than stated anywhere: a change to `STORAGE_ROOT_PATH` or `generate_uri`, or a bypass of the path validation, would silently widen where the platform writes.
+
+**Measured before shipping.** Replaying 28 days of production traffic: all 1,415 `download-url` requests and all 342 distinct `/files/list` URIs fall inside the four locations. Nothing legitimate is refused.
+
+**One ordering dependency, recorded because it is load-bearing.** The vendor allowlist is database-backed, so whoever can write `vendor.bucket` decides what the platform will sign. `vendor:create` and `vendor:update` move to `vendor_admin` in step 3 of the role model; until then this inference widens signing to anyone who can edit a vendor row.
+
+### The restriction flag was unsettable, and the gate was advisory
+
+**Corrected 2026-10-13, after proving the gate against production.** Three defects, all found by setting the flag on a real project and probing it rather than by reading the code.
+
+**1. `restricted` could not be set through the API.** `update_project` and `patch_project` persisted only `name` and `attributes`; the field had been on `ProjectUpdate` since #425 and was never written. A `PATCH {"restricted": true}` returned **200 and changed nothing** — an ignored field is indistinguishable from an applied one in the response. Two of the six `ProjectPublic` constructions in that module also omitted the field, so those responses reported every project as unrestricted whatever the row said.
+
+> **This invalidates a figure quoted repeatedly in the sections above.** "0 of 11,156 projects set `download_restricted`" was used as evidence that nobody wanted restricted projects — in the argument for opening downloads by default, and again for declining an `actions_restricted` flag. It actually meant **nobody could create one**. The conclusions may still be right, but that particular support for them was an artefact, and the sections above are left as written with this correction rather than quietly amended.
+
+**2. The membership gate was mode-aware.** Folded into the guard's `granted` flag and handed to `decide()`, which applies `RBAC_MODE`. With the flag set, a **superuser who was not a member** still received 200 on every route whose permission had not been graduated — including `GET /projects/{id}/samples` and `GET /files/download-url`, since `file:download` has never been graduated. `dry_run` turned the refusal into a log line. The whole test suite missed it because tests run in `enforce`, where the distinction does not exist.
+
+A project being locked down is a property of the project, not an authorisation decision mid-rollout, so no mode, role or superuser flag may soften it. The check now runs before the permission check and raises unconditionally; the permission check stays mode-aware.
+
+**3. The flag was a one-way door.** Every project-plane route applies the gate, `PATCH` included, so a restricted project could not be unlocked by a non-member — and `POST .../members` was gated too, so nobody could enrol themselves to become one. A project restricted with the wrong people in it was unreachable through the API entirely, including to an administrator. Recovery required a direct database write.
+
+`project:manage_members` is now exempt from the gate, because membership *is* the restriction's allowlist and managing the allowlist cannot require being on it. The recovery path is two steps — enrol, then act — and it leaves a `project_member` row behind, which is the point: an administrator reaching into a locked-down project should leave a trace. `project:manage_members` is `critical`, so this is an admin capability rather than something an ordinary caller holds.
+
+**What the gate did not cover, and now does.** It only runs where `require_project_permission` is used. When this was written that was 13 routes, excluding `GET /projects/{id}` and `GET /projects/{id}/samples` — so a restricted project's metadata and sample list remained readable. Both were guarded on 2026-10-15 once authentication was closed on them; see [Guarding the two project reads](#guarding-the-two-project-reads).
+
+### Restriction is membership, not permission
+
+**Changed 2026-10-08.** A project marked `restricted` now requires *membership* — a `project_member` row — rather than a permission on the project plane. `download_restricted` is renamed to `restricted`, because the flag no longer governs downloads alone.
+
+**Why the permission form could not survive.** `AuthzContext.has_in_project()` returns true immediately on a **global** grant:
+
+```python
+if self.has(permission):
+    return True
+return str(permission) in self.permissions_in_project(project_id)
+```
+
+So "requires `file:download` on this project" was already satisfied by anyone holding `file:download` anywhere — `lab_manager`, `auditor`, `admin`, superusers. That was tolerable while those were four roles. It stops being tolerable under the three-tier model, where the default role holds the project-scopable permissions globally: every user would satisfy every restriction, the guard would stay in place, and it would refuse nobody. The failure is silent, which is the dangerous part — nothing in the logs distinguishes "allowed because unrestricted" from "allowed because the restriction is void".
+
+A `project_member` row cannot be conjured by a role. That is the entire reason membership is the gate.
+
+**Where it applies.** Two places, and they differ deliberately:
+
+| Guard | On a restricted project |
+|---|---|
+| `require_file_download` | membership **replaces** the permission check |
+| `require_project_permission` | membership is an **additional** precondition; the permission check still runs |
+
+The second is additive on purpose. Today it can only refuse something currently allowed, and since no project sets the flag, production behaviour is unchanged. When the default role is widened the permission half goes vacuous on its own and membership becomes the whole gate — without `api/rbac/deps.py` changing again.
+
+**Superuser is not exempt**, and this is the one place in the codebase where that holds. `restricted` is meant to mean restricted; an administrator who needs the data enrols themselves, which leaves a row behind as the audit trail. Silent administrative access to a locked-down project is what the flag exists to prevent. The superuser flag still bypasses every *permission* check, so this costs an enrolment and nothing more.
+
+**Rename rather than a second flag.** A project whose data may not be downloaded but may be deleted is not a coherent state, and two flags would invite exactly that. Safe to rename because the column is set on **0 of 11,156** projects — no data to migrate, no caller depending on it. It is a breaking API change in principle (`download_restricted` → `restricted` on `ProjectPublic` and `ProjectUpdate`); in practice nothing sets it and the frontend does not read it.
+
+**This is step 1 of the three-tier role model** recorded on NWP-2213, and it is deliberately first: nothing depends on `restricted` yet, so the gate can be exercised on a real project before any permission is widened. Widening the default role first would leave a window in which nothing protects a restricted project.
+
+### Submitting an action is no longer project-scoped
+
+**Policy decision, 2026-10-07.** `project:submit_action` moved into `member`, so any authenticated user may submit a pipeline action on any project.
+
+**What the measurement showed, and why the obvious fix was wrong.** Across 28 days of dry-run, `project:submit_action` produced 44 refusals. Every single one came from a caller with **no membership of the target project**, and **no project member was ever refused** — 40 of the allowed requests came from `project_owner`, 4 from `project_contributor`, and the remaining 16 from admins. So the project plane was working exactly as specified.
+
+That rules out the first reading of "members should be able to submit": adding `project:submit_action` to `project_viewer` would have fixed **zero** of the 44, because none of the refused callers were viewers — or members of any kind.
+
+**Who was refused also matters.** These were not outsiders. The ten people involved hold 182, 147, 90, 81, 58, 36, 24, 14, 11 and 0 project memberships respectively; the one with 182 was refused on the two or three projects they happen not to belong to. Two further refusals came from personal API keys belonging to an eleventh user — the third time a human has turned up driving pipeline work through a personal token, after `seq2s3` and the `run:associate` key. This is cross-project analysis on an open platform, not an access-control violation.
+
+**Why not a targeted role.** It was worked up and lost on the collateral. The only existing role it fits is `lab_manager`, which already carries global `project:ingest` and would have become coherent by gaining this — but it is thirteen permissions beyond `member`, including global `file:download`. Global `file:download` satisfies every project's restriction, so granting `lab_manager` to ten analysts in order to fix one permission would have quietly undone the project download restrictions shipped in #425. A new narrow role avoids that, at the price of ten grants now and one per new analyst forever, for a permission nobody has ever been refused *within* their own projects.
+
+Worth recording separately: **`lab_manager` holds global `project:ingest` but not `project:submit_action`.** That asymmetry is real — a sequencing-core operator can ingest vendor data into any project but cannot submit a pipeline job on one — and it is left in place deliberately rather than fixed as a side effect here. It is the same shape as the `run:create`/`run:update` pairing corrected in #447.
+
+**The cost.** `has_in_project` short-circuits on a global grant, so while this sits in `member` there is no way to restrict submitting an action on a particular project. That lever is gone until the permission leaves `member` again. The alternative was an `actions_restricted` flag mirroring downloads; it lost on the evidence that `download_restricted` is set on **0 of 11,156 projects**, so a second unused lever did not justify a column, a migration and a guard.
+
+This makes `project:submit_action` the first project-scopable **write** in `member` — every other scopable permission it holds is a read. `tests/api/test_project_access_control.py::test_member_holds_four_scopable_reads_and_one_scopable_write` pins that, and asserts the reads/writes split separately so a second write cannot arrive unnoticed.
 
 ### Run folders are open to authenticated callers
 
@@ -796,7 +944,7 @@ Neither option could cover more than about half of recent run traffic. Project r
 
 **It opens raw base calls, and that was the choice made.** A run folder holds `Data/Intensities/BaseCalls/**.cbcl` next to the QC reports, and cbcl decodes into reads — so this opens instrument-level sequence data to every platform user. The narrower option was an allowlist of report subpaths (`Reports/`, `Stats/`, `InterOp/`, the XMLs, the sample sheets), which covered **100% of the observed traffic**. The whole folder was chosen instead, on the grounds that it matches what the run page already offers and leaves no allowlist to maintain. `test_raw_base_calls_are_included` pins it so the cost is visible in the test suite rather than discovered later.
 
-**Ordering is what keeps `download_restricted` alive.** The opening is evaluated only after every project-resolving strategy has failed. A file that is both associated with a restricted project and sitting under a run folder resolves strictly, through the project, and stays refused. Checking the run folder first would have made restriction unenforceable for precisely the files most likely to warrant it. `test_a_restricted_project_still_wins` pins the ordering.
+**Ordering is what keeps `restricted` alive.** The opening is evaluated only after every project-resolving strategy has failed. A file that is both associated with a restricted project and sitting under a run folder resolves strictly, through the project, and stays refused. Checking the run folder first would have made restriction unenforceable for precisely the files most likely to warrant it. `test_a_restricted_project_still_wins` pins the ordering.
 
 **Measured effect.** Replaying 28 days of real download URIs through the new resolver against the production database: 38 requests move from refused to open, 1,271 continue to resolve to a project, and **83 remain refused**. Those 83 are a different family — vendor inbound buckets of the form `.../incoming/<project-id>/...` whose buckets are not in `DATA_BUCKET_URI`/`RESULTS_BUCKET_URI`, so path inference does not reach them. They carry project ids and would resolve if those buckets were recognised, which is the next thing to look at and is not addressed here.
 
@@ -893,6 +1041,24 @@ New router `api/rbac/routes.py` at `/api/v1/rbac`:
 | GET | `/rbac/users/{username}/roles` | `role:read` |
 | POST | `/rbac/users/{username}/roles` | `role:manage` |
 | DELETE | `/rbac/users/{username}/roles/{role_name}` | `role:manage` |
+| GET | `/rbac/users` | `role:read` — the user roster: status flags and global roles, paginated, filterable on name, role and status |
+| GET | `/rbac/users/{username}/access` | `role:read` — both grant planes for one user, including project memberships |
+
+`GET /rbac/users` exists rather than reusing `GET /users/search` because those are two different endpoints wearing the same name. Search backs the user *picker*: it may answer from LDAP, it requires a query of at least two characters, and it filters to `is_active`. All three are right for choosing somebody to grant a role to, and all three are wrong for administering accounts — the deactivated account is the one the administrator came to find.
+
+Both take `role:read` rather than `user:read`: the latter is the directory-search permission every `member` holds, and it does not describe reading the whole roster's status flags and grants.
+
+`GET /rbac/me` carries the global plane only. Project-scoped permissions are not inlined there — with a five-figure project count the payload would be unbounded — so `GET /projects/{project_id}` carries a per-caller `permissions` list for the project in hand instead.
+
+`None` and `[]` are different facts, and the distinction is worth keeping straight:
+
+- **`None` means the field was not populated.** Only the detail route resolves it. The list, create, update and patch routes all return `ProjectPublic` without it, the same way they leave `sequencing_runs` unset — resolving it costs a membership lookup per project, which on a page of projects is an N+1 for something no list view needs, since there are no per-row controls to gate. One consequence for a UI: after a successful `PUT`/`PATCH` the field comes back `None`, so re-read the detail route rather than treating the response as a refreshed permission set.
+- **`[]` means a real caller was evaluated and holds nothing here.**
+
+`None` once also covered an anonymous request, and the field was built on `OptionalAuthzDep` for that reason. It no longer can: every feature router requires a caller, and the detail route additionally requires `project:read`, so a request that reaches the handler always has somebody to report on. The optional dependency is kept rather than folded into `load_authz`, because collapsing it is a change to the route and not to the helper — its docstring records the same thing.
+
+The list is restricted to `PROJECT_SCOPABLE` and is resolved through `has_in_project`, which means two things. A global grant is included, so an `admin` is not reported as holding nothing on a project and having every control hidden from the one account that can use all of them. And a permission added to the catalogue is reported without this code changing — `project:restrict` ([#475](https://github.com/NGS360/APIServer/pull/475)) is carried by `project_owner` and `admin` and withheld from `member`, which is exactly what a UI needs to decide whether to offer a restrict control.
+
 
 Project membership lives on the project router so that owners can self-serve:
 
@@ -1139,7 +1305,71 @@ The four that enforce immediately are `pipeline:update`, `qcrecord:delete`, `ven
 
 **`run:associate` is deliberately among the seven that log.** It has a live refusing caller — a run-metrics service account, 12 refusals in the window and still going — so guarding `DELETE /runs/{run_id}/samples/{sample_id}` on it must not enforce. Closing the route while its permission stays in dry-run is exactly the sequencing that #434 got wrong.
 
+> **Closed 2026-10-14 — see [Authentication is now a property of the router](#authentication-is-now-a-property-of-the-router) below. The paragraph that follows is left as written, and its central claim did not survive measurement.**
+
 **What remains is 28 routes, none of them ours.** Every one carries anonymous or invalid-JWT traffic from a consumer another team owns. The largest is `GET /workflows/{workflow_id}` at 23,443 anonymous requests (WES bearer-token forwarding), then `/jobs` and `/jobs/{job_id}` (ngs-observe), `/runs/{id}/metrics` and `/runs/search` (RStudio), `/actions/configs` (the Batch event trigger), and `/files` and `/files/list`.
+
+### What `service_account` has accumulated, and the rule that bounds it
+
+`service_account` has grown from 12 permissions to 15 in four days: `action:read` (#471), then `manifest:validate` and `project:update` (2026-10-20). Each addition had a measured caller behind it, and each widened a role shared by nine accounts to satisfy one.
+
+That is the trade #447 argued *against* when it took `run:create` out of this role on the evidence that 16 of 17 holders had never used it. The reasoning for going the other way here:
+
+- **`project:update` is project-scopable.** The documented rule for a new global role is that it must grant a write on a *global* resource; project-scoped personas belong in project membership. A role carrying `project:update` would break that rule.
+- **This role already carries six project-scopable writes globally** — `sample:create`, `sample:update`, `file:create`, `file:update`, `qcrecord:create`, `project:read` — for the documented reason that a machine cannot be enrolled in every project whose data it writes. `project:update` is the same shape, not a new kind of grant.
+- **The role model was collapsed from eleven global roles to six** four days earlier, specifically to stop one-account roles accumulating. An eighth a week later would undo that.
+
+The cost is real: the other eight service accounts hold three permissions they do not use. Two things bound the drift rather than leaving it to judgement each time:
+
+`test_the_machine_role_still_excludes_what_spends_or_destroys` lists what has been deliberately kept out — `run:demux`, `project:submit_action`, `project:ingest`, `file:download`, `file:browse`, and every delete, `setting:update`, `role:manage`, `user:manage`. Each addition to the role has to argue with that list.
+
+And if a second account ever needs `project:update` on a *specific* set of projects rather than all of them, the answer is enrolling it per project, not widening this further.
+
+### The guarded surface is complete
+
+**2026-10-15.** The remaining 26 routes are guarded, as one batch. **115 guarded, 0 unguarded** outside the public authentication surface and the self-service endpoints.
+
+Every permission involved — `action:read`, `file:read`, `job:read`, `run:read`, `workflow:read`, `vendor:read`, `platform:read`, `project:read`, `search:query`, `file:browse`, `file:create`, `job:read_all` — is in the default role. **The batch refuses nobody.** It exists to finish the decision record, so every route now emits an allow or a would_deny to the access log, and to empty the unguarded category so a new route arrives either guarded or listed in `PUBLIC`/`SELF_SERVICE` with a reason.
+
+Two are worth noting. `GET /files/list` is guarded on **`file:browse`**, which until now was an *inert permission* — defined in the catalogue, held by roles, and checked by no route. `POST /files/upload` takes `file:create`, matching the JSON `POST /files` beside it.
+
+**A note on how this was done, because it went wrong twice.** The batch was applied by script, and the script computed its insertion point from the next closing parenthesis. For the two routes whose decorators were written on a single line — `GET /search` and `GET /runs/demultiplex` — that point was inside the *handler signature*, so the guard became a parameter named `dependencies`. That is valid Python, does nothing, and adds a spurious query parameter to the route. **flake8 passed and the whole suite passed.**
+
+The route-coverage counts caught one of them. `test_no_guard_is_hiding_in_a_handler_signature` now catches the shape directly, via the AST — a first attempt at a textual detector reported 19 offenders, 18 of them false, because one-line `def`s left its state machine convinced it was still inside a signature.
+
+### Guarding the two project reads
+
+**2026-10-15.** `GET /projects/{project_id}` is guarded on `project:read`, and `GET /projects/{project_id}/samples` on `sample:read`.
+
+**Neither guard refuses anyone who could reach those routes the day before.** Both permissions are in the default role, which all 258 users hold. They are not here to restrict reads.
+
+They are here for the other thing `require_project_permission` does: **a project marked `restricted` requires membership, and that check lives in the guard.** A route without a guard never consults it, which is why `restricted` protected writes, downloads and member management but not reads. A locked-down project handed its metadata and its entire sample list to any authenticated caller — the sample list being the project's actual content. These two routes are what make the flag mean what it says.
+
+**It takes effect immediately, not at the enforce cutover.** The membership check is mode-independent, so the refusal holds in `dry_run` and in `off`. That is asserted directly, because the alternative failure — a change that looks complete and does nothing in production — has happened three times in this rollout: the signing rule, the membership gate and the `restricted` flag were each inert in `dry_run` while every test passed.
+
+**Guarded surface: 87 → 89. Authenticated-but-unguarded: 28 → 26.** The remaining 26 are global-plane reads whose permissions `member` already holds, so guarding them adds the decision record rather than a restriction. They are now ordinary work rather than blocked on anyone.
+
+### Authentication is now a property of the router
+
+**Closed 2026-10-14.** Every feature router requires an authenticated caller, applied once at `app.include_router(...)` in `main.py` rather than route by route. An endpoint is reachable anonymously if and only if it sits in the authentication routers.
+
+**What the measurement actually showed, and it is not what the section above says.** Asked which routes did not *require* authentication — as opposed to which carried anonymous traffic — the answer was 39 of 134, of which 11 are the login and OAuth surface and **28 were data routes**. Among them: `GET /runs/{run_id}` at 393,818 requests a week, `GET /projects/{project_id}/samples`, `GET /jobs`, the whole workflow catalogue, and `POST /files/upload`, which is a **write**.
+
+But they were **99.8% authenticated in practice** — 738 anonymous requests against 444,485 authenticated ones over seven days, with anonymous traffic on only 9 of the 28. So the framing carried through this document, that these routes were blocked on consumer migrations, was wrong in an important way: the consumers had largely migrated. The routes simply never started requiring what the consumers were already sending.
+
+That inverted the cost. Closing them was not five consumer systems and a phased rollout; it was one line and 738 requests a week of breakage, concentrated in three identified callers.
+
+**Why at the router.** The alternative is twenty-eight decorators that a twenty-ninth route can silently fail to copy — which is how this situation arose. At the router, the split in `main.py` *is* the policy, and a new endpoint is authenticated by default.
+
+**Two findings worth keeping.**
+
+*A dependency-graph walk lies here.* This FastAPI version does not flatten included routers, so `include_router(dependencies=...)` attaches to the wrapper while `effective_route_contexts()` returns the inner route — which still looks unauthenticated. A graph walk reported all 39 routes as still open *after* they were closed. Only sending a request showed otherwise, which is why `test_only_the_authentication_routes_are_reachable_anonymously` is behavioural: one unauthenticated request per route, asserting 401 or 403 for everything outside `PUBLIC`. A 422 for a bad body is a *failure* — it means the handler ran.
+
+*`auth_method` is the string `"none"`, not null.* A first tally that treated only a missing field as anonymous reported zero anonymous requests across all 28 routes — a clean result that was pure artefact. The same failure mode as the `auth_valid` and `http_method` parse errors recorded earlier: a measurement shaped so it can only return the expected answer.
+
+**Consequence for `submitted_by`.** `POST /files/upload` was the last route that could record a file with no submitter. It cannot now. Existing null values stay null — there is nothing to backfill them *from*, which is the point of the column.
+
+**What this does not do.** These 28 routes still carry no *permission* guard; they are authenticated and unguarded, which is ordinary Phase 4 work now rather than blocked on anyone else. `tests/test_route_coverage.py` renames the set from `AWAITING_AUTHENTICATION` to `AUTHENTICATED_BUT_UNGUARDED` to say so.
 
 ### Verified Phase 1 blockers
 

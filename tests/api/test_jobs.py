@@ -230,7 +230,7 @@ class TestJobsAPI:
         response = client.get("/api/v1/jobs")
         assert response.status_code == 200
         data = response.json()
-        assert data["count"] == 0
+        assert data["total_items"] == 0
         assert data["data"] == []
 
     def test_get_jobs_with_data(self, client: TestClient, session: Session):
@@ -251,7 +251,7 @@ class TestJobsAPI:
         response = client.get("/api/v1/jobs")
         assert response.status_code == 200
         data = response.json()
-        assert data["count"] == 3
+        assert data["total_items"] == 3
         assert len(data["data"]) == 3
 
     def test_get_jobs_with_filters(self, client: TestClient, session: Session):
@@ -280,7 +280,7 @@ class TestJobsAPI:
         response = client.get("/api/v1/jobs?user=user1")
         assert response.status_code == 200
         data = response.json()
-        assert data["count"] == 1
+        assert data["total_items"] == 1
         assert data["data"][0]["user"] == "user1"
 
     def test_get_jobs_filtered_by_project(self, client: TestClient, session: Session):
@@ -314,44 +314,395 @@ class TestJobsAPI:
         response = client.get("/api/v1/jobs?project_id=P-19900109-0001")
         assert response.status_code == 200
         data = response.json()
-        assert data["count"] == 1
+        assert data["total_items"] == 1
         assert data["data"][0]["id"] == "job-p1"
         assert data["data"][0]["project_id"] == "P-19900109-0001"
 
         # Unattributed jobs are excluded rather than leaking into every project
         response = client.get("/api/v1/jobs")
-        assert response.json()["count"] == 3
+        assert response.json()["total_items"] == 3
 
         response = client.get("/api/v1/jobs?project_id=P-00000000-0000")
-        assert response.json()["count"] == 0
+        assert response.json()["total_items"] == 0
+
+    def test_get_jobs_search(self, client: TestClient, session: Session):
+        """Test free-text search across job id, name and user"""
+        session.add(BatchJob(
+            id="job-align-1",
+            name="rnaseq-align-batch7",
+            command="echo hello",
+            user="alice",
+            status=JobStatus.SUBMITTED,
+        ))
+        session.add(BatchJob(
+            id="job-quant-2",
+            name="salmon-quant-batch7",
+            command="echo hello",
+            user="bob",
+            status=JobStatus.SUBMITTED,
+        ))
+        session.add(BatchJob(
+            id="job-fastqc-3",
+            name="fastqc-multiqc",
+            command="rnaseq-align mentioned only in the command",
+            user="carol",
+            status=JobStatus.SUBMITTED,
+        ))
+        session.commit()
+
+        # Name match
+        response = client.get("/api/v1/jobs?search=align")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["total_items"] == 1
+        assert data["data"][0]["id"] == "job-align-1"
+
+        # Id match
+        assert client.get("/api/v1/jobs?search=quant-2").json()["total_items"] == 1
+
+        # User match
+        response = client.get("/api/v1/jobs?search=carol")
+        assert response.json()["total_items"] == 1
+        assert response.json()["data"][0]["id"] == "job-fastqc-3"
+
+        # Substring spanning several rows
+        assert client.get("/api/v1/jobs?search=batch7").json()["total_items"] == 2
+
+        # The command column is deliberately not searched
+        assert client.get("/api/v1/jobs?search=mentioned").json()["total_items"] == 0
+
+        # No match
+        assert client.get("/api/v1/jobs?search=nosuchthing").json()["total_items"] == 0
+
+        # Absent, empty and whitespace-only terms are all "no filter"
+        assert client.get("/api/v1/jobs").json()["total_items"] == 3
+        assert client.get("/api/v1/jobs?search=").json()["total_items"] == 3
+        assert client.get("/api/v1/jobs?search=%20%20").json()["total_items"] == 3
+
+    def test_get_jobs_search_escapes_like_wildcards(self, client: TestClient, session: Session):
+        """A literal % or _ in the term must not widen the match"""
+        session.add(BatchJob(
+            id="job-pct",
+            name="100%-complete",
+            command="echo hello",
+            user="alice",
+            status=JobStatus.SUBMITTED,
+        ))
+        session.add(BatchJob(
+            id="job-plain",
+            name="align-batch7",
+            command="echo hello",
+            user="alice",
+            status=JobStatus.SUBMITTED,
+        ))
+        session.commit()
+
+        # Bare "%" would match everything if it reached LIKE unescaped
+        response = client.get("/api/v1/jobs?search=%25")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["total_items"] == 1
+        assert data["data"][0]["id"] == "job-pct"
+
+        # "_" is LIKE's single-character wildcard
+        assert client.get("/api/v1/jobs?search=a_i").json()["total_items"] == 0
+        assert client.get("/api/v1/jobs?search=ali").json()["total_items"] == 2
+
+    def test_get_jobs_search_combines_with_filters(self, client: TestClient, session: Session):
+        """Search narrows within the other filters rather than replacing them"""
+        session.add(BatchJob(
+            id="job-a",
+            name="rnaseq-align",
+            command="echo hello",
+            user="alice",
+            status=JobStatus.SUBMITTED,
+            project_id="P-19900109-0001",
+        ))
+        session.add(BatchJob(
+            id="job-b",
+            name="rnaseq-align",
+            command="echo hello",
+            user="alice",
+            status=JobStatus.SUBMITTED,
+            project_id="P-19900109-0002",
+        ))
+        session.commit()
+
+        response = client.get("/api/v1/jobs?project_id=P-19900109-0001&search=align")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["total_items"] == 1
+        assert data["data"][0]["id"] == "job-a"
+
+        # Count reflects the search, so pagination stays correct
+        response = client.get("/api/v1/jobs?search=align&limit=1")
+        assert response.json()["total_items"] == 2
+        assert len(response.json()["data"]) == 1
+
+    def _submit(self, session: Session, user: str, count: int, **scope):
+        """Helper: `count` jobs submitted by `user`, optionally within a scope"""
+        for _ in range(count):
+            session.add(BatchJob(
+                # Unique per job, so one user can be given jobs in more than
+                # one scope within a test
+                id=f"job-{user}-{uuid.uuid4().hex[:8]}",
+                name="rnaseq-align",
+                command="echo hello",
+                user=user,
+                status=JobStatus.SUBMITTED,
+                **scope,
+            ))
+        session.commit()
+
+    def test_get_jobs_filtered_by_several_users(self, client: TestClient, session: Session):
+        """Repeating user matches any of them, so the filter can be multi-select"""
+        for user in ["alice", "bob", "carol"]:
+            self._submit(session, user, 1)
+
+        response = client.get("/api/v1/jobs?user=alice&user=carol")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["total_items"] == 2
+        assert {row["user"] for row in data["data"]} == {"alice", "carol"}
+
+        # One is still one, so a single-select caller is unaffected
+        response = client.get("/api/v1/jobs?user=alice")
+        assert response.json()["total_items"] == 1
+
+        # And it narrows within the other filters rather than replacing them
+        self._submit(session, "alice", 1, project_id="P-19900109-0001")
+        response = client.get(
+            "/api/v1/jobs?user=alice&user=carol&project_id=P-19900109-0001"
+        )
+        data = response.json()
+        assert data["total_items"] == 1
+        assert data["data"][0]["user"] == "alice"
+
+    def test_get_job_submitters(self, client: TestClient, session: Session):
+        """One row per submitter, busiest first, with the job count"""
+        self._submit(session, "alice", 1)
+        self._submit(session, "bob", 3)
+        self._submit(session, "carol", 2)
+
+        response = client.get("/api/v1/jobs/stats/submitters")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["data"] == [
+            {"username": "bob", "job_count": 3},
+            {"username": "carol", "job_count": 2},
+            {"username": "alice", "job_count": 1},
+        ]
+        assert data["total_items"] == 3
+
+    def test_get_job_submitters_ties_break_on_username(
+        self, client: TestClient, session: Session
+    ):
+        """Equal counts order alphabetically, so paging cannot repeat or skip"""
+        self._submit(session, "carol", 2)
+        self._submit(session, "alice", 2)
+        self._submit(session, "bob", 2)
+
+        response = client.get("/api/v1/jobs/stats/submitters")
+        assert [row["username"] for row in response.json()["data"]] == [
+            "alice", "bob", "carol",
+        ]
+
+    def test_get_job_submitters_empty(self, client: TestClient):
+        """No jobs means no submitters, not an error"""
+        response = client.get("/api/v1/jobs/stats/submitters")
+        assert response.status_code == 200
+        assert response.json() == {
+            "data": [], "total_items": 0, "skip": 0, "limit": 10,
+            "has_next": False, "has_prev": False,
+        }
+
+    def test_get_job_submitters_scoped(self, client: TestClient, session: Session):
+        """Scoping matches GET /jobs, so every option offered returns rows"""
+        self._submit(session, "alice", 1, project_id="P-19900109-0001")
+        self._submit(session, "bob", 1, project_id="P-19900109-0002")
+        # Belongs to a run as well as a project: both scopes must find it
+        self._submit(
+            session, "carol", 1,
+            project_id="P-19900109-0001",
+            sequencing_run_id="240101_VH00000_1_EXAMPLE01",
+        )
+
+        response = client.get("/api/v1/jobs/stats/submitters?project_id=P-19900109-0001")
+        assert response.status_code == 200
+        assert [row["username"] for row in response.json()["data"]] == ["alice", "carol"]
+
+        response = client.get(
+            "/api/v1/jobs/stats/submitters?sequencing_run_id=240101_VH00000_1_EXAMPLE01"
+        )
+        assert [row["username"] for row in response.json()["data"]] == ["carol"]
+
+        # Both scopes together narrow to their intersection
+        response = client.get(
+            "/api/v1/jobs/stats/submitters"
+            "?project_id=P-19900109-0001"
+            "&sequencing_run_id=240101_VH00000_1_EXAMPLE01"
+        )
+        assert [row["username"] for row in response.json()["data"]] == ["carol"]
+
+    def test_get_job_submitters_counts_only_jobs_in_scope(
+        self, client: TestClient, session: Session
+    ):
+        """The count is the submitter's jobs here, not everywhere"""
+        self._submit(session, "alice", 3, project_id="P-19900109-0001")
+        self._submit(session, "alice", 5, project_id="P-19900109-0002")
+
+        response = client.get("/api/v1/jobs/stats/submitters?project_id=P-19900109-0001")
+        assert response.json()["data"] == [{"username": "alice", "job_count": 3}]
+
+    def test_get_job_submitters_filtered_by_username(self, client: TestClient, session: Session):
+        """q is a substring match on the username, anywhere in it"""
+        self._submit(session, "alice", 2)
+        self._submit(session, "alicia", 1)
+        self._submit(session, "bob", 3)
+
+        response = client.get("/api/v1/jobs/stats/submitters?username=ali")
+        assert response.status_code == 200
+        data = response.json()
+        assert [row["username"] for row in data["data"]] == ["alice", "alicia"]
+        # The total reflects the filter, so "load more" cannot offer a page
+        # of results the filter has excluded
+        assert data["total_items"] == 2
+
+        # Matches mid-username, not just the start
+        response = client.get("/api/v1/jobs/stats/submitters?username=lic")
+        assert [row["username"] for row in response.json()["data"]] == ["alice", "alicia"]
+
+        # And composes with the scope
+        self._submit(session, "alice", 1, project_id="P-19900109-0001")
+        response = client.get(
+            "/api/v1/jobs/stats/submitters?username=ali&project_id=P-19900109-0001"
+        )
+        assert response.json()["data"] == [{"username": "alice", "job_count": 1}]
+
+    def test_get_job_submitters_username_escapes_like_wildcards(
+        self, client: TestClient, session: Session
+    ):
+        """A literal % must not widen the match to everyone"""
+        self._submit(session, "alice", 1)
+        self._submit(session, "bob", 1)
+
+        empty = {
+            "data": [], "total_items": 0, "skip": 0, "limit": 10,
+            "has_next": False, "has_prev": False,
+        }
+
+        response = client.get("/api/v1/jobs/stats/submitters?username=%25")
+        assert response.status_code == 200
+        assert response.json() == empty
+
+        response = client.get("/api/v1/jobs/stats/submitters?username=_")
+        assert response.json() == empty
+
+    def test_get_job_submitters_pages(self, client: TestClient, session: Session):
+        """
+        limit and skip page through the ranking.
+
+        total_items stays the whole matching set on every page, and has_next
+        and has_prev say where in it the page sits -- so a caller can offer
+        "load more" without recomputing it from the page length.
+        """
+        for position, user in enumerate(["alice", "bob", "carol", "dave"]):
+            # Descending counts, so the ranking is unambiguous
+            self._submit(session, user, 4 - position)
+
+        response = client.get("/api/v1/jobs/stats/submitters?limit=2")
+        assert response.status_code == 200
+        data = response.json()
+        assert [row["username"] for row in data["data"]] == ["alice", "bob"]
+        # Not the length of the page -- together with has_next this is what
+        # tells the caller to offer another one
+        assert data["total_items"] == 4
+        # Echoed back, so a response is self-describing without its request
+        assert (data["skip"], data["limit"]) == (0, 2)
+        assert data["has_next"] is True
+        assert data["has_prev"] is False
+
+        response = client.get("/api/v1/jobs/stats/submitters?limit=2&skip=2")
+        data = response.json()
+        assert [row["username"] for row in data["data"]] == ["carol", "dave"]
+        # The last page: more behind it, none ahead
+        assert data["total_items"] == 4
+        assert data["has_next"] is False
+        assert data["has_prev"] is True
+
+        # A page that holds the whole set has neither neighbour
+        data = client.get("/api/v1/jobs/stats/submitters?limit=4").json()
+        assert data["has_next"] is False
+        assert data["has_prev"] is False
+
+        # Past the end is empty, not an error
+        response = client.get("/api/v1/jobs/stats/submitters?limit=2&skip=99")
+        assert response.json() == {
+            "data": [], "total_items": 4, "skip": 99, "limit": 2,
+            "has_next": False, "has_prev": True,
+        }
+
+    def test_get_job_submitters_limit_is_capped(self, client: TestClient):
+        """An unbounded page is the thing paging exists to prevent"""
+        assert client.get("/api/v1/jobs/stats/submitters?limit=100").status_code == 200
+        assert client.get("/api/v1/jobs/stats/submitters?limit=101").status_code == 422
+        assert client.get("/api/v1/jobs/stats/submitters?limit=0").status_code == 422
+
+    def test_stats_does_not_collide_with_a_job_id(
+        self, client: TestClient, session: Session
+    ):
+        """
+        The /stats segment is what keeps the two namespaces apart.
+
+        A one-segment name under /jobs has to win a match against
+        GET /jobs/{job_id} to be reachable at all, so it is only ever one
+        plausible job id away from being swallowed. Nesting puts the aggregates
+        at a depth that route cannot reach -- including when a real job is
+        called "stats".
+        """
+        self._submit(session, "alice", 1)
+        session.add(BatchJob(
+            id="stats", name="stats", command="echo hello", user="bob",
+            status=JobStatus.SUBMITTED,
+        ))
+        session.commit()
+
+        response = client.get("/api/v1/jobs/stats/submitters")
+        assert response.status_code == 200
+        assert [row["username"] for row in response.json()["data"]] == ["alice", "bob"]
+
+        # And the job keeps its own route rather than being shadowed by it
+        response = client.get("/api/v1/jobs/stats")
+        assert response.status_code == 200
+        assert response.json()["id"] == "stats"
 
     def test_get_jobs_filtered_by_sequencing_run(self, client: TestClient, session: Session):
         """Test filtering jobs by the sequencing run they were submitted against"""
         session.add(BatchJob(
             id="job-r1",
-            name="bcl2fastq-260506_VH01208_93_222FCGLNX",
+            name="bcl2fastq-240101_VH00000_1_EXAMPLE01",
             command="echo hello",
             user="user1",
             status=JobStatus.SUBMITTED,
-            sequencing_run_id="260506_VH01208_93_222FCGLNX",
+            sequencing_run_id="240101_VH00000_1_EXAMPLE01",
         ))
         session.add(BatchJob(
             id="job-r2",
-            name="bcl2fastq-260507_VH01122_74_AAHMVYTM5",
+            name="bcl2fastq-240102_VH00000_2_EXAMPLE02",
             command="echo hello",
             user="user1",
             status=JobStatus.SUBMITTED,
-            sequencing_run_id="260507_VH01122_74_AAHMVYTM5",
+            sequencing_run_id="240102_VH00000_2_EXAMPLE02",
         ))
         # A job can belong to a run *and* a project; the run filter must find it
         session.add(BatchJob(
             id="job-r1-project",
-            name="pipeline-260506_VH01208_93_222FCGLNX",
+            name="pipeline-240101_VH00000_1_EXAMPLE01",
             command="echo hello",
             user="user1",
             status=JobStatus.SUBMITTED,
             project_id="P-19900109-0001",
-            sequencing_run_id="260506_VH01208_93_222FCGLNX",
+            sequencing_run_id="240101_VH00000_1_EXAMPLE01",
         ))
         # Work with no run at all must never leak into a run's table
         session.add(BatchJob(
@@ -364,17 +715,17 @@ class TestJobsAPI:
         ))
         session.commit()
 
-        response = client.get("/api/v1/jobs?sequencing_run_id=260506_VH01208_93_222FCGLNX")
+        response = client.get("/api/v1/jobs?sequencing_run_id=240101_VH00000_1_EXAMPLE01")
         assert response.status_code == 200
         data = response.json()
-        assert data["count"] == 2
+        assert data["total_items"] == 2
         assert {job["id"] for job in data["data"]} == {"job-r1", "job-r1-project"}
 
-        response = client.get("/api/v1/jobs?sequencing_run_id=260507_VH01122_74_AAHMVYTM5")
-        assert response.json()["count"] == 1
+        response = client.get("/api/v1/jobs?sequencing_run_id=240102_VH00000_2_EXAMPLE02")
+        assert response.json()["total_items"] == 1
 
         response = client.get("/api/v1/jobs?sequencing_run_id=000000_NOSUCHRUN_0_X")
-        assert response.json()["count"] == 0
+        assert response.json()["total_items"] == 0
 
     def test_run_and_project_filters_are_independent(
         self, client: TestClient, session: Session
@@ -382,30 +733,30 @@ class TestJobsAPI:
         """The two filters narrow on different axes and compose with each other"""
         session.add(BatchJob(
             id="job-both",
-            name="pipeline-260506_VH01208_93_222FCGLNX",
+            name="pipeline-240101_VH00000_1_EXAMPLE01",
             command="echo hello",
             user="user1",
             status=JobStatus.SUBMITTED,
             project_id="P-19900109-0001",
-            sequencing_run_id="260506_VH01208_93_222FCGLNX",
+            sequencing_run_id="240101_VH00000_1_EXAMPLE01",
         ))
         session.add(BatchJob(
             id="job-run-only",
-            name="bcl2fastq-260506_VH01208_93_222FCGLNX",
+            name="bcl2fastq-240101_VH00000_1_EXAMPLE01",
             command="echo hello",
             user="user1",
             status=JobStatus.SUBMITTED,
-            sequencing_run_id="260506_VH01208_93_222FCGLNX",
+            sequencing_run_id="240101_VH00000_1_EXAMPLE01",
         ))
         session.commit()
 
         response = client.get(
-            "/api/v1/jobs?sequencing_run_id=260506_VH01208_93_222FCGLNX"
+            "/api/v1/jobs?sequencing_run_id=240101_VH00000_1_EXAMPLE01"
             "&project_id=P-19900109-0001"
         )
         assert response.status_code == 200
         data = response.json()
-        assert data["count"] == 1
+        assert data["total_items"] == 1
         assert data["data"][0]["id"] == "job-both"
 
     @patch("api.jobs.services.boto3.client")
@@ -543,14 +894,60 @@ class TestJobsAPI:
         response = client.get("/api/v1/jobs")
         assert response.status_code == 200
         data = response.json()
-        assert data["count"] == 25
+        assert data["total_items"] == 25
 
         # Get with custom limit
         response = client.get("/api/v1/jobs?limit=10")
         assert response.status_code == 200
         data = response.json()
         assert len(data["data"]) == 10
-        assert data["count"] == 25
+        assert data["total_items"] == 25
+
+    def test_jobs_pagination_envelope(self, client: TestClient, session: Session):
+        """
+        skip and limit come back with the page, and has_next/has_prev say
+        where in the matching set it sits -- so a caller can page without
+        recomputing either from the page length.
+        """
+        for position in range(5):
+            session.add(BatchJob(
+                id=f"job-{position}",
+                name=f"test-job-{position}",
+                command="echo hello",
+                user="alice",
+                status=JobStatus.SUBMITTED,
+            ))
+        session.commit()
+
+        # First page: more ahead, none behind
+        data = client.get("/api/v1/jobs?limit=2").json()
+        assert data["total_items"] == 5
+        # Echoed back, so a response is self-describing without its request
+        assert (data["skip"], data["limit"]) == (0, 2)
+        assert data["has_next"] is True
+        assert data["has_prev"] is False
+
+        # Middle page: neighbours on both sides
+        data = client.get("/api/v1/jobs?limit=2&skip=2").json()
+        assert data["has_next"] is True
+        assert data["has_prev"] is True
+
+        # Last page, partially filled: nothing ahead
+        data = client.get("/api/v1/jobs?limit=2&skip=4").json()
+        assert len(data["data"]) == 1
+        assert data["has_next"] is False
+        assert data["has_prev"] is True
+
+        # A page holding the whole set has neither neighbour
+        data = client.get("/api/v1/jobs?limit=5").json()
+        assert data["has_next"] is False
+        assert data["has_prev"] is False
+
+        # Past the end is empty, not an error, and the total still stands
+        data = client.get("/api/v1/jobs?limit=2&skip=99").json()
+        assert data["data"] == []
+        assert data["total_items"] == 5
+        assert data["has_next"] is False
 
     def test_jobs_sorting(self, client: TestClient, session: Session):
         """Test job list sorting by different fields"""
@@ -684,7 +1081,7 @@ class TestJobsServices:
         session.commit()
 
         # Filter by user
-        jobs, count = get_batch_jobs(session, user="user1")
+        jobs, count = get_batch_jobs(session, user=["user1"])
         assert count == 3
 
         # Filter by status
@@ -693,7 +1090,7 @@ class TestJobsServices:
 
         # Both filters
         jobs, count = get_batch_jobs(
-            session, user="user2", status_filter=JobStatus.RUNNING
+            session, user=["user2"], status_filter=JobStatus.RUNNING
         )
         assert count == 2
 
@@ -717,7 +1114,7 @@ class TestJobsServices:
         assert all(job.project_id == "P-19900109-0001" for job in jobs)
 
         jobs, count = get_batch_jobs(
-            session, user="user1", project_id="P-19900109-0001"
+            session, user=["user1"], project_id="P-19900109-0001"
         )
         assert count == 2
 
@@ -729,7 +1126,7 @@ class TestJobsServices:
         """Test the sequencing_run_id filter composes with the other filters"""
         from api.jobs.services import get_batch_jobs
 
-        run = "260506_VH01208_93_222FCGLNX"
+        run = "240101_VH00000_1_EXAMPLE01"
         for i in range(4):
             session.add(BatchJob(
                 id=str(uuid.uuid4()),
@@ -745,7 +1142,7 @@ class TestJobsServices:
         assert count == 3
         assert all(job.sequencing_run_id == run for job in jobs)
 
-        jobs, count = get_batch_jobs(session, user="user1", sequencing_run_id=run)
+        jobs, count = get_batch_jobs(session, user=["user1"], sequencing_run_id=run)
         assert count == 2
 
         # A null sequencing_run_id must never match a filtered query
@@ -852,28 +1249,28 @@ class TestJobsServices:
         mock_batch = MagicMock()
         mock_batch.submit_job.return_value = {
             "jobId": "aws-job-789",
-            "jobName": "bcl2fastq-260506_VH01208_93_222FCGLNX",
+            "jobName": "bcl2fastq-240101_VH00000_1_EXAMPLE01",
         }
         mock_boto_client.return_value = mock_batch
 
         job = submit_batch_job(
             session=session,
-            job_name="bcl2fastq-260506_VH01208_93_222FCGLNX",
+            job_name="bcl2fastq-240101_VH00000_1_EXAMPLE01",
             container_overrides={"command": ["echo", "hello"]},
             job_def="test-def:1",
             job_queue="test-queue",
             user="testuser",
-            sequencing_run_id="260506_VH01208_93_222FCGLNX",
+            sequencing_run_id="240101_VH00000_1_EXAMPLE01",
         )
 
-        assert job.sequencing_run_id == "260506_VH01208_93_222FCGLNX"
+        assert job.sequencing_run_id == "240101_VH00000_1_EXAMPLE01"
         # A run-scoped submission carries no project: demultiplexing a flowcell
         # spans every project with samples on it.
         assert job.project_id is None
 
         session.expire_all()
         persisted = session.get(BatchJob, "aws-job-789")
-        assert persisted.sequencing_run_id == "260506_VH01208_93_222FCGLNX"
+        assert persisted.sequencing_run_id == "240101_VH00000_1_EXAMPLE01"
 
     @patch("api.jobs.services.boto3.client")
     def test_submit_batch_job_aws_error(self, mock_boto_client, session: Session):

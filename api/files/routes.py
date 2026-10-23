@@ -33,7 +33,7 @@ from api.files.models import (
 )
 from api.files import services
 from api.auth.deps import OptionalUser
-from api.files.scope import scope_for_uri
+from api.files.scope import is_wellformed, may_sign, scope_for_uri
 from api.rbac.deps import AuthzDep, decide, require_permission
 from api.rbac.permissions import Permission
 from core.deps import get_s3_client, SessionDep
@@ -92,6 +92,7 @@ def create_file(
     response_model=FilePublic,
     status_code=status.HTTP_201_CREATED,
     summary="Upload a file",
+    dependencies=[Depends(require_permission(Permission.FILE_CREATE))],
 )
 def upload_file(
     session: SessionDep,
@@ -173,6 +174,7 @@ def upload_file(
     "",
     response_model=FilesPublic,
     summary="List/search files",
+    dependencies=[Depends(require_permission(Permission.FILE_READ))],
 )
 def list_files(
     session: SessionDep,
@@ -244,8 +246,10 @@ def list_files(
     "/list",
     response_model=FileBrowserData,
     summary="Browse S3 bucket/folder",
+    dependencies=[Depends(require_permission(Permission.FILE_BROWSE))],
 )
 def browse_s3(
+    session: SessionDep,
     uri: str = Query(
         ...,
         description="S3 URI to list (e.g., s3://bucket/folder/)"
@@ -257,7 +261,29 @@ def browse_s3(
 
     Returns a list of folders and files at the given path.
     For S3, the full s3:// URI is required.
+
+    Confined to the three locations the platform will sign for -- a project, a
+    registered run folder, or a registered vendor inbound prefix -- since
+    2026-10-08. Enumerating a bucket and signing a key in it are the same class
+    of problem, and this route had neither constraint: it would list any prefix
+    the API's IAM role could read.
+
+    Verified against production before the constraint was added: all 342
+    distinct URIs this route received over 28 days resolve to a project, so
+    nothing legitimate is refused.
+
+    This is a *location* check, not an authorization check. The route remains
+    unauthenticated -- closing that is consumer work tracked separately -- so
+    the constraint deliberately does not depend on who is asking.
     """
+    if is_wellformed(uri, require_key=False) and not may_sign(session, uri):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(
+                "This URI is not in a project, a registered sequencing run "
+                "folder, or a registered vendor prefix, so it cannot be listed."
+            ),
+        )
     return services.list_s3_files(uri=uri, s3_client=s3_client)
 
 
@@ -271,7 +297,7 @@ def _restricted_projects(session, project_ids) -> list:
         session.exec(
             select(Project.id).where(
                 col(Project.id).in_(list(project_ids)),
-                Project.download_restricted.is_(True),
+                Project.restricted.is_(True),
             )
         ).all()
     )
@@ -287,7 +313,7 @@ def require_file_download(
     May this caller download *this* file? Open unless the project says otherwise.
 
     Downloads are open to any authenticated caller. A project opts out by setting
-    `download_restricted`, and only then is `file:download` consulted. Absence of
+    `restricted`, and only then is membership consulted. Absence of
     a restriction is permission -- see docs/RBAC.md, "Downloads: open by default,
     restricted by exception".
 
@@ -315,25 +341,72 @@ def require_file_download(
       workload read 66 projects 33M times in a month, and requiring a grant per
       project made project membership mean "reads everything".
 
-    - **Resolved and restricted.** Requires `file:download` on the project plane,
-      which project_viewer and above carry -- so a restricted project's members
-      are its allowlist. `has_in_project` also honours a *global* grant, so
-      lab_manager, auditor, admin and superusers pass regardless. That is
-      intended for cross-project operation, and it is exactly why `member` must
-      **not** be given global `file:download`: it would satisfy every restriction
-      for every user and make this branch unreachable.
+    - **Resolved and restricted.** Requires *membership* of the project. Changed
+      from a `file:download` project-plane check on 2026-10-08: `has_in_project`
+      honours a global grant, so the old form was satisfied by anyone holding
+      `file:download` anywhere -- lab_manager, auditor, admin and superusers --
+      and would have been satisfied by *everyone* once the default role is
+      widened. A restricted project's members are its allowlist, and membership
+      is the only form of that statement a global grant cannot forge.
 
-    - **Unresolved.** Requires *global* `file:download`, unchanged. "Belongs to
-      no project" is not evidence of permission, and this case is load-bearing
-      for a reason beyond authorization: generate_presigned_url signs whatever
-      bucket and key it is handed, so an unresolved URI can name any object the
-      API's own IAM role can read. Keeping it privileged is what stops the
-      endpoint being an arbitrary-S3-read proxy. Do not "simplify" this to allow.
+      Superuser is not exempt. An administrator who needs a restricted
+      project's data enrols themselves, which leaves a row behind; silent
+      administrative access is what the flag exists to prevent.
+
+    - **Unresolved.** Refused, for everyone, superuser included. Changed
+      2026-10-08: it previously required *global* `file:download`, which four
+      roles and every superuser held, so the protection was a privilege rather
+      than a boundary.
+
+      This case is load-bearing for a reason beyond authorization:
+      generate_presigned_url signs whatever bucket and key it is handed, so an
+      unresolved URI can name any object the API's own IAM role can read. That
+      is what makes it a property of the location rather than of the caller --
+      there is no principal for whom signing an arbitrary bucket is correct. Do
+      not "simplify" this to allow, and do not add a role that overrides it.
 
     A dependency may take the same query parameter as its handler; both receive it
     and the OpenAPI schema is unchanged.
     """
     scope = scope_for_uri(session, path)
+
+    # The location rule is settled here, *before* and outside the RBAC decision
+    # machinery, and that separation is the whole point.
+    #
+    # It was not, when this shipped in #459: the refusal was folded into the
+    # `granted` flag and handed to decide(), which applies RBAC_MODE. Production
+    # runs dry_run, so an unsignable URI was logged `would_deny` and served a
+    # 200 -- the protection the change describes was inert in the only tier that
+    # matters. Caught by probing prod with a superuser token after the deploy.
+    #
+    # Whether a URI is one of the platform's locations is a property of the URI.
+    # It is not an authorisation question, so no enforcement mode, role or
+    # superuser flag may soften it. Authorisation -- a restricted project's
+    # membership check below -- stays mode-aware, because that one genuinely is
+    # a permission decision and is still being rolled out.
+    #
+    # A malformed URI is let through to the handler, which answers 400. Refusing
+    # it here would report "forbidden" for a typo and make the two cases
+    # indistinguishable to a caller fixing their request.
+    if is_wellformed(path) and not may_sign(session, path):
+        # Still emitted through decide(), so the refusal lands in the access log
+        # beside every other decision and carries the URI as its subject -- the
+        # measurement that distinguishes "these files are unregistered" from
+        # "the resolver failed to match a URI it should have". decide() will not
+        # stop the request in dry_run, which is why the raise below is
+        # unconditional rather than left to it.
+        decide(request, False, (Permission.FILE_DOWNLOAD,),
+               scope=f"file via {scope.origin}, not a platform location",
+               subject=path)
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(
+                "This URI is not in a project, a registered sequencing run "
+                "folder, a registered vendor prefix, or the platform's file "
+                "store, so it cannot be downloaded."
+            ),
+        )
+
     if scope.open_to_authenticated:
         # Run-folder contents. No project to consult, and none required.
         granted = True
@@ -342,16 +415,39 @@ def require_file_download(
         if not restricted:
             granted = True
         else:
+            # Settled here, outside the enforcement mode, for the reason the
+            # project-plane gate is: `file:download` has not been graduated, so
+            # while this was folded into `granted` a restricted project's files
+            # stayed downloadable in dry_run -- by anyone, superuser included.
+            # Measured in production, not reasoned about.
+            #
             # Every restricted project in the set has to be satisfied. Only one
             # project is ever resolved in practice -- measured 0 multi-project
             # files in production -- so this is the safe reading of a case that
             # does not currently occur, not a considered conflict policy.
-            granted = all(
-                authz.has_in_project(Permission.FILE_DOWNLOAD, project_id)
-                for project_id in restricted
-            )
+            #
+            # Membership, not permission: `file:download` held globally
+            # satisfies has_in_project for every project, so expressing the
+            # restriction as a permission check makes it void for any role
+            # carrying it. A project_member row cannot be granted by a role.
+            if not all(authz.is_member_of(pid) for pid in restricted):
+                decide(request, False, (Permission.FILE_DOWNLOAD,),
+                       scope=(f"file via {scope.origin}, restricted project, "
+                              f"not a member"),
+                       subject=path)
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail=(
+                        "This file belongs to a project that is restricted to "
+                        "its members."
+                    ),
+                )
+            granted = True
     else:
-        granted = authz.has(Permission.FILE_DOWNLOAD)
+        # Only reachable for a malformed URI now -- anything well formed and
+        # unsignable was refused above. Left as an allow so the handler can
+        # answer 400 rather than this dependency answering 403.
+        granted = True
 
     # The origin is on the decision record so the mix of project-, sample- and
     # run-resolved downloads is measurable, and so the unregistered surface can be
@@ -514,6 +610,7 @@ def delete_file(
     "/{file_id}",
     response_model=FilePublic,
     summary="Get file by UUID",
+    dependencies=[Depends(require_permission(Permission.FILE_READ))],
 )
 def get_file(
     file_id: uuid.UUID,

@@ -264,6 +264,29 @@ def create_file_upload(
         relative_path=relative_path,
     )
 
+    # The same three-location constraint the read paths use, applied to the
+    # write path. Defence in depth rather than a hole being closed: this URI is
+    # server-computed from STORAGE_ROOT_PATH plus the entity, and
+    # validate_relative_path has already rejected absolute paths, "..", "//"
+    # and anything outside [a-zA-Z0-9_-/], so a caller cannot name an arbitrary
+    # destination today.
+    #
+    # It is worth asserting anyway because that safety is emergent from three
+    # functions agreeing, not stated anywhere: a change to STORAGE_ROOT_PATH, to
+    # generate_uri, or a bypass of the path validation would widen where the
+    # platform writes, silently. This turns that into a 403.
+    from api.files.scope import may_sign
+
+    if not may_sign(session, uri):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(
+                f"Computed destination '{uri}' is not in a project, a "
+                f"registered sequencing run folder, or a registered vendor "
+                f"prefix, so it cannot be written."
+            ),
+        )
+
     # Check for existing file - if overwrite is false and a file exists at URI
     if not file_upload.overwrite:
         latest = get_latest_file_by_uri(session, uri)
