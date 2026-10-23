@@ -1658,3 +1658,35 @@ def test_omitting_restricted_leaves_it_alone(client: TestClient, session: Sessio
     assert response.status_code == 200, response.text
     session.refresh(project)
     assert project.restricted is True
+
+
+def test_a_project_can_be_created_already_restricted(
+    client: TestClient, session: Session
+):
+    """
+    Creating it open and closing it in a second request leaves a window in
+    which it is readable, which is the thing someone asking for a restricted
+    project is trying to avoid.
+    """
+    response = client.post(
+        "/api/v1/projects", json={"name": "Locked", "restricted": True}
+    )
+
+    assert response.status_code == 201, response.text
+    assert response.json()["restricted"] is True
+
+    from sqlmodel import select as _select
+
+    project = session.exec(
+        _select(Project).where(
+            Project.project_id == response.json()["project_id"]
+        )
+    ).one()
+    assert project.restricted is True
+
+
+def test_a_project_is_created_unrestricted_by_default(client: TestClient):
+    response = client.post("/api/v1/projects", json={"name": "Open"})
+
+    assert response.status_code == 201, response.text
+    assert response.json()["restricted"] is False
