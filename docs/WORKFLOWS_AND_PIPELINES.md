@@ -113,20 +113,20 @@ flowchart LR
 
 ### 3. Running a launcher on a project
 
-Each launcher prepares every workflow for the project before submitting, by calling `platform.prepare_workflow(workflow_id, project)`. What "prepare" means depends on the platform:
+Before submitting, every launcher already passes each workflow through `platform.copy_workflow(workflow_id, project)`. Launchers don't change; only PAML's NGS360 `copy_workflow` gains new behaviour:
 
-| Platform | `prepare_workflow` does | How the version stays fixed per project |
-|----------|-------------------------|-----------------------------------------|
-| SevenBridges | Copies the app into the project (unchanged behaviour) | The project keeps reusing its copy |
-| Arvados | Copies the workflow into the project (unchanged behaviour) | The project keeps reusing its copy |
-| **NGS360** | Looks up the project's pinned version in the NGS360 ProjectWorkflowVersion table | The ProjectWorkflowVersion table |
+| Platform | `copy_workflow` does | How the version stays fixed per project |
+|----------|----------------------|-----------------------------------------|
+| SevenBridges | Copies the app into the project (unchanged) | The project keeps reusing its copy |
+| Arvados | Copies the workflow into the project (unchanged) | The project keeps reusing its copy |
+| **NGS360** | Was a no-op. Now looks up the project's pinned version and returns `W:N` | The ProjectWorkflowVersion table |
 
 On NGS360 the decision is:
 
 ```mermaid
 %%{init: {"flowchart": {"wrappingWidth": 400}}}%%
 flowchart LR
-    START["Launcher prepares<br/>workflow W for project P"] --> EXP{"Config entry<br/>has a suffix?<br/>('W:prod', 'W:4')"}
+    START["Launcher calls<br/>copy_workflow(W, P)"] --> EXP{"Config entry<br/>has a suffix?<br/>('W:prod', 'W:4')"}
     EXP -- yes --> USE["Submit it unchanged<br/>no ProjectWorkflowVersion<br/>record read or written"]
     EXP -- no --> CALL["POST /projects/P/<br/>workflow-versions/W/resolve<br/>{alias: prod, engine}"]
     CALL --> HAS{"ProjectWorkflowVersion<br/>record exists<br/>for (P, W, engine)?"}
