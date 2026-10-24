@@ -29,6 +29,10 @@ from core.models import Attribute
 # ---------------------------------------------------------------------------
 
 class WorkflowAttribute(SQLModel, table=True):
+    __table_args__ = (
+        UniqueConstraint("workflow_id", "key", name="uq_workflow_attr_key"),
+    )
+
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     workflow_id: uuid.UUID = Field(foreign_key="workflow.id")
     key: str
@@ -41,6 +45,11 @@ class WorkflowAttribute(SQLModel, table=True):
 class WorkflowVersionAttribute(SQLModel, table=True):
     """Key-value metadata for workflow versions."""
     __tablename__ = "workflowversionattribute"
+    __table_args__ = (
+        UniqueConstraint(
+            "workflow_version_id", "key", name="uq_workflowversion_attr_key"
+        ),
+    )
 
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     workflow_version_id: uuid.UUID = Field(foreign_key="workflowversion.id")

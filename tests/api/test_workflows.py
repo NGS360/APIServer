@@ -107,3 +107,33 @@ def test_get_workflow_by_id_nonexistent_uuid(client: TestClient):
     fake_id = str(uuid.uuid4())
     response = client.get(f"/api/v1/workflows/{fake_id}")
     assert response.status_code == 404
+
+
+def test_post_workflow_fails_with_duplicate_attribute(client: TestClient):
+    """Exact-duplicate attribute keys are rejected with 400."""
+    workflow_data = {
+        'name': 'Dup Workflow',
+        'attributes': [
+            {'key': 'category', 'value': 'imaging'},
+            {'key': 'category', 'value': 'genomics'},
+        ],
+    }
+    response = client.post("/api/v1/workflows", json=workflow_data)
+    assert response.status_code == 400
+    assert "duplicate" in response.json()["detail"].lower()
+
+
+def test_post_workflow_fails_with_case_insensitive_duplicate_attribute(
+    client: TestClient,
+):
+    """Attribute keys differing only in case are rejected with 400."""
+    workflow_data = {
+        'name': 'Case Dup Workflow',
+        'attributes': [
+            {'key': 'Category', 'value': 'imaging'},
+            {'key': 'category', 'value': 'genomics'},
+        ],
+    }
+    response = client.post("/api/v1/workflows", json=workflow_data)
+    assert response.status_code == 400
+    assert "duplicate" in response.json()["detail"].lower()

@@ -69,6 +69,23 @@ def test_create_version_workflow_not_found(client: TestClient):
     assert resp.status_code == 404
 
 
+def test_create_version_fails_with_case_insensitive_duplicate_attribute(
+    client: TestClient, session: Session,
+):
+    """Version attribute keys differing only in case are rejected with 400."""
+    wf_id = _create_workflow(session)
+    body = {
+        "definition_uri": "s3://bucket/align-v1.0.wdl",
+        "attributes": [
+            {"key": "Stage", "value": "align"},
+            {"key": "stage", "value": "qc"},
+        ],
+    }
+    resp = client.post(f"/api/v1/workflows/{wf_id}/versions", json=body)
+    assert resp.status_code == 400
+    assert "duplicate" in resp.json()["detail"].lower()
+
+
 def test_create_multiple_versions_auto_increment(
     client: TestClient, session: Session,
 ):
