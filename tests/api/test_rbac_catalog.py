@@ -66,6 +66,11 @@ class TestPermissionCatalog:
     def test_role_manage_is_critical(self):
         assert CATALOG[Permission.ROLE_MANAGE].risk == "critical"
 
+    def test_user_manage_is_critical(self):
+        """It is the only guard on deactivating an account, so it has to refuse
+        under dry_run -- which is what `critical` buys."""
+        assert CATALOG[Permission.USER_MANAGE].risk == "critical"
+
     def test_is_valid_accepts_catalog_members_and_rejects_others(self):
         assert is_valid("project:read")
         assert not is_valid("project:archive")

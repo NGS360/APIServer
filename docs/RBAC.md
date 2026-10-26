@@ -269,7 +269,7 @@ These have no path to a project (see *Design Decisions*), so they are global-onl
 | `search:query` | G | low | `GET /search` and the `*/search` read endpoints |
 | `chat:use` | G | medium | `POST /chat`, `/chat/stream`, `GET /chat/threads/{id}` |
 | `user:read` | G | low | `GET /users/search` |
-| `user:manage` | G | **high** | New admin user endpoints (activate, verify, set superuser) |
+| `user:manage` | G | **critical** | `PATCH /users/{username}` (activate, verify, set superuser). Raised from high 2026-10-26: #404 shipped the route on this permission alone, and at `high` it only logged under `dry_run`, so any authenticated user could deactivate any account. `critical` puts it in `ALWAYS_ENFORCE`; safe because the route is new and production logs show no caller but admins |
 | `role:read` | G | low | `GET /rbac/permissions`, `/rbac/roles`, `/rbac/users/{u}/roles` |
 | `role:manage` | G | **critical** | `POST` / `PATCH` / `DELETE /rbac/roles`, global role grant and revoke |
 | `system:reindex` | G | high | `POST /projects/search`, `POST /runs/search`, `POST /qcmetrics/search`, `POST /samples/reindex` |
@@ -1450,7 +1450,7 @@ Four properties matter:
 
 **Dry-run behaviour.** Resolve the decision, stash it on `request.state`, and emit exactly one `event=rbac.decision` log line per request — not one per dependency — carrying `decision`, `mode`, `permission`, `scope`, `principal`, `auth_method`, `route_name`, `method`, `path`, `request_id`, and `client_app`. In non-production tiers, also return an `X-RBAC-Decision` header so developers see denials without opening CloudWatch.
 
-Dry-run necessarily lets a should-be-denied write succeed. That is acceptable for reads and ordinary writes, but a small `ALWAYS_ENFORCE` set hard-denies even in dry-run: `PUT /settings/{key}`, every `DELETE`, and all role-grant routes. These have near-zero legitimate traffic, so there is no discovery value in dry-running them and real damage potential in doing so.
+Dry-run necessarily lets a should-be-denied write succeed. That is acceptable for reads and ordinary writes, but a small `ALWAYS_ENFORCE` set hard-denies even in dry-run: `PUT /settings/{key}`, every `DELETE`, all role-grant routes, and `PATCH /users/{username}`. These have near-zero legitimate traffic, so there is no discovery value in dry-running them and real damage potential in doing so.
 
 **Operational hygiene.** Log a startup banner at ERROR when `RBAC_MODE=dry_run` and `ENVIRONMENT=prod`. Alarm in CloudWatch if production still reports `dry_run` past the cutover date. Expose `GET /api/v1/rbac/status` (authenticated) returning `{environment, rbac_mode, permission_count, seeded_at}` so "is it actually on?" is a two-second question — and keep mode off the public `/api/health`.
 
