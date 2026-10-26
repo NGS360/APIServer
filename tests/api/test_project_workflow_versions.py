@@ -15,6 +15,7 @@ from api.workflow.models import (
 )
 
 ENGINE = "AWSHealthOmics (us-east)"
+OTHER_ENGINE = "SevenBridges (US)"
 RESOLVE = {"engine": ENGINE, "alias": "prod"}
 
 
@@ -26,9 +27,9 @@ def _url(project: Project, workflow_id: str, suffix: str = "") -> str:
     return f"/api/v1/projects/{project.project_id}/workflow-versions/{workflow_id}{suffix}"
 
 
-def _record_url(project: Project, workflow_id: str) -> str:
+def _record_url(project: Project, workflow_id: str, engine: str = ENGINE) -> str:
     """DELETE addresses one record, so the engine is a required query parameter."""
-    return f"{_url(project, workflow_id)}?engine={ENGINE}"
+    return f"{_url(project, workflow_id)}?engine={engine}"
 
 
 @pytest.fixture(name="workflow")
@@ -62,6 +63,22 @@ def workflow_fixture(session: Session) -> dict:
     ))
     session.commit()
     return {"id": str(wf.id), "uuid": wf.id, "versions": versions}
+
+
+@pytest.fixture(name="second_engine")
+def second_engine_fixture(session: Session, workflow: dict) -> dict:
+    """
+    A second platform carrying version 3 -- the one version Omics does not
+    deploy. Deliberately the opposite deployment set to `workflow`, so a test
+    can tell "this version is deployed" from "deployed *on this engine*".
+    """
+    session.add(Platform(name=OTHER_ENGINE))
+    session.add(WorkflowDeployment(
+        workflow_version_id=workflow["versions"][3].id, engine=OTHER_ENGINE,
+        external_id="sbg://bms/alignment/3", created_by="testuser",
+    ))
+    session.commit()
+    return workflow
 
 
 def _move_prod(session: Session, workflow: dict, version: int) -> None:
@@ -335,6 +352,102 @@ def test_delete_then_resolve_records_current_prod(
 def test_delete_without_record_is_404(client: TestClient, test_project, workflow):
     resp = client.delete(_record_url(test_project, workflow["id"]))
     assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# Two engines
+#
+# The unique constraint is on (project_id, workflow_id, engine), and
+# test_duplicate_record_is_rejected only pins the half that forbids. These pin
+# the half that permits: dropping `engine` from the key would still satisfy
+# every other test in this file.
+# ---------------------------------------------------------------------------
+
+def test_each_engine_records_its_own_version(
+    client: TestClient, test_project, second_engine,
+):
+    """One project runs different versions of one workflow on different engines."""
+    omics = client.post(
+        _url(test_project, second_engine["id"], "/resolve"), json=RESOLVE,
+    )
+    assert omics.status_code == 201
+    assert omics.json()["version"] == 2
+
+    sbg = client.post(
+        _url(test_project, second_engine["id"], "/resolve"),
+        json={"engine": OTHER_ENGINE, "version": 3},
+    )
+    assert sbg.status_code == 201
+    assert sbg.json()["version"] == 3
+
+    listed = client.get(
+        f"/api/v1/projects/{test_project.project_id}/workflow-versions"
+    )
+    assert listed.status_code == 200
+    assert {(r["engine"], r["version"]) for r in listed.json()} == {
+        (ENGINE, 2), (OTHER_ENGINE, 3),
+    }
+    # The external_id travels with the engine, not just the version: a caller
+    # handed the wrong one would submit to the wrong platform.
+    assert {r["external_id"] for r in listed.json()} == {
+        "arn:aws:omics:us-east-1:1:workflow/123/version/2", "sbg://bms/alignment/3",
+    }
+
+
+def test_one_engines_pin_does_not_answer_for_another(
+    client: TestClient, test_project, second_engine,
+):
+    """
+    Resolving on a second engine must record afresh rather than return the
+    first engine's version, which a key missing `engine` would do.
+    """
+    client.post(_url(test_project, second_engine["id"], "/resolve"), json=RESOLVE)
+
+    resp = client.post(
+        _url(test_project, second_engine["id"], "/resolve"),
+        json={"engine": OTHER_ENGINE, "version": 3},
+    )
+    assert resp.status_code == 201
+    assert resp.json()["created"] is True
+    assert resp.json()["message"] is None
+
+
+def test_delete_removes_only_the_engine_addressed(
+    client: TestClient, test_project, second_engine,
+):
+    client.post(_url(test_project, second_engine["id"], "/resolve"), json=RESOLVE)
+    client.post(
+        _url(test_project, second_engine["id"], "/resolve"),
+        json={"engine": OTHER_ENGINE, "version": 3},
+    )
+
+    deleted = client.delete(_record_url(test_project, second_engine["id"]))
+    assert deleted.status_code == 204
+
+    remaining = client.get(
+        f"/api/v1/projects/{test_project.project_id}/workflow-versions"
+    ).json()
+    assert [(r["engine"], r["version"]) for r in remaining] == [(OTHER_ENGINE, 3)]
+
+
+def test_deployment_is_required_on_the_engine_asked_for(
+    client: TestClient, test_project, second_engine,
+):
+    """
+    Version 3 is deployed on the second engine only. Deployment is therefore
+    not a property of the version, and resolving it on Omics must still 422.
+    """
+    on_other = client.post(
+        _url(test_project, second_engine["id"], "/resolve"),
+        json={"engine": OTHER_ENGINE, "version": 3},
+    )
+    assert on_other.status_code == 201
+
+    on_omics = client.post(
+        _url(test_project, second_engine["id"], "/resolve"),
+        json={"engine": ENGINE, "version": 3},
+    )
+    assert on_omics.status_code == 422
 
 
 # ---------------------------------------------------------------------------
