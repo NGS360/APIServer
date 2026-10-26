@@ -178,9 +178,18 @@ class TestTheAdminSurfaceHoldsOnItsGuardAlone:
     def test_the_roster_refuses_a_non_holder(self, client):
         assert client.get("/api/v1/rbac/users").status_code == 403
 
-    def test_user_flags_refuse_a_non_holder(self, client):
+    @pytest.mark.parametrize("mode_value", ["dry_run", "enforce"])
+    def test_user_flags_refuse_a_non_holder(self, client, mode, mode_value):
+        """
+        `PATCH /users/{username}` arrived in #404 already on user:manage alone,
+        which was `high` -- so under `dry_run` it logged a refusal and let any
+        authenticated user deactivate any account. The suite runs in `enforce`,
+        so the unparametrised version of this test passed throughout. The
+        `dry_run` case is the one production runs.
+        """
+        mode(mode_value)
         assert client.patch(
-            "/api/v1/users/testuser", json={"is_verified": True}
+            "/api/v1/users/testuser", json={"is_active": False}
         ).status_code == 403
 
     @pytest.mark.parametrize("route", [

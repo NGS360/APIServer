@@ -277,7 +277,7 @@ CATALOG: dict[Permission, PermissionSpec] = {
     Permission.USER_READ: PermissionSpec(
         "user", "Search the user directory", False, "low"),
     Permission.USER_MANAGE: PermissionSpec(
-        "user", "Activate, verify and set superuser on users", False, "high"),
+        "user", "Activate, verify and set superuser on users", False, "critical"),
 
     Permission.ROLE_READ: PermissionSpec(
         "role", "View roles, permissions and grants", False, "low"),

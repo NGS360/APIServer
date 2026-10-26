@@ -83,7 +83,7 @@ class TestAlwaysEnforce:
     buys no discovery value while leaving real damage available."""
 
     @pytest.mark.parametrize("permission", [
-        Permission.SETTING_UPDATE, Permission.ROLE_MANAGE,
+        Permission.SETTING_UPDATE, Permission.ROLE_MANAGE, Permission.USER_MANAGE,
     ])
     def test_includes_the_critical_permissions(self, permission):
         assert permission in ALWAYS_ENFORCE
