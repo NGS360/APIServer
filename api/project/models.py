@@ -155,7 +155,7 @@ class ProjectsPublic(SQLModel):
 
 class ProjectWorkflowVersion(SQLModel, table=True):
     """
-    The workflow version a project runs, per workflow and engine.
+    The workflow version a project uses, per workflow and engine.
 
     Recorded on the project's first run, from an alias or an explicit version,
     then reused: later runs get this version whatever they request, until it is
@@ -163,10 +163,12 @@ class ProjectWorkflowVersion(SQLModel, table=True):
     """
     __tablename__ = "projectworkflowversion"
     __table_args__ = (
+        # One version per project, workflow and engine: the guarantee that a
+        # project cannot end up with two versions of the same workflow.
         UniqueConstraint(
             "project_id", "workflow_id", "engine", name="uq_project_workflow_engine"
         ),
-         ForeignKeyConstraint(
+        ForeignKeyConstraint(
             ["workflow_id", "version"],
             ["workflowversion.workflow_id", "workflowversion.version"],
             name="fk_projectworkflowversion_workflowversion",

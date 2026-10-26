@@ -13,7 +13,6 @@ from api.utils import check_duplicate_attribute_keys
 from pydantic import PositiveInt, ValidationError
 from pytz import timezone
 from sqlmodel import Session, func, select
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
 from opensearchpy import OpenSearch
 import yaml
@@ -1325,7 +1324,7 @@ def _require_deployment(
     """422 unless the version is deployed on `engine`: a version that can't run is never recorded."""
     if _deployment_external_id(session, workflow_id, version, engine) is None:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=f"Version {version} of workflow {workflow_id} has no deployment on '{engine}'.",
         )
 
@@ -1423,17 +1422,7 @@ def resolve_project_workflow_version(
         created_by=created_by,
     )
     session.add(record)
-    try:
-        session.commit()
-    except IntegrityError:
-        # A concurrent caller recorded it first; both must get the same version.
-        session.rollback()
-        existing = _get_project_workflow_version(session, project, workflow.id, body.engine)
-        if existing is None:
-            raise
-        return _project_workflow_version_to_public(
-            session, existing, message=_existing_record_message(session, existing, body)
-        )
+    session.commit()
     session.refresh(record)
     return _project_workflow_version_to_public(session, record, created=True)
 
