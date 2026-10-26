@@ -4,9 +4,10 @@ Models for the Project API
 
 from datetime import datetime, timezone
 import uuid
+from sqlalchemy import ForeignKeyConstraint
 from sqlmodel import SQLModel, Field, Relationship, UniqueConstraint
 from typing import List
-from pydantic import ConfigDict, field_validator
+from pydantic import ConfigDict, field_validator, model_validator
 
 from api.rbac.permissions import Permission
 from api.runs.models import SequencingRunPublic
@@ -150,3 +151,73 @@ class ProjectsPublic(SQLModel):
     per_page: int
     has_next: bool
     has_prev: bool
+
+
+class ProjectWorkflowVersion(SQLModel, table=True):
+    """
+    The workflow version a project runs, per workflow and engine.
+
+    Recorded on the project's first run, from an alias or an explicit version,
+    then reused: later runs get this version whatever they request, until it is
+    changed with PUT or deleted.
+    """
+    __tablename__ = "projectworkflowversion"
+    __table_args__ = (
+        UniqueConstraint(
+            "project_id", "workflow_id", "engine", name="uq_project_workflow_engine"
+        ),
+         ForeignKeyConstraint(
+            ["workflow_id", "version"],
+            ["workflowversion.workflow_id", "workflowversion.version"],
+            name="fk_projectworkflowversion_workflowversion",
+        ),
+    )
+
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    project_id: str = Field(foreign_key="project.project_id")
+    workflow_id: uuid.UUID = Field(foreign_key="workflow.id")
+    version: int
+    engine: str = Field(foreign_key="platform.name")
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    created_by: str
+    # Set only when someone chose the version explicitly, via PUT.
+    updated_at: datetime | None = None
+    updated_by: str | None = None
+
+
+class ProjectWorkflowVersionResolve(SQLModel):
+    """
+    An existing record always wins. Without one, `alias`
+    or `version` says what to record; with neither, nothing is written.
+    """
+    engine: str
+    alias: str | None = None
+    version: int | None = None
+
+    @model_validator(mode="after")
+    def _not_both(self):
+        if self.alias is not None and self.version is not None:
+            raise ValueError("Give 'alias' or 'version', not both.")
+        return self
+
+
+class ProjectWorkflowVersionSet(SQLModel):
+    engine: str
+    version: int
+
+
+class ProjectWorkflowVersionPublic(SQLModel):
+    project_id: str
+    workflow_id: uuid.UUID
+    version: int
+    engine: str
+    # The deployment's id on `engine`, for logging; WES does its own selection.
+    external_id: str | None = None
+    # True only on the resolve call that created the record.
+    created: bool = False
+    # Set when resolve returned an existing record instead of what was requested.
+    message: str | None = None
+    created_at: datetime
+    created_by: str
+    updated_at: datetime | None = None
+    updated_by: str | None = None
