@@ -1360,3 +1360,26 @@ class TestJobsServices:
         env_dict = {e["name"]: e["value"] for e in env}
         assert env_dict["MY_VAR"] == "my_value"
         assert env_dict["NGS360_API_ENDPOINT"] == get_settings().client_origin
+
+
+def test_loggable_overrides_masks_credentials():
+    """Test credential values are masked in the logged overrides, and only those"""
+    from api.jobs.services import _loggable_overrides
+
+    overrides = {
+        "command": ["launch"],
+        "environment": [
+            {"name": "NGS360_AUTH_TOKEN", "value": "ngs360_secret"},
+            {"name": "PROJECT_ID", "value": "P-1"},
+        ],
+    }
+
+    logged = _loggable_overrides(overrides)
+
+    assert logged["environment"] == [
+        {"name": "NGS360_AUTH_TOKEN", "value": "<redacted>"},
+        {"name": "PROJECT_ID", "value": "P-1"},
+    ]
+    assert logged["command"] == ["launch"]
+    # The overrides sent to AWS Batch are untouched
+    assert overrides["environment"][0]["value"] == "ngs360_secret"
