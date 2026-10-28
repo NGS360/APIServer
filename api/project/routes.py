@@ -626,7 +626,8 @@ def submit_pipeline_job(
         email=current_user.email,
         reference=request.reference,
         auto_release=request.auto_release,
-        s3_client=s3_client
+        s3_client=s3_client,
+        submitter=current_user,
     )
 
     return BatchJobPublic.model_validate(batch_job)
