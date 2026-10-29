@@ -381,7 +381,7 @@ What this does **not** change is the narrowing itself. `run:create` and `run:ass
 
 **`auditor` survived the collapse** rather than being folded into `member`, because it is *narrower* than the user tier, not wider. Merging it would have granted its holder write access to everything, which is the opposite of what an auditor is.
 
-**What `restricted` protects.** Writes, downloads, member management — and, since 2026-10-15, reads. The narrow reading taken at the role collapse left `GET /projects/{id}` and `GET /projects/{id}/samples` unguarded, so a locked-down project still handed its metadata and sample list to any authenticated caller. Both are now guarded on `project:read` and `sample:read`, which is what gives the flag effect over reads — the membership check lives inside `require_project_permission`, so a route without a guard never consults it. See [Guarding the two project reads](#guarding-the-two-project-reads).
+**What `restricted` protects.** A project's files and actions: downloads and file browsing, writes, sample changes, submissions and ingest. **Not who can see it.** A restricted project stays findable and viewable by every user — its detail and its sample list — and listings and search are not filtered (decided 2026-10-29). From 2026-10-15 to 2026-10-29 the two reads were members-only; see [Guarding the two project reads](#guarding-the-two-project-reads) for why that was reversed.
 
 ### Project roles
 
@@ -871,7 +871,7 @@ A project being locked down is a property of the project, not an authorisation d
 
 `project:manage_members` is now exempt from the gate, because membership *is* the restriction's allowlist and managing the allowlist cannot require being on it. The recovery path is two steps — enrol, then act — and it leaves a `project_member` row behind, which is the point: an administrator reaching into a locked-down project should leave a trace. `project:manage_members` is `critical`, so this is an admin capability rather than something an ordinary caller holds.
 
-**What the gate did not cover, and now does.** It only runs where `require_project_permission` is used. When this was written that was 13 routes, excluding `GET /projects/{id}` and `GET /projects/{id}/samples` — so a restricted project's metadata and sample list remained readable. Both were guarded on 2026-10-15 once authentication was closed on them; see [Guarding the two project reads](#guarding-the-two-project-reads).
+**What the gate did not cover, and now does.** It only runs where `require_project_permission` is used. When this was written that was 13 routes, excluding `GET /projects/{id}` and `GET /projects/{id}/samples` — so a restricted project's metadata and sample list remained readable. Both were guarded on 2026-10-15 once authentication was closed on them, and exempted from the gate again on 2026-10-29, because a restricted project is meant to stay viewable; see [Guarding the two project reads](#guarding-the-two-project-reads).
 
 ### Restriction is membership, not permission
 
@@ -949,6 +949,8 @@ Neither option could cover more than about half of recent run traffic. Project r
 **Measured effect.** Replaying 28 days of real download URIs through the new resolver against the production database: 38 requests move from refused to open, 1,271 continue to resolve to a project, and **83 remain refused**. Those 83 are a different family — vendor inbound buckets of the form `.../incoming/<project-id>/...` whose buckets are not in `DATA_BUCKET_URI`/`RESULTS_BUCKET_URI`, so path inference does not reach them. They carry project ids and would resolve if those buckets were recognised, which is the next thing to look at and is not addressed here.
 
 ### List endpoints filter rows; they do not return 403
+
+> **Superseded for projects, 2026-10-29.** Restricted projects stay findable and viewable by every user, so project listings and search are **not** filtered by membership, and `visible_project_ids` is not to be applied to them. The design below is kept for the record and for any future row-level need; it is not planned work.
 
 `GET /projects`, `GET /projects/search`, `GET /qcmetrics/search`, `GET /files`, `GET /samples/search`, `GET /jobs`, and `GET /search` must return a *narrower list*, not a denial. This is expressed as a scope dependency yielding plain data, so the service layer keeps its existing convention of receiving primitives rather than `User` objects:
 
@@ -1110,7 +1112,7 @@ Phase 1 — closing the 73 remaining open routes — is the highest-value securi
 | **3** | Membership backfill; admin API guarded by the existing `CurrentSuperuser` (no chicken-and-egg) | No | Admins can grant and revoke; the "projects with no member" report is empty or explicitly signed off |
 | **4** | `require_permission` wired onto routes with `RBAC_MODE=dry_run` | No | 14 days in production dry-run, with every distinct `(principal, permission, route)` denial either resolved by a grant or explicitly accepted |
 | **5** | `RBAC_MODE=enforce`, dev → staging → prod | **Yes** | 30 days in production enforce with no rollback |
-| **6** | Row-level read filtering and pagination | **Yes** | Pagination tests pass; list totals reflect membership |
+| **6** | ~~Row-level read filtering and pagination~~ Dropped 2026-10-29: restricted projects stay viewable, so listings are not filtered. Replaced by exempting the two project reads from the membership gate | No | A non-member can view a restricted project and its samples, and is refused its files and actions |
 | **7** | Frontend permission gating, MCP 403 handling, access reporting | No | — |
 
 **Phase 0 is not optional.** There is no request-logging middleware today, and therefore no inventory of who calls the 73 remaining open routes. Skipping it means discovering consumers from a production outage. It uses `optional_current_user` (already present at `api/auth/deps.py:163`), which returns `None` rather than raising — zero behaviour change, but the caller's identity becomes available for logging.
@@ -1348,6 +1350,8 @@ They are here for the other thing `require_project_permission` does: **a project
 **It takes effect immediately, not at the enforce cutover.** The membership check is mode-independent, so the refusal holds in `dry_run` and in `off`. That is asserted directly, because the alternative failure — a change that looks complete and does nothing in production — has happened three times in this rollout: the signing rule, the membership gate and the `restricted` flag were each inert in `dry_run` while every test passed.
 
 **Guarded surface: 87 → 89. Authenticated-but-unguarded: 28 → 26.** The remaining 26 are global-plane reads whose permissions `member` already holds, so guarding them adds the decision record rather than a restriction. They are now ordinary work rather than blocked on anyone.
+
+**Reversed 2026-10-29: restricted projects stay viewable.** The intent for `restricted` is that every user can search for, find and view a restricted project, sample list included, and only its files and actions are limited to its members. Making the two reads members-only overshot that. The guards stay, so both reads still record a decision, but the membership gate in `require_project_permission` now exempts `VIEWABLE_WHEN_RESTRICTED` (`project:read`, `sample:read`). The set is listed explicitly and pinned by a test, so a new project-plane read has to be judged viewable rather than inherit it. The detail response's `permissions` follows the gate: a non-member of a restricted project is reported only the view permissions (and `project:manage_members` if held), so a UI does not offer actions that answer 403. No project was restricted at the time, so nothing a user could see changed.
 
 ### Authentication is now a property of the router
 

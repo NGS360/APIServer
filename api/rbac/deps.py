@@ -20,7 +20,7 @@ from api.auth.models import User
 from api.project.deps import ProjectDep
 from api.project.models import Project
 from api.rbac.mode import RBACMode, effective_mode
-from api.rbac.permissions import Permission
+from api.rbac.permissions import VIEWABLE_WHEN_RESTRICTED, Permission
 from api.rbac.resolver import AuthzContext
 from core.deps import SessionDep
 
@@ -273,9 +273,17 @@ def require_project_permission(
         # the flag exists to prevent.
         managing_membership = Permission.PROJECT_MANAGE_MEMBERS in permissions
 
+        # Viewing is not restricted either. A restricted project stays findable
+        # and viewable by every user -- its detail and its sample list -- and
+        # only its files and actions are limited to members (decided
+        # 2026-10-29; the 2026-10-15 guards on the two reads had made it
+        # private). `all`, so a route mixing a view with anything else is gated.
+        viewing = all(p in VIEWABLE_WHEN_RESTRICTED for p in permissions)
+
         if (
             project.restricted
             and not managing_membership
+            and not viewing
             and not authz.is_member_of(project.id)
         ):
             decide(request, False, permissions,

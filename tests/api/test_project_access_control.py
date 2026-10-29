@@ -566,22 +566,18 @@ class TestTheRestrictionIgnoresTheEnforcementMode:
         assert response.status_code in (200, 201)
 
 
-class TestRestrictedProjectsAreNowPrivateForReads:
+class TestRestrictedProjectsStayViewable:
     """
-    Added 2026-10-15, and it is the point of guarding the two project reads.
+    Decided 2026-10-29: a restricted project stays findable and viewable by
+    every user. Restriction limits its *files and actions* to members, not who
+    can see it -- its detail and its sample list are open to anyone signed in.
 
-    `restricted` shipped protecting writes, downloads and member management.
-    Reads were not covered, because `GET /projects/{id}` and
-    `GET /projects/{id}/samples` carried no guard at all -- and the membership
-    check lives inside `require_project_permission`, so a route without a guard
-    never consults it. A locked-down project still handed its metadata and its
-    entire sample list to any authenticated caller. That was recorded as a known
-    gap when the narrow reading was agreed; this closes it.
-
-    The permissions chosen -- `project:read` and `sample:read` -- are both in
-    the default role, so these guards refuse nobody who could reach the routes
-    yesterday. That is deliberate: the guard is not here to restrict reads
-    generally, only to make `restricted` mean what it says.
+    This reverses the 2026-10-15 reading, under which the guards on
+    `GET /projects/{id}` and `GET /projects/{id}/samples` existed to make those
+    two reads members-only. The guards stay (they record the decision), and the
+    membership gate inside require_project_permission now exempts
+    VIEWABLE_WHEN_RESTRICTED. The other half -- files and actions stay closed
+    -- is asserted here too, so the exemption cannot quietly widen.
     """
 
     @pytest.fixture(name="locked")
@@ -593,74 +589,80 @@ class TestRestrictedProjectsAreNowPrivateForReads:
         session.refresh(project)
         return project
 
-    def test_a_non_member_cannot_read_a_restricted_project(
+    def test_a_non_member_can_view_a_restricted_project(
         self, client_with_permissions, locked
     ):
         from api.rbac.permissions import Permission
 
-        api = client_with_permissions([Permission.PROJECT_READ], username="nr1")
-        assert api.get(f"/api/v1/projects/{locked.project_id}").status_code == 403
-
-    def test_a_non_member_cannot_list_its_samples(
-        self, client_with_permissions, locked
-    ):
-        """
-        The one that mattered most: the sample list is the project's actual
-        content, and it was readable by anyone with a login.
-        """
-        from api.rbac.permissions import Permission
-
-        api = client_with_permissions([Permission.SAMPLE_READ], username="nr2")
+        api = client_with_permissions(
+            [Permission.PROJECT_READ, Permission.SAMPLE_READ], username="nv1")
+        assert api.get(f"/api/v1/projects/{locked.project_id}").status_code == 200
         assert api.get(
             f"/api/v1/projects/{locked.project_id}/samples"
-        ).status_code == 403
-
-    def test_a_member_can_read_it(self, session, restricted_client, locked):
-        grant_project_role(session, locked, "norole", "project_viewer")
-        assert restricted_client.get(
-            f"/api/v1/projects/{locked.project_id}"
-        ).status_code == 200
-        assert restricted_client.get(
-            f"/api/v1/projects/{locked.project_id}/samples"
         ).status_code == 200
 
-    def test_a_superuser_is_not_exempt(self, superuser_client, locked):
-        """
-        Consistent with every other restricted-project check: an administrator
-        who needs the data enrols themselves, which leaves a row behind.
-        """
-        assert superuser_client.get(
-            f"/api/v1/projects/{locked.project_id}"
-        ).status_code == 403
+    def test_a_non_member_still_cannot_act_on_it(
+        self, client_with_permissions, locked
+    ):
+        """Viewing is open; adding a sample is an action, and stays members-only."""
+        from api.rbac.permissions import Permission
 
-    def test_an_unrestricted_project_is_readable_by_anyone_authenticated(
-        self, session, client_with_permissions
+        api = client_with_permissions(
+            [Permission.PROJECT_READ, Permission.SAMPLE_CREATE], username="nv2")
+        response = api.post(
+            f"/api/v1/projects/{locked.project_id}/samples",
+            json={"sample_id": "S-V1"},
+        )
+        assert response.status_code == 403
+        assert "restricted" in response.json()["detail"]
+
+    def test_a_non_member_is_shown_only_what_they_can_do(
+        self, client_with_permissions, locked
     ):
         """
-        The half that must not change. `project:read` and `sample:read` are in
-        `member`, so an ordinary user reads any unrestricted project exactly as
-        before -- these guards are about `restricted`, not about reads.
+        `permissions` on the detail response drives UI gating. A non-member's
+        global grants would otherwise list actions the gate refuses.
         """
+        from api.rbac.permissions import Permission
+
+        api = client_with_permissions(
+            [Permission.PROJECT_READ, Permission.SAMPLE_READ,
+             Permission.SAMPLE_CREATE, Permission.PROJECT_SUBMIT_ACTION],
+            username="nv3")
+        body = api.get(f"/api/v1/projects/{locked.project_id}").json()
+        assert body["permissions"] == ["project:read", "sample:read"]
+
+    def test_a_member_is_shown_their_actions(
+        self, session, client_with_permissions, locked
+    ):
+        from api.rbac.permissions import Permission
+
+        api = client_with_permissions(
+            [Permission.PROJECT_READ, Permission.SAMPLE_CREATE], username="nv4")
+        grant_project_role(session, locked, "nv4", "project_viewer")
+        body = api.get(f"/api/v1/projects/{locked.project_id}").json()
+        assert "sample:create" in body["permissions"]
+
+    def test_a_superuser_can_view_it(self, superuser_client, locked):
+        assert superuser_client.get(
+            f"/api/v1/projects/{locked.project_id}"
+        ).status_code == 200
+
+    def test_an_unrestricted_project_is_unaffected(
+        self, session, client_with_permissions
+    ):
         from api.rbac.permissions import Permission
 
         project = make_project(session, "P-20260601-0002", "Open")
         api = client_with_permissions(
-            [Permission.PROJECT_READ, Permission.SAMPLE_READ], username="nr3")
-        assert api.get(f"/api/v1/projects/{project.project_id}").status_code == 200
-        assert api.get(
-            f"/api/v1/projects/{project.project_id}/samples"
-        ).status_code == 200
+            [Permission.PROJECT_READ, Permission.SAMPLE_CREATE], username="nv5")
+        body = api.get(f"/api/v1/projects/{project.project_id}").json()
+        assert "sample:create" in body["permissions"]
 
-    @pytest.mark.parametrize("mode_value", ["dry_run", "off"])
-    def test_the_refusal_holds_in_the_permissive_modes(
+    @pytest.mark.parametrize("mode_value", ["dry_run", "off", "enforce"])
+    def test_viewing_is_open_in_every_mode(
         self, client_with_permissions, locked, monkeypatch, mode_value
     ):
-        """
-        The membership gate is mode-independent, so guarding these routes gives
-        `restricted` effect *today*, in dry_run, rather than at some future
-        enforce cutover. Without this the change would look complete and do
-        nothing in production -- which has happened three times in this rollout.
-        """
         from api.rbac.permissions import Permission
         from core.config import get_settings
 
@@ -669,9 +671,19 @@ class TestRestrictedProjectsAreNowPrivateForReads:
         get_settings.cache_clear()
         try:
             api = client_with_permissions([Permission.PROJECT_READ],
-                                          username="nr4" + mode_value[0])
+                                          username="nv6" + mode_value[0])
             assert api.get(
                 f"/api/v1/projects/{locked.project_id}"
-            ).status_code == 403, mode_value
+            ).status_code == 200, mode_value
         finally:
             get_settings.cache_clear()
+
+    def test_the_viewable_set_is_exactly_the_two_reads(self):
+        """
+        Widening it opens a restricted project's content to non-members, so it
+        is pinned: a new project-plane read must be judged, not inherited.
+        """
+        from api.rbac.permissions import VIEWABLE_WHEN_RESTRICTED, Permission
+
+        assert VIEWABLE_WHEN_RESTRICTED == {
+            Permission.PROJECT_READ, Permission.SAMPLE_READ}
