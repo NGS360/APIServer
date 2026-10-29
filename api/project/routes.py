@@ -266,23 +266,24 @@ def get_project_by_project_id(
     Returns a single project by its project_id.
     Note: This is different from its internal "id".
 
-    Guarded 2026-10-15. `project:read` is in the default role, so this refuses
-    nobody who could reach it yesterday -- the guard is here for the *other*
-    thing require_project_permission does: a project marked `restricted`
-    requires membership, and that check lives in the guard. Without it a
-    locked-down project still handed its metadata to any authenticated caller,
-    which made `restricted` a half-measure.
+    Guarded on `project:read`, which is in the default role. A `restricted`
+    project is viewable here by every user, member or not (decided 2026-10-29):
+    restriction limits a project's files and actions, not who can see it. The
+    guard's membership gate exempts this read; see VIEWABLE_WHEN_RESTRICTED.
 
     Carries `permissions`: what the calling user may do in this project. The
     project plane is the only place that answer exists -- /rbac/me reports global
     grants only -- so without it a UI has no way to gate a project control
-    except by making the request and handling the refusal.
+    except by making the request and handling the refusal. On a restricted
+    project a non-member is reported only what they can still do there.
     """
     result = services.get_project_by_project_id(
         session=session, project_id=project.project_id
     )
     if authz is not None:
-        result.permissions = authz.effective_project_permissions(project.id)
+        result.permissions = authz.effective_project_permissions(
+            project.id, restricted=project.restricted
+        )
     return result
 
 

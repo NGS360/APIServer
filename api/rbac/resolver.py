@@ -27,7 +27,11 @@ from dataclasses import dataclass, field
 from sqlmodel import Session, select
 
 from api.rbac.models import ProjectMember, Role, RolePermission, UserRole
-from api.rbac.permissions import PROJECT_SCOPABLE, Permission
+from api.rbac.permissions import (
+    PROJECT_SCOPABLE,
+    VIEWABLE_WHEN_RESTRICTED,
+    Permission,
+)
 
 
 def global_permissions(session: Session, user_id: uuid.UUID) -> frozenset[str]:
@@ -209,7 +213,9 @@ class AuthzContext:
             return sorted(str(p) for p in Permission)
         return sorted(self.global_permissions)
 
-    def effective_project_permissions(self, project_id: uuid.UUID) -> list[str]:
+    def effective_project_permissions(
+        self, project_id: uuid.UUID, restricted: bool = False
+    ) -> list[str]:
         """
         What this caller may do *in one project*, for the project response.
 
@@ -227,7 +233,14 @@ class AuthzContext:
         grant is included. Reporting only the project-role grants would show an
         `admin` as holding nothing on the project, and hide every control from
         the account that can use all of them.
+
+        On a `restricted` project a non-member is reported only what the
+        membership gate in require_project_permission still lets through:
+        viewing, and managing membership. Their global grants would otherwise
+        list every action, and a UI would offer controls that answer 403.
         """
-        return sorted(
-            str(p) for p in PROJECT_SCOPABLE if self.has_in_project(p, project_id)
-        )
+        granted = [p for p in PROJECT_SCOPABLE if self.has_in_project(p, project_id)]
+        if restricted and not self.is_member_of(project_id):
+            open_ = VIEWABLE_WHEN_RESTRICTED | {Permission.PROJECT_MANAGE_MEMBERS}
+            granted = [p for p in granted if p in open_]
+        return sorted(str(p) for p in granted)

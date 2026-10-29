@@ -300,6 +300,16 @@ READ_PERMISSIONS: frozenset[Permission] = frozenset(
     p for p in Permission if p.endswith((":read", ":read_all"))
 )
 
+# What a restricted project still shows a non-member. Restriction limits a
+# project's files and actions to its members; the project itself stays
+# findable and viewable by every user, sample list included (decided
+# 2026-10-29). Listed explicitly rather than derived from READ_PERMISSIONS:
+# a new project-plane read should have to be judged viewable, not inherit it.
+VIEWABLE_WHEN_RESTRICTED: frozenset[Permission] = frozenset({
+    Permission.PROJECT_READ,
+    Permission.SAMPLE_READ,
+})
+
 
 def is_valid(value: str) -> bool:
     """Whether a string names a permission in this catalog."""
