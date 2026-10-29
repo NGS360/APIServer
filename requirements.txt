@@ -54,7 +54,7 @@ detect-installer==0.1.0
     # via fastapi-cloud-cli
 distro==1.9.0
     # via langsmith
-dnspython==2.9.0
+dnspython==2.8.0
     # via email-validator
 ecdsa==0.19.2
     # via python-jose
