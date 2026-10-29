@@ -219,6 +219,22 @@ def update_batch_job(
     return job
 
 
+# Environment variable names that mark a value as a credential. The values reach
+# the container; they are kept out of this service's logs.
+_SECRET_NAME_MARKERS = ("TOKEN", "KEY", "SECRET", "PASSWORD")
+
+
+def _loggable_overrides(container_overrides: Dict[str, Any]) -> Dict[str, Any]:
+    """A copy of container overrides with credential values masked, for logging."""
+    environment = [
+        {**env, "value": "<redacted>"}
+        if any(marker in env.get("name", "").upper() for marker in _SECRET_NAME_MARKERS)
+        else env
+        for env in container_overrides.get("environment", [])
+    ]
+    return {**container_overrides, "environment": environment}
+
+
 def submit_batch_job(
     session: Session,
     job_name: str,
@@ -264,7 +280,7 @@ def submit_batch_job(
     container_overrides["environment"].append(
         {"name": "NGS360_API_ENDPOINT", "value": settings.client_origin}
     )
-    logger.info(f"Container overrides: {container_overrides}")
+    logger.info(f"Container overrides: {_loggable_overrides(container_overrides)}")
 
     try:
         batch_client = boto3.client("batch", region_name=settings.AWS_REGION)
