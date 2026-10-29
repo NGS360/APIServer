@@ -120,7 +120,7 @@ langchain-protocol==0.0.18
     # via
     #   langchain-core
     #   langgraph-sdk
-langgraph-sdk==0.4.4
+langgraph-sdk==0.4.6
     # via ngs360-server
 langsmith==0.10.15
     # via langchain-core
