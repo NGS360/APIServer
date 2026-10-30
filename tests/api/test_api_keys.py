@@ -8,8 +8,10 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlmodel import Session
 
+from api.auth.deps import API_KEY_TOUCH_INTERVAL, authenticate_api_key
 from api.auth.models import User, APIKey
-from core.security import hash_password
+from api.auth.services import ensure_timezone_aware
+from core.security import hash_api_key, hash_password
 
 
 @pytest.fixture(name="test_user")
@@ -197,6 +199,40 @@ class TestAPIKeyAuth:
         # Check last_used_at was set
         api_key = session.get(APIKey, uuid.UUID(key_id))
         assert api_key.last_used_at is not None
+
+    def test_last_used_at_is_not_rewritten_within_the_interval(
+        self, test_user, session: Session
+    ):
+        """A recent last_used_at is left alone, so a busy key is not a write per call."""
+        raw_key, recent = self._key_used_at(
+            session, test_user, datetime.now(timezone.utc) - timedelta(minutes=1)
+        )
+        authenticate_api_key(session, raw_key)
+        session.refresh(recent)
+        assert ensure_timezone_aware(recent.last_used_at) < (
+            datetime.now(timezone.utc) - timedelta(seconds=30)
+        )
+
+    def test_last_used_at_is_refreshed_once_stale(self, test_user, session: Session):
+        stale_at = datetime.now(timezone.utc) - API_KEY_TOUCH_INTERVAL - timedelta(minutes=1)
+        raw_key, stale = self._key_used_at(session, test_user, stale_at)
+        authenticate_api_key(session, raw_key)
+        session.refresh(stale)
+        assert ensure_timezone_aware(stale.last_used_at) > stale_at + timedelta(minutes=1)
+
+    @staticmethod
+    def _key_used_at(session: Session, user, last_used_at):
+        raw_key = "ngs360_" + uuid.uuid4().hex
+        api_key = APIKey(
+            user_id=user.id,
+            name="Throttled Key",
+            key_prefix=raw_key[:12],
+            hashed_key=hash_api_key(raw_key),
+            last_used_at=last_used_at,
+        )
+        session.add(api_key)
+        session.commit()
+        return raw_key, api_key
 
     def test_revoked_key_returns_401(self, unauthenticated_client: TestClient, test_user):
         """Revoking a key then using it for auth returns 401."""

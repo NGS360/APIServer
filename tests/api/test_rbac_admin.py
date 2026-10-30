@@ -393,13 +393,45 @@ class TestProjectResponseCarriesCallerPermissions:
         any more: every feature router requires a caller, so an anonymous
         request is 401 at the authentication layer before the project:read
         guard is even reached, and never gets a body to carry either answer.
-        The field stays optional regardless, because the create, update and
-        patch routes return ProjectPublic without ever populating it.
+        The field stays optional regardless, because the list and create
+        routes return ProjectPublic without ever populating it.
         """
         response = unauthenticated_client.get(
             f"/api/v1/projects/{test_project.project_id}"
         )
         assert response.status_code == 401
+
+    @pytest.mark.parametrize("method", ["put", "patch"])
+    def test_a_write_reports_it_too(self, method, client, test_project):
+        """
+        PUT and PATCH answer with the same field, so a UI that saves a project
+        does not have to re-read it to keep its controls right.
+        """
+        body = getattr(client, method)(
+            f"/api/v1/projects/{test_project.project_id}", json={"name": "Renamed"}
+        ).json()
+        assert body["name"] == "Renamed"
+        assert "sample:create" in body["permissions"]
+
+    @pytest.mark.parametrize("method", ["put", "patch"])
+    def test_a_write_that_restricts_reports_the_restricted_answer(
+        self, method, superuser_client, session, test_project
+    ):
+        """
+        Restriction is read from the saved project, not the one loaded before
+        the write. A non-member administrator who locks a project can no
+        longer act on it, and the response must not offer them the controls.
+        """
+        assert session.exec(
+            select(ProjectMember).where(ProjectMember.project_id == test_project.id)
+        ).first() is None
+
+        body = getattr(superuser_client, method)(
+            f"/api/v1/projects/{test_project.project_id}", json={"restricted": True}
+        ).json()
+        assert body["restricted"] is True
+        assert body["permissions"] == ["project:manage_members", "project:read",
+                                       "sample:read"]
 
     def test_the_list_route_does_not_populate_it(self, superuser_client, test_project):
         """
