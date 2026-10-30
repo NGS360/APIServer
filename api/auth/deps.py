@@ -1,7 +1,7 @@
 """
 Authentication dependencies for protecting endpoints
 """
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Annotated
 import uuid
 
@@ -14,6 +14,12 @@ from core.deps import SessionDep
 from core.security import decode_token, hash_api_key
 from api.auth.models import User, APIKey
 from api.auth.services import ensure_timezone_aware
+
+# How stale api_keys.last_used_at may get before a request refreshes it. The
+# column answers "is this key still in use", which is judged in days, so
+# minute precision buys nothing -- and writing it on every request made each
+# API-key call a database write and commit, however read-only the call itself.
+API_KEY_TOUCH_INTERVAL = timedelta(minutes=5)
 
 # OAuth2 scheme for token extraction
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
@@ -53,10 +59,13 @@ def authenticate_api_key(session: Session, token: str) -> User:
     if user is None:
         raise credentials_exception
 
-    # Update last_used_at
-    api_key.last_used_at = datetime.now(timezone.utc)
-    session.add(api_key)
-    session.commit()
+    # Refresh last_used_at at most once per API_KEY_TOUCH_INTERVAL.
+    now = datetime.now(timezone.utc)
+    last_used = ensure_timezone_aware(api_key.last_used_at)
+    if last_used is None or now - last_used >= API_KEY_TOUCH_INTERVAL:
+        api_key.last_used_at = now
+        session.add(api_key)
+        session.commit()
 
     return user
 

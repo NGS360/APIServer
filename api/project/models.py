@@ -110,14 +110,14 @@ class ProjectPublic(SQLModel):
     # for the same project_id. This response must therefore never go into a
     # shared or CDN cache.
     #
-    # Populated on the detail route only, and left None by the list routes, the
-    # same way sequencing_runs is. Resolving it costs a membership lookup per
+    # Populated on the detail, update and patch routes, and left None by the
+    # list routes, the same way sequencing_runs is. Resolving it costs a membership lookup per
     # project, which on a page of projects is an N+1 for something no list view
     # needs -- there are no per-row actions to gate.
     #
     # None is not the same as []. None means the field was not populated -- the
-    # list, create, update and patch routes all return this model without
-    # resolving it; [] means this caller genuinely holds nothing here.
+    # list and create routes return this model without resolving it; [] means
+    # this caller genuinely holds nothing here.
     #
     # None once also covered an anonymous caller. It no longer can: the detail
     # route requires a caller and then project:read, so a request that reaches

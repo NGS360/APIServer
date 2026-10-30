@@ -1054,7 +1054,7 @@ Both take `role:read` rather than `user:read`: the latter is the directory-searc
 
 `None` and `[]` are different facts, and the distinction is worth keeping straight:
 
-- **`None` means the field was not populated.** Only the detail route resolves it. The list, create, update and patch routes all return `ProjectPublic` without it, the same way they leave `sequencing_runs` unset — resolving it costs a membership lookup per project, which on a page of projects is an N+1 for something no list view needs, since there are no per-row controls to gate. One consequence for a UI: after a successful `PUT`/`PATCH` the field comes back `None`, so re-read the detail route rather than treating the response as a refreshed permission set.
+- **`None` means the field was not populated.** The detail, `PUT` and `PATCH` routes resolve it. The list and create routes return `ProjectPublic` without it, the same way they leave `sequencing_runs` unset — resolving it costs a membership lookup per project, which on a page of projects is an N+1 for something no list view needs, since there are no per-row controls to gate. A `PUT`/`PATCH` response is a refreshed permission set, and it reflects the write: restriction is read from the saved project, so locking a project you are not a member of comes back with only the view permissions.
 - **`[]` means a real caller was evaluated and holds nothing here.**
 
 `None` once also covered an anonymous request, and the field was built on `OptionalAuthzDep` for that reason. It no longer can: every feature router requires a caller, and the detail route additionally requires `project:read`, so a request that reaches the handler always has somebody to report on. The optional dependency is kept rather than folded into `load_authz`, because collapsing it is a change to the route and not to the helper — its docstring records the same thing.
@@ -1677,7 +1677,7 @@ Consequences for the rest of this design: MCP needs no service account, so `serv
 Two notes that will otherwise cost someone an afternoon, for whichever machine identities do end up existing:
 
 - A service-account user must be created with **both** `is_active` and `is_verified` true, or its API key fails on every route using `get_current_active_user`.
-- `authenticate_api_key` writes `last_used_at` and **commits on every request** (`api/auth/deps.py:57`). That is write amplification independent of RBAC and deserves its own ticket — throttle to once per N minutes.
+- ~~`authenticate_api_key` writes `last_used_at` and **commits on every request**~~. Throttled: the column is refreshed at most once per `API_KEY_TOUCH_INTERVAL` (5 minutes) per key, which is far finer than the days-scale idle judgements it feeds.
 
 ### Frontend
 

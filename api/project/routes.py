@@ -22,7 +22,9 @@ from api.rbac.deps import (
     require_project_permission,
 )
 from api.rbac.permissions import Permission
+from api.rbac.resolver import AuthzContext
 from api.project.models import (
+    Project,
     ProjectCreate,
     ProjectUpdate,
     ProjectPublic,
@@ -287,6 +289,26 @@ def get_project_by_project_id(
     return result
 
 
+def _with_permissions(
+    result: ProjectPublic, project: Project, authz: AuthzContext
+) -> ProjectPublic:
+    """
+    Report the caller's permissions on a project they have just written.
+
+    Without this a UI that saves a project gets `permissions: null` back and has
+    to re-read the detail route to keep its controls right -- and a save can
+    change the answer, because `restricted` is one of the fields it writes.
+
+    So restriction is read from the result, not from the project as loaded
+    before the write. A non-member administrator who locks a project has, in
+    the same request, stopped being able to act on it, and the response says so.
+    """
+    result.permissions = authz.effective_project_permissions(
+        project.id, restricted=result.restricted
+    )
+    return result
+
+
 @router.put(
     "/{project_id}",
     status_code=status.HTTP_200_OK,
@@ -301,7 +323,8 @@ def update_project(
     session: SessionDep,
     opensearch_client: OpenSearchDep,
     project: ProjectDep,
-    update_request: ProjectUpdate
+    update_request: ProjectUpdate,
+    authz: AuthzDep,
 ) -> ProjectPublic:
     """
     Full replacement update of a project.
@@ -309,13 +332,16 @@ def update_project(
     Attributes provided here **replace** all existing attributes.
     To merge/upsert attributes without removing unmentioned ones,
     use ``PATCH /{project_id}`` instead.
+
+    Carries `permissions`, as the detail route does; see _with_permissions.
     """
-    return services.update_project(
+    result = services.update_project(
         session=session,
         opensearch_client=opensearch_client,
         project_id=project.project_id,
         update_request=update_request,
     )
+    return _with_permissions(result, project, authz)
 
 
 @router.patch(
@@ -333,6 +359,7 @@ def patch_project(
     opensearch_client: OpenSearchDep,
     project: ProjectDep,
     update_request: ProjectUpdate,
+    authz: AuthzDep,
 ) -> ProjectPublic:
     """
     Partially update a project using merge/upsert semantics.
@@ -341,13 +368,16 @@ def patch_project(
     from the request.  Each supplied attribute is upserted: existing
     keys are updated, new keys are inserted, and unmentioned keys
     are left untouched.  An empty attributes list is a no-op.
+
+    Carries `permissions`, as the detail route does; see _with_permissions.
     """
-    return services.patch_project(
+    result = services.patch_project(
         session=session,
         opensearch_client=opensearch_client,
         project_id=project.project_id,
         update_request=update_request,
     )
+    return _with_permissions(result, project, authz)
 
 ###############################################################################
 # "Samples" Endpoints /api/v1/projects/{project_id}/samples
