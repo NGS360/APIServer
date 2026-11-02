@@ -440,11 +440,12 @@ All paths are under `/api/v1` and require authentication; the caller's username 
 
 | Method | Path | Body / params | Notes | Permission |
 |--------|------|---------------|-------|------------|
-| `POST` | `/projects/{project_id}/workflow/{workflow_id}/resolve` | `alias` (`prod`) or `version` | Returns the existing record (`200`) or resolves the alias and creates one (`201`). `404` if the alias isn't set. Safe under concurrent calls | `project:submit_action` |
-| `GET` | `/projects/{project_id}/workflow` | optional `workflow_id` | All records for the project | Project read |
-| `GET` | `/projects/{project_id}/workflow/{workflow_id}` | — | One record; `404` if none | Project read |
-| `PUT` | `/projects/{project_id}/workflow/{workflow_id}` | `version` | Override to another version | `workflow:create` |
-| `DELETE` | `/projects/{project_id}/workflow/{workflow_id}` | — | `204`. The next run records the current `prod` | `workflow:create` |
+| `POST` | `/projects/{project_id}/workflow/{workflow_id}/resolve` | `alias` (`prod`) or `version` | Returns the existing record (`200`) or resolves the alias and creates one (`201`). `404` if the alias isn't set | `project:submit_action` |
+| `GET` | `/projects/{project_id}/workflow` | optional `workflow_id` | All records for the project; pass `workflow_id` to narrow to one | `project:read` |
+| `PUT` | `/projects/{project_id}/workflow/{workflow_id}` | `version` | Override to another version | `project:update` |
+| `DELETE` | `/projects/{project_id}/workflow/{workflow_id}` | — | `204`. The next run records the current `prod` | `project:update` |
+
+There is no `GET` on `/workflow/{workflow_id}`: `PUT` and `DELETE` own that path, so read a single pin with `GET /workflow?workflow_id=`.
 
 ### Database Models
 
@@ -577,5 +578,5 @@ One record per project and workflow. Deliberately not scoped by platform: a proj
 | `api/pipeline/services.py` | Pipeline business logic (create, list, add/remove workflow, response building) |
 | `api/pipeline/routes.py` | Pipeline endpoint handlers |
 | `api/project/models.py` | `ProjectWorkflowVersion` table and schemas (or a new `api/project/workflow_versions/` module) |
-| `api/project/services.py` | ProjectWorkflowVersion resolve (atomic get-or-create), read, override and delete |
+| `api/project/services.py` | ProjectWorkflowVersion resolve (get-or-create), read, override and delete |
 | `api/project/routes.py` | `/projects/{project_id}/workflow` endpoint handlers |
