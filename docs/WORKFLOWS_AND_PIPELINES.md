@@ -128,15 +128,16 @@ On NGS360 the decision is:
 flowchart LR
     START["Launcher calls<br/>copy_workflow(W, P)"] --> EXP{"Config entry<br/>has a suffix?<br/>('W:prod', 'W:4')"}
     EXP -- yes --> USE["Submit it unchanged<br/>no ProjectWorkflowVersion<br/>record read or written"]
-    EXP -- no --> CALL["POST /projects/P/<br/>workflow-versions/W/resolve<br/>{alias: prod, engine}"]
-    CALL --> HAS{"ProjectWorkflowVersion<br/>record exists<br/>for (P, W, engine)?"}
+    EXP -- no --> CALL["POST /projects/P/<br/>workflow/W/resolve<br/>{alias: prod}"]
+    CALL --> HAS{"ProjectWorkflowVersion<br/>record exists<br/>for (P, W)?"}
     HAS -- yes --> OLD["200: return<br/>pinned version"]
     HAS -- no --> PROD{"'prod' alias<br/>set?"}
     PROD -- no --> F404["404: launcher stops<br/>(no fallback to newest)"]
-    PROD -- yes --> DEPL{"prod's version<br/>deployed on<br/>HealthOmics?"}
-    DEPL -- no --> F422["422: launcher stops<br/>no record written"]
-    DEPL -- yes --> NEW["201: store<br/>ProjectWorkflowVersion<br/>(P, W) → N"]
+    PROD -- yes --> NEW["201: store<br/>ProjectWorkflowVersion<br/>(P, W) → N"]
     OLD & NEW --> SUB["Submit 'W:N'<br/>to WES"]
+    SUB --> DEPL{"version N deployed<br/>on the target<br/>platform?"}
+    DEPL -- no --> FSUB["WES fails the<br/>submission"]
+    DEPL -- yes --> RUN["Run"]
 ```
 
 Each workflow in a launcher gets its own pinned version: a WGS launcher with five workflows has five ProjectWorkflowVersion records for the project.
@@ -154,7 +155,7 @@ sequenceDiagram
     participant O as Omics Lambda function
     participant OM as AWS HealthOmics
 
-    L->>API: POST /projects/P/workflow-versions/W/resolve {alias: prod}
+    L->>API: POST /projects/P/workflow/W/resolve {alias: prod}
     API->>DB: record for (P, W)?
     DB-->>API: none
     API->>API: resolve prod → v2
@@ -179,7 +180,7 @@ sequenceDiagram
     participant WES as GA4GH WES
 
     Note over API: prod → v3 now
-    L->>API: POST /projects/P/workflow-versions/W/resolve {alias: prod}
+    L->>API: POST /projects/P/workflow/W/resolve {alias: prod}
     API->>DB: record for (P, W)?
     DB-->>API: v2
     API-->>L: 200 {version: 2, created: false}
@@ -219,8 +220,7 @@ sequenceDiagram
     participant L as Launcher
 
     Note over DB: (P, W) → v2
-    Admin->>API: PUT /projects/P/workflow-versions/W {version: 3}
-    API->>API: check v3 has an Omics deployment (else 422)
+    Admin->>API: PUT /projects/P/workflow/W {version: 3}
     API->>DB: (P, W) → v3, updated_by = admin
     API-->>Admin: 200
     L->>API: resolve (next run)
@@ -230,7 +230,7 @@ sequenceDiagram
 
 Things to know:
 
-- To reset a project to whatever `prod` points at now, `DELETE /projects/P/workflow-versions/W` instead. The next run records the current `prod`.
+- To reset a project to whatever `prod` points at now, `DELETE /projects/P/workflow/W` instead. The next run records the current `prod`.
 - If a project's *first* run used an explicit `W:5`, no ProjectWorkflowVersion record is written. Going back to a bare id later records whatever `prod` is at that time, not 5. To keep 5, `PUT` the record.
 
 ### 7. Edge cases
@@ -238,7 +238,7 @@ Things to know:
 | Situation | What happens | Fix |
 |-----------|--------------|-----|
 | `prod` is not set when a project first runs `W` | `resolve` returns `404`; launcher stops | Set the `prod` alias |
-| `prod`'s version has no HealthOmics deployment | `resolve` returns `422`; no ProjectWorkflowVersion record written | Deploy that version, or move `prod` |
+| `prod`'s version has no deployment anywhere | `resolve` still records it; deployment is not checked when pinning | Deploy that version before a run is submitted |
 | A pinned version's deployment is deleted later | WES rejects the submission (no deployment) | Redeploy that version, or override the pinned version |
 | Reference suffix matches no alias and no version | WES: alias/version not found | Fix the config entry |
 | Workflow has no versions | WES: no versions found | Add a version |
@@ -342,7 +342,6 @@ erDiagram
         string project_id FK
         uuid workflow_id FK
         int version FK
-        string engine FK
         datetime created_at
         string created_by
         datetime updated_at
@@ -358,7 +357,6 @@ erDiagram
     WorkflowVersion ||--o{ WorkflowVersionAlias : pointed_to_by
     WorkflowVersion ||--o{ WorkflowDeployment : deployed_on
     Platform ||--o{ WorkflowDeployment : engine_FK
-    Platform ||--o{ ProjectWorkflowVersion : engine_FK
     WorkflowVersion ||--o{ ProjectWorkflowVersion : pinned_version
     Workflow ||--o{ ProjectWorkflowVersion : version_for
     Project ||--o{ ProjectWorkflowVersion : uses_version
@@ -438,15 +436,17 @@ All paths are under `/api/v1` and require authentication; the caller's username 
 
 #### Project workflow versions
 
-`{project_id}` is the project business key (`P-YYYYMMDD-NNNN`). Launchers always use `engine = AWSHealthOmics (us-east)`.
+`{project_id}` is the project business key (`P-YYYYMMDD-NNNN`).
 
 | Method | Path | Body / params | Notes | Permission |
 |--------|------|---------------|-------|------------|
-| `POST` | `/projects/{project_id}/workflow-versions/{workflow_id}/resolve` | `engine`, `alias` (`prod`) | Returns the existing record (`200`) or resolves the alias and creates one (`201`). `404` if the alias isn't set; `422` if its version has no deployment on `engine`. Safe under concurrent calls | `project:submit_action` |
-| `GET` | `/projects/{project_id}/workflow-versions` | optional `engine` | All records for the project | Project read |
-| `GET` | `/projects/{project_id}/workflow-versions/{workflow_id}` | optional `engine` | One record; `404` if none | Project read |
-| `PUT` | `/projects/{project_id}/workflow-versions/{workflow_id}` | `engine`, `version` | Override to another version. `422` if it has no deployment on `engine` | `workflow:create` |
-| `DELETE` | `/projects/{project_id}/workflow-versions/{workflow_id}` | `engine` | `204`. The next run records the current `prod` | `workflow:create` |
+| `POST` | `/projects/{project_id}/workflow/{workflow_id}/resolve` | `alias` (`prod`) or `version` | Returns the existing record (`200`) or resolves the alias and creates one (`201`). `404` if the alias isn't set. Safe under concurrent calls | `project:submit_action` |
+| `GET` | `/projects/{project_id}/workflow` | optional `workflow_id` | All records for the project | Project read |
+| `GET` | `/projects/{project_id}/workflow/{workflow_id}` | — | One record; `404` if none | Project read |
+| `PUT` | `/projects/{project_id}/workflow/{workflow_id}` | `version` | Override to another version | `workflow:create` |
+| `DELETE` | `/projects/{project_id}/workflow/{workflow_id}` | — | `204`. The next run records the current `prod` | `workflow:create` |
+
+A record names a version, not a version on a platform: there is no `engine` anywhere in these routes, and no deployment check. A version that exists can be pinned whether or not any platform currently runs it — "not deployed on platform X" surfaces when WES selects a deployment at submission.
 
 ### Database Models
 
@@ -529,13 +529,12 @@ Columns in each table. **Required** is `yes` if the caller must supply it, `auto
 | `project_id` | string | yes | FK → `project.project_id` (business key `P-YYYYMMDD-NNNN`) |
 | `workflow_id` | UUID | yes | FK → `workflow.id` |
 | `version` | int | yes | The project's pinned version number. With `workflow_id`, FK → `workflowversion(workflow_id, version)` |
-| `engine` | string | yes | FK → `platform.name`, e.g. `AWSHealthOmics (us-east)` |
 | `created_at` | datetime | auto | UTC creation time |
 | `created_by` | string | auto | Username of the creator (the launcher's user, or `backfill`) |
 | `updated_at` | datetime | auto | Set when the version is changed by an override; `null` until then |
 | `updated_by` | string | auto | Username who made the override; `null` until then |
 
-One record per project, workflow and engine.
+One record per project and workflow. Deliberately not scoped by platform: a project runs one version of a workflow, and which platforms that version is deployed on is resolved at submission.
 
 #### Pipeline
 
@@ -581,4 +580,4 @@ One record per project, workflow and engine.
 | `api/pipeline/routes.py` | Pipeline endpoint handlers |
 | `api/project/models.py` | `ProjectWorkflowVersion` table and schemas (or a new `api/project/workflow_versions/` module) |
 | `api/project/services.py` | ProjectWorkflowVersion resolve (atomic get-or-create), read, override and delete |
-| `api/project/routes.py` | `/projects/{project_id}/workflow-versions` endpoint handlers |
+| `api/project/routes.py` | `/projects/{project_id}/workflow` endpoint handlers |

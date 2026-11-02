@@ -155,7 +155,7 @@ class ProjectsPublic(SQLModel):
 
 class ProjectWorkflowVersion(SQLModel, table=True):
     """
-    The workflow version a project uses, per workflow and engine.
+    The workflow version a project uses, per workflow.
 
     Recorded on the project's first run, from an alias or an explicit version,
     then reused: later runs get this version whatever they request, until it is
@@ -163,10 +163,10 @@ class ProjectWorkflowVersion(SQLModel, table=True):
     """
     __tablename__ = "projectworkflowversion"
     __table_args__ = (
-        # One version per project, workflow and engine: the guarantee that a
-        # project cannot end up with two versions of the same workflow.
+        # One version per project and workflow: the guarantee that a project
+        # cannot end up with two versions of the same workflow.
         UniqueConstraint(
-            "project_id", "workflow_id", "engine", name="uq_project_workflow_engine"
+            "project_id", "workflow_id", name="uq_project_workflow"
         ),
         ForeignKeyConstraint(
             ["workflow_id", "version"],
@@ -179,7 +179,6 @@ class ProjectWorkflowVersion(SQLModel, table=True):
     project_id: str = Field(foreign_key="project.project_id")
     workflow_id: uuid.UUID = Field(foreign_key="workflow.id")
     version: int
-    engine: str = Field(foreign_key="platform.name")
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     created_by: str
     # Set only when someone chose the version explicitly, via PUT.
@@ -192,7 +191,6 @@ class ProjectWorkflowVersionResolve(SQLModel):
     An existing record always wins. Without one, `alias`
     or `version` says what to record; with neither, nothing is written.
     """
-    engine: str
     alias: str | None = None
     version: int | None = None
 
@@ -204,7 +202,6 @@ class ProjectWorkflowVersionResolve(SQLModel):
 
 
 class ProjectWorkflowVersionSet(SQLModel):
-    engine: str
     version: int
 
 
@@ -212,9 +209,6 @@ class ProjectWorkflowVersionPublic(SQLModel):
     project_id: str
     workflow_id: uuid.UUID
     version: int
-    engine: str
-    # The deployment's id on `engine`, for logging; WES does its own selection.
-    external_id: str | None = None
     # True only on the resolve call that created the record.
     created: bool = False
     # Set when resolve returned an existing record instead of what was requested.

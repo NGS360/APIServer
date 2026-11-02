@@ -53,9 +53,8 @@ from api.samples.models import (
     Attribute,
 )
 from api.runs.models import SequencingRun, SequencingRunPublic, SampleSequencingRun
-from api.workflow.models import WorkflowDeployment, WorkflowVersion, WorkflowVersionAlias
+from api.workflow.models import WorkflowVersionAlias
 from api.workflow.services import (
-    _validate_engine,
     get_workflow_by_id,
     get_workflow_version_by_num,
 )
@@ -1278,55 +1277,29 @@ def ingest_vendor_data(
 
 
 def _get_project_workflow_version(
-    session: Session, project: Project, workflow_id: UUID, engine: str
+    session: Session, project: Project, workflow_id: UUID
 ) -> ProjectWorkflowVersion | None:
     return session.exec(
         select(ProjectWorkflowVersion).where(
             ProjectWorkflowVersion.project_id == project.project_id,
             ProjectWorkflowVersion.workflow_id == workflow_id,
-            ProjectWorkflowVersion.engine == engine,
         )
     ).first()
 
 
 def _require_project_workflow_version(
-    session: Session, project: Project, workflow_id: UUID, engine: str
+    session: Session, project: Project, workflow_id: UUID
 ) -> ProjectWorkflowVersion:
-    record = _get_project_workflow_version(session, project, workflow_id, engine)
+    record = _get_project_workflow_version(session, project, workflow_id)
     if not record:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=(
                 f"Project {project.project_id} has no recorded version of "
-                f"workflow {workflow_id} on '{engine}'."
+                f"workflow {workflow_id}."
             ),
         )
     return record
-
-
-def _deployment_external_id(
-    session: Session, workflow_id: UUID, version: int, engine: str
-) -> str | None:
-    return session.exec(
-        select(WorkflowDeployment.external_id)
-        .join(WorkflowVersion)
-        .where(
-            WorkflowVersion.workflow_id == workflow_id,
-            WorkflowVersion.version == version,
-            WorkflowDeployment.engine == engine,
-        )
-    ).first()
-
-
-def _require_deployment(
-    session: Session, workflow_id: UUID, version: int, engine: str
-) -> None:
-    """422 unless the version is deployed on `engine`: a version that can't run is never recorded."""
-    if _deployment_external_id(session, workflow_id, version, engine) is None:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail=f"Version {version} of workflow {workflow_id} has no deployment on '{engine}'.",
-        )
 
 
 def _project_workflow_version_to_public(
@@ -1337,9 +1310,6 @@ def _project_workflow_version_to_public(
 ) -> ProjectWorkflowVersionPublic:
     return ProjectWorkflowVersionPublic(
         **record.model_dump(),
-        external_id=_deployment_external_id(
-            session, record.workflow_id, record.version, record.engine
-        ),
         created=created,
         message=message,
     )
@@ -1386,9 +1356,8 @@ def resolve_project_workflow_version(
     current version or the explicit version given; with neither, 404.
     """
     workflow = get_workflow_by_id(session, workflow_id)
-    _validate_engine(session, body.engine)
 
-    existing = _get_project_workflow_version(session, project, workflow.id, body.engine)
+    existing = _get_project_workflow_version(session, project, workflow.id)
     if existing:
         return _project_workflow_version_to_public(
             session, existing, message=_existing_record_message(session, existing, body)
@@ -1399,7 +1368,7 @@ def resolve_project_workflow_version(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=(
                 f"Project {project.project_id} has no recorded version of workflow "
-                f"{workflow_id} on '{body.engine}'. Give 'alias' or 'version' to record one."
+                f"{workflow_id}. Give 'alias' or 'version' to record one."
             ),
         )
     if body.version is not None:
@@ -1412,13 +1381,11 @@ def resolve_project_workflow_version(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Alias '{body.alias}' is not set for workflow {workflow_id}.",
             )
-    _require_deployment(session, workflow.id, version, body.engine)
 
     record = ProjectWorkflowVersion(
         project_id=project.project_id,
         workflow_id=workflow.id,
         version=version,
-        engine=body.engine,
         created_by=created_by,
     )
     session.add(record)
@@ -1431,7 +1398,6 @@ def get_project_workflow_versions(
     session: Session,
     project: Project,
     workflow_id: str | None = None,
-    engine: str | None = None,
 ) -> list[ProjectWorkflowVersionPublic]:
     stmt = select(ProjectWorkflowVersion).where(
         ProjectWorkflowVersion.project_id == project.project_id
@@ -1440,8 +1406,6 @@ def get_project_workflow_versions(
         # Through the usual lookup, so a mistyped id is a 400/404 rather than [].
         workflow = get_workflow_by_id(session, workflow_id)
         stmt = stmt.where(ProjectWorkflowVersion.workflow_id == workflow.id)
-    if engine is not None:
-        stmt = stmt.where(ProjectWorkflowVersion.engine == engine)
     return [
         _project_workflow_version_to_public(session, r) for r in session.exec(stmt).all()
     ]
@@ -1460,17 +1424,14 @@ def set_project_workflow_version(
     chosen by a person rather than taken from the alias.
     """
     workflow = get_workflow_by_id(session, workflow_id)
-    _validate_engine(session, body.engine)
     get_workflow_version_by_num(session, workflow_id, body.version)
-    _require_deployment(session, workflow.id, body.version, body.engine)
 
-    record = _get_project_workflow_version(session, project, workflow.id, body.engine)
+    record = _get_project_workflow_version(session, project, workflow.id)
     if record is None:
         record = ProjectWorkflowVersion(
             project_id=project.project_id,
             workflow_id=workflow.id,
             version=body.version,
-            engine=body.engine,
             created_by=updated_by,
         )
         session.add(record)
@@ -1483,10 +1444,10 @@ def set_project_workflow_version(
 
 
 def delete_project_workflow_version(
-    session: Session, project: Project, workflow_id: str, engine: str
+    session: Session, project: Project, workflow_id: str
 ) -> None:
     """Remove the record; the project's next resolve records a version afresh."""
     workflow = get_workflow_by_id(session, workflow_id)
-    record = _require_project_workflow_version(session, project, workflow.id, engine)
+    record = _require_project_workflow_version(session, project, workflow.id)
     session.delete(record)
     session.commit()

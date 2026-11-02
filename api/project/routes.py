@@ -759,11 +759,11 @@ def remove_project_member(
 
 
 ###############################################################################
-# Project workflow versions /api/v1/projects/{project_id}/workflow-versions
+# Project workflow versions /api/v1/projects/{project_id}/workflow
 ###############################################################################
 
 @router.post(
-    "/{project_id}/workflow-versions/{workflow_id}/resolve",
+    "/{project_id}/workflow/{workflow_id}/resolve",
     response_model=ProjectWorkflowVersionPublic,
     tags=["Project Endpoints"],
     responses={
@@ -772,7 +772,6 @@ def remove_project_member(
             "Project, workflow or version not found, the alias is not set, or "
             "nothing is recorded and neither alias nor version was given"
         )},
-        422: {"description": "The version has no deployment on the engine"},
     },
     dependencies=[Depends(require_project_permission(Permission.PROJECT_SUBMIT_ACTION))],
 )
@@ -798,7 +797,7 @@ def resolve_project_workflow_version(
 
 
 @router.get(
-    "/{project_id}/workflow-versions",
+    "/{project_id}/workflow",
     response_model=list[ProjectWorkflowVersionPublic],
     tags=["Project Endpoints"],
     dependencies=[Depends(require_project_permission(Permission.PROJECT_READ))],
@@ -807,17 +806,15 @@ def get_project_workflow_versions(
     session: SessionDep,
     project: ProjectDep,
     workflow_id: str | None = Query(None, description="Only this workflow"),
-    engine: str | None = Query(None, description="Only this platform"),
 ) -> list[ProjectWorkflowVersionPublic]:
     """Workflow versions recorded for this project; an empty list if none match."""
-    return services.get_project_workflow_versions(session, project, workflow_id, engine)
+    return services.get_project_workflow_versions(session, project, workflow_id)
 
 
 @router.put(
-    "/{project_id}/workflow-versions/{workflow_id}",
+    "/{project_id}/workflow/{workflow_id}",
     response_model=ProjectWorkflowVersionPublic,
     tags=["Project Endpoints"],
-    responses={422: {"description": "The version has no deployment on the engine"}},
     dependencies=[Depends(require_project_permission(Permission.PROJECT_UPDATE))],
 )
 def set_project_workflow_version(
@@ -834,7 +831,7 @@ def set_project_workflow_version(
 
 
 @router.delete(
-    "/{project_id}/workflow-versions/{workflow_id}",
+    "/{project_id}/workflow/{workflow_id}",
     status_code=status.HTTP_204_NO_CONTENT,
     tags=["Project Endpoints"],
     dependencies=[Depends(require_project_permission(Permission.PROJECT_UPDATE))],
@@ -843,7 +840,6 @@ def delete_project_workflow_version(
     session: SessionDep,
     project: ProjectDep,
     workflow_id: str,
-    engine: str = Query(..., description="Platform name"),
 ) -> None:
     """Remove the record; the next resolve records a version afresh."""
-    services.delete_project_workflow_version(session, project, workflow_id, engine)
+    services.delete_project_workflow_version(session, project, workflow_id)

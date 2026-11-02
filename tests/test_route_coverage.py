@@ -173,7 +173,7 @@ def test_guard_count_is_recorded():
     /rbac/users/{username}/access and PATCH /users/{username}.
 
     118 -> 122 with the project workflow version routes under
-    /projects/{project_id}/workflow-versions: resolve, get (filterable list),
+    /projects/{project_id}/workflow: resolve, get (filterable list),
     put, delete.
     """
     assert len(GUARDED) == 122

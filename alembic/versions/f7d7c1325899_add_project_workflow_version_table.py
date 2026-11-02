@@ -4,10 +4,10 @@ Revision ID: f7d7c1325899
 Revises: c8e4a1f72b93
 Create Date: 2026-10-23
 
-Records which version of each workflow a project runs on an engine, so a
-project keeps running the same version across runs, even after an alias moves.
-A row is created by the first resolve, from an alias or an explicit version;
-PUT creates or overwrites it.
+Records which version of each workflow a project runs, so a project keeps
+running the same version across runs, even after an alias moves. A row is
+created by the first resolve, from an alias or an explicit version; PUT creates
+or overwrites it.
 
 `version` is stored as the version number with a composite FK to
 workflowversion(workflow_id, version), rather than an FK to workflowversion.id:
@@ -15,9 +15,8 @@ the number is what GA4GH WES takes (`<workflow_id>:<version>`), and the FK still
 stops a recorded version from being deleted. MySQL needs the referenced columns
 indexed, which the existing uq_workflow_version unique key already provides.
 
-UNIQUE(project_id, workflow_id, engine) is the guarantee that a project cannot
-end up with two versions of the same workflow on one engine, whatever writes
-the rows.
+UNIQUE(project_id, workflow_id) is the guarantee that a project cannot end up
+with two versions of the same workflow, whatever writes the rows.
 
 New table only; no existing rows are touched.
 """
@@ -40,7 +39,6 @@ def upgrade() -> None:
         sa.Column('project_id', sqlmodel.sql.sqltypes.AutoString(), nullable=False),
         sa.Column('workflow_id', sa.Uuid(), nullable=False),
         sa.Column('version', sa.Integer(), nullable=False),
-        sa.Column('engine', sqlmodel.sql.sqltypes.AutoString(), nullable=False),
         sa.Column('created_at', sa.DateTime(), nullable=False),
         sa.Column('created_by', sqlmodel.sql.sqltypes.AutoString(), nullable=False),
         sa.Column('updated_at', sa.DateTime(), nullable=True),
@@ -48,14 +46,13 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint('id'),
         sa.ForeignKeyConstraint(['project_id'], ['project.project_id']),
         sa.ForeignKeyConstraint(['workflow_id'], ['workflow.id']),
-        sa.ForeignKeyConstraint(['engine'], ['platform.name']),
         sa.ForeignKeyConstraint(
             ['workflow_id', 'version'],
             ['workflowversion.workflow_id', 'workflowversion.version'],
             name='fk_projectworkflowversion_workflowversion',
         ),
         sa.UniqueConstraint(
-            'project_id', 'workflow_id', 'engine', name='uq_project_workflow_engine',
+            'project_id', 'workflow_id', name='uq_project_workflow',
         ),
     )
 
