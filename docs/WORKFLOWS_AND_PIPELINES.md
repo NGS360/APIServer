@@ -446,8 +446,6 @@ All paths are under `/api/v1` and require authentication; the caller's username 
 | `PUT` | `/projects/{project_id}/workflow/{workflow_id}` | `version` | Override to another version | `workflow:create` |
 | `DELETE` | `/projects/{project_id}/workflow/{workflow_id}` | — | `204`. The next run records the current `prod` | `workflow:create` |
 
-A record names a version, not a version on a platform: there is no `engine` anywhere in these routes, and no deployment check. A version that exists can be pinned whether or not any platform currently runs it — "not deployed on platform X" surfaces when WES selects a deployment at submission.
-
 ### Database Models
 
 Columns in each table. **Required** is `yes` if the caller must supply it, `auto` if the server sets it (`created_by` is the authenticated user), and `no` if it is optional.
