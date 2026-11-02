@@ -3,9 +3,13 @@ Test /projects endpoint
 
 """
 
+from datetime import datetime, timedelta, timezone
 from unittest.mock import patch, MagicMock
+import uuid
+
+import botocore.exceptions
 from fastapi.testclient import TestClient
-from sqlmodel import Session
+from sqlmodel import Session, select
 import yaml
 
 from api.project.models import Project, ProjectAttribute
@@ -913,6 +917,135 @@ def test_submit_create_project_job(
     call_args = mock_batch.submit_job.call_args[1]
     assert call_args["jobQueue"] == "batch-queue"
     assert call_args["jobDefinition"] == "pipeline-job-def:1"
+
+
+def _submit_rna_seq_job(client, project, mock_s3_client, aws_batch_extra=None):
+    """Submit a create-project job against a minimal RNA-Seq action config"""
+    pipeline_config = {
+        "project_type": "RNA-Seq",
+        "project_admins": ["admin@example.com"],
+        "platforms": {
+            "Arvados": {"create_project_command": "launch {{projectid}}"}
+        },
+        "aws_batch": {
+            "job_name": "launch-{{projectid}}",
+            "job_definition": "launcher-job-def:1",
+            "job_queue": "batch-queue",
+            "command": "launch",
+            **(aws_batch_extra or {}),
+        }
+    }
+    mock_s3_client.setup_bucket(
+        "ngs360-resources", "pipeline_configs/",
+        [{"Key": "pipeline_configs/rna-seq_pipeline.yaml"}], []
+    )
+    mock_s3_client.uploaded_files["ngs360-resources"] = {
+        "pipeline_configs/rna-seq_pipeline.yaml": yaml.dump(pipeline_config).encode("utf-8")
+    }
+    return client.post(
+        f"/api/v1/projects/{project.project_id}/actions/submit",
+        json={"action": "create-project", "platform": "Arvados", "project_type": "RNA-Seq"}
+    )
+
+
+def _batch_environment(mock_batch: MagicMock) -> dict:
+    """The environment a mocked submit_job was called with, as a dict"""
+    overrides = mock_batch.submit_job.call_args[1]["containerOverrides"]
+    return {env["name"]: env["value"] for env in overrides["environment"]}
+
+
+@patch("api.jobs.services.boto3.client")
+@patch("api.actions.services.get_setting_value")
+def test_submit_job_mints_submitter_api_key(
+    mock_get_setting: MagicMock,
+    mock_boto_client: MagicMock,
+    client: TestClient,
+    session: Session,
+    test_project: Project,
+    mock_s3_client
+):
+    """Test a config asking for a key gets one owned by the submitter, named for the job"""
+    from api.auth.models import APIKey, User
+    from core.security import hash_api_key
+
+    mock_get_setting.return_value = "s3://ngs360-resources/pipeline_configs/"
+    mock_batch = MagicMock()
+    mock_batch.submit_job.return_value = {"jobId": "aws-batch-job-123"}
+    mock_boto_client.return_value = mock_batch
+
+    before = datetime.now(timezone.utc)
+    response = _submit_rna_seq_job(
+        client, test_project, mock_s3_client, {"user_api_key_hours": 72}
+    )
+
+    assert response.status_code == 201
+    environment = _batch_environment(mock_batch)
+    api_key = session.get(APIKey, uuid.UUID(environment["NGS360_AUTH_KEY_ID"]))
+    assert api_key.hashed_key == hash_api_key(environment["NGS360_AUTH_TOKEN"])
+    assert session.get(User, api_key.user_id).username == "testuser"
+    assert api_key.is_active
+    assert api_key.name == "Batch job aws-batch-job-123"
+    expires_at = api_key.expires_at.replace(tzinfo=timezone.utc)
+    ttl = timedelta(hours=72)
+    assert before + ttl <= expires_at <= datetime.now(timezone.utc) + ttl
+
+
+@patch("api.jobs.services.boto3.client")
+@patch("api.actions.services.get_setting_value")
+def test_submit_job_without_key_config_mints_nothing(
+    mock_get_setting: MagicMock,
+    mock_boto_client: MagicMock,
+    client: TestClient,
+    session: Session,
+    test_project: Project,
+    mock_s3_client
+):
+    """Test jobs whose config does not ask for a key get no credential"""
+    from api.auth.models import APIKey
+
+    mock_get_setting.return_value = "s3://ngs360-resources/pipeline_configs/"
+    mock_batch = MagicMock()
+    mock_batch.submit_job.return_value = {"jobId": "aws-batch-job-123"}
+    mock_boto_client.return_value = mock_batch
+
+    response = _submit_rna_seq_job(client, test_project, mock_s3_client)
+
+    assert response.status_code == 201
+    environment = _batch_environment(mock_batch)
+    assert "NGS360_AUTH_TOKEN" not in environment
+    assert "NGS360_AUTH_KEY_ID" not in environment
+    assert session.exec(select(APIKey)).all() == []
+
+
+@patch("api.jobs.services.boto3.client")
+@patch("api.actions.services.get_setting_value")
+def test_submit_job_failure_revokes_minted_key(
+    mock_get_setting: MagicMock,
+    mock_boto_client: MagicMock,
+    client: TestClient,
+    session: Session,
+    test_project: Project,
+    mock_s3_client
+):
+    """Test a key minted for a job AWS Batch refused does not stay usable"""
+    from api.auth.models import APIKey
+
+    mock_get_setting.return_value = "s3://ngs360-resources/pipeline_configs/"
+    mock_batch = MagicMock()
+    mock_batch.submit_job.side_effect = botocore.exceptions.ClientError(
+        {"Error": {"Code": "ClientException", "Message": "no such queue"}}, "SubmitJob"
+    )
+    mock_boto_client.return_value = mock_batch
+
+    response = _submit_rna_seq_job(
+        client, test_project, mock_s3_client, {"user_api_key_hours": 72}
+    )
+
+    assert response.status_code == 500
+    (api_key,) = session.exec(select(APIKey)).all()
+    session.refresh(api_key)
+    assert not api_key.is_active
+    assert api_key.revoked_at is not None
 
 
 @patch("api.jobs.services.boto3.client")
