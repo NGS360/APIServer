@@ -915,6 +915,21 @@ class TestDemuxAPI:
         assert isinstance(data, list)
         assert len(data) == 0
 
+    def test_list_demux_workflows_when_setting_is_unset(
+        self, client: TestClient, session, mock_s3_client
+    ):
+        """A fresh install has no DEMUX_WORKFLOW_CONFIGS_BUCKET_URI: answer [] instead of 500"""
+        from api.settings.models import Setting
+
+        setting = session.get(Setting, "DEMUX_WORKFLOW_CONFIGS_BUCKET_URI")
+        assert setting is not None  # seeded by conftest
+        session.delete(setting)
+        session.commit()
+
+        response = client.get("/api/v1/runs/demultiplex")
+        assert response.status_code == 200
+        assert response.json() == []
+
     def test_list_demux_workflows_with_configs(self, client: TestClient, mock_s3_client):
         """Test listing demux workflows when multiple configs exist"""
         # Setup bucket with multiple workflow config files
