@@ -112,7 +112,8 @@ def test_record_is_listable_then_removable(client: TestClient, test_project, wor
     what lets a caller tell "nothing recorded yet" from "no such project or
     workflow" -- the distinction PAML's copy_workflow depends on.
     """
-    assert client.get(_list_url(test_project, workflow_id=workflow["id"])).json() == []
+    before = client.get(_list_url(test_project, workflow_id=workflow["id"]))
+    assert before.json() == []
 
     client.put(_url(test_project, workflow["id"]), json={"version": 2})
 
@@ -124,8 +125,11 @@ def test_record_is_listable_then_removable(client: TestClient, test_project, wor
         assert resp.status_code == 200
         assert [r["version"] for r in resp.json()] == [2]
 
-    assert client.delete(_url(test_project, workflow["id"])).status_code == 204
-    assert client.get(_list_url(test_project, workflow_id=workflow["id"])).json() == []
+    deleted = client.delete(_url(test_project, workflow["id"]))
+    assert deleted.status_code == 204
+
+    after = client.get(_list_url(test_project, workflow_id=workflow["id"]))
+    assert after.json() == []
 
 
 def test_unknown_or_missing_is_404(client: TestClient, test_project, workflow):
@@ -134,16 +138,20 @@ def test_unknown_or_missing_is_404(client: TestClient, test_project, workflow):
     like "nothing recorded".
     """
     # Nothing recorded yet, so there is nothing to delete.
-    assert client.delete(_url(test_project, workflow["id"])).status_code == 404
+    deleted = client.delete(_url(test_project, workflow["id"]))
+    assert deleted.status_code == 404
+
     # A workflow that does not exist, which must not read as an empty listing.
-    assert client.get(_list_url(test_project, workflow_id=UNKNOWN_UUID)).status_code == 404
+    listed = client.get(_list_url(test_project, workflow_id=UNKNOWN_UUID))
+    assert listed.status_code == 404
 
     for url, version in (
         (_url(test_project, workflow["id"]), 9),                              # no version
         (_url(test_project, UNKNOWN_UUID), 1),                                # no workflow
         (f"/api/v1/projects/P-00000000-0000/workflow/{workflow['id']}", 1),   # no project
     ):
-        assert client.put(url, json={"version": version}).status_code == 404, url
+        written = client.put(url, json={"version": version})
+        assert written.status_code == 404, url
 
 
 def test_duplicate_record_is_rejected(session: Session, test_project, workflow):
