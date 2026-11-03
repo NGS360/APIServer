@@ -34,7 +34,6 @@ from api.project.models import (
     ProjectsPublic,
     ProjectWorkflowVersion,
     ProjectWorkflowVersionPublic,
-    ProjectWorkflowVersionResolve,
     ProjectWorkflowVersionSet,
 )
 from api.search.models import SearchDocument
@@ -53,7 +52,6 @@ from api.samples.models import (
     Attribute,
 )
 from api.runs.models import SequencingRun, SequencingRunPublic, SampleSequencingRun
-from api.workflow.models import WorkflowVersionAlias
 from api.workflow.services import (
     get_workflow_by_id,
     get_workflow_version_by_num,
@@ -1303,95 +1301,9 @@ def _require_project_workflow_version(
 
 
 def _project_workflow_version_to_public(
-    session: Session,
     record: ProjectWorkflowVersion,
-    created: bool = False,
-    message: str | None = None,
 ) -> ProjectWorkflowVersionPublic:
-    return ProjectWorkflowVersionPublic(
-        **record.model_dump(),
-        created=created,
-        message=message,
-    )
-
-
-def _alias_version(session: Session, workflow_id: UUID, alias: str) -> int | None:
-    record = session.exec(
-        select(WorkflowVersionAlias).where(
-            WorkflowVersionAlias.workflow_id == workflow_id,
-            WorkflowVersionAlias.alias == alias,
-        )
-    ).first()
-    return record.workflow_version.version if record else None
-
-
-def _existing_record_message(
-    session: Session, record: ProjectWorkflowVersion, body: ProjectWorkflowVersionResolve
-) -> str | None:
-    """Say so when the recorded version was returned in place of a different one requested."""
-    if body.version is not None and body.version != record.version:
-        requested = f"version {body.version}"
-    elif (
-        body.alias is not None
-        and _alias_version(session, record.workflow_id, body.alias) != record.version
-    ):
-        requested = f"alias '{body.alias}'"
-    else:
-        return None
-    return (
-        f"Project already records version {record.version}; returned it instead of "
-        f"{requested}. Use PUT to change the recorded version."
-    )
-
-
-def resolve_project_workflow_version(
-    session: Session,
-    project: Project,
-    workflow_id: str,
-    body: ProjectWorkflowVersionResolve,
-    created_by: str,
-) -> ProjectWorkflowVersionPublic:
-    """
-    Return the project's recorded version. If there is none, record the alias's
-    current version or the explicit version given; with neither, 404.
-    """
-    workflow = get_workflow_by_id(session, workflow_id)
-
-    existing = _get_project_workflow_version(session, project, workflow.id)
-    if existing:
-        return _project_workflow_version_to_public(
-            session, existing, message=_existing_record_message(session, existing, body)
-        )
-
-    if body.alias is None and body.version is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=(
-                f"Project {project.project_id} has no recorded version of workflow "
-                f"{workflow_id}. Give 'alias' or 'version' to record one."
-            ),
-        )
-    if body.version is not None:
-        version = get_workflow_version_by_num(session, workflow_id, body.version).version
-    else:
-        version = _alias_version(session, workflow.id, body.alias)
-        if version is None:
-            # No fallback to the newest version: that is the drift this table prevents.
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Alias '{body.alias}' is not set for workflow {workflow_id}.",
-            )
-
-    record = ProjectWorkflowVersion(
-        project_id=project.project_id,
-        workflow_id=workflow.id,
-        version=version,
-        created_by=created_by,
-    )
-    session.add(record)
-    session.commit()
-    session.refresh(record)
-    return _project_workflow_version_to_public(session, record, created=True)
+    return ProjectWorkflowVersionPublic(**record.model_dump())
 
 
 def get_project_workflow_versions(
@@ -1407,7 +1319,7 @@ def get_project_workflow_versions(
         workflow = get_workflow_by_id(session, workflow_id)
         stmt = stmt.where(ProjectWorkflowVersion.workflow_id == workflow.id)
     return [
-        _project_workflow_version_to_public(session, r) for r in session.exec(stmt).all()
+        _project_workflow_version_to_public(r) for r in session.exec(stmt).all()
     ]
 
 
@@ -1419,9 +1331,8 @@ def set_project_workflow_version(
     updated_by: str,
 ) -> ProjectWorkflowVersionPublic:
     """
-    Record an explicitly chosen version, creating the record or overwriting it.
-    Either way updated_at/updated_by are set, which is what marks a version as
-    chosen by a person rather than taken from the alias.
+    Record the version a project runs, creating the record or overwriting it.
+    updated_at/updated_by are set only on an overwrite.
     """
     workflow = get_workflow_by_id(session, workflow_id)
     get_workflow_version_by_num(session, workflow_id, body.version)
@@ -1435,18 +1346,20 @@ def set_project_workflow_version(
             created_by=updated_by,
         )
         session.add(record)
-    record.version = body.version
-    record.updated_at = datetime.now(tz.utc)
-    record.updated_by = updated_by
+    else:
+        # Stamped only when a version replaces one already recorded
+        record.version = body.version
+        record.updated_at = datetime.now(tz.utc)
+        record.updated_by = updated_by
     session.commit()
     session.refresh(record)
-    return _project_workflow_version_to_public(session, record)
+    return _project_workflow_version_to_public(record)
 
 
 def delete_project_workflow_version(
     session: Session, project: Project, workflow_id: str
 ) -> None:
-    """Remove the record; the project's next resolve records a version afresh."""
+    """Remove the record; the project's next run records a version afresh."""
     workflow = get_workflow_by_id(session, workflow_id)
     record = _require_project_workflow_version(session, project, workflow.id)
     session.delete(record)

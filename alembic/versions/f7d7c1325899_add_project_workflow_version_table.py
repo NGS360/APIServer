@@ -5,15 +5,12 @@ Revises: c8e4a1f72b93
 Create Date: 2026-10-23
 
 Records which version of each workflow a project runs, so a project keeps
-running the same version across runs, even after an alias moves. A row is
-created by the first resolve, from an alias or an explicit version; PUT creates
-or overwrites it.
+running the same version across runs, even after an alias moves.
 
 `version` is stored as the version number with a composite FK to
-workflowversion(workflow_id, version), rather than an FK to workflowversion.id:
-the number is what GA4GH WES takes (`<workflow_id>:<version>`), and the FK still
-stops a recorded version from being deleted. MySQL needs the referenced columns
-indexed, which the existing uq_workflow_version unique key already provides.
+workflowversion(workflow_id, version), rather than an FK to
+workflowversion.id. MySQL needs the referenced columns indexed,
+which the existing uq_workflow_version unique key already provides.
 
 UNIQUE(project_id, workflow_id) is the guarantee that a project cannot end up
 with two versions of the same workflow, whatever writes the rows.

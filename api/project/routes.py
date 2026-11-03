@@ -4,7 +4,7 @@ Routes/endpoints for the Project API
 
 from typing import Literal, List as TypingList
 from fastapi import (
-    APIRouter, Depends, HTTPException, Query, Request, Response, UploadFile, status,
+    APIRouter, Depends, HTTPException, Query, Request, UploadFile, status,
 )
 from sqlmodel import select
 from core.deps import SessionDep, OpenSearchDep, S3ClientDep
@@ -28,7 +28,6 @@ from api.project.models import (
     ProjectPublic,
     ProjectsPublic,
     ProjectWorkflowVersionPublic,
-    ProjectWorkflowVersionResolve,
     ProjectWorkflowVersionSet,
 )
 from api.samples.models import (
@@ -762,40 +761,6 @@ def remove_project_member(
 # Project workflow versions /api/v1/projects/{project_id}/workflow
 ###############################################################################
 
-@router.post(
-    "/{project_id}/workflow/{workflow_id}/resolve",
-    response_model=ProjectWorkflowVersionPublic,
-    tags=["Project Endpoints"],
-    responses={
-        201: {"description": "No version was recorded; the requested one is now recorded"},
-        404: {"description": (
-            "Project, workflow or version not found, the alias is not set, or "
-            "nothing is recorded and neither alias nor version was given"
-        )},
-    },
-    dependencies=[Depends(require_project_permission(Permission.PROJECT_SUBMIT_ACTION))],
-)
-def resolve_project_workflow_version(
-    session: SessionDep,
-    project: ProjectDep,
-    workflow_id: str,
-    body: ProjectWorkflowVersionResolve,
-    current_user: CurrentUser,
-    response: Response,
-) -> ProjectWorkflowVersionPublic:
-    """
-    Return the workflow version this project runs. An existing record always
-    wins; otherwise record the alias's current version or the explicit version
-    given, and with neither, 404 without writing.
-    """
-    result = services.resolve_project_workflow_version(
-        session, project, workflow_id, body, created_by=current_user.username
-    )
-    if result.created:
-        response.status_code = status.HTTP_201_CREATED
-    return result
-
-
 @router.get(
     "/{project_id}/workflow",
     response_model=list[ProjectWorkflowVersionPublic],
@@ -841,5 +806,5 @@ def delete_project_workflow_version(
     project: ProjectDep,
     workflow_id: str,
 ) -> None:
-    """Remove the record; the next resolve records a version afresh."""
+    """Remove the record; the project's next run records a version afresh."""
     services.delete_project_workflow_version(session, project, workflow_id)

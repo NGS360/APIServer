@@ -7,7 +7,7 @@ import uuid
 from sqlalchemy import ForeignKeyConstraint
 from sqlmodel import SQLModel, Field, Relationship, UniqueConstraint
 from typing import List
-from pydantic import ConfigDict, field_validator, model_validator
+from pydantic import ConfigDict, field_validator
 
 from api.rbac.permissions import Permission
 from api.runs.models import SequencingRunPublic
@@ -181,24 +181,10 @@ class ProjectWorkflowVersion(SQLModel, table=True):
     version: int
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     created_by: str
-    # Set only when someone chose the version explicitly, via PUT.
+    # Set only when a version replaces one already recorded, so NULL means the
+    # record still holds the version it was first created with.
     updated_at: datetime | None = None
     updated_by: str | None = None
-
-
-class ProjectWorkflowVersionResolve(SQLModel):
-    """
-    An existing record always wins. Without one, `alias`
-    or `version` says what to record; with neither, nothing is written.
-    """
-    alias: str | None = None
-    version: int | None = None
-
-    @model_validator(mode="after")
-    def _not_both(self):
-        if self.alias is not None and self.version is not None:
-            raise ValueError("Give 'alias' or 'version', not both.")
-        return self
 
 
 class ProjectWorkflowVersionSet(SQLModel):
@@ -209,10 +195,6 @@ class ProjectWorkflowVersionPublic(SQLModel):
     project_id: str
     workflow_id: uuid.UUID
     version: int
-    # True only on the resolve call that created the record.
-    created: bool = False
-    # Set when resolve returned an existing record instead of what was requested.
-    message: str | None = None
     created_at: datetime
     created_by: str
     updated_at: datetime | None = None

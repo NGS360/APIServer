@@ -126,14 +126,16 @@ On NGS360 the decision is:
 ```mermaid
 %%{init: {"flowchart": {"wrappingWidth": 400}}}%%
 flowchart LR
-    START["Launcher calls<br/>copy_workflow(W, P)"] --> EXP{"Config entry<br/>has a suffix?<br/>('W:prod', 'W:4')"}
-    EXP -- yes --> USE["Submit it unchanged<br/>no ProjectWorkflowVersion<br/>record read or written"]
-    EXP -- no --> CALL["POST /projects/P/<br/>workflow/W/resolve<br/>{alias: prod}"]
-    CALL --> HAS{"ProjectWorkflowVersion<br/>record exists<br/>for (P, W)?"}
-    HAS -- yes --> OLD["200: return<br/>pinned version"]
-    HAS -- no --> PROD{"'prod' alias<br/>set?"}
-    PROD -- no --> F404["404: launcher stops<br/>(no fallback to newest)"]
-    PROD -- yes --> NEW["201: store<br/>ProjectWorkflowVersion<br/>(P, W) → N"]
+    START["Launcher calls<br/>copy_workflow(W, P)"] --> GET["GET /projects/P/workflow<br/>?workflow_id=W"]
+    GET --> HAS{"record for<br/>(P, W)?"}
+    HAS -- yes --> OLD["use the recorded<br/>version; a suffix on<br/>the config entry<br/>is ignored"]
+    HAS -- no --> SUF{"Config entry<br/>has a suffix?<br/>('W:4', 'W:staging')"}
+    SUF -- "number" --> NUM["record that number"]
+    SUF -- "alias, or none<br/>(means 'prod')" --> AL["GET /workflows/W/aliases"]
+    AL --> PROD{"alias set?"}
+    PROD -- no --> F404["launcher stops<br/>(no fallback to newest)"]
+    PROD -- yes --> NUM
+    NUM --> NEW["PUT /projects/P/<br/>workflow/W {version: N}"]
     OLD & NEW --> SUB["Submit 'W:N'<br/>to WES"]
     SUB --> DEPL{"version N deployed<br/>on the target<br/>platform?"}
     DEPL -- no --> FSUB["WES fails the<br/>submission"]
@@ -155,12 +157,15 @@ sequenceDiagram
     participant O as Omics Lambda function
     participant OM as AWS HealthOmics
 
-    L->>API: POST /projects/P/workflow/W/resolve {alias: prod}
+    L->>API: GET /projects/P/workflow?workflow_id=W
     API->>DB: record for (P, W)?
     DB-->>API: none
-    API->>API: resolve prod → v2
+    API-->>L: 200 []
+    L->>API: GET /workflows/W/aliases
+    API-->>L: 200 [{alias: prod, version: 2}]
+    L->>API: PUT /projects/P/workflow/W {version: 2}
     API->>DB: insert (P, W) → v2
-    API-->>L: 201 {version: 2, created: true}
+    API-->>L: 200 {version: 2}
     L->>WES: POST /runs workflow_url=W:2, tags.ProjectId=P
     WES->>API: GET /workflows/W
     WES->>WES: select v2 and its Omics ARN
@@ -180,11 +185,11 @@ sequenceDiagram
     participant WES as GA4GH WES
 
     Note over API: prod → v3 now
-    L->>API: POST /projects/P/workflow/W/resolve {alias: prod}
+    L->>API: GET /projects/P/workflow?workflow_id=W
     API->>DB: record for (P, W)?
     DB-->>API: v2
-    API-->>L: 200 {version: 2, created: false}
-    Note over API,L: prod (v3) is ignored, P stays on pinned v2
+    API-->>L: 200 [{version: 2}]
+    Note over API,L: the aliases are not even read; P stays on v2
     L->>WES: POST /runs workflow_url=W:2
 ```
 
@@ -223,7 +228,7 @@ sequenceDiagram
     Admin->>API: PUT /projects/P/workflow/W {version: 3}
     API->>DB: (P, W) → v3, updated_by = admin
     API-->>Admin: 200
-    L->>API: resolve (next run)
+    L->>API: GET /projects/P/workflow (next run)
     API-->>L: 200 {version: 3}
     Note over L: every later run of P uses v3
 ```
@@ -237,8 +242,8 @@ Things to know:
 
 | Situation | What happens | Fix |
 |-----------|--------------|-----|
-| `prod` is not set when a project first runs `W` | `resolve` returns `404`; launcher stops | Set the `prod` alias |
-| `prod`'s version has no deployment anywhere | `resolve` still records it; deployment is not checked when pinning | Deploy that version before a run is submitted |
+| `prod` is not set when a project first runs `W` | the launcher finds no version to record and stops | Set the `prod` alias |
+| `prod`'s version has no deployment anywhere | it is still recorded; deployment is not checked when recording | Deploy that version before a run is submitted |
 | A pinned version's deployment is deleted later | WES rejects the submission (no deployment) | Redeploy that version, or override the pinned version |
 | Reference suffix matches no alias and no version | WES: alias/version not found | Fix the config entry |
 | Workflow has no versions | WES: no versions found | Add a version |
@@ -440,12 +445,13 @@ All paths are under `/api/v1` and require authentication; the caller's username 
 
 | Method | Path | Body / params | Notes | Permission |
 |--------|------|---------------|-------|------------|
-| `POST` | `/projects/{project_id}/workflow/{workflow_id}/resolve` | `alias` (`prod`) or `version` | Returns the existing record (`200`) or resolves the alias and creates one (`201`). `404` if the alias isn't set | `project:submit_action` |
-| `GET` | `/projects/{project_id}/workflow` | optional `workflow_id` | All records for the project; pass `workflow_id` to narrow to one | `project:read` |
-| `PUT` | `/projects/{project_id}/workflow/{workflow_id}` | `version` | Override to another version | `project:update` |
+| `GET` | `/projects/{project_id}/workflow` | optional `workflow_id` | All records for the project; pass `workflow_id` to narrow to one. An empty list when nothing is recorded | `project:read` |
+| `PUT` | `/projects/{project_id}/workflow/{workflow_id}` | `version` | Record a version, creating or overwriting | `project:update` |
 | `DELETE` | `/projects/{project_id}/workflow/{workflow_id}` | — | `204`. The next run records the current `prod` | `project:update` |
 
-There is no `GET` on `/workflow/{workflow_id}`: `PUT` and `DELETE` own that path, so read a single pin with `GET /workflow?workflow_id=`.
+There is no `GET` on `/workflow/{workflow_id}`: `PUT` and `DELETE` own that path, so read a single record with `GET /workflow?workflow_id=`.
+
+The API does not resolve aliases for a project. `PUT` is the only way a version is recorded, and it takes a version number. A caller that wants "whatever `prod` points at" reads `GET /workflows/{id}/aliases` first and then `PUT`s the number -- which is what PAML's `copy_workflow` does. The listing returning `[]` rather than `404` is what lets it tell "nothing recorded" from "no such project or workflow".
 
 ### Database Models
 
@@ -578,5 +584,5 @@ One record per project and workflow. Deliberately not scoped by platform: a proj
 | `api/pipeline/services.py` | Pipeline business logic (create, list, add/remove workflow, response building) |
 | `api/pipeline/routes.py` | Pipeline endpoint handlers |
 | `api/project/models.py` | `ProjectWorkflowVersion` table and schemas (or a new `api/project/workflow_versions/` module) |
-| `api/project/services.py` | ProjectWorkflowVersion resolve (get-or-create), read, override and delete |
+| `api/project/services.py` | ProjectWorkflowVersion read, record and delete |
 | `api/project/routes.py` | `/projects/{project_id}/workflow` endpoint handlers |
