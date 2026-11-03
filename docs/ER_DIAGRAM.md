@@ -307,8 +307,11 @@ erDiagram
     Workflow ||--o{ WorkflowVersion : "has versions"
     Workflow ||--o{ WorkflowVersionAlias : "has aliases"
     Workflow ||--o{ PipelineWorkflow : "member of"
+    Workflow ||--o{ ProjectWorkflowVersion : "version recorded per project"
     WorkflowVersion ||--o{ WorkflowDeployment : "deployed on"
+    WorkflowVersion ||--o{ ProjectWorkflowVersion : "recorded version"
     WorkflowVersionAlias }o--|| WorkflowVersion : "points to"
+    Project ||--o{ ProjectWorkflowVersion : "runs version"
     
     Workflow {
         uuid id PK
@@ -351,6 +354,17 @@ erDiagram
         string created_by
     }
     
+    ProjectWorkflowVersion {
+        uuid id PK
+        string project_id FK
+        uuid workflow_id FK
+        int version FK
+        datetime created_at
+        string created_by
+        datetime updated_at
+        string updated_by
+    }
+
     %% ==========================================
     %% Pipelines
     %% ==========================================
@@ -452,6 +466,7 @@ erDiagram
 - **WorkflowVersion**: Versioned workflow definitions (version string + definition URI)
 - **WorkflowVersionAlias**: Named pointers (e.g. production, development) to specific versions
 - **WorkflowDeployment**: Platform-specific deployments of workflow versions (links version to platform)
+- **ProjectWorkflowVersion**: The workflow version a project runs, one per project and workflow, so a project keeps running the same version after an alias moves. Not scoped by platform
 
 ### Batch Jobs
 
