@@ -29,6 +29,8 @@ from api.project.models import (
     ProjectUpdate,
     ProjectPublic,
     ProjectsPublic,
+    ProjectWorkflowVersionPublic,
+    ProjectWorkflowVersionSet,
 )
 from api.samples.models import (
     SampleCreate,
@@ -787,3 +789,56 @@ def remove_project_member(
     user = rbac_services.get_user_or_404(session, username)
     rbac_services.remove_project_member(session, project.id, user)
     return list_project_members(session, project)
+
+
+###############################################################################
+# Project workflow versions /api/v1/projects/{project_id}/workflow
+###############################################################################
+
+@router.get(
+    "/{project_id}/workflow",
+    response_model=list[ProjectWorkflowVersionPublic],
+    tags=["Project Endpoints"],
+    dependencies=[Depends(require_project_permission(Permission.PROJECT_READ))],
+)
+def get_project_workflow_versions(
+    session: SessionDep,
+    project: ProjectDep,
+    workflow_id: str | None = Query(None, description="Only this workflow"),
+) -> list[ProjectWorkflowVersionPublic]:
+    """Workflow versions recorded for this project; an empty list if none match."""
+    return services.get_project_workflow_versions(session, project, workflow_id)
+
+
+@router.put(
+    "/{project_id}/workflow/{workflow_id}",
+    response_model=ProjectWorkflowVersionPublic,
+    tags=["Project Endpoints"],
+    dependencies=[Depends(require_project_permission(Permission.PROJECT_UPDATE))],
+)
+def set_project_workflow_version(
+    session: SessionDep,
+    project: ProjectDep,
+    workflow_id: str,
+    body: ProjectWorkflowVersionSet,
+    current_user: CurrentUser,
+) -> ProjectWorkflowVersionPublic:
+    """Choose the version this project runs, creating or overwriting the record."""
+    return services.set_project_workflow_version(
+        session, project, workflow_id, body, updated_by=current_user.username
+    )
+
+
+@router.delete(
+    "/{project_id}/workflow/{workflow_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    tags=["Project Endpoints"],
+    dependencies=[Depends(require_project_permission(Permission.PROJECT_UPDATE))],
+)
+def delete_project_workflow_version(
+    session: SessionDep,
+    project: ProjectDep,
+    workflow_id: str,
+) -> None:
+    """Remove the record; the project's next run records a version afresh."""
+    services.delete_project_workflow_version(session, project, workflow_id)

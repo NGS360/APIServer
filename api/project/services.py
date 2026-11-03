@@ -4,6 +4,7 @@ Services for the Project API
 
 from datetime import datetime, timezone as tz
 from typing import Literal
+from uuid import UUID
 import boto3
 import logging
 
@@ -31,6 +32,9 @@ from api.project.models import (
     ProjectUpdate,
     ProjectPublic,
     ProjectsPublic,
+    ProjectWorkflowVersion,
+    ProjectWorkflowVersionPublic,
+    ProjectWorkflowVersionSet,
 )
 from api.search.models import SearchDocument
 from api.search.services import (
@@ -48,6 +52,10 @@ from api.samples.models import (
     Attribute,
 )
 from api.runs.models import SequencingRun, SequencingRunPublic, SampleSequencingRun
+from api.workflow.services import (
+    get_workflow_by_id,
+    get_workflow_version_by_num,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -1260,3 +1268,100 @@ def ingest_vendor_data(
         user=user,
         project_id=project.project_id
     )
+
+
+###############################################################################
+# Project workflow versions
+###############################################################################
+
+
+def _get_project_workflow_version(
+    session: Session, project: Project, workflow_id: UUID
+) -> ProjectWorkflowVersion | None:
+    return session.exec(
+        select(ProjectWorkflowVersion).where(
+            ProjectWorkflowVersion.project_id == project.project_id,
+            ProjectWorkflowVersion.workflow_id == workflow_id,
+        )
+    ).first()
+
+
+def _require_project_workflow_version(
+    session: Session, project: Project, workflow_id: UUID
+) -> ProjectWorkflowVersion:
+    record = _get_project_workflow_version(session, project, workflow_id)
+    if not record:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=(
+                f"Project {project.project_id} has no recorded version of "
+                f"workflow {workflow_id}."
+            ),
+        )
+    return record
+
+
+def _project_workflow_version_to_public(
+    record: ProjectWorkflowVersion,
+) -> ProjectWorkflowVersionPublic:
+    return ProjectWorkflowVersionPublic(**record.model_dump())
+
+
+def get_project_workflow_versions(
+    session: Session,
+    project: Project,
+    workflow_id: str | None = None,
+) -> list[ProjectWorkflowVersionPublic]:
+    stmt = select(ProjectWorkflowVersion).where(
+        ProjectWorkflowVersion.project_id == project.project_id
+    )
+    if workflow_id is not None:
+        # Through the usual lookup, so a mistyped id is a 400/404 rather than [].
+        workflow = get_workflow_by_id(session, workflow_id)
+        stmt = stmt.where(ProjectWorkflowVersion.workflow_id == workflow.id)
+    return [
+        _project_workflow_version_to_public(r) for r in session.exec(stmt).all()
+    ]
+
+
+def set_project_workflow_version(
+    session: Session,
+    project: Project,
+    workflow_id: str,
+    body: ProjectWorkflowVersionSet,
+    updated_by: str,
+) -> ProjectWorkflowVersionPublic:
+    """
+    Record the version a project runs, creating the record or overwriting it.
+    updated_at/updated_by are set only on an overwrite.
+    """
+    workflow = get_workflow_by_id(session, workflow_id)
+    get_workflow_version_by_num(session, workflow_id, body.version)
+
+    record = _get_project_workflow_version(session, project, workflow.id)
+    if record is None:
+        record = ProjectWorkflowVersion(
+            project_id=project.project_id,
+            workflow_id=workflow.id,
+            version=body.version,
+            created_by=updated_by,
+        )
+        session.add(record)
+    else:
+        # Stamped only when a version replaces one already recorded
+        record.version = body.version
+        record.updated_at = datetime.now(tz.utc)
+        record.updated_by = updated_by
+    session.commit()
+    session.refresh(record)
+    return _project_workflow_version_to_public(record)
+
+
+def delete_project_workflow_version(
+    session: Session, project: Project, workflow_id: str
+) -> None:
+    """Remove the record; the project's next run records a version afresh."""
+    workflow = get_workflow_by_id(session, workflow_id)
+    record = _require_project_workflow_version(session, project, workflow.id)
+    session.delete(record)
+    session.commit()
