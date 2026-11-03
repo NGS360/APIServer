@@ -7,33 +7,35 @@ from sqlmodel import Session, select
 
 from api.platforms.models import Platform
 from api.project.models import Project, ProjectWorkflowVersion
-from api.workflow.models import (
-    Workflow,
-    WorkflowDeployment,
-    WorkflowVersion,
-    WorkflowVersionAlias,
-)
+from api.workflow.models import Workflow, WorkflowDeployment, WorkflowVersion
 
 ENGINE = "AWSHealthOmics (us-east)"
-RESOLVE = {"alias": "prod"}
+UNKNOWN_UUID = "00000000-0000-0000-0000-000000000000"
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _url(project: Project, workflow_id: str, suffix: str = "") -> str:
-    return f"/api/v1/projects/{project.project_id}/workflow/{workflow_id}{suffix}"
+def _url(project: Project, workflow_id: str) -> str:
+    return f"/api/v1/projects/{project.project_id}/workflow/{workflow_id}"
+
+
+def _list_url(project: Project, **filters) -> str:
+    query = "&".join(f"{k}={v}" for k, v in filters.items())
+    url = f"/api/v1/projects/{project.project_id}/workflow"
+    return f"{url}?{query}" if query else url
 
 
 @pytest.fixture(name="workflow")
 def workflow_fixture(session: Session) -> dict:
     """
-    A workflow with versions 1-3 and `prod` pointing at version 2.
+    A workflow with versions 1-3.
 
     Only versions 1 and 2 are deployed; version 3 is deliberately deployed
-    nowhere, so tests can show that a version is pinnable whether or not any
-    platform can currently run it.
+    nowhere, so a test can show that a version is recordable whether or not any
+    platform can currently run it. No alias is set: aliases are a workflow-level
+    concept and nothing in this API reads them.
     """
     session.add(Platform(name=ENGINE))
     wf = Workflow(name="Alignment", created_by="testuser")
@@ -54,207 +56,65 @@ def workflow_fixture(session: Session) -> dict:
                 external_id=f"arn:aws:omics:us-east-1:1:workflow/123/version/{n}",
                 created_by="testuser",
             ))
-    session.add(WorkflowVersionAlias(
-        workflow_id=wf.id, alias="prod",
-        workflow_version_id=versions[2].id, created_by="testuser",
-    ))
     session.commit()
     return {"id": str(wf.id), "uuid": wf.id, "versions": versions}
 
 
-def _move_prod(session: Session, workflow: dict, version: int) -> None:
-    alias = session.exec(
-        select(WorkflowVersionAlias).where(WorkflowVersionAlias.workflow_id == workflow["uuid"])
-    ).one()
-    alias.workflow_version_id = workflow["versions"][version].id
-    session.commit()
-
-
 # ---------------------------------------------------------------------------
-# POST .../resolve
+# Tests
 # ---------------------------------------------------------------------------
 
-def test_first_resolve_records_prod(client: TestClient, test_project, workflow):
-    resp = client.post(_url(test_project, workflow["id"], "/resolve"), json=RESOLVE)
-    assert resp.status_code == 201
-    data = resp.json()
-    assert data["version"] == 2
-    assert data["created"] is True
+def test_put_records_then_overwrites(
+    client: TestClient, session: Session, test_project, workflow,
+):
+    """
+    PUT is the only writer, and the same call creates or replaces. The
+    updated_* pair is what separates the two: unset on a create, so NULL means
+    the record still holds the version it was first given.
+    """
+    created = client.put(_url(test_project, workflow["id"]), json={"version": 1})
+    assert created.status_code == 200
+    data = created.json()
+    assert data["version"] == 1
     assert data["created_by"] == "testuser"
     assert data["updated_at"] is None
-    # A version is all this resolves. Nothing platform-specific is returned:
+    assert data["updated_by"] is None
+    # A version is all this records. Nothing platform-specific is returned:
     # which engines can run it is answered at submission time.
     assert "engine" not in data
     assert "external_id" not in data
 
+    changed = client.put(_url(test_project, workflow["id"]), json={"version": 2})
+    assert changed.status_code == 200
+    assert changed.json()["version"] == 2
+    assert changed.json()["updated_at"] is not None
+    assert changed.json()["updated_by"] == "testuser"
 
-def test_resolve_reuses_record_after_prod_moves(
-    client: TestClient, session: Session, test_project, workflow,
-):
-    client.post(_url(test_project, workflow["id"], "/resolve"), json=RESOLVE)
-    _move_prod(session, workflow, 1)
-
-    resp = client.post(_url(test_project, workflow["id"], "/resolve"), json=RESOLVE)
-    assert resp.status_code == 200
-    assert resp.json()["version"] == 2
-    assert resp.json()["created"] is False
-    assert "already records version 2" in resp.json()["message"]
+    # Replaced, not added: one version per project and workflow.
+    assert len(session.exec(select(ProjectWorkflowVersion)).all()) == 1
 
 
-def test_resolve_with_explicit_version_records_it(client: TestClient, test_project, workflow):
-    """No alias needed: the caller asks for version 1 directly."""
-    resp = client.post(
-        _url(test_project, workflow["id"], "/resolve"), json={"version": 1},
-    )
-    assert resp.status_code == 201
-    assert resp.json()["version"] == 1
-
-
-def test_resolve_explicit_version_matching_record_returns_it(
-    client: TestClient, test_project, workflow,
-):
-    client.post(_url(test_project, workflow["id"], "/resolve"), json=RESOLVE)
-    resp = client.post(
-        _url(test_project, workflow["id"], "/resolve"), json={"version": 2},
-    )
-    assert resp.status_code == 200
-    assert resp.json()["version"] == 2
-    assert resp.json()["message"] is None
-
-
-def test_resolve_existing_record_wins_over_requested_version(
-    client: TestClient, test_project, workflow,
-):
-    """The recorded version is returned, with a message saying the request was not applied."""
-    client.post(_url(test_project, workflow["id"], "/resolve"), json=RESOLVE)
-    resp = client.post(
-        _url(test_project, workflow["id"], "/resolve"), json={"version": 1},
-    )
-    assert resp.status_code == 200
-    assert resp.json()["version"] == 2
-    assert "already records version 2" in resp.json()["message"]
-
-
-def test_resolve_records_a_version_deployed_nowhere(
-    client: TestClient, test_project, workflow,
-):
+def test_put_accepts_a_version_deployed_nowhere(client: TestClient, test_project, workflow):
     """
     Version 3 has no deployment on any platform, and is still recorded.
     Deployment is a submission-time concern: refusing here would make the
     recorded version depend on which platform happened to ask first.
     """
-    resp = client.post(
-        _url(test_project, workflow["id"], "/resolve"), json={"version": 3},
-    )
-    assert resp.status_code == 201
+    resp = client.put(_url(test_project, workflow["id"]), json={"version": 3})
+
+    assert resp.status_code == 200
     assert resp.json()["version"] == 3
 
 
-def test_resolve_explicit_unknown_version_is_404(client: TestClient, test_project, workflow):
-    resp = client.post(
-        _url(test_project, workflow["id"], "/resolve"), json={"version": 9},
-    )
-    assert resp.status_code == 404
-
-
-def test_resolve_unset_alias_is_404(client: TestClient, test_project, workflow):
-    resp = client.post(
-        _url(test_project, workflow["id"], "/resolve"),
-        json={"alias": "missing"},
-    )
-    assert resp.status_code == 404
-
-
-def test_resolve_with_neither_only_reads(
-    client: TestClient, session: Session, test_project, workflow,
-):
-    """Neither alias nor version: return the record if there is one, else 404 and write nothing."""
-    url = _url(test_project, workflow["id"], "/resolve")
-    resp = client.post(url, json={})
-    assert resp.status_code == 404
-    assert session.exec(select(ProjectWorkflowVersion)).all() == []
-
-    client.post(url, json=RESOLVE)
-    resp = client.post(url, json={})
-    assert resp.status_code == 200
-    assert resp.json()["version"] == 2
-    assert resp.json()["message"] is None
-
-
-def test_resolve_with_unmoved_alias_has_no_message(
-    client: TestClient, test_project, workflow,
-):
-    """Nothing to report when the alias still points at the recorded version."""
-    url = _url(test_project, workflow["id"], "/resolve")
-    client.post(url, json=RESOLVE)
-    resp = client.post(url, json=RESOLVE)
-    assert resp.status_code == 200
-    assert resp.json()["message"] is None
-
-
-def test_resolve_rejects_both_alias_and_version(client: TestClient, test_project, workflow):
-    resp = client.post(
-        _url(test_project, workflow["id"], "/resolve"),
-        json={"alias": "prod", "version": 1},
-    )
-    assert resp.status_code == 422
-
-
-def test_resolve_records_an_undeployed_version_the_alias_points_at(
-    client: TestClient, session: Session, test_project, workflow,
-):
-    """The alias route reaches an undeployed version too, and records it."""
-    _move_prod(session, workflow, 3)
-    resp = client.post(_url(test_project, workflow["id"], "/resolve"), json=RESOLVE)
-    assert resp.status_code == 201
-    assert resp.json()["version"] == 3
-
-
-def test_resolve_unknown_workflow_is_404(client: TestClient, test_project, workflow):
-    resp = client.post(
-        _url(test_project, "00000000-0000-0000-0000-000000000000", "/resolve"),
-        json=RESOLVE,
-    )
-    assert resp.status_code == 404
-
-
-def test_resolve_unknown_project_is_404(client: TestClient, workflow):
-    resp = client.post(
-        f"/api/v1/projects/P-00000000-0000/workflow/{workflow['id']}/resolve",
-        json=RESOLVE,
-    )
-    assert resp.status_code == 404
-
-
-def test_duplicate_record_is_rejected(session: Session, test_project, workflow):
+def test_record_is_listable_then_removable(client: TestClient, test_project, workflow):
     """
-    The unique constraint is what guarantees one version per project and
-    workflow, whatever writes the rows. Note the two rows differ in version:
-    the key is the project and workflow, so a second version of the same
-    workflow is refused rather than stored alongside the first.
+    The listing answers `[]` rather than 404 when nothing is recorded, which is
+    what lets a caller tell "nothing recorded yet" from "no such project or
+    workflow" -- the distinction PAML's copy_workflow depends on.
     """
-    for version in (1, 2):
-        session.add(ProjectWorkflowVersion(
-            project_id=test_project.project_id, workflow_id=workflow["uuid"],
-            version=version, created_by="testuser",
-        ))
-    with pytest.raises(IntegrityError):
-        session.commit()
-    session.rollback()
+    assert client.get(_list_url(test_project, workflow_id=workflow["id"])).json() == []
 
-
-# ---------------------------------------------------------------------------
-# GET
-# ---------------------------------------------------------------------------
-
-def _list_url(project: Project, **filters) -> str:
-    query = "&".join(f"{k}={v}" for k, v in filters.items())
-    url = f"/api/v1/projects/{project.project_id}/workflow"
-    return f"{url}?{query}" if query else url
-
-
-def test_list_and_filter(client: TestClient, test_project, workflow):
-    client.post(_url(test_project, workflow["id"], "/resolve"), json=RESOLVE)
+    client.put(_url(test_project, workflow["id"]), json={"version": 2})
 
     for url in (
         _list_url(test_project),
@@ -264,123 +124,40 @@ def test_list_and_filter(client: TestClient, test_project, workflow):
         assert resp.status_code == 200
         assert [r["version"] for r in resp.json()] == [2]
 
-
-def test_list_without_records_is_empty(client: TestClient, test_project, workflow):
-    resp = client.get(_list_url(test_project, workflow_id=workflow["id"]))
-    assert resp.status_code == 200
-    assert resp.json() == []
+    assert client.delete(_url(test_project, workflow["id"])).status_code == 204
+    assert client.get(_list_url(test_project, workflow_id=workflow["id"])).json() == []
 
 
-def test_list_with_unknown_workflow_is_404(client: TestClient, test_project, workflow):
-    """A mistyped workflow id fails loudly instead of looking like 'nothing recorded'."""
-    resp = client.get(
-        _list_url(test_project, workflow_id="00000000-0000-0000-0000-000000000000")
-    )
-    assert resp.status_code == 404
+def test_unknown_or_missing_is_404(client: TestClient, test_project, workflow):
+    """
+    A mistyped id fails loudly rather than recording the wrong thing or looking
+    like "nothing recorded".
+    """
+    # Nothing recorded yet, so there is nothing to delete.
+    assert client.delete(_url(test_project, workflow["id"])).status_code == 404
+    # A workflow that does not exist, which must not read as an empty listing.
+    assert client.get(_list_url(test_project, workflow_id=UNKNOWN_UUID)).status_code == 404
+
+    for url, version in (
+        (_url(test_project, workflow["id"]), 9),                              # no version
+        (_url(test_project, UNKNOWN_UUID), 1),                                # no workflow
+        (f"/api/v1/projects/P-00000000-0000/workflow/{workflow['id']}", 1),   # no project
+    ):
+        assert client.put(url, json={"version": version}).status_code == 404, url
 
 
-# ---------------------------------------------------------------------------
-# PUT
-# ---------------------------------------------------------------------------
-
-def test_put_overwrites_existing_record(client: TestClient, test_project, workflow):
-    client.post(_url(test_project, workflow["id"], "/resolve"), json=RESOLVE)
-
-    resp = client.put(_url(test_project, workflow["id"]), json={"version": 1})
-    assert resp.status_code == 200
-    assert resp.json()["version"] == 1
-    assert resp.json()["updated_by"] == "testuser"
-
-    after = client.post(_url(test_project, workflow["id"], "/resolve"), json=RESOLVE)
-    assert after.json()["version"] == 1
-
-
-def test_put_creates_record_when_none_exists(client: TestClient, test_project, workflow):
-    """A version chosen before anything is recorded is still marked as chosen."""
-    resp = client.put(_url(test_project, workflow["id"]), json={"version": 1})
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data["version"] == 1
-    assert data["created_by"] == "testuser"
-    assert data["updated_at"] is not None
-
-
-def test_put_accepts_a_version_deployed_nowhere(client: TestClient, test_project, workflow):
-    """Same rule as resolve: deployment is not a precondition for pinning."""
-    resp = client.put(_url(test_project, workflow["id"]), json={"version": 3})
-    assert resp.status_code == 200
-    assert resp.json()["version"] == 3
-
-
-def test_put_unknown_version_is_404(client: TestClient, test_project, workflow):
-    resp = client.put(_url(test_project, workflow["id"]), json={"version": 9})
-    assert resp.status_code == 404
-
-
-# ---------------------------------------------------------------------------
-# DELETE
-# ---------------------------------------------------------------------------
-
-def test_delete_then_resolve_records_current_prod(
-    client: TestClient, session: Session, test_project, workflow,
-):
-    client.post(_url(test_project, workflow["id"], "/resolve"), json=RESOLVE)
-    _move_prod(session, workflow, 1)
-
-    deleted = client.delete(_url(test_project, workflow["id"]))
-    assert deleted.status_code == 204
-
-    resp = client.post(_url(test_project, workflow["id"], "/resolve"), json=RESOLVE)
-    assert resp.status_code == 201
-    assert resp.json()["version"] == 1
-
-
-def test_delete_without_record_is_404(client: TestClient, test_project, workflow):
-    resp = client.delete(_url(test_project, workflow["id"]))
-    assert resp.status_code == 404
-
-
-# ---------------------------------------------------------------------------
-# One version per project and workflow
-#
-# test_duplicate_record_is_rejected pins this at the database. This pins it
-# through the API: the record is not scoped by platform, so a second resolve
-# naming a different version returns the first rather than recording another.
-# ---------------------------------------------------------------------------
-
-def test_a_second_version_never_becomes_a_second_record(
-    client: TestClient, session: Session, test_project, workflow,
-):
-    first = client.post(_url(test_project, workflow["id"], "/resolve"), json=RESOLVE)
-    assert first.status_code == 201
-    assert first.json()["version"] == 2
-
-    again = client.post(
-        _url(test_project, workflow["id"], "/resolve"), json={"version": 3},
-    )
-    assert again.status_code == 200
-    assert again.json()["version"] == 2
-    assert again.json()["created"] is False
-
-    assert len(session.exec(select(ProjectWorkflowVersion)).all()) == 1
-
-
-# ---------------------------------------------------------------------------
-# Permissions
-# ---------------------------------------------------------------------------
-
-def test_caller_without_project_roles_is_refused(
-    restricted_client: TestClient, test_project, workflow,
-):
-    put = restricted_client.put(
-        _url(test_project, workflow["id"]), json={"version": 1},
-    )
-    assert put.status_code == 403
-
-    deleted = restricted_client.delete(_url(test_project, workflow["id"]))
-    assert deleted.status_code == 403
-
-    resolved = restricted_client.post(
-        _url(test_project, workflow["id"], "/resolve"), json=RESOLVE,
-    )
-    assert resolved.status_code == 403
+def test_duplicate_record_is_rejected(session: Session, test_project, workflow):
+    """
+    The unique constraint is what guarantees one version per project and
+    workflow, whatever writes the rows -- not only the API. Note the two rows
+    differ in version: the key is the project and workflow, so a second version
+    of the same workflow is refused rather than stored alongside the first.
+    """
+    for version in (1, 2):
+        session.add(ProjectWorkflowVersion(
+            project_id=test_project.project_id, workflow_id=workflow["uuid"],
+            version=version, created_by="testuser",
+        ))
+    with pytest.raises(IntegrityError):
+        session.commit()
+    session.rollback()

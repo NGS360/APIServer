@@ -172,11 +172,10 @@ def test_guard_count_is_recorded():
     115 -> 118 with the user administration API: GET /rbac/users, GET
     /rbac/users/{username}/access and PATCH /users/{username}.
 
-    118 -> 122 with the project workflow version routes under
-    /projects/{project_id}/workflow: resolve, get (filterable list),
-    put, delete.
+    118 -> 121 with the project workflow version routes under
+    /projects/{project_id}/workflow: get (filterable list), put, delete.
     """
-    assert len(GUARDED) == 122
+    assert len(GUARDED) == 121
 
 
 def test_the_authentication_backlog_only_shrinks():
