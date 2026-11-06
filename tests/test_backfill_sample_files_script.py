@@ -23,6 +23,10 @@ from scripts import backfill_sample_files as script
     ("SRR100_1.fastq.gz", "R1"),
     ("SRR100_2.fastq.gz", "R2"),
     ("SRR100_2.fq", "R2"),
+    # spelled-out read token (older vendor deliveries)
+    ("10_TAGCTT_read1.fastq.gz", "R1"),
+    ("100_23073_TCTCGCGC-GGCTCTGA_read2.fastq.gz", "R2"),
+    ("S1.read2.fq", "R2"),
 ])
 def test_read_pair_names(filename, mate):
     assert script.extract_mate_from_filename(filename) == mate

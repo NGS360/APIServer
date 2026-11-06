@@ -206,6 +206,8 @@ MATE_PATTERNS = [
     re.compile(rf"_R(?P<read>[12])(?:_\d+)?{_STEP}\.(?:fastq|fq)(?:\.gz)?$"),
     # Dot-delimited: <sample>.R1.fastq.gz
     re.compile(rf"\.R(?P<read>[12]){_STEP}\.(?:fastq|fq)(?:\.gz)?$"),
+    # Spelled out: <sample>_read1.fastq.gz / _read2 (older vendor deliveries)
+    re.compile(rf"[_.]read(?P<read>[12]){_STEP}\.(?:fastq|fq)(?:\.gz)?$"),
     # SRA / ENA read-pair naming: <sample>_1.fastq.gz / _2.fastq.gz
     re.compile(rf"_(?P<read>[12]){_STEP}\.(?:fastq|fq)(?:\.gz)?$"),
 ]
