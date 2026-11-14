@@ -2,7 +2,7 @@
 Services for the Project API
 """
 
-from datetime import datetime, timezone as tz
+from datetime import datetime, timedelta, timezone as tz
 from typing import Literal
 import boto3
 import logging
@@ -21,6 +21,8 @@ from api.settings.services import get_setting, get_setting_value
 from api.actions.services import get_all_action_configs
 from api.actions.models import ActionOption, ActionPlatform
 from api.jobs.services import submit_batch_job
+from api.auth.models import APIKeyCreate, User
+from api.auth.services import create_user_api_key, revoke_user_api_key
 
 from core.utils import define_search_body, interpolate
 
@@ -672,7 +674,8 @@ def submit_pipeline_job(
     email: str | None = None,
     reference: str | None = None,
     auto_release: bool | None = None,
-    s3_client=None
+    s3_client=None,
+    submitter: User | None = None,
 ) -> BatchJob:
     """
     Submit a pipeline job to AWS Batch.
@@ -692,6 +695,8 @@ def submit_pipeline_job(
         reference: Export reference label (required for export action)
         auto_release: Auto-release flag (only valid for export action)
         s3_client: Optional boto3 S3 client
+        submitter: The submitting user, who owns the job's API key when the
+            config's aws_batch.user_api_key_hours asks for one
 
     Returns:
         BatchJob instance
@@ -838,16 +843,50 @@ def submit_pipeline_job(
                     detail=f"Failed to interpolate environment variable '{env.name}': {str(e)}"
                 ) from e
 
+    # A job that calls back into NGS360 as the submitter (a pipeline launcher)
+    # outlives any session token they hold, so it gets an API key of its own.
+    # The key is the submitter's: every call the job makes is authorized against
+    # their roles and project memberships, as if they had made it themselves.
+    api_key = None
+    if action_config.aws_batch.user_api_key_hours:
+        if submitter is None:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="An API key was requested for a job with no submitter"
+            )
+        api_key, raw_key = create_user_api_key(session, submitter, APIKeyCreate(
+            name=f"Batch job {interpolated_job_name}"[:100],
+            expires_at=datetime.now(tz.utc) + timedelta(
+                hours=action_config.aws_batch.user_api_key_hours),
+        ))
+        container_overrides["environment"].extend([
+            {"name": "NGS360_AUTH_TOKEN", "value": raw_key},
+            # Lets the job retire its own key when it exits
+            {"name": "NGS360_AUTH_KEY_ID", "value": str(api_key.id)},
+        ])
+
     # Submit job to AWS Batch
-    batch_job = submit_batch_job(
-        session=session,
-        job_name=interpolated_job_name,
-        container_overrides=container_overrides,
-        job_def=action_config.aws_batch.job_definition,
-        job_queue=action_config.aws_batch.job_queue,
-        user=username,
-        project_id=project.project_id
-    )
+    try:
+        batch_job = submit_batch_job(
+            session=session,
+            job_name=interpolated_job_name,
+            container_overrides=container_overrides,
+            job_def=action_config.aws_batch.job_definition,
+            job_queue=action_config.aws_batch.job_queue,
+            user=username,
+            project_id=project.project_id
+        )
+    except Exception:
+        if api_key is not None:
+            revoke_user_api_key(session, submitter, str(api_key.id))
+        raise
+
+    if api_key is not None:
+        # Renamed for the job's id once there is one, so a key in the user's list
+        # can be matched to the job that held it.
+        api_key.name = f"Batch job {batch_job.id}"[:100]
+        session.add(api_key)
+        session.commit()
     return batch_job
 
 
