@@ -108,7 +108,7 @@ jmespath==1.1.0
     # via
     #   boto3
     #   botocore
-joserfc==1.7.6
+joserfc==1.7.4
     # via authlib
 jsonpatch==1.33
     # via langchain-core
