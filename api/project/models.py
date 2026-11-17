@@ -187,10 +187,6 @@ class ProjectWorkflowVersion(SQLModel, table=True):
     updated_by: str | None = None
 
 
-class ProjectWorkflowVersionSet(SQLModel):
-    version: int
-
-
 class ProjectWorkflowVersionPublic(SQLModel):
     project_id: str
     workflow_id: uuid.UUID

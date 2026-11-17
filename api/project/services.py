@@ -34,7 +34,6 @@ from api.project.models import (
     ProjectsPublic,
     ProjectWorkflowVersion,
     ProjectWorkflowVersionPublic,
-    ProjectWorkflowVersionSet,
 )
 from api.search.models import SearchDocument
 from api.search.services import (
@@ -52,6 +51,7 @@ from api.samples.models import (
     Attribute,
 )
 from api.runs.models import SequencingRun, SequencingRunPublic, SampleSequencingRun
+from api.workflow.models import Workflow, WorkflowVersion, WorkflowVersionAlias
 from api.workflow.services import (
     get_workflow_by_id,
     get_workflow_version_by_num,
@@ -1316,39 +1316,84 @@ def get_project_workflow_versions(
     )
     if workflow_id is not None:
         # Through the usual lookup, so a mistyped id is a 400/404 rather than [].
-        workflow = get_workflow_by_id(session, workflow_id)
+        workflow = get_workflow_by_id(session, workflow_id.split(":")[0])
         stmt = stmt.where(ProjectWorkflowVersion.workflow_id == workflow.id)
     return [
         _project_workflow_version_to_public(r) for r in session.exec(stmt).all()
     ]
 
 
+def _resolve_version_from_tag(session: Session, workflow: Workflow, tag: str) -> int:
+    """
+    Find the version from identifier <uuid>[:<tag>]
+    """
+    # Use latest version when no tag is provided
+    if not tag:
+        latest = session.exec(
+            select(func.max(WorkflowVersion.version))
+            .where(WorkflowVersion.workflow_id == workflow.id)
+        ).one()
+        if latest is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Workflow {workflow.id} has no versions to record.",
+            )
+        return latest
+
+    # When tag is not an int, check for this alias
+    if not tag.isdigit():
+        version = session.exec(
+            select(WorkflowVersion.version)
+            .join(
+                WorkflowVersionAlias,
+                WorkflowVersionAlias.workflow_version_id == WorkflowVersion.id,
+            )
+            .where(
+                WorkflowVersionAlias.workflow_id == workflow.id,
+                WorkflowVersionAlias.alias == tag,
+            )
+        ).first()
+        if version is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Alias '{tag}' is not set for workflow {workflow.id}.",
+            )
+        return version
+
+    # When tag is an int, return this version
+    return get_workflow_version_by_num(
+        session, str(workflow.id), int(tag),
+    ).version
+
+
 def set_project_workflow_version(
     session: Session,
     project: Project,
     workflow_id: str,
-    body: ProjectWorkflowVersionSet,
     updated_by: str,
 ) -> ProjectWorkflowVersionPublic:
     """
-    Record the version a project runs, creating the record or overwriting it.
+    Record the workflow version in a project, creating the record or overwriting it.
     updated_at/updated_by are set only on an overwrite.
+    workflow_id carries which version to record: bare ID for the latest;
+    :<alias> of the version pointed by alias; :<n> for specific version.
     """
-    workflow = get_workflow_by_id(session, workflow_id)
-    get_workflow_version_by_num(session, workflow_id, body.version)
+    base, _, tag = workflow_id.partition(":")
+    workflow = get_workflow_by_id(session, base)
+    version = _resolve_version_from_tag(session, workflow, tag)
 
     record = _get_project_workflow_version(session, project, workflow.id)
     if record is None:
         record = ProjectWorkflowVersion(
             project_id=project.project_id,
             workflow_id=workflow.id,
-            version=body.version,
+            version=version,
             created_by=updated_by,
         )
         session.add(record)
     else:
         # Stamped only when a version replaces one already recorded
-        record.version = body.version
+        record.version = version
         record.updated_at = datetime.now(tz.utc)
         record.updated_by = updated_by
     session.commit()
@@ -1360,7 +1405,7 @@ def delete_project_workflow_version(
     session: Session, project: Project, workflow_id: str
 ) -> None:
     """Remove the record; the project's next run records a version afresh."""
-    workflow = get_workflow_by_id(session, workflow_id)
+    workflow = get_workflow_by_id(session, workflow_id.split(':')[0])
     record = _require_project_workflow_version(session, project, workflow.id)
     session.delete(record)
     session.commit()

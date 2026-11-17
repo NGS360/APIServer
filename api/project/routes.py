@@ -28,7 +28,6 @@ from api.project.models import (
     ProjectPublic,
     ProjectsPublic,
     ProjectWorkflowVersionPublic,
-    ProjectWorkflowVersionSet,
 )
 from api.samples.models import (
     SampleCreate,
@@ -786,12 +785,16 @@ def set_project_workflow_version(
     session: SessionDep,
     project: ProjectDep,
     workflow_id: str,
-    body: ProjectWorkflowVersionSet,
     current_user: CurrentUser,
 ) -> ProjectWorkflowVersionPublic:
-    """Choose the version this project runs, creating or overwriting the record."""
+    """
+    Record the workflow version in this project, creating or overwriting the record.
+
+    `workflow_id` says which version: bare for the workflow's latest, `:<n>`
+    for that version, `:<alias>` for whatever the alias points at.
+    """
     return services.set_project_workflow_version(
-        session, project, workflow_id, body, updated_by=current_user.username
+        session, project, workflow_id, updated_by=current_user.username
     )
 
 

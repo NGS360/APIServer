@@ -7,7 +7,12 @@ from sqlmodel import Session, select
 
 from api.platforms.models import Platform
 from api.project.models import Project, ProjectWorkflowVersion
-from api.workflow.models import Workflow, WorkflowDeployment, WorkflowVersion
+from api.workflow.models import (
+    Workflow,
+    WorkflowDeployment,
+    WorkflowVersion,
+    WorkflowVersionAlias,
+)
 
 ENGINE = "AWSHealthOmics (us-east)"
 UNKNOWN_UUID = "00000000-0000-0000-0000-000000000000"
@@ -30,12 +35,15 @@ def _list_url(project: Project, **filters) -> str:
 @pytest.fixture(name="workflow")
 def workflow_fixture(session: Session) -> dict:
     """
-    A workflow with versions 1-3.
+    A workflow with versions 1-3 and `prod` pointing at version 2.
 
-    Only versions 1 and 2 are deployed; version 3 is deliberately deployed
-    nowhere, so a test can show that a version is recordable whether or not any
-    platform can currently run it. No alias is set: aliases are a workflow-level
-    concept and nothing in this API reads them.
+    The three identifier forms therefore resolve to three *different* versions
+    -- bare to 3 (the latest), `:1` to 1, `:prod` to 2 -- so a test asserting
+    the wrong one cannot pass by coincidence.
+
+    Only versions 1 and 2 are deployed. Version 3 is deployed nowhere and is
+    also the latest, so the bare form doubles as proof that deployment is not a
+    precondition for recording a version.
     """
     session.add(Platform(name=ENGINE))
     wf = Workflow(name="Alignment", created_by="testuser")
@@ -56,6 +64,10 @@ def workflow_fixture(session: Session) -> dict:
                 external_id=f"arn:aws:omics:us-east-1:1:workflow/123/version/{n}",
                 created_by="testuser",
             ))
+    session.add(WorkflowVersionAlias(
+        workflow_id=wf.id, alias="prod",
+        workflow_version_id=versions[2].id, created_by="testuser",
+    ))
     session.commit()
     return {"id": str(wf.id), "uuid": wf.id, "versions": versions}
 
@@ -63,6 +75,27 @@ def workflow_fixture(session: Session) -> dict:
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
+
+def test_put_resolves_the_identifier(client: TestClient, test_project, workflow):
+    """
+    The identifier says which version to record, and there is no request body:
+    bare takes the workflow's latest, `:<n>` takes that one, `:<alias>` takes
+    whatever the alias points at. The resolved *number* is stored, so a later
+    alias move cannot change what the project runs.
+
+    The bare case records version 3, which is deployed nowhere -- deployment is
+    a submission-time concern, so it is not a precondition for recording.
+    """
+    for ref, expected in (
+        (workflow["id"], 3),                 # latest
+        (f"{workflow['id']}:1", 1),          # explicit version
+        (f"{workflow['id']}:prod", 2),       # alias
+    ):
+        resp = client.put(_url(test_project, ref))
+        assert resp.status_code == 200, ref
+        assert resp.json()["version"] == expected, ref
+        assert resp.json()["workflow_id"] == workflow["id"], ref
+
 
 def test_put_records_then_overwrites(
     client: TestClient, session: Session, test_project, workflow,
@@ -72,7 +105,7 @@ def test_put_records_then_overwrites(
     updated_* pair is what separates the two: unset on a create, so NULL means
     the record still holds the version it was first given.
     """
-    created = client.put(_url(test_project, workflow["id"]), json={"version": 1})
+    created = client.put(_url(test_project, f"{workflow['id']}:1"))
     assert created.status_code == 200
     data = created.json()
     assert data["version"] == 1
@@ -84,7 +117,7 @@ def test_put_records_then_overwrites(
     assert "engine" not in data
     assert "external_id" not in data
 
-    changed = client.put(_url(test_project, workflow["id"]), json={"version": 2})
+    changed = client.put(_url(test_project, f"{workflow['id']}:prod"))
     assert changed.status_code == 200
     assert changed.json()["version"] == 2
     assert changed.json()["updated_at"] is not None
@@ -92,18 +125,6 @@ def test_put_records_then_overwrites(
 
     # Replaced, not added: one version per project and workflow.
     assert len(session.exec(select(ProjectWorkflowVersion)).all()) == 1
-
-
-def test_put_accepts_a_version_deployed_nowhere(client: TestClient, test_project, workflow):
-    """
-    Version 3 has no deployment on any platform, and is still recorded.
-    Deployment is a submission-time concern: refusing here would make the
-    recorded version depend on which platform happened to ask first.
-    """
-    resp = client.put(_url(test_project, workflow["id"]), json={"version": 3})
-
-    assert resp.status_code == 200
-    assert resp.json()["version"] == 3
 
 
 def test_record_is_listable_then_removable(client: TestClient, test_project, workflow):
@@ -115,17 +136,18 @@ def test_record_is_listable_then_removable(client: TestClient, test_project, wor
     before = client.get(_list_url(test_project, workflow_id=workflow["id"]))
     assert before.json() == []
 
-    client.put(_url(test_project, workflow["id"]), json={"version": 2})
+    client.put(_url(test_project, f"{workflow['id']}:2"))
 
     for url in (
         _list_url(test_project),
         _list_url(test_project, workflow_id=workflow["id"]),
+        _list_url(test_project, workflow_id=f"{workflow['id']}:99"),
     ):
         resp = client.get(url)
-        assert resp.status_code == 200
-        assert [r["version"] for r in resp.json()] == [2]
+        assert resp.status_code == 200, url
+        assert [r["version"] for r in resp.json()] == [2], url
 
-    deleted = client.delete(_url(test_project, workflow["id"]))
+    deleted = client.delete(_url(test_project, f"{workflow['id']}:prod"))
     assert deleted.status_code == 204
 
     after = client.get(_list_url(test_project, workflow_id=workflow["id"]))
@@ -134,8 +156,8 @@ def test_record_is_listable_then_removable(client: TestClient, test_project, wor
 
 def test_unknown_or_missing_is_404(client: TestClient, test_project, workflow):
     """
-    A mistyped id fails loudly rather than recording the wrong thing or looking
-    like "nothing recorded".
+    Anything that cannot be resolved to an existing version fails loudly rather
+    than recording a guess.
     """
     # Nothing recorded yet, so there is nothing to delete.
     deleted = client.delete(_url(test_project, workflow["id"]))
@@ -145,14 +167,14 @@ def test_unknown_or_missing_is_404(client: TestClient, test_project, workflow):
     listed = client.get(_list_url(test_project, workflow_id=UNKNOWN_UUID))
     assert listed.status_code == 404
 
-    for url, version in (
-        (_url(test_project, workflow["id"]), 9),                              # no version
-        (_url(test_project, UNKNOWN_UUID), 1),                                # no workflow
-        (f"/api/v1/projects/P-00000000-0000/workflow/{workflow['id']}", 1),   # no project
+    for url in (
+        _url(test_project, f"{workflow['id']}:99"),       # no such version
+        _url(test_project, f"{workflow['id']}:nosuch"),   # no such alias
+        _url(test_project, UNKNOWN_UUID),                 # no such workflow
+        f"/api/v1/projects/P-00000000-0000/workflow/{workflow['id']}",  # no project
     ):
-        written = client.put(url, json={"version": version})
+        written = client.put(url)
         assert written.status_code == 404, url
-
 
 def test_duplicate_record_is_rejected(session: Session, test_project, workflow):
     """
