@@ -176,6 +176,7 @@ def test_unknown_or_missing_is_404(client: TestClient, test_project, workflow):
         written = client.put(url)
         assert written.status_code == 404, url
 
+
 def test_duplicate_record_is_rejected(session: Session, test_project, workflow):
     """
     The unique constraint is what guarantees one version per project and
