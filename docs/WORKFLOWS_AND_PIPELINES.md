@@ -106,9 +106,9 @@ What happens at each step:
 ```mermaid
 %%{init: {"flowchart": {"wrappingWidth": 400}}}%%
 flowchart LR
-    M["prod moves<br/>v2 → v3"] --> N["Projects that have never<br/>run this workflow<br/>→ record v3 on first run"]
+    M["prod moves<br/>v2 → v3"] --> N["Configs naming 'uuid:prod',<br/>on a project with no record<br/>→ record v3 on first run"]
     M --> E["Projects already<br/>pinned to v2<br/>→ stay on v2"]
-    M --> X["Configs with explicit<br/>'uuid:prod' or 'uuid:3'<br/>→ get v3 on next run"]
+    M --> B["Configs naming a bare id<br/>→ unaffected; they record<br/>the latest version"]
 ```
 
 ### 3. Running a launcher on a project
@@ -126,17 +126,16 @@ On NGS360 the decision is:
 ```mermaid
 %%{init: {"flowchart": {"wrappingWidth": 400}}}%%
 flowchart LR
-    START["Launcher calls<br/>copy_workflow(W, P)"] --> GET["GET /projects/P/workflow<br/>?workflow_id=W"]
+    START["Launcher calls<br/>copy_workflow(W[:tag], P)"] --> GET["GET /projects/P/workflow<br/>?workflow_id=W[:tag]"]
     GET --> HAS{"record for<br/>(P, W)?"}
-    HAS -- yes --> OLD["use the recorded<br/>version; a suffix on<br/>the config entry<br/>is ignored"]
-    HAS -- no --> SUF{"Config entry<br/>has a suffix?<br/>('W:4', 'W:staging')"}
-    SUF -- "number" --> NUM["record that number"]
-    SUF -- "alias, or none<br/>(means 'prod')" --> AL["GET /workflows/W/aliases"]
-    AL --> PROD{"alias set?"}
-    PROD -- no --> F404["launcher stops<br/>(no fallback to newest)"]
-    PROD -- yes --> NUM
-    NUM --> NEW["PUT /projects/P/<br/>workflow/W {version: N}"]
-    OLD & NEW --> SUB["Submit 'W:N'<br/>to WES"]
+    HAS -- yes --> OLD["use the recorded<br/>version; any tag on<br/>the config entry<br/>is ignored"]
+    HAS -- no --> NEW["PUT /projects/P/<br/>workflow/W[:tag]<br/>(no body)"]
+    NEW --> TAG{"tag?"}
+    TAG -- "none" --> LATEST["server records the<br/>workflow's latest<br/>version"]
+    TAG -- "number" --> NUM["server records<br/>that version"]
+    TAG -- "alias" --> AL["server records the<br/>version the alias<br/>points at"]
+    TAG -- "unknown version<br/>or unset alias" --> F404["404: launcher stops"]
+    OLD & LATEST & NUM & AL --> SUB["Submit 'W:N'<br/>to WES"]
     SUB --> DEPL{"version N deployed<br/>on the target<br/>platform?"}
     DEPL -- no --> FSUB["WES fails the<br/>submission"]
     DEPL -- yes --> RUN["Run"]
@@ -146,7 +145,7 @@ Each workflow in a launcher gets its own pinned version: a WGS launcher with fiv
 
 ### 4. First run of a project (no pinned version yet)
 
-Project `P` runs workflow `W` for the first time. `prod` currently points to version 2.
+Project `P` runs workflow `W` for the first time, with a config entry of `W:prod`. `prod` currently points to version 2. A bare `W` would record the latest version instead.
 
 ```mermaid
 sequenceDiagram
@@ -157,13 +156,12 @@ sequenceDiagram
     participant O as Omics Lambda function
     participant OM as AWS HealthOmics
 
-    L->>API: GET /projects/P/workflow?workflow_id=W
+    L->>API: GET /projects/P/workflow?workflow_id=W:prod
     API->>DB: record for (P, W)?
     DB-->>API: none
     API-->>L: 200 []
-    L->>API: GET /workflows/W/aliases
-    API-->>L: 200 [{alias: prod, version: 2}]
-    L->>API: PUT /projects/P/workflow/W {version: 2}
+    L->>API: PUT /projects/P/workflow/W:prod (no body)
+    API->>API: resolve 'prod' → v2
     API->>DB: insert (P, W) → v2
     API-->>L: 200 {version: 2}
     L->>WES: POST /runs workflow_url=W:2, tags.ProjectId=P
@@ -235,22 +233,23 @@ sequenceDiagram
 
 Things to know:
 
-- To reset a project to whatever `prod` points at now, `DELETE /projects/P/workflow/W` instead. The next run records the current `prod`.
-- If a project's *first* run used an explicit `W:5`, no ProjectWorkflowVersion record is written. Going back to a bare id later records whatever `prod` is at that time, not 5. To keep 5, `PUT` the record.
+- To reset a project, `DELETE /projects/P/workflow/W`. The next run records afresh from whatever its config entry names.
+- A tag only decides what gets recorded on the *first* copy. Once a record exists it wins, so changing a launcher config from `W` to `W:5` has no effect on a project that already has a record — `PUT` the version you want instead.
+- **A bare id records the workflow's latest version, not `prod`.** That matches what copying does on SevenBridges and Arvados, and it has to be the default because not every workflow carries a `prod` alias — non-production pipelines use this API too. A pipeline that wants the blessed version says so in its config, as `W:prod`.
 
 ### 7. Edge cases
 
 | Situation | What happens | Fix |
 |-----------|--------------|-----|
-| `prod` is not set when a project first runs `W` | the launcher finds no version to record and stops | Set the `prod` alias |
-| `prod`'s version has no deployment anywhere | it is still recorded; deployment is not checked when recording | Deploy that version before a run is submitted |
-| A pinned version's deployment is deleted later | WES rejects the submission (no deployment) | Redeploy that version, or override the pinned version |
-| Reference suffix matches no alias and no version | WES: alias/version not found | Fix the config entry |
-| Workflow has no versions | WES: no versions found | Add a version |
-| Reference has more than one `:` | WES: malformed reference | Fix the config entry |
+| Config names `W:prod` but `prod` is not set | `PUT` returns `404` "Alias 'prod' is not set"; the launcher stops | Set the alias, or use a bare id to take the latest version |
+| Config names `W:99` and there is no version 99 | `PUT` returns `404` "Version 99 not found"; the launcher stops | Fix the config entry |
+| Workflow has no versions at all | `PUT` on a bare id returns `404` "no versions to record" | Add a version |
+| The recorded version has no deployment anywhere | It is still recorded; deployment is not checked when recording | Deploy that version before a run is submitted |
+| A recorded version's deployment is deleted later | WES rejects the submission (no deployment) | Redeploy that version, or overwrite the record |
+| Reference has more than one `:` | PAML raises before calling the API | Fix the config entry |
 | HealthOmics deploy returns `504` | Registration probably succeeded on AWS, but NGS360 didn't record it | Check Omics, then record with an explicit `external_id`; don't redeploy |
 
-**Projects run before this change ships** have no ProjectWorkflowVersion record. Unless they are backfilled from WES run history (`resolved_workflow_version`), their next run records whatever `prod` is at that time, which may differ from what they ran before.
+**Projects run before this change ships** have no ProjectWorkflowVersion record. Unless they are backfilled from WES run history (`resolved_workflow_version`), their next run records whatever their config entry resolves to at that time — the workflow's latest version for a bare id — which may differ from what they ran before.
 
 ## Reference
 
@@ -451,7 +450,11 @@ All paths are under `/api/v1` and require authentication; the caller's username 
 
 There is no `GET` on `/workflow/{workflow_id}`: `PUT` and `DELETE` own that path, so read a single record with `GET /workflow?workflow_id=`.
 
-The API does not resolve aliases for a project. `PUT` is the only way a version is recorded, and it takes a version number. A caller that wants "whatever `prod` points at" reads `GET /workflows/{id}/aliases` first and then `PUT`s the number -- which is what PAML's `copy_workflow` does. The listing returning `[]` rather than `404` is what lets it tell "nothing recorded" from "no such project or workflow".
+`PUT` is the only way a version is recorded, and it takes no request body: the identifier says which version. A bare id records the workflow's **latest** version, `:<n>` records that one, and `:<alias>` records whatever the alias points at. The server resolves it and stores the resulting *number*, so a later alias move cannot change what the project runs.
+
+Latest is the default rather than `prod` because not every workflow carries a `prod` alias — non-production pipelines use this API too — and because it matches what copying does on SevenBridges and Arvados. A pipeline that wants the blessed version names it in its config, as `W:prod`.
+
+All three routes accept a tagged identifier. On `GET` and `DELETE` the tag is ignored, since a project records one version per workflow and there is nothing for a tag to select between. The listing returning `[]` rather than `404` is what lets a caller tell "nothing recorded" from "no such project or workflow".
 
 ### Database Models
 
