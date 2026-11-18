@@ -670,6 +670,45 @@ def reindex_projects(
     add_objects_to_index(client, search_docs, "projects")
 
 
+def _resolve_reference(
+    choices: list[dict[str, str]] | None,
+    choices_name: str,
+    reference: str | None,
+    action: "ActionOption",
+    platform: "ActionPlatform",
+    project_type: str,
+) -> str:
+    """
+    Look a reference label up among a platform's configured choices.
+
+    The export and launch actions both name their reference by label and run
+    with the value configured for it, so a request can only ever run against
+    something the configuration lists.
+
+    Raises:
+        HTTPException: 400 if the reference is missing or is not a configured choice
+    """
+    if not reference:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Reference is required for {action.value} action"
+        )
+
+    for choice in choices or []:
+        # Each choice is a dict with one key-value pair
+        for label, value in choice.items():
+            if label == reference:
+                return value
+
+    raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail=(
+            f"Reference '{reference}' not found in {choices_name} for "
+            f"platform '{platform.value}' and project type '{project_type}'"
+        )
+    )
+
+
 def submit_pipeline_job(
     session: Session,
     project: Project,
@@ -692,12 +731,13 @@ def submit_pipeline_job(
     Args:
         session: Database session
         project: The project object (already validated)
-        action: Pipeline action (create-project or export-project-results)
-        platform: Platform name (arvados or sevenbridges)
+        action: Pipeline action (create-project, export-project-results or
+            launch-pipeline)
+        platform: Platform name (Arvados, SevenBridges or NGS360)
         project_type: Pipeline type (e.g., RNA-Seq)
         username: Username of the user submitting the job
         email: Email of the user submitting the job (available as template variable)
-        reference: Export reference label (required for export action)
+        reference: Reference label (required for the export and launch actions)
         auto_release: Auto-release flag (only valid for export action)
         s3_client: Optional boto3 S3 client
 
@@ -742,43 +782,17 @@ def submit_pipeline_job(
         if auto_release is None:
             auto_release = False
 
-        # Validate reference is provided for export
-        if not reference:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Reference is required for export-project-results action"
-            )
+        reference_value = _resolve_reference(
+            platform_config.exports, "exports", reference, action, platform, project_type
+        )
+    elif action == ActionOption.LAUNCH_PIPELINE:
+        auto_release = False
 
-        # Look up reference value from exports list
-        if not platform_config.exports:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=(
-                    f"No exports configured for platform '{platform}' "
-                    f"in project type '{project_type}'"
-                )
-            )
-
-        # Find the matching export entry
-        reference_value = None
-        for export_item in platform_config.exports:
-            # Each export_item is a dict with one key-value pair
-            for label, value in export_item.items():
-                if label == reference:
-                    reference_value = value
-                    break
-            if reference_value:
-                break
-
-        if reference_value is None:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=(
-                    f"Reference '{reference}' not found in exports for "
-                    f"platform '{platform}' and project type "
-                    f"'{project_type}'"
-                )
-            )
+        # The launcher resolves the reference model itself, so the request may
+        # only name one the configuration lists for this platform.
+        reference_value = _resolve_reference(
+            platform_config.references, "references", reference, action, platform, project_type
+        )
 
     # Prepare template context with all variables needed for interpolation
     template_context = {
@@ -795,8 +809,19 @@ def submit_pipeline_job(
     # Select and interpolate the appropriate command based on action
     if action == ActionOption.CREATE_PROJECT:
         command_template = platform_config.create_project_command
+    elif action == ActionOption.LAUNCH_PIPELINE:
+        command_template = platform_config.launch_command
     else:  # export-project-results
         command_template = platform_config.export_command
+
+    if not command_template:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"Action '{action.value}' is not configured for platform "
+                f"'{platform.value}' in project type '{project_type}'"
+            )
+        )
 
     try:
         interpolated_command = interpolate(command_template, template_context)
@@ -831,9 +856,16 @@ def submit_pipeline_job(
         "environment": []
     }
 
+    # What this action changes about the project type's aws_batch on this
+    # platform, if anything. A launcher, for one, runs in its own image.
+    override = (platform_config.aws_batch or {}).get(action)
+
     # Add environment variables if specified in aws_batch config
-    if action_config.aws_batch.environment:
-        for env in action_config.aws_batch.environment:
+    environment = list(action_config.aws_batch.environment or [])
+    if override and override.environment:
+        environment.extend(override.environment)
+    if environment:
+        for env in environment:
             try:
                 interpolated_env_value = interpolate(env.value, template_context)
                 container_overrides["environment"].append({
@@ -851,8 +883,8 @@ def submit_pipeline_job(
         session=session,
         job_name=interpolated_job_name,
         container_overrides=container_overrides,
-        job_def=action_config.aws_batch.job_definition,
-        job_queue=action_config.aws_batch.job_queue,
+        job_def=(override and override.job_definition) or action_config.aws_batch.job_definition,
+        job_queue=(override and override.job_queue) or action_config.aws_batch.job_queue,
         user=username,
         project_id=project.project_id
     )

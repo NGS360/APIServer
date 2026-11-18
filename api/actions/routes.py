@@ -101,6 +101,12 @@ def get_action_options() -> list[SelectOption]:
             description="Export the project results from one of the "
             "supported platforms",
         ),
+        SelectOption(
+            label="Launch Pipeline",
+            value="launch-pipeline",
+            description="Run the project's pipeline on a platform that "
+            "launches from NGS360",
+        ),
     ]
 
 
@@ -129,6 +135,11 @@ def get_action_platforms() -> list[SelectOption]:
             label="SevenBridges",
             value="SevenBridges",
             description="SevenBridges platform",
+        ),
+        SelectOption(
+            label="NGS360",
+            value="NGS360",
+            description="AWS HealthOmics, through NGS360",
         ),
     ]
 
