@@ -3,11 +3,15 @@ Test /projects endpoint
 
 """
 
+import copy
+from datetime import datetime, timedelta, timezone
 from unittest.mock import patch, MagicMock
+import uuid
 
+import botocore.exceptions
 import pytest
 from fastapi.testclient import TestClient
-from sqlmodel import Session
+from sqlmodel import Session, select
 import yaml
 
 from api.project.models import Project, ProjectAttribute
@@ -1084,6 +1088,124 @@ def test_submit_launch_pipeline_job_on_platform_that_cannot_launch(
 
     assert response.status_code == 400
     mock_batch.submit_job.assert_not_called()
+
+
+def _config_minting_launch_key(hours: int = 72) -> dict:
+    """The NGS360 pipeline config, with the launch action asking for a user API key"""
+    config = copy.deepcopy(NGS360_PIPELINE_CONFIG)
+    launch = config["platforms"]["NGS360"]["aws_batch"]["launch-pipeline"]
+    launch["user_api_key_hours"] = hours
+    return config
+
+
+LAUNCH = {
+    "action": "launch-pipeline",
+    "platform": "NGS360",
+    "reference": "RNA-Seq: GRCh38ERCC.ensembl91",
+}
+
+
+def _batch_environment(mock_batch: MagicMock) -> dict:
+    """The environment a mocked submit_job was called with, as a dict"""
+    overrides = mock_batch.submit_job.call_args[1]["containerOverrides"]
+    return {env["name"]: env["value"] for env in overrides["environment"]}
+
+
+@patch("api.jobs.services.boto3.client")
+@patch("api.actions.services.get_setting_value")
+def test_submit_launch_mints_submitter_api_key(
+    mock_get_setting: MagicMock,
+    mock_boto_client: MagicMock,
+    client: TestClient,
+    session: Session,
+    test_project: Project,
+    mock_s3_client
+):
+    """Test an action asking for a key gets one owned by the submitter, named for the job"""
+    from api.auth.models import APIKey, User
+    from core.security import hash_api_key
+
+    mock_get_setting.return_value = "s3://ngs360-resources/pipeline_configs/"
+    mock_batch = _mock_batch(mock_boto_client)
+
+    before = datetime.now(timezone.utc)
+    response = _submit_action(
+        client, test_project, mock_s3_client, LAUNCH, _config_minting_launch_key(72)
+    )
+
+    assert response.status_code == 201
+    environment = _batch_environment(mock_batch)
+    api_key = session.get(APIKey, uuid.UUID(environment["NGS360_AUTH_KEY_ID"]))
+    assert api_key.hashed_key == hash_api_key(environment["NGS360_AUTH_TOKEN"])
+    assert session.get(User, api_key.user_id).username == "testuser"
+    assert api_key.is_active
+    assert api_key.name == "Batch job aws-batch-job-123"
+    expires_at = api_key.expires_at.replace(tzinfo=timezone.utc)
+    ttl = timedelta(hours=72)
+    assert before + ttl <= expires_at <= datetime.now(timezone.utc) + ttl
+
+
+@pytest.mark.parametrize("body", [
+    LAUNCH,                                               # launch not asking for a key
+    {"action": "create-project", "platform": "NGS360"},  # another action, same platform
+])
+@patch("api.jobs.services.boto3.client")
+@patch("api.actions.services.get_setting_value")
+def test_submit_action_not_asking_for_a_key_mints_nothing(
+    mock_get_setting: MagicMock,
+    mock_boto_client: MagicMock,
+    body,
+    client: TestClient,
+    session: Session,
+    test_project: Project,
+    mock_s3_client
+):
+    """Test only the action whose settings ask for a key is given a credential"""
+    from api.auth.models import APIKey
+
+    mock_get_setting.return_value = "s3://ngs360-resources/pipeline_configs/"
+    mock_batch = _mock_batch(mock_boto_client)
+
+    # create-project runs against a config where launch does ask for a key
+    config = None if body is LAUNCH else _config_minting_launch_key()
+    response = _submit_action(client, test_project, mock_s3_client, body, config)
+
+    assert response.status_code == 201
+    environment = _batch_environment(mock_batch)
+    assert "NGS360_AUTH_TOKEN" not in environment
+    assert "NGS360_AUTH_KEY_ID" not in environment
+    assert session.exec(select(APIKey)).all() == []
+
+
+@patch("api.jobs.services.boto3.client")
+@patch("api.actions.services.get_setting_value")
+def test_submit_launch_failure_revokes_minted_key(
+    mock_get_setting: MagicMock,
+    mock_boto_client: MagicMock,
+    client: TestClient,
+    session: Session,
+    test_project: Project,
+    mock_s3_client
+):
+    """Test a key minted for a job AWS Batch refused does not stay usable"""
+    from api.auth.models import APIKey
+
+    mock_get_setting.return_value = "s3://ngs360-resources/pipeline_configs/"
+    mock_batch = MagicMock()
+    mock_batch.submit_job.side_effect = botocore.exceptions.ClientError(
+        {"Error": {"Code": "ClientException", "Message": "no such queue"}}, "SubmitJob"
+    )
+    mock_boto_client.return_value = mock_batch
+
+    response = _submit_action(
+        client, test_project, mock_s3_client, LAUNCH, _config_minting_launch_key()
+    )
+
+    assert response.status_code == 500
+    (api_key,) = session.exec(select(APIKey)).all()
+    session.refresh(api_key)
+    assert not api_key.is_active
+    assert api_key.revoked_at is not None
 
 
 @patch("api.jobs.services.boto3.client")

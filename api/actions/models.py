@@ -4,7 +4,7 @@ Models for the Actions API
 
 from enum import Enum
 from typing import List, Dict, Any
-from sqlmodel import SQLModel
+from sqlmodel import SQLModel, Field
 from api.jobs.models import AwsBatchConfig, AwsBatchEnvironment
 
 
@@ -38,6 +38,13 @@ class ActionBatchOverride(SQLModel):
     job_queue: str | None = None
     # Added to the project type's environment, not replacing it
     environment: List[AwsBatchEnvironment] | None = None
+    # Hours an API key minted for the submitter stays valid, for a job (a
+    # pipeline launcher) that calls back into NGS360 as that user. Unset means no
+    # key is minted. Sized to the job definition's timeout: the job retires the
+    # key when it exits, and the expiry covers a job that is killed first.
+    # Here rather than on the project type's aws_batch so that it is asked for
+    # one action at a time: the other actions run as the backend's own account.
+    user_api_key_hours: int | None = Field(default=None, gt=0, le=24 * 7)
 
 
 class PlatformConfig(SQLModel):
