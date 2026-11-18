@@ -7,7 +7,7 @@ from fastapi import HTTPException, status
 from sqlmodel import Session
 
 from api.settings.services import get_setting_value
-from .models import ActionConfig, ActionConfigsResponse
+from .models import ActionConfig, ActionConfigsResponse, ActionPlatform
 
 
 def _get_action_configs_s3_location(session: Session) -> tuple[str, str]:
@@ -243,16 +243,13 @@ def get_project_types_for_action_and_platform(
         List of dictionaries with project type information
     """
     # Normalize platform name to match YAML keys
-    platform_map = {
-        'arvados': 'Arvados',
-        'sevenbridges': 'SevenBridges'
-    }
+    platform_map = {p.value.lower(): p.value for p in ActionPlatform}
 
     platform_key = platform_map.get(platform.lower())
     if not platform_key:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid platform: {platform}. Must be 'arvados' or 'sevenbridges'"
+            detail=f"Invalid platform: {platform}. Must be one of {sorted(platform_map)}"
         )
 
     # Get all action configs
@@ -267,17 +264,22 @@ def get_project_types_for_action_and_platform(
 
         platform_config = config.platforms[platform_key]
 
-        if action == 'export-project-results':
-            # For export action, return the exports list
-            if platform_config.exports:
-                for export_item in platform_config.exports:
-                    # Each export item is a dict with one key-value pair
-                    for label, value in export_item.items():
-                        result.append({
-                            'label': label,
-                            'value': value,
-                            'project_type': config.project_type
-                        })
+        if action in ('export-project-results', 'launch-pipeline'):
+            # Both choose from a list of {label: value} pairs: the exports for
+            # export, the reference models for launch. A platform that cannot
+            # launch from here offers nothing to launch.
+            if action == 'export-project-results':
+                choices = platform_config.exports
+            else:
+                choices = platform_config.references if platform_config.launch_command else None
+            for choice in choices or []:
+                # Each item is a dict with one key-value pair
+                for label, value in choice.items():
+                    result.append({
+                        'label': label,
+                        'value': value,
+                        'project_type': config.project_type
+                    })
 
         elif action == 'create-project':
             # For create action, return the project_type if platform is listed

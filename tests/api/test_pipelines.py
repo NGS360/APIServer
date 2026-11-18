@@ -15,7 +15,7 @@ def test_get_pipeline_actions(client: TestClient):
     response_json = response.json()
 
     assert isinstance(response_json, list)
-    assert len(response_json) == 2
+    assert len(response_json) == 3
 
     # Check structure of action options
     for action in response_json:
@@ -27,6 +27,7 @@ def test_get_pipeline_actions(client: TestClient):
     action_values = [action["value"] for action in response_json]
     assert "create-project" in action_values
     assert "export-project-results" in action_values
+    assert "launch-pipeline" in action_values
 
 
 def test_get_pipeline_platforms(client: TestClient):
@@ -36,7 +37,7 @@ def test_get_pipeline_platforms(client: TestClient):
     response_json = response.json()
 
     assert isinstance(response_json, list)
-    assert len(response_json) == 2
+    assert len(response_json) == 3
 
     # Check structure of platform options
     for platform in response_json:
@@ -48,6 +49,7 @@ def test_get_pipeline_platforms(client: TestClient):
     platform_values = [platform["value"] for platform in response_json]
     assert "Arvados" in platform_values
     assert "SevenBridges" in platform_values
+    assert "NGS360" in platform_values
 
 
 @patch("api.actions.services.get_setting_value")
@@ -357,6 +359,88 @@ def test_get_pipeline_types_export_action(
 
     # Verify project_type is included
     assert all(item["project_type"] == "RNA-Seq" for item in response_json)
+
+
+@patch("api.actions.services.get_setting_value")
+def test_get_pipeline_types_launch_action(
+    mock_get_setting: MagicMock,
+    client: TestClient,
+    session: Session,
+    mock_s3_client
+):
+    """Test launch offers a platform's reference models, and only where it can launch"""
+    mock_get_setting.return_value = "s3://ngs360-resources/pipeline_configs/"
+    mock_s3_client.setup_bucket(
+        "ngs360-resources", "pipeline_configs/",
+        [{"Key": "pipeline_configs/rna-seq_pipeline.yaml"}], []
+    )
+    sample_config = {
+        "project_type": "RNA-Seq",
+        "project_admins": ["admin@example.com"],
+        "platforms": {
+            "Arvados": {
+                "create_project_command": "arvados loadProject",
+                # Listed, but with no launch command there is nothing to launch
+                "references": [{"RNA-Seq: GRCh38": "GRCh38"}],
+            },
+            "NGS360": {
+                "launch_command": "launcher.py --reference_model {{reference}}",
+                "references": [
+                    {"RNA-Seq: GRCh38ERCC.ensembl91": "GRCh38ERCC.ensembl91"},
+                ],
+            },
+        }
+    }
+    mock_s3_client.uploaded_files["ngs360-resources"] = {
+        "pipeline_configs/rna-seq_pipeline.yaml": yaml.dump(sample_config).encode("utf-8")
+    }
+
+    response = client.get(
+        "/api/v1/actions/types",
+        params={"action": "launch-pipeline", "platform": "NGS360"}
+    )
+    assert response.status_code == 200
+    assert response.json() == [{
+        "label": "RNA-Seq: GRCh38ERCC.ensembl91",
+        "value": "GRCh38ERCC.ensembl91",
+        "project_type": "RNA-Seq",
+    }]
+
+    response = client.get(
+        "/api/v1/actions/types",
+        params={"action": "launch-pipeline", "platform": "Arvados"}
+    )
+    assert response.status_code == 200
+    assert response.json() == []
+
+
+@patch("api.actions.services.get_setting_value")
+def test_validate_pipeline_config_rejects_unknown_action_settings(
+    mock_get_setting: MagicMock,
+    client: TestClient,
+    session: Session,
+    mock_s3_client
+):
+    """Test a platform's per-action job settings must name a real action"""
+    mock_get_setting.return_value = "s3://ngs360-resources/pipeline_configs/"
+    config = {
+        "project_type": "RNA-Seq",
+        "project_admins": ["admin@example.com"],
+        "platforms": {
+            "NGS360": {
+                "aws_batch": {"launch": {"job_definition": "rnaseq-launcher:1"}},
+            },
+        },
+    }
+    mock_s3_client.uploaded_files["ngs360-resources"] = {
+        "pipeline_configs/rna-seq_pipeline.yaml": yaml.dump(config).encode("utf-8")
+    }
+
+    response = client.post(
+        "/api/v1/actions/config/validate",
+        params={"s3_path": "rna-seq_pipeline.yaml"}
+    )
+    assert response.status_code == 422
 
 
 @patch("api.actions.services.get_setting_value")
