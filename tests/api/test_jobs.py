@@ -1383,3 +1383,98 @@ def test_loggable_overrides_masks_credentials():
     assert logged["command"] == ["launch"]
     # The overrides sent to AWS Batch are untouched
     assert overrides["environment"][0]["value"] == "ngs360_secret"
+
+
+class TestJobEndRetiresItsApiKey:
+    """A key minted for a job is retired when the job reaches a state it does not leave"""
+
+    @staticmethod
+    def _job_with_key(session: Session, username: str = "testuser", job_id: str = "job-1"):
+        """A running job, and the active key minted for it, owned by its submitter"""
+        from api.auth.models import APIKey, User
+        from api.auth.services import job_api_key_name
+        from core.security import generate_api_key
+        from sqlmodel import select
+
+        user = session.exec(select(User).where(User.username == username)).first()
+        if user is None:
+            user = User(username=username, email=f"{username}@example.com",
+                        is_active=True, is_verified=True)
+            session.add(user)
+            session.commit()
+        job = session.get(BatchJob, job_id) or BatchJob(
+            id=job_id, name="launch", command="launch", user=username,
+            status=JobStatus.RUNNING,
+        )
+        _, hashed_key, key_prefix = generate_api_key()
+        api_key = APIKey(user_id=user.id, name=job_api_key_name(job_id),
+                         key_prefix=key_prefix, hashed_key=hashed_key)
+        session.add_all([job, api_key])
+        session.commit()
+        return job, api_key
+
+    @pytest.mark.parametrize("final", [JobStatus.SUCCEEDED, JobStatus.FAILED])
+    def test_terminal_status_retires_the_key(self, final, client: TestClient, session: Session):
+        """However the job ended, its key stops working"""
+        _, api_key = self._job_with_key(session)
+
+        response = client.put("/api/v1/jobs/job-1", json={"status": final})
+
+        assert response.status_code == 200
+        session.refresh(api_key)
+        assert not api_key.is_active
+        assert api_key.revoked_at is not None
+
+    @pytest.mark.parametrize("update", [
+        {"status": JobStatus.RUNNABLE},   # a retry: the job is not over
+        {"status": JobStatus.RUNNING},
+        {"viewed": True},                 # somebody opened the job in the UI
+        {"log_stream_name": "stream"},
+    ])
+    def test_other_updates_leave_the_key_alone(self, update, client: TestClient, session: Session):
+        """The key lasts as long as the job can still run"""
+        _, api_key = self._job_with_key(session)
+
+        response = client.put("/api/v1/jobs/job-1", json=update)
+
+        assert response.status_code == 200
+        session.refresh(api_key)
+        assert api_key.is_active
+
+    def test_only_the_submitters_key_is_retired(self, client: TestClient, session: Session):
+        """A key of the same name owned by someone else is not the job's key"""
+        _, api_key = self._job_with_key(session)
+        # Same name, another owner: attached to the same job id only by its name
+        _, other_key = self._job_with_key(session, username="someone-else")
+
+        response = client.put("/api/v1/jobs/job-1", json={"status": JobStatus.SUCCEEDED})
+
+        assert response.status_code == 200
+        session.refresh(api_key)
+        session.refresh(other_key)
+        assert not api_key.is_active
+        assert other_key.is_active
+
+    def test_job_without_a_key_ends_normally(self, client: TestClient, session: Session):
+        """Most jobs have no key; ending one is unaffected"""
+        session.add(BatchJob(id="plain-job", name="demux", command="demux", user="testuser",
+                             status=JobStatus.RUNNING))
+        session.commit()
+
+        response = client.put("/api/v1/jobs/plain-job", json={"status": JobStatus.SUCCEEDED})
+
+        assert response.status_code == 200
+        assert response.json()["status"] == JobStatus.SUCCEEDED
+
+    @patch("api.jobs.services.retire_job_api_keys", side_effect=RuntimeError("database gone"))
+    def test_failing_to_retire_does_not_fail_the_status_update(
+        self, _mock_retire, client: TestClient, session: Session
+    ):
+        """The status write is what was asked for; the key still expires on its own"""
+        job, _ = self._job_with_key(session)
+
+        response = client.put("/api/v1/jobs/job-1", json={"status": JobStatus.FAILED})
+
+        assert response.status_code == 200
+        session.refresh(job)
+        assert job.status == JobStatus.FAILED

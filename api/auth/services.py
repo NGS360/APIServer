@@ -512,6 +512,16 @@ def get_user_by_email(session: Session, email: str) -> User | None:
 
 MAX_API_KEYS_PER_USER = 25
 
+# A key minted for a Batch job is named for it. The name is the only link
+# between the two: it is how the key is found again when the job ends, and how
+# the key listing tells a job's key from one its owner created.
+JOB_API_KEY_NAME_PREFIX = "Batch job "
+
+
+def job_api_key_name(job_ref: str) -> str:
+    """The name of the API key minted for a Batch job, from the job's id."""
+    return f"{JOB_API_KEY_NAME_PREFIX}{job_ref}"[:100]
+
 
 def _is_expired():
     """SQL condition: the key has an expiry and it has passed."""
@@ -641,6 +651,38 @@ def revoke_user_api_key(
         session.refresh(api_key)
 
     return api_key
+
+
+def retire_job_api_keys(session: Session, username: str, job_id: str) -> int:
+    """
+    Retire the API key minted for a Batch job, once the job has ended.
+
+    The job is what the key was for, so the job ending is what ends the key,
+    however it ended -- including killed, cancelled or timed out, where nothing
+    inside the job is left to clean up after itself.
+
+    Matched by name among the submitter's own keys, so a job can only ever
+    retire a key belonging to the user who submitted it.
+
+    Does not commit: the caller commits it together with the job's final
+    status, so the two cannot disagree.
+
+    Returns:
+        The number of keys retired; 0 if the job had none.
+    """
+    keys = session.exec(
+        select(APIKey).join(User, User.id == APIKey.user_id).where(
+            User.username == username,
+            APIKey.name == job_api_key_name(job_id),
+            APIKey.is_active.is_(True),
+        )
+    ).all()
+    now = datetime.now(timezone.utc)
+    for api_key in keys:
+        api_key.is_active = False
+        api_key.revoked_at = now
+        session.add(api_key)
+    return len(keys)
 
 
 def delete_user_api_key(
