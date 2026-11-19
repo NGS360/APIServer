@@ -402,10 +402,17 @@ def list_api_keys(
     current_user: CurrentActiveUser,
     page: int = 1,
     per_page: int = 20,
+    include_job_keys: bool = False,
 ) -> APIKeysPublic:
-    """List API keys for the authenticated user."""
+    """
+    List API keys for the authenticated user.
+
+    Keys minted for Batch jobs are left out once they are retired or expired;
+    pass `include_job_keys=true` to list those as well. A job's key that still
+    works is always listed.
+    """
     keys, count = auth_services.list_user_api_keys(
-        session, current_user, page, per_page
+        session, current_user, page, per_page, include_job_keys
     )
     return APIKeysPublic(
         data=[APIKeyPublic.model_validate(k) for k in keys],

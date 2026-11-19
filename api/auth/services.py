@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 import logging
 
 from fastapi import HTTPException, status
-from sqlalchemy import and_, not_
+from sqlalchemy import and_, not_, or_
 from sqlmodel import Session, select, func
 
 from api.auth.models import (
@@ -575,17 +575,34 @@ def create_user_api_key(
 
 
 def list_user_api_keys(
-    session: Session, user: User, page: int = 1, per_page: int = 20
+    session: Session, user: User, page: int = 1, per_page: int = 20,
+    include_job_keys: bool = False,
 ) -> tuple[list[APIKey], int]:
-    """List API keys for a user (paginated)."""
+    """
+    List API keys for a user (paginated).
+
+    A key minted for a Batch job is left out once it is retired or expired,
+    unless include_job_keys is set. Every launch mints one, its owner never
+    asked for it, and once it is spent there is nothing they can do with it, so
+    listing them all would bury the keys the user actually manages. A job's key
+    that still works is listed like any other, so its owner can revoke it while
+    the job runs. The records themselves are kept either way.
+    """
+    owned = [APIKey.user_id == user.id]
+    if not include_job_keys:
+        owned.append(not_(and_(
+            APIKey.name.startswith(JOB_API_KEY_NAME_PREFIX, autoescape=True),
+            or_(APIKey.is_active.is_(False), _is_expired()),
+        )))
+
     count = session.exec(
-        select(func.count()).select_from(APIKey).where(APIKey.user_id == user.id)
+        select(func.count()).select_from(APIKey).where(*owned)
     ).one()
 
     offset = (page - 1) * per_page
     keys = session.exec(
         select(APIKey)
-        .where(APIKey.user_id == user.id)
+        .where(*owned)
         .order_by(APIKey.created_at.desc())
         .offset(offset)
         .limit(per_page)
