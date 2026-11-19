@@ -6,7 +6,6 @@ Test /projects endpoint
 import copy
 from datetime import datetime, timedelta, timezone
 from unittest.mock import patch, MagicMock
-import uuid
 
 import botocore.exceptions
 import pytest
@@ -1135,8 +1134,11 @@ def test_submit_launch_mints_submitter_api_key(
 
     assert response.status_code == 201
     environment = _batch_environment(mock_batch)
-    api_key = session.get(APIKey, uuid.UUID(environment["NGS360_AUTH_KEY_ID"]))
+    (api_key,) = session.exec(select(APIKey)).all()
     assert api_key.hashed_key == hash_api_key(environment["NGS360_AUTH_TOKEN"])
+    # The job is not told its key's id: the key is retired from here when the
+    # job ends, not by the job.
+    assert "NGS360_AUTH_KEY_ID" not in environment
     assert session.get(User, api_key.user_id).username == "testuser"
     assert api_key.is_active
     assert api_key.name == "Batch job aws-batch-job-123"

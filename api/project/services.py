@@ -23,7 +23,11 @@ from api.actions.services import get_all_action_configs
 from api.actions.models import ActionOption, ActionPlatform
 from api.jobs.services import submit_batch_job
 from api.auth.models import APIKeyCreate, User
-from api.auth.services import create_user_api_key, revoke_user_api_key
+from api.auth.services import (
+    create_user_api_key,
+    job_api_key_name,
+    revoke_user_api_key,
+)
 
 from core.utils import define_search_body, interpolate
 
@@ -895,14 +899,12 @@ def submit_pipeline_job(
                 detail="An API key was requested for a job with no submitter"
             )
         api_key, raw_key = create_user_api_key(session, submitter, APIKeyCreate(
-            name=f"Batch job {interpolated_job_name}"[:100],
+            name=job_api_key_name(interpolated_job_name),
             expires_at=datetime.now(tz.utc) + timedelta(hours=override.user_api_key_hours),
         ))
-        container_overrides["environment"].extend([
-            {"name": "NGS360_AUTH_TOKEN", "value": raw_key},
-            # Lets the job retire its own key when it exits
-            {"name": "NGS360_AUTH_KEY_ID", "value": str(api_key.id)},
-        ])
+        container_overrides["environment"].append(
+            {"name": "NGS360_AUTH_TOKEN", "value": raw_key}
+        )
 
     # Submit job to AWS Batch
     try:
@@ -921,9 +923,10 @@ def submit_pipeline_job(
         raise
 
     if api_key is not None:
-        # Renamed for the job's id once there is one, so a key in the user's list
-        # can be matched to the job that held it.
-        api_key.name = f"Batch job {batch_job.id}"[:100]
+        # Renamed for the job's id once there is one. That name is how the key is
+        # found and retired when the job ends (see update_batch_job), and how a
+        # key in the user's list is matched to the job that held it.
+        api_key.name = job_api_key_name(batch_job.id)
         session.add(api_key)
         session.commit()
     return batch_job
