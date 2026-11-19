@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 import logging
 
 from fastapi import HTTPException, status
+from sqlalchemy import and_, not_
 from sqlmodel import Session, select, func
 
 from api.auth.models import (
@@ -512,6 +513,14 @@ def get_user_by_email(session: Session, email: str) -> User | None:
 MAX_API_KEYS_PER_USER = 25
 
 
+def _is_expired():
+    """SQL condition: the key has an expiry and it has passed."""
+    return and_(
+        APIKey.expires_at.is_not(None),
+        APIKey.expires_at < datetime.now(timezone.utc),
+    )
+
+
 def create_user_api_key(
     session: Session, user: User, data: APIKeyCreate
 ) -> tuple[APIKey, str]:
@@ -521,10 +530,14 @@ def create_user_api_key(
     Returns:
         Tuple of (APIKey record, raw_key)
     """
+    # An expired key can no longer authenticate but keeps is_active set, so
+    # counting on the flag alone would let keys nobody retired -- a job's key
+    # whose job ended unreported, say -- hold their owner's quota forever.
     active_count = session.exec(
         select(func.count()).select_from(APIKey).where(
             APIKey.user_id == user.id,
             APIKey.is_active.is_(True),
+            not_(_is_expired()),
         )
     ).one()
 

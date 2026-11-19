@@ -468,6 +468,62 @@ class TestAPIKeyDelete:
         assert after.status_code == 201, after.text
 
 
+def _seed_key(session: Session, user: User, name: str, *,
+              is_active: bool = True, expires_in: timedelta | None = None) -> APIKey:
+    """Put a key straight into the database in a given state."""
+    from core.security import generate_api_key
+
+    _, hashed, prefix = generate_api_key()
+    key = APIKey(
+        user_id=user.id, name=name, key_prefix=prefix, hashed_key=hashed,
+        is_active=is_active,
+        revoked_at=None if is_active else datetime.now(timezone.utc),
+        expires_at=(datetime.now(timezone.utc) + expires_in) if expires_in else None,
+    )
+    session.add(key)
+    session.commit()
+    return key
+
+
+class TestExpiredKeysAndQuota:
+    """An expired key cannot authenticate, so it should not hold a place either."""
+
+    def test_an_expired_key_does_not_consume_quota(
+        self, unauthenticated_client: TestClient, test_user, session: Session
+    ):
+        """
+        A key whose job ended without anyone hearing of it is never retired; it
+        just expires. Were those counted, each one would cost its owner a slot
+        for good.
+        """
+        from api.auth.services import MAX_API_KEYS_PER_USER
+
+        for i in range(MAX_API_KEYS_PER_USER):
+            _seed_key(session, test_user, f"Batch job lost-{i}",
+                      expires_in=timedelta(hours=-1))
+
+        resp = unauthenticated_client.post(
+            "/api/v1/auth/api-keys", json={"name": "still room"},
+            headers={"Authorization": f"Bearer {_login(unauthenticated_client, test_user.email)}"},
+        )
+        assert resp.status_code == 201, resp.text
+
+    def test_an_unexpired_key_still_counts(
+        self, unauthenticated_client: TestClient, test_user, session: Session
+    ):
+        """A key with time left is a live credential and counts as one"""
+        from api.auth.services import MAX_API_KEYS_PER_USER
+
+        for i in range(MAX_API_KEYS_PER_USER):
+            _seed_key(session, test_user, f"key-{i}", expires_in=timedelta(hours=1))
+
+        resp = unauthenticated_client.post(
+            "/api/v1/auth/api-keys", json={"name": "one too many"},
+            headers={"Authorization": f"Bearer {_login(unauthenticated_client, test_user.email)}"},
+        )
+        assert resp.status_code == 400
+
+
 class TestAPIKeyUserIsolation:
     """Test that users can't access each other's keys."""
 
