@@ -270,8 +270,18 @@ def get_project_types_for_action_and_platform(
             # launch from here offers nothing to launch.
             if action == 'export-project-results':
                 choices = platform_config.exports
+            elif platform_config.launch_command or platform_config.launch_workflow:
+                choices = platform_config.references
+                if not choices and platform_config.launch_workflow:
+                    # The reference is one of the workflow's own inputs, so the
+                    # project type is all there is to choose.
+                    result.append({
+                        'label': config.project_type,
+                        'value': config.project_type,
+                        'project_type': config.project_type
+                    })
             else:
-                choices = platform_config.references if platform_config.launch_command else None
+                choices = None
             for choice in choices or []:
                 # Each item is a dict with one key-value pair
                 for label, value in choice.items():
