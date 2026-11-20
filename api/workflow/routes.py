@@ -268,7 +268,7 @@ def get_workflow_deployments_for_workflow(
     - **engine**: restrict results to a specific platform
 
     Combine both to get a single deployment in one call, e.g.
-    ``?alias=production&engine=<platform-name>``.
+    ``?alias=production&engine=Arvados``.
     """
     deps = services.get_workflow_deployments_for_workflow(
         session=session,

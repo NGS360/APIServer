@@ -110,7 +110,7 @@ class WorkflowVersionAlias(SQLModel, table=True):
 
 
 class WorkflowDeployment(SQLModel, table=True):
-    """Platform-specific deployment of a workflow version."""
+    """Platform-specific deployment of a workflow version (e.g., on Arvados or SevenBridges)."""
     __tablename__ = "workflowdeployment"
     __table_args__ = (
         UniqueConstraint("workflow_version_id", "engine", name="uq_workflowversion_engine"),

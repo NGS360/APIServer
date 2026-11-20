@@ -77,7 +77,7 @@ class LaunchWorkflow(SQLModel):
 
 
 class PlatformConfig(SQLModel):
-    """Model for platform-specific configuration."""
+    """Model for platform-specific configuration (Arvados, SevenBridges, etc)."""
     create_project_command: str | None = None
     launchers: str | List[str] | None = None
     exports: List[Dict[str, str]] | None = None
