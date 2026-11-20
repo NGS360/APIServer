@@ -1,7 +1,7 @@
 """
 Models for the Platforms API
 
-Platform — a registered workflow execution engine (e.g., Arvados, SevenBridges).
+Platform — a registered workflow execution engine.
 UUID primary key with a unique constraint on name.
 """
 
@@ -11,7 +11,7 @@ from sqlmodel import SQLModel, Field
 
 
 class Platform(SQLModel, table=True):
-    """Workflow execution platform (e.g., Arvados, SevenBridges)."""
+    """Workflow execution platform."""
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     name: str = Field(unique=True)
 
