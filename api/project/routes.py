@@ -645,7 +645,7 @@ def submit_pipeline_job(
         request: Pipeline submission request containing:
             - action: Pipeline action (create-project, export-project-results
               or launch-pipeline)
-            - platform: Platform name (Arvados, SevenBridges or NGS360)
+            - platform: Platform to run the action on
             - project_type: Pipeline workflow type (e.g., RNA-Seq, WGS)
             - reference: Export reference (required for export-project-results),
               or reference model (launch-pipeline, where the platform lists them)

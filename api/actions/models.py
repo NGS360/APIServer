@@ -77,7 +77,7 @@ class LaunchWorkflow(SQLModel):
 
 
 class PlatformConfig(SQLModel):
-    """Model for platform-specific configuration (Arvados, SevenBridges, etc)."""
+    """Model for platform-specific configuration."""
     create_project_command: str | None = None
     launchers: str | List[str] | None = None
     exports: List[Dict[str, str]] | None = None
@@ -89,8 +89,9 @@ class PlatformConfig(SQLModel):
     # launch workflow's inputs.
     references: List[Dict[str, str]] | None = None
     # Launches the pipeline. Only for a platform with nowhere of its own to
-    # start a launcher: on Arvados and SevenBridges the launcher is an app the
-    # user runs on the platform, after create-project has put it in their project.
+    # start a launcher. Where the launcher is an app the user runs on the
+    # platform itself, after create-project has put it in their project, there
+    # is nothing to launch from here.
     launch_workflow: LaunchWorkflow | None = None
     # Per-action changes to the project type's aws_batch: the API key a launch
     # asks for, say, or a job queue of its own.

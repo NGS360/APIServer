@@ -920,7 +920,7 @@ def submit_pipeline_job(
         project: The project object (already validated)
         action: Pipeline action (create-project, export-project-results or
             launch-pipeline)
-        platform: Platform name (Arvados, SevenBridges or NGS360)
+        platform: Platform to run the action on
         project_type: Pipeline type (e.g., RNA-Seq)
         username: Username of the user submitting the job
         email: Email of the user submitting the job (available as template variable)
