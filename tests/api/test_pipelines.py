@@ -380,11 +380,14 @@ def test_get_pipeline_types_launch_action(
         "platforms": {
             "Arvados": {
                 "create_project_command": "arvados loadProject",
-                # Listed, but with no launch command there is nothing to launch
+                # Listed, but with no workflow to launch there is nothing to launch
                 "references": [{"RNA-Seq: GRCh38": "GRCh38"}],
             },
             "NGS360": {
-                "launch_command": "launcher.py --reference_model {{reference}}",
+                "launch_workflow": {
+                    "workflow": "00000000-0000-0000-0000-000000000001",
+                    "engine": "AWSBatch",
+                },
                 "references": [
                     {"RNA-Seq: GRCh38ERCC.ensembl91": "GRCh38ERCC.ensembl91"},
                 ],
@@ -415,44 +418,33 @@ def test_get_pipeline_types_launch_action(
 
 
 @patch("api.actions.services.get_setting_value")
-def test_get_launch_types_for_a_platform_launching_a_workflow(
+def test_get_launch_types_where_no_references_are_listed(
     mock_get_setting: MagicMock,
     client: TestClient,
     session: Session,
     mock_s3_client
 ):
-    """Test launch offers reference models where listed, else the project type itself"""
+    """Test launch offers the project type itself where a platform lists no references"""
     mock_get_setting.return_value = "s3://ngs360-resources/pipeline_configs/"
     mock_s3_client.setup_bucket(
         "ngs360-resources", "pipeline_configs/",
-        [
-            {"Key": "pipeline_configs/rna-seq_pipeline.yaml"},
-            {"Key": "pipeline_configs/wes_pipeline.yaml"},
-        ],
-        []
+        [{"Key": "pipeline_configs/wes_pipeline.yaml"}], []
     )
-    launch_workflow = {"workflow": "00000000-0000-0000-0000-000000000001", "engine": "AWSBatch"}
-    rna_seq = {
-        "project_type": "RNA-Seq",
+    sample_config = {
+        "project_type": "WES",
         "project_admins": ["admin@example.com"],
         "platforms": {
+            # No references: the reference is one of the workflow's inputs
             "NGS360": {
-                "launch_workflow": launch_workflow,
-                "references": [
-                    {"RNA-Seq: GRCh38ERCC.ensembl91": "GRCh38ERCC.ensembl91"},
-                ],
+                "launch_workflow": {
+                    "workflow": "00000000-0000-0000-0000-000000000001",
+                    "engine": "AWSBatch",
+                },
             },
         }
     }
-    wes = {
-        "project_type": "WES",
-        "project_admins": ["admin@example.com"],
-        # No references: the reference is one of the workflow's inputs
-        "platforms": {"NGS360": {"launch_workflow": launch_workflow}},
-    }
     mock_s3_client.uploaded_files["ngs360-resources"] = {
-        "pipeline_configs/rna-seq_pipeline.yaml": yaml.dump(rna_seq).encode("utf-8"),
-        "pipeline_configs/wes_pipeline.yaml": yaml.dump(wes).encode("utf-8"),
+        "pipeline_configs/wes_pipeline.yaml": yaml.dump(sample_config).encode("utf-8")
     }
 
     response = client.get(
@@ -460,14 +452,7 @@ def test_get_launch_types_for_a_platform_launching_a_workflow(
         params={"action": "launch-pipeline", "platform": "NGS360"}
     )
     assert response.status_code == 200
-    assert response.json() == [
-        {
-            "label": "RNA-Seq: GRCh38ERCC.ensembl91",
-            "value": "GRCh38ERCC.ensembl91",
-            "project_type": "RNA-Seq",
-        },
-        {"label": "WES", "value": "WES", "project_type": "WES"},
-    ]
+    assert response.json() == [{"label": "WES", "value": "WES", "project_type": "WES"}]
 
 
 @patch("api.actions.services.get_setting_value")
@@ -484,7 +469,7 @@ def test_validate_pipeline_config_rejects_unknown_action_settings(
         "project_admins": ["admin@example.com"],
         "platforms": {
             "NGS360": {
-                "aws_batch": {"launch": {"job_definition": "rnaseq-launcher:1"}},
+                "aws_batch": {"launch": {"job_definition": "some-job-definition:1"}},
             },
         },
     }

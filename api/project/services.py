@@ -21,12 +21,7 @@ import yaml
 from api.jobs.models import BatchJob, VendorIngestionConfig
 from api.settings.services import get_setting, get_setting_value
 from api.actions.services import get_all_action_configs
-from api.actions.models import (
-    ActionBatchOverride,
-    ActionOption,
-    ActionPlatform,
-    LaunchWorkflow,
-)
+from api.actions.models import ActionOption, ActionPlatform, LaunchWorkflow
 from api.files.models import FileUploadCreate
 from api.files.services import create_file_upload
 from api.jobs.services import submit_batch_job
@@ -805,7 +800,6 @@ def _prepare_workflow_launch(
     session: Session,
     project: Project,
     launch_workflow: LaunchWorkflow,
-    override: ActionBatchOverride | None,
     template_context: dict,
     inputs: dict | None,
     job_name: str,
@@ -833,8 +827,8 @@ def _prepare_workflow_launch(
 
     Raises:
         HTTPException: If the workflow or its version cannot be found, an input
-            is unknown or a required one is missing, or no job definition can be
-            determined
+            is unknown or a required one is missing, or the version is not
+            deployed on the configured engine
     """
     version = _resolve_launch_workflow_version(session, project, launch_workflow.workflow)
 
@@ -853,30 +847,18 @@ def _prepare_workflow_launch(
     workflow_inputs.update(configured_inputs)
     _check_workflow_inputs(version, workflow_inputs)
 
-    if launch_workflow.engine:
-        deployment = session.exec(
-            select(WorkflowDeployment).where(
-                WorkflowDeployment.workflow_version_id == version.id,
-                WorkflowDeployment.engine == launch_workflow.engine,
-            )
-        ).first()
-        if deployment is None:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=(
-                    f"Version {version.version} of workflow {version.workflow_id} "
-                    f"is not deployed on '{launch_workflow.engine}'"
-                )
-            )
-        job_definition = deployment.external_id
-    elif override and override.job_definition:
-        job_definition = override.job_definition
-    else:
+    deployment = session.exec(
+        select(WorkflowDeployment).where(
+            WorkflowDeployment.workflow_version_id == version.id,
+            WorkflowDeployment.engine == launch_workflow.engine,
+        )
+    ).first()
+    if deployment is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=(
-                "The launch workflow is configured with neither an engine nor a "
-                "job definition to run it in"
+                f"Version {version.version} of workflow {version.workflow_id} "
+                f"is not deployed on '{launch_workflow.engine}'"
             )
         )
 
@@ -906,7 +888,7 @@ def _prepare_workflow_launch(
         "Launching version %d of workflow %s for project %s with inputs %s",
         version.version, version.workflow_id, project.project_id, inputs_file.uri,
     )
-    return ["--workflow", definition_uri, "--inputs", inputs_file.uri], job_definition
+    return ["--workflow", definition_uri, "--inputs", inputs_file.uri], deployment.external_id
 
 
 def submit_pipeline_job(
@@ -930,8 +912,8 @@ def submit_pipeline_job(
     command to use based on the action, interpolates template variables, and submits
     the job to AWS Batch.
 
-    A launch on a platform configured with launch_workflow runs a registered
-    workflow instead of a command: see _prepare_workflow_launch.
+    A launch runs a registered workflow, not a command: see
+    _prepare_workflow_launch.
 
     Args:
         session: Database session
@@ -942,13 +924,14 @@ def submit_pipeline_job(
         project_type: Pipeline type (e.g., RNA-Seq)
         username: Username of the user submitting the job
         email: Email of the user submitting the job (available as template variable)
-        reference: Reference label (required for the export and launch actions)
+        reference: Reference label (required for the export action, and for the
+            launch action on a platform that lists reference models)
         auto_release: Auto-release flag (only valid for export action)
         s3_client: Optional boto3 S3 client
         submitter: The submitting user, who owns the job's API key when the
             action's aws_batch settings ask for one
         inputs: Values for the inputs of the workflow a launch runs (only for
-            the launch action on a platform configured with launch_workflow)
+            the launch action)
 
     Returns:
         BatchJob instance
@@ -980,12 +963,6 @@ def submit_pipeline_job(
 
     platform_config = action_config.platforms[platform]
 
-    # A launch runs a registered workflow where the platform names one, and a
-    # command otherwise.
-    launch_workflow = (
-        platform_config.launch_workflow if action == ActionOption.LAUNCH_PIPELINE else None
-    )
-
     # Validate action-specific requirements
     reference_value = None
     if action == ActionOption.CREATE_PROJECT:
@@ -1005,9 +982,9 @@ def submit_pipeline_job(
 
         # The launcher resolves the reference model itself, so the request may
         # only name one the configuration lists for this platform. A platform
-        # that launches a workflow may list none, and take the reference as one
-        # of the workflow's inputs instead.
-        if platform_config.references or launch_workflow is None:
+        # may list none, and take the reference as one of the workflow's inputs
+        # instead.
+        if platform_config.references:
             reference_value = _resolve_reference(
                 platform_config.references, "references", reference, action, platform,
                 project_type
@@ -1025,27 +1002,29 @@ def submit_pipeline_job(
         "auto_release": auto_release
     }
 
-    # Select and interpolate the appropriate command based on action
-    command = None
-    if launch_workflow is None:
-        if action == ActionOption.CREATE_PROJECT:
-            command_template = platform_config.create_project_command
-        elif action == ActionOption.LAUNCH_PIPELINE:
-            command_template = platform_config.launch_command
-        else:  # export-project-results
-            command_template = platform_config.export_command
+    # What the platform configures for the action: a command to run, or for a
+    # launch the registered workflow to run.
+    if action == ActionOption.CREATE_PROJECT:
+        configured = platform_config.create_project_command
+    elif action == ActionOption.LAUNCH_PIPELINE:
+        configured = platform_config.launch_workflow
+    else:  # export-project-results
+        configured = platform_config.export_command
 
-        if not command_template:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=(
-                    f"Action '{action.value}' is not configured for platform "
-                    f"'{platform.value}' in project type '{project_type}'"
-                )
+    if not configured:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"Action '{action.value}' is not configured for platform "
+                f"'{platform.value}' in project type '{project_type}'"
             )
+        )
 
+    # A launch's command is put together further down, once the job has a name
+    command = None
+    if action != ActionOption.LAUNCH_PIPELINE:
         try:
-            command = interpolate(command_template, template_context).split()
+            command = interpolate(configured, template_context).split()
         except Exception as e:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -1072,15 +1051,14 @@ def submit_pipeline_job(
         ) from e
 
     # What this action changes about the project type's aws_batch on this
-    # platform, if anything. A launcher, for one, runs in its own image.
+    # platform, if anything. A launch, for one, asks for an API key.
     override = (platform_config.aws_batch or {}).get(action)
 
-    if launch_workflow is not None:
+    if action == ActionOption.LAUNCH_PIPELINE:
         command, job_definition = _prepare_workflow_launch(
             session=session,
             project=project,
-            launch_workflow=launch_workflow,
-            override=override,
+            launch_workflow=platform_config.launch_workflow,
             template_context=template_context,
             inputs=inputs,
             job_name=interpolated_job_name,

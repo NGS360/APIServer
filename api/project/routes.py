@@ -634,10 +634,10 @@ def submit_pipeline_job(
     launch-pipeline), interpolates template variables, and submits the job to
     AWS Batch.
 
-    On a platform configured to launch a registered workflow, launch-pipeline
-    runs that workflow with a runner job instead of a command. Its inputs
-    are the request's `inputs`, with the values the configuration supplies laid
-    over them, checked against the inputs the workflow version records.
+    launch-pipeline runs the registered workflow the platform names, with a
+    runner job, rather than a command. Its inputs are the request's `inputs`,
+    with the values the configuration supplies laid over them, checked against
+    the inputs the workflow version records.
 
     Args:
         session: Database session
@@ -650,8 +650,7 @@ def submit_pipeline_job(
             - reference: Export reference (required for export-project-results),
               or reference model (launch-pipeline, where the platform lists them)
             - auto_release: Auto-release flag for export action (default: False)
-            - inputs: Values for the launched workflow's inputs (launch-pipeline
-              on a platform configured with a launch workflow)
+            - inputs: Values for the launched workflow's inputs (launch-pipeline)
         current_user: Currently authenticated user
         s3_client: S3 client for retrieving pipeline configs
 

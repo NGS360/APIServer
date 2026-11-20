@@ -34,6 +34,8 @@ class ActionInput(SQLModel):
 
 class ActionBatchOverride(SQLModel):
     """What one action on one platform changes about the project type's aws_batch."""
+    # For an action that runs a command. A launch runs in the job definition its
+    # workflow's deployment names, whatever is set here.
     job_definition: str | None = None
     job_queue: str | None = None
     # Added to the project type's environment, not replacing it
@@ -65,9 +67,8 @@ class LaunchWorkflow(SQLModel):
     workflow: str
     # Name of the platform whose deployment of that version holds, as its
     # external id, the AWS Batch job definition of the runner for it. A version
-    # not deployed there cannot be launched. Left unset, the job definition is
-    # the one this action's aws_batch settings name.
-    engine: str | None = None
+    # not deployed there cannot be launched.
+    engine: str
     # Inputs the configuration supplies rather than the user: values known from
     # the project, such as its id or where its samplesheet is. Strings are
     # templates, with the variables the commands have. These win over a value
@@ -84,17 +85,15 @@ class PlatformConfig(SQLModel):
     # Reference models a pipeline can be launched against, each a single
     # {label: reference} pair as in `exports`. The launcher resolves the
     # reference itself, so these must be ones its own configuration knows.
+    # Optional: a platform listing none takes the reference as one of the
+    # launch workflow's inputs.
     references: List[Dict[str, str]] | None = None
-    # Runs the pipeline launcher. Only for a platform with nowhere of its own to
-    # start one: on Arvados and SevenBridges the launcher is an app the user runs
-    # on the platform, after create-project has put it in their project.
-    launch_command: str | None = None
-    # Launches the pipeline by running a registered workflow instead of a
-    # command. Used in preference to launch_command when both are set, so a
-    # configuration can carry both while a deployment catches up.
+    # Launches the pipeline. Only for a platform with nowhere of its own to
+    # start a launcher: on Arvados and SevenBridges the launcher is an app the
+    # user runs on the platform, after create-project has put it in their project.
     launch_workflow: LaunchWorkflow | None = None
-    # Per-action changes to the project type's aws_batch, for an action that
-    # cannot run in the shared job definition -- a launcher is its own image.
+    # Per-action changes to the project type's aws_batch: the API key a launch
+    # asks for, say, or a job queue of its own.
     aws_batch: Dict[ActionOption, ActionBatchOverride] | None = None
 
 
@@ -134,5 +133,5 @@ class ActionSubmitRequest(SQLModel):
     # Auto-release flag (only valid for export action)
     auto_release: bool | None = None
     # Values for the inputs of the workflow a launch runs, keyed by input id
-    # (only for the launch action on a platform configured with launch_workflow)
+    # (only for the launch action)
     inputs: Dict[str, Any] | None = None
