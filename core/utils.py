@@ -1,3 +1,5 @@
+from typing import Any
+
 from jinja2.sandbox import SandboxedEnvironment
 
 # OpenSearch utilities ----
@@ -44,18 +46,29 @@ def define_search_body(
 # Template utilities ----
 
 
-def interpolate(template_str: str, context: dict) -> str:
+def interpolate(template: Any, context: dict) -> Any:
     """
-    Interpolate a Jinja2 template string with the provided context.
+    Interpolate a Jinja2 template with the provided context.
     Uses SandboxedEnvironment to prevent code execution vulnerabilities.
 
+    A string is rendered. A dict or a list is interpolated value by value, to
+    any depth, so a structure read from a configuration can be passed whole.
+    Dict keys, and values that are neither strings, dicts nor lists, are
+    returned as they are.
+
     Args:
-        template_str: The template string to interpolate
+        template: The template string to interpolate, or a structure holding
+            template strings
         context: Dictionary of variables to pass to the template
 
     Returns:
-        Interpolated string with variables substituted
+        Interpolated string with variables substituted, or the structure with
+        every string in it interpolated
     """
-    env = SandboxedEnvironment()
-    template = env.from_string(template_str)
-    return template.render(context).strip()
+    if isinstance(template, str):
+        return SandboxedEnvironment().from_string(template).render(context).strip()
+    if isinstance(template, dict):
+        return {key: interpolate(value, context) for key, value in template.items()}
+    if isinstance(template, list):
+        return [interpolate(item, context) for item in template]
+    return template

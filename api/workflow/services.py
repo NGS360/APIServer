@@ -496,7 +496,7 @@ def alias_to_public(
 NGS360_URI_SCHEME = "ngs360://"
 
 
-def _resolve_cwl_definition_to_s3(
+def resolve_definition_to_s3(
     session: Session,
     definition_uri: str,
 ) -> str:
@@ -738,7 +738,7 @@ def _register_workflow_via_lambda(
 ) -> str:
     """Register the workflow/version on AWS HealthOmics via Lambda; return ARN."""
     prior = _find_existing_omics_deployment(session, workflow, engine)
-    cwl_s3_path = _resolve_cwl_definition_to_s3(session, version.definition_uri)
+    cwl_s3_path = resolve_definition_to_s3(session, version.definition_uri)
     tags = _get_tags_from_version(version)
     # Deployment-level identity: which NGS360 tier registered this workflow.
     # settings.ENVIRONMENT falls back to "dev" if unset, so this is always
