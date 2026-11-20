@@ -51,18 +51,22 @@ class LaunchWorkflow(SQLModel):
     """
     A registered workflow that launches the pipeline.
 
-    The launch runs the workflow's definition with a CWL runner job, so the
-    command line and the image come from the definition itself and the inputs a
-    user can set are the ones the workflow version records.
+    The launch hands the workflow's definition and an inputs object to a runner
+    job: a batch job whose image knows how to run a workflow in that language.
+    The command line and the image then come from the definition itself, and
+    the inputs a user can set are the ones the workflow version records.
+
+    Nothing here depends on the workflow's language. The deployment picks the
+    runner, and the definition and the input values are passed to it unread.
     """
     # Workflow id, optionally followed by ":<alias>" or ":<version>". Without
     # either, the latest version. A version recorded for the project wins over
     # all three.
     workflow: str
     # Name of the platform whose deployment of that version holds, as its
-    # external id, the AWS Batch job definition of the CWL runner. A version not
-    # deployed there cannot be launched. Left unset, the job definition is the
-    # one this action's aws_batch settings name.
+    # external id, the AWS Batch job definition of the runner for it. A version
+    # not deployed there cannot be launched. Left unset, the job definition is
+    # the one this action's aws_batch settings name.
     engine: str | None = None
     # Inputs the configuration supplies rather than the user: values known from
     # the project, such as its id or where its samplesheet is. Strings are

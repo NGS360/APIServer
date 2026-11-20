@@ -72,7 +72,7 @@ from api.workflow.models import (
     WorkflowVersionAlias,
 )
 from api.workflow.services import (
-    _resolve_cwl_definition_to_s3,
+    resolve_definition_to_s3,
     get_workflow_by_id,
     get_workflow_version_by_num,
 )
@@ -813,12 +813,16 @@ def _prepare_workflow_launch(
     s3_client=None,
 ) -> tuple[list[str], str]:
     """
-    Prepare a launch that runs a registered workflow with a CWL runner job.
+    Prepare a launch that runs a registered workflow with a runner job.
 
     The runner is given two locations and nothing else: the workflow version's
     definition, and an inputs object written to the project's files for this
     launch. It builds the command line from the definition, so no part of it is
     spelled out in the configuration.
+
+    Which runner, and so which workflow language, is the deployment's business:
+    the job definition comes from it, and neither the definition nor the input
+    values are read here.
 
     The inputs are the request's values with the configuration's laid over
     them, so a value the configuration derives from the project cannot be
@@ -876,7 +880,7 @@ def _prepare_workflow_launch(
             )
         )
 
-    definition_uri = _resolve_cwl_definition_to_s3(session, version.definition_uri)
+    definition_uri = resolve_definition_to_s3(session, version.definition_uri)
 
     # Written before the job exists, so named for the job and the moment
     # rather than the job's id.

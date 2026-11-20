@@ -635,7 +635,7 @@ def submit_pipeline_job(
     AWS Batch.
 
     On a platform configured to launch a registered workflow, launch-pipeline
-    runs that workflow with a CWL runner job instead of a command. Its inputs
+    runs that workflow with a runner job instead of a command. Its inputs
     are the request's `inputs`, with the values the configuration supplies laid
     over them, checked against the inputs the workflow version records.
 

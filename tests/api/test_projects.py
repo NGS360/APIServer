@@ -1134,7 +1134,7 @@ def launcher_fixture(session: Session) -> Workflow:
         session.add(WorkflowDeployment(
             workflow_version_id=version.id,
             engine=BATCH_ENGINE if number < 3 else OTHER_ENGINE,
-            external_id=f"cwl-runner:{number}" if number < 3 else "arn:aws:omics:workflow/3",
+            external_id=f"runner:{number}" if number < 3 else "arn:aws:omics:workflow/3",
             created_by="testuser",
         ))
         if number == 1:
@@ -1185,7 +1185,7 @@ def test_submit_launch_runs_registered_workflow(
     launcher: Workflow,
     mock_s3_client
 ):
-    """Test a launch runs the configured workflow version with a CWL runner job"""
+    """Test a launch runs the configured workflow version with a runner job"""
     mock_get_setting.return_value = "s3://ngs360-resources/pipeline_configs/"
     mock_batch = _mock_batch(mock_boto_client)
 
@@ -1221,7 +1221,7 @@ def test_submit_launch_runs_registered_workflow(
     }
     # The job definition is the version's deployment on the engine, not the one
     # the action's aws_batch settings name for a command launch
-    assert call_args["jobDefinition"] == "cwl-runner:2"
+    assert call_args["jobDefinition"] == "runner:2"
     assert call_args["jobQueue"] == "batch-queue"
     assert _batch_environment(mock_batch)["WES_API_ENDPOINT"] == "https://wes"
 
@@ -1233,9 +1233,9 @@ def test_submit_launch_runs_registered_workflow(
 
 
 @pytest.mark.parametrize("tag, definition, job_definition", [
-    (":1", "s3://definitions/launcher-v1.cwl", "cwl-runner:1"),
-    (":stable", "s3://definitions/launcher-v1.cwl", "cwl-runner:1"),
-    (":2", "s3://definitions/launcher-v2.cwl", "cwl-runner:2"),
+    (":1", "s3://definitions/launcher-v1.cwl", "runner:1"),
+    (":stable", "s3://definitions/launcher-v1.cwl", "runner:1"),
+    (":2", "s3://definitions/launcher-v2.cwl", "runner:2"),
 ])
 @patch("api.jobs.services.boto3.client")
 @patch("api.actions.services.get_setting_value")
@@ -1291,7 +1291,7 @@ def test_submit_launch_prefers_the_version_recorded_for_the_project(
     assert response.status_code == 201, response.text
     call_args = mock_batch.submit_job.call_args[1]
     assert call_args["containerOverrides"]["command"][1] == "s3://definitions/launcher-v1.cwl"
-    assert call_args["jobDefinition"] == "cwl-runner:1"
+    assert call_args["jobDefinition"] == "runner:1"
 
 
 @patch("api.jobs.services.boto3.client")
@@ -1377,7 +1377,7 @@ def test_submit_launch_without_an_engine_uses_the_actions_job_definition(
     assert mock_batch.submit_job.call_args[1]["jobDefinition"] == "rnaseq-launcher:1"
 
     # Without either there is nowhere to run it: the project type's own job
-    # definition is the backend's image, not a CWL runner
+    # definition is the backend's image, not a workflow runner
     del config["platforms"]["NGS360"]["aws_batch"]
     mock_batch.reset_mock()
     response = _submit_action(client, test_project, mock_s3_client, LAUNCH, config)
