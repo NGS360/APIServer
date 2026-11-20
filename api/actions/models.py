@@ -47,6 +47,30 @@ class ActionBatchOverride(SQLModel):
     user_api_key_hours: int | None = Field(default=None, gt=0, le=24 * 7)
 
 
+class LaunchWorkflow(SQLModel):
+    """
+    A registered workflow that launches the pipeline.
+
+    The launch runs the workflow's definition with a CWL runner job, so the
+    command line and the image come from the definition itself and the inputs a
+    user can set are the ones the workflow version records.
+    """
+    # Workflow id, optionally followed by ":<alias>" or ":<version>". Without
+    # either, the latest version. A version recorded for the project wins over
+    # all three.
+    workflow: str
+    # Name of the platform whose deployment of that version holds, as its
+    # external id, the AWS Batch job definition of the CWL runner. A version not
+    # deployed there cannot be launched. Left unset, the job definition is the
+    # one this action's aws_batch settings name.
+    engine: str | None = None
+    # Inputs the configuration supplies rather than the user: values known from
+    # the project, such as its id or where its samplesheet is. Strings are
+    # templates, with the variables the commands have. These win over a value
+    # for the same input in the request.
+    inputs: Dict[str, Any] | None = None
+
+
 class PlatformConfig(SQLModel):
     """Model for platform-specific configuration (Arvados, SevenBridges, etc)."""
     create_project_command: str | None = None
@@ -61,6 +85,10 @@ class PlatformConfig(SQLModel):
     # start one: on Arvados and SevenBridges the launcher is an app the user runs
     # on the platform, after create-project has put it in their project.
     launch_command: str | None = None
+    # Launches the pipeline by running a registered workflow instead of a
+    # command. Used in preference to launch_command when both are set, so a
+    # configuration can carry both while a deployment catches up.
+    launch_workflow: LaunchWorkflow | None = None
     # Per-action changes to the project type's aws_batch, for an action that
     # cannot run in the shared job definition -- a launcher is its own image.
     aws_batch: Dict[ActionOption, ActionBatchOverride] | None = None
@@ -96,7 +124,11 @@ class ActionSubmitRequest(SQLModel):
     platform: ActionPlatform
     project_type: str  # The workflow type (e.g., "RNA-Seq", "WGS")
     # Reference label: an export for the export action, a reference model for
-    # the launch action. Required for both.
+    # the launch action. Required for both, except for a launch on a platform
+    # that lists no references and takes the reference as a workflow input.
     reference: str | None = None
     # Auto-release flag (only valid for export action)
     auto_release: bool | None = None
+    # Values for the inputs of the workflow a launch runs, keyed by input id
+    # (only for the launch action on a platform configured with launch_workflow)
+    inputs: Dict[str, Any] | None = None

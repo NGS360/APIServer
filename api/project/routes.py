@@ -630,18 +630,28 @@ def submit_pipeline_job(
 
     This endpoint validates the project exists, retrieves the appropriate pipeline
     configuration based on the project type, determines the command to execute
-    based on the action (create-project or export-project-results), interpolates
-    template variables, and submits the job to AWS Batch.
+    based on the action (create-project, export-project-results or
+    launch-pipeline), interpolates template variables, and submits the job to
+    AWS Batch.
+
+    On a platform configured to launch a registered workflow, launch-pipeline
+    runs that workflow with a CWL runner job instead of a command. Its inputs
+    are the request's `inputs`, with the values the configuration supplies laid
+    over them, checked against the inputs the workflow version records.
 
     Args:
         session: Database session
         project_id: The project ID
         request: Pipeline submission request containing:
-            - action: Pipeline action (create-project or export-project-results)
-            - platform: Platform name (Arvados or SevenBridges)
+            - action: Pipeline action (create-project, export-project-results
+              or launch-pipeline)
+            - platform: Platform name (Arvados, SevenBridges or NGS360)
             - project_type: Pipeline workflow type (e.g., RNA-Seq, WGS)
-            - reference: Export reference (required for export-project-results)
+            - reference: Export reference (required for export-project-results),
+              or reference model (launch-pipeline, where the platform lists them)
             - auto_release: Auto-release flag for export action (default: False)
+            - inputs: Values for the launched workflow's inputs (launch-pipeline
+              on a platform configured with a launch workflow)
         current_user: Currently authenticated user
         s3_client: S3 client for retrieving pipeline configs
 
@@ -660,6 +670,7 @@ def submit_pipeline_job(
         auto_release=request.auto_release,
         s3_client=s3_client,
         submitter=current_user,
+        inputs=request.inputs,
     )
 
     return BatchJobPublic.model_validate(batch_job)
