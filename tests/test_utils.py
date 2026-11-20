@@ -179,6 +179,31 @@ class TestTemplateInterpolation:
         )
         assert result == expected
 
+    def test_interpolate_nested_structure(self):
+        """Test every string in a structure is interpolated, at any depth"""
+        template = {
+            "project_id": "{{projectid}}",
+            "sample_sheet": {
+                "class": "File",
+                "location": "s3://store/{{projectid}}/{{project_type}}.txt",
+            },
+            "references": ["{{reference}}", "fixed"],
+        }
+        context = {"projectid": "P-1", "project_type": "RNA-Seq", "reference": "GRCh38"}
+
+        assert interpolate(template, context) == {
+            "project_id": "P-1",
+            "sample_sheet": {"class": "File", "location": "s3://store/P-1/RNA-Seq.txt"},
+            "references": ["GRCh38", "fixed"],
+        }
+        # A new structure is returned; the template is left as it was
+        assert template["project_id"] == "{{projectid}}"
+
+    def test_interpolate_leaves_keys_and_other_values_alone(self):
+        """Test dict keys, and values that are not strings, pass through unchanged"""
+        template = {"{{projectid}}": 4, "flag": True, "nothing": None, "ratio": 0.5}
+        assert interpolate(template, {"projectid": "P-1"}) == template
+
 
 class TestSearchBodyBuilder:
     """Tests for OpenSearch query body builder"""

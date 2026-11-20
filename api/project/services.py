@@ -728,17 +728,6 @@ def _resolve_reference(
     )
 
 
-def _interpolate_values(value, template_context: dict):
-    """Interpolate every string in a nested structure of dicts and lists."""
-    if isinstance(value, str):
-        return interpolate(value, template_context)
-    if isinstance(value, dict):
-        return {key: _interpolate_values(item, template_context) for key, item in value.items()}
-    if isinstance(value, list):
-        return [_interpolate_values(item, template_context) for item in value]
-    return value
-
-
 def _resolve_launch_workflow_version(
     session: Session, project: Project, workflow_ref: str
 ) -> WorkflowVersion:
@@ -833,7 +822,7 @@ def _prepare_workflow_launch(
     version = _resolve_launch_workflow_version(session, project, launch_workflow.workflow)
 
     try:
-        configured_inputs = _interpolate_values(launch_workflow.inputs or {}, template_context)
+        configured_inputs = interpolate(launch_workflow.inputs or {}, template_context)
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
