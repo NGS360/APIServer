@@ -307,8 +307,11 @@ erDiagram
     Workflow ||--o{ WorkflowVersion : "has versions"
     Workflow ||--o{ WorkflowVersionAlias : "has aliases"
     Workflow ||--o{ PipelineWorkflow : "member of"
+    Workflow ||--o{ ProjectWorkflowVersion : "version recorded per project"
     WorkflowVersion ||--o{ WorkflowDeployment : "deployed on"
+    WorkflowVersion ||--o{ ProjectWorkflowVersion : "recorded version"
     WorkflowVersionAlias }o--|| WorkflowVersion : "points to"
+    Project ||--o{ ProjectWorkflowVersion : "runs version"
     
     Workflow {
         uuid id PK
@@ -351,6 +354,17 @@ erDiagram
         string created_by
     }
     
+    ProjectWorkflowVersion {
+        uuid id PK
+        string project_id FK
+        uuid workflow_id FK
+        int version FK
+        datetime created_at
+        string created_by
+        datetime updated_at
+        string updated_by
+    }
+
     %% ==========================================
     %% Pipelines
     %% ==========================================
@@ -452,6 +466,7 @@ erDiagram
 - **WorkflowVersion**: Versioned workflow definitions (version string + definition URI)
 - **WorkflowVersionAlias**: Named pointers (e.g. production, development) to specific versions
 - **WorkflowDeployment**: Platform-specific deployments of workflow versions (links version to platform)
+- **ProjectWorkflowVersion**: The workflow version a project runs, one per project and workflow
 
 ### Batch Jobs
 
@@ -478,6 +493,7 @@ erDiagram
 13. **WorkflowVersion → WorkflowDeployment → Platform**: Many-to-many (versions are deployed on specific platforms)
 14. **Platform → WorkflowDeployment**: One-to-many (platforms host multiple workflow deployments)
 15. **Pipeline → PipelineWorkflow → Workflow**: Many-to-many (version-agnostic grouping)
+16. **Project → ProjectWorkflowVersion**: One-to-many (a project records one version per workflow it runs)
 
 ## Unique Constraints
 
@@ -494,6 +510,7 @@ erDiagram
 - **WorkflowVersionAlias**: `(workflow_id, alias)` - One alias name per workflow
 - **ProjectAttribute**: `(project_id, key)` - One value per key per project
 - **SampleAttribute**: `(sample_id, key)` - One value per key per sample
+- **ProjectWorkflowVersion**: `(project_id, workflow_id)` - One version per project per workflow. Deliberately not scoped by platform: a project runs one version of a workflow, whichever platform executes it
 
 ## Indexes
 
@@ -522,6 +539,7 @@ The workflow system supports definition, versioning, and cross-platform deployme
 - **WorkflowVersion**: Immutable snapshot with a `version` string and `definition_uri`
 - **WorkflowVersionAlias**: Labels a specific version with a free-text alias name (re-pointable)
 - **WorkflowDeployment**: Links a version to a specific platform (e.g., version 1.2.0 deployed on Arvados)
+- **ProjectWorkflowVersion**: Records the version a project runs, so the project keeps running it even after an alias moves on
 
 Workflow execution tracking (runs) is handled by an external database via the GA4GH WES API. The `workflow_run_id` fields on QCRecord and QCMetric are plain UUIDs that act as soft references to that external system.
 

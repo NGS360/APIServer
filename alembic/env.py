@@ -18,7 +18,7 @@ from api.files.models import (
 )
 from api.samples.models import Sample, SampleAttribute
 from api.settings.models import Setting
-from api.project.models import Project
+from api.project.models import Project, ProjectWorkflowVersion
 from api.runs.models import SequencingRun, SampleSequencingRun
 from api.vendors.models import Vendor
 from api.workflow.models import (

@@ -1,0 +1,58 @@
+"""Add the projectworkflowversion table
+
+Revision ID: f7d7c1325899
+Revises: c8e4a1f72b93
+Create Date: 2026-10-23
+
+Records which version of each workflow a project runs, so a project keeps
+running the same version across runs, even after an alias moves.
+
+`version` is stored as the version number with a composite FK to
+workflowversion(workflow_id, version), rather than an FK to
+workflowversion.id. MySQL needs the referenced columns indexed,
+which the existing uq_workflow_version unique key already provides.
+
+UNIQUE(project_id, workflow_id) is the guarantee that a project cannot end up
+with two versions of the same workflow, whatever writes the rows.
+
+New table only; no existing rows are touched.
+"""
+from typing import Sequence, Union
+
+import sqlalchemy as sa
+import sqlmodel
+from alembic import op
+
+revision: str = 'f7d7c1325899'
+down_revision: Union[str, Sequence[str], None] = 'c8e4a1f72b93'
+branch_labels: Union[str, Sequence[str], None] = None
+depends_on: Union[str, Sequence[str], None] = None
+
+
+def upgrade() -> None:
+    op.create_table(
+        'projectworkflowversion',
+        sa.Column('id', sa.Uuid(), nullable=False),
+        sa.Column('project_id', sqlmodel.sql.sqltypes.AutoString(), nullable=False),
+        sa.Column('workflow_id', sa.Uuid(), nullable=False),
+        sa.Column('version', sa.Integer(), nullable=False),
+        sa.Column('created_at', sa.DateTime(), nullable=False),
+        sa.Column('created_by', sqlmodel.sql.sqltypes.AutoString(), nullable=False),
+        sa.Column('updated_at', sa.DateTime(), nullable=True),
+        sa.Column('updated_by', sqlmodel.sql.sqltypes.AutoString(), nullable=True),
+        sa.PrimaryKeyConstraint('id'),
+        sa.ForeignKeyConstraint(['project_id'], ['project.project_id']),
+        sa.ForeignKeyConstraint(['workflow_id'], ['workflow.id']),
+        sa.ForeignKeyConstraint(
+            ['workflow_id', 'version'],
+            ['workflowversion.workflow_id', 'workflowversion.version'],
+            name='fk_projectworkflowversion_workflowversion',
+        ),
+        sa.UniqueConstraint(
+            'project_id', 'workflow_id', name='uq_project_workflow',
+        ),
+    )
+
+
+def downgrade() -> None:
+    op.drop_table('projectworkflowversion')
