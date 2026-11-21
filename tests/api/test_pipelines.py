@@ -368,78 +368,29 @@ def test_get_pipeline_types_launch_action(
     session: Session,
     mock_s3_client
 ):
-    """Test launch offers a platform's reference models, and only where it can launch"""
-    mock_get_setting.return_value = "s3://ngs360-resources/pipeline_configs/"
-    mock_s3_client.setup_bucket(
-        "ngs360-resources", "pipeline_configs/",
-        [{"Key": "pipeline_configs/rna-seq_pipeline.yaml"}], []
-    )
-    sample_config = {
-        "project_type": "RNA-Seq",
-        "project_admins": ["admin@example.com"],
-        "platforms": {
-            "Arvados": {
-                "create_project_command": "arvados loadProject",
-                # Listed, but with no workflow to launch there is nothing to launch
-                "references": [{"RNA-Seq: GRCh38": "GRCh38"}],
-            },
-            "NGS360": {
-                "launch_workflow": {
-                    "workflow": "00000000-0000-0000-0000-000000000001",
-                    "engine": "AWSBatch",
-                },
-                "references": [
-                    {"RNA-Seq: GRCh38ERCC.ensembl91": "GRCh38ERCC.ensembl91"},
-                ],
-            },
-        }
-    }
-    mock_s3_client.uploaded_files["ngs360-resources"] = {
-        "pipeline_configs/rna-seq_pipeline.yaml": yaml.dump(sample_config).encode("utf-8")
-    }
-
-    response = client.get(
-        "/api/v1/actions/types",
-        params={"action": "launch-pipeline", "platform": "NGS360"}
-    )
-    assert response.status_code == 200
-    assert response.json() == [{
-        "label": "RNA-Seq: GRCh38ERCC.ensembl91",
-        "value": "GRCh38ERCC.ensembl91",
-        "project_type": "RNA-Seq",
-    }]
-
-    response = client.get(
-        "/api/v1/actions/types",
-        params={"action": "launch-pipeline", "platform": "Arvados"}
-    )
-    assert response.status_code == 200
-    assert response.json() == []
-
-
-@patch("api.actions.services.get_setting_value")
-def test_get_launch_types_where_no_references_are_listed(
-    mock_get_setting: MagicMock,
-    client: TestClient,
-    session: Session,
-    mock_s3_client
-):
-    """Test launch offers the project type itself where a platform lists no references"""
+    """Test launch offers a project type with its launchers, and only where it can launch"""
     mock_get_setting.return_value = "s3://ngs360-resources/pipeline_configs/"
     mock_s3_client.setup_bucket(
         "ngs360-resources", "pipeline_configs/",
         [{"Key": "pipeline_configs/wes_pipeline.yaml"}], []
     )
+    launch_workflow = {"workflow": "00000000-0000-0000-0000-000000000001", "engine": "AWSBatch"}
     sample_config = {
         "project_type": "WES",
         "project_admins": ["admin@example.com"],
         "platforms": {
-            # No references: the reference is one of the workflow's inputs
+            "Arvados": {
+                "create_project_command": "arvados loadProject",
+                # Apps the user runs on the platform itself: nothing to launch from here
+                "launchers": ["launcher-app-1", "launcher-app-2"],
+            },
             "NGS360": {
-                "launch_workflow": {
-                    "workflow": "00000000-0000-0000-0000-000000000001",
-                    "engine": "AWSBatch",
-                },
+                "launchers": [
+                    {"name": "WES", "launch_workflow": launch_workflow},
+                    {"name": "MSI", "launch_workflow": launch_workflow},
+                    # Named, but with no workflow to launch it
+                    {"name": "CNV"},
+                ],
             },
         }
     }
@@ -452,7 +403,53 @@ def test_get_launch_types_where_no_references_are_listed(
         params={"action": "launch-pipeline", "platform": "NGS360"}
     )
     assert response.status_code == 200
-    assert response.json() == [{"label": "WES", "value": "WES", "project_type": "WES"}]
+    assert response.json() == [{
+        "label": "WES",
+        "value": "WES",
+        "project_type": "WES",
+        "launchers": ["WES", "MSI"],
+    }]
+
+    response = client.get(
+        "/api/v1/actions/types",
+        params={"action": "launch-pipeline", "platform": "Arvados"}
+    )
+    assert response.status_code == 200
+    assert response.json() == []
+
+
+@patch("api.actions.services.get_setting_value")
+def test_validate_pipeline_config_rejects_launchers_sharing_a_name(
+    mock_get_setting: MagicMock,
+    client: TestClient,
+    session: Session,
+    mock_s3_client
+):
+    """Test a platform's launchers must have names a launch can tell apart"""
+    mock_get_setting.return_value = "s3://ngs360-resources/pipeline_configs/"
+    launch_workflow = {"workflow": "00000000-0000-0000-0000-000000000001", "engine": "AWSBatch"}
+    config = {
+        "project_type": "WES",
+        "project_admins": ["admin@example.com"],
+        "platforms": {
+            "NGS360": {
+                "launchers": [
+                    {"name": "WES", "launch_workflow": launch_workflow},
+                    {"name": "WES", "launch_workflow": launch_workflow},
+                ],
+            },
+        },
+    }
+    mock_s3_client.uploaded_files["ngs360-resources"] = {
+        "pipeline_configs/wes_pipeline.yaml": yaml.dump(config).encode("utf-8")
+    }
+
+    response = client.post(
+        "/api/v1/actions/config/validate",
+        params={"s3_path": "wes_pipeline.yaml"}
+    )
+    assert response.status_code == 422
+    assert "Launcher names must be unique: WES" in response.text
 
 
 @patch("api.actions.services.get_setting_value")
