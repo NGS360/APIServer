@@ -21,7 +21,13 @@ import yaml
 from api.jobs.models import BatchJob, VendorIngestionConfig
 from api.settings.services import get_setting, get_setting_value
 from api.actions.services import get_all_action_configs
-from api.actions.models import ActionOption, ActionPlatform, LaunchWorkflow
+from api.actions.models import (
+    ActionOption,
+    ActionPlatform,
+    Launcher,
+    LaunchWorkflow,
+    PlatformConfig,
+)
 from api.files.models import FileUploadCreate
 from api.files.services import create_file_upload
 from api.jobs.services import submit_batch_job
@@ -700,9 +706,9 @@ def _resolve_reference(
     """
     Look a reference label up among a platform's configured choices.
 
-    The export and launch actions both name their reference by label and run
-    with the value configured for it, so a request can only ever run against
-    something the configuration lists.
+    An export names its reference by label and runs with the value configured
+    for it, so a request can only ever run against something the configuration
+    lists.
 
     Raises:
         HTTPException: 400 if the reference is missing or is not a configured choice
@@ -725,6 +731,49 @@ def _resolve_reference(
             f"Reference '{reference}' not found in {choices_name} for "
             f"platform '{platform.value}' and project type '{project_type}'"
         )
+    )
+
+
+def _select_launcher(
+    platform_config: PlatformConfig,
+    name: str | None,
+    platform: "ActionPlatform",
+    project_type: str,
+) -> Launcher:
+    """
+    The launcher a launch request means, among those the platform can launch.
+
+    A request names its launcher. It may leave the name out where there is only
+    one to choose from.
+
+    Raises:
+        HTTPException: 400 if the platform launches nothing for the project
+            type, the name matches no launcher, or no name is given and there
+            are several
+    """
+    launchers = platform_config.launchable
+    where = f"platform '{platform.value}' in project type '{project_type}'"
+    if not launchers:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Action '{ActionOption.LAUNCH_PIPELINE.value}' is not configured for {where}"
+        )
+
+    names = ", ".join(launcher.name for launcher in launchers)
+    if name is None:
+        if len(launchers) == 1:
+            return launchers[0]
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"A launcher is required for {where}: one of {names}"
+        )
+
+    for launcher in launchers:
+        if launcher.name == name:
+            return launcher
+    raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail=f"Launcher '{name}' not found for {where}: one of {names}"
     )
 
 
@@ -893,6 +942,7 @@ def submit_pipeline_job(
     s3_client=None,
     submitter: User | None = None,
     inputs: dict | None = None,
+    launcher: str | None = None,
 ) -> BatchJob:
     """
     Submit a pipeline job to AWS Batch.
@@ -901,8 +951,8 @@ def submit_pipeline_job(
     command to use based on the action, interpolates template variables, and submits
     the job to AWS Batch.
 
-    A launch runs a registered workflow, not a command: see
-    _prepare_workflow_launch.
+    A launch runs one of the platform's launchers, each a registered workflow
+    rather than a command: see _select_launcher and _prepare_workflow_launch.
 
     Args:
         session: Database session
@@ -913,14 +963,15 @@ def submit_pipeline_job(
         project_type: Pipeline type (e.g., RNA-Seq)
         username: Username of the user submitting the job
         email: Email of the user submitting the job (available as template variable)
-        reference: Reference label (required for the export action, and for the
-            launch action on a platform that lists reference models)
+        reference: Reference label (required for the export action)
         auto_release: Auto-release flag (only valid for export action)
         s3_client: Optional boto3 S3 client
         submitter: The submitting user, who owns the job's API key when the
             action's aws_batch settings ask for one
         inputs: Values for the inputs of the workflow a launch runs (only for
             the launch action)
+        launcher: Name of the launcher to run (only for the launch action; may
+            be left out where the platform has just one for the project type)
 
     Returns:
         BatchJob instance
@@ -954,6 +1005,7 @@ def submit_pipeline_job(
 
     # Validate action-specific requirements
     reference_value = None
+    selected_launcher = None
     if action == ActionOption.CREATE_PROJECT:
         # Ignore auto_release for create action - just set to None/False
         if auto_release is None:
@@ -968,16 +1020,7 @@ def submit_pipeline_job(
         )
     elif action == ActionOption.LAUNCH_PIPELINE:
         auto_release = False
-
-        # The launcher resolves the reference model itself, so the request may
-        # only name one the configuration lists for this platform. A platform
-        # may list none, and take the reference as one of the workflow's inputs
-        # instead.
-        if platform_config.references:
-            reference_value = _resolve_reference(
-                platform_config.references, "references", reference, action, platform,
-                project_type
-            )
+        selected_launcher = _select_launcher(platform_config, launcher, platform, project_type)
 
     # Prepare template context with all variables needed for interpolation
     template_context = {
@@ -988,15 +1031,18 @@ def submit_pipeline_job(
         "platform": platform.value,
         "action": action.value,
         "reference": reference_value,  # Use the looked-up value, not the label
-        "auto_release": auto_release
+        "auto_release": auto_release,
+        # Empty for the other actions, so a job name shared by all of them can
+        # carry it
+        "launcher": selected_launcher.name if selected_launcher else "",
     }
 
     # What the platform configures for the action: a command to run, or for a
-    # launch the registered workflow to run.
+    # launch the registered workflow of the launcher chosen.
     if action == ActionOption.CREATE_PROJECT:
         configured = platform_config.create_project_command
     elif action == ActionOption.LAUNCH_PIPELINE:
-        configured = platform_config.launch_workflow
+        configured = selected_launcher.launch_workflow
     else:  # export-project-results
         configured = platform_config.export_command
 
@@ -1047,7 +1093,7 @@ def submit_pipeline_job(
         command, job_definition = _prepare_workflow_launch(
             session=session,
             project=project,
-            launch_workflow=platform_config.launch_workflow,
+            launch_workflow=selected_launcher.launch_workflow,
             template_context=template_context,
             inputs=inputs,
             job_name=interpolated_job_name,

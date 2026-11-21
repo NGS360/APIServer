@@ -4,6 +4,8 @@ Models for the Actions API
 
 from enum import Enum
 from typing import List, Dict, Any
+from pydantic import model_validator
+from pydantic_core import PydanticCustomError
 from sqlmodel import SQLModel, Field
 from api.jobs.models import AwsBatchConfig, AwsBatchEnvironment
 
@@ -51,7 +53,7 @@ class ActionBatchOverride(SQLModel):
 
 class LaunchWorkflow(SQLModel):
     """
-    A registered workflow that launches the pipeline.
+    A registered workflow that launches a pipeline.
 
     The launch hands the workflow's definition and an inputs object to a runner
     job: a batch job whose image knows how to run a workflow in that language.
@@ -76,26 +78,61 @@ class LaunchWorkflow(SQLModel):
     inputs: Dict[str, Any] | None = None
 
 
+class Launcher(SQLModel):
+    """
+    One of the launchers a platform runs for a project type, by name.
+
+    A project type can have several: its main pipeline and others that work on
+    the same kind of data. The name is what a user chooses and what a launch
+    request gives.
+    """
+    name: str
+    # The workflow that launches it. A launcher named without one cannot be
+    # launched from here.
+    launch_workflow: LaunchWorkflow | None = None
+
+
 class PlatformConfig(SQLModel):
     """Model for platform-specific configuration (Arvados, SevenBridges, etc)."""
     create_project_command: str | None = None
-    launchers: str | List[str] | None = None
+    # The platform's launchers, in one of two forms. Where a launcher is an app
+    # the user runs on the platform itself, after create-project has put it in
+    # their project: the ids of those apps, and there is nothing to launch from
+    # here. Where a platform has nowhere of its own to start a launcher: named
+    # launchers, each with the workflow that launches it.
+    launchers: str | List[str | Launcher] | None = None
     exports: List[Dict[str, str]] | None = None
     export_command: str | None = None
-    # Reference models a pipeline can be launched against, each a single
-    # {label: reference} pair as in `exports`. The launcher resolves the
-    # reference itself, so these must be ones its own configuration knows.
-    # Optional: a platform listing none takes the reference as one of the
-    # launch workflow's inputs.
-    references: List[Dict[str, str]] | None = None
-    # Launches the pipeline. Only for a platform with nowhere of its own to
-    # start a launcher. Where the launcher is an app the user runs on the
-    # platform itself, after create-project has put it in their project, there
-    # is nothing to launch from here.
-    launch_workflow: LaunchWorkflow | None = None
     # Per-action changes to the project type's aws_batch: the API key a launch
     # asks for, say, or a job queue of its own.
     aws_batch: Dict[ActionOption, ActionBatchOverride] | None = None
+
+    @model_validator(mode="after")
+    def launcher_names_are_unique(self):
+        """A launch names its launcher, so two cannot share a name."""
+        names = [launcher.name for launcher in self.named_launchers]
+        repeated = sorted({name for name in names if names.count(name) > 1})
+        if repeated:
+            # Not a bare ValueError: the error's context is returned by the
+            # endpoint that validates a configuration, and has to be JSON
+            raise PydanticCustomError(
+                "launcher_names_not_unique",
+                "Launcher names must be unique: {names}",
+                {"names": ", ".join(repeated)},
+            )
+        return self
+
+    @property
+    def named_launchers(self) -> List[Launcher]:
+        """The launchers given by name rather than as an app id."""
+        if not isinstance(self.launchers, list):
+            return []
+        return [launcher for launcher in self.launchers if isinstance(launcher, Launcher)]
+
+    @property
+    def launchable(self) -> List[Launcher]:
+        """The launchers that can be launched from here: those with a workflow to run."""
+        return [launcher for launcher in self.named_launchers if launcher.launch_workflow]
 
 
 class ActionConfig(SQLModel):
@@ -127,12 +164,14 @@ class ActionSubmitRequest(SQLModel):
     action: ActionOption
     platform: ActionPlatform
     project_type: str  # The workflow type (e.g., "RNA-Seq", "WGS")
-    # Reference label: an export for the export action, a reference model for
-    # the launch action. Required for both, except for a launch on a platform
-    # that lists no references and takes the reference as a workflow input.
+    # Label of the export to run (required for the export action, and only
+    # used by it)
     reference: str | None = None
     # Auto-release flag (only valid for export action)
     auto_release: bool | None = None
+    # Name of the launcher to run (only for the launch action). May be left out
+    # where the platform has just one for the project type.
+    launcher: str | None = None
     # Values for the inputs of the workflow a launch runs, keyed by input id
     # (only for the launch action)
     inputs: Dict[str, Any] | None = None

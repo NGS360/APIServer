@@ -934,13 +934,12 @@ NGS360_PIPELINE_CONFIG = {
     "platforms": {
         "Arvados": {
             "create_project_command": "arvados loadProject -p {{projectid}}",
+            # Apps the user runs on the platform itself: nothing to launch from here
+            "launchers": ["launcher-app-1", "launcher-app-2"],
         },
         "NGS360": {
             "create_project_command": "samples generate --projectid {{projectid}}",
-            "references": [
-                {"RNA-Seq: GRCh38ERCC.ensembl91": "GRCh38ERCC.ensembl91"},
-            ],
-            # What to launch is added by _config_launching_workflow, which needs
+            # Its launchers are added by _config_launching_workflow, which needs
             # a registered workflow to name
             "aws_batch": {
                 "launch-pipeline": {
@@ -991,11 +990,8 @@ def _batch_environment(mock_batch: MagicMock) -> dict:
     return {env["name"]: env["value"] for env in overrides["environment"]}
 
 
-LAUNCH = {
-    "action": "launch-pipeline",
-    "platform": "NGS360",
-    "reference": "RNA-Seq: GRCh38ERCC.ensembl91",
-}
+# The platform's one launcher is launched without being named
+LAUNCH = {"action": "launch-pipeline", "platform": "NGS360"}
 
 BATCH_ENGINE = "AWSBatch"
 OTHER_ENGINE = "AWSHealthOmics (us-east)"
@@ -1047,22 +1043,45 @@ def launcher_fixture(session: Session) -> Workflow:
 
 
 def _config_launching_workflow(workflow: Workflow, tag: str = ":2", **changes) -> dict:
-    """The NGS360 pipeline config, with the platform launching a registered workflow"""
+    """The NGS360 pipeline config, with the platform launching one registered workflow"""
     config = copy.deepcopy(NGS360_PIPELINE_CONFIG)
-    config["platforms"]["NGS360"]["launch_workflow"] = {
-        "workflow": f"{workflow.id}{tag}",
-        "engine": BATCH_ENGINE,
-        "inputs": {
-            "platform": "NGS360",
-            "project_id": "{{projectid}}",
-            "reference_model": "{{reference}}",
-            "sample_sheet": {
-                "class": "File",
-                "location": "s3://store/{{projectid}}/{{projectid}}.{{project_type}}.txt",
+    config["platforms"]["NGS360"]["launchers"] = [{
+        "name": "RNA-Seq",
+        "launch_workflow": {
+            "workflow": f"{workflow.id}{tag}",
+            "engine": BATCH_ENGINE,
+            "inputs": {
+                "platform": "NGS360",
+                "project_id": "{{projectid}}",
+                "reference_model": "GRCh38ERCC.ensembl91",
+                "sample_sheet": {
+                    "class": "File",
+                    "location": "s3://store/{{projectid}}/{{projectid}}.{{project_type}}.txt",
+                },
             },
+            **changes,
         },
-        **changes,
-    }
+    }]
+    return config
+
+
+def _config_with_several_launchers(workflow: Workflow) -> dict:
+    """
+    A WES pipeline config whose NGS360 platform has more than one launcher.
+
+    WES launches version 2 of the workflow and MSI version 1, so which one ran
+    shows in the definition and the job definition. CNV is named but has no
+    workflow, so it cannot be launched. The job name carries the launcher.
+    """
+    config = _config_launching_workflow(workflow)
+    config["project_type"] = "WES"
+    config["aws_batch"]["job_name"] = "{{action}}-{{projectid}}-{{launcher}}"
+    wes = config["platforms"]["NGS360"]["launchers"][0]
+    wes["name"] = "WES"
+    msi = copy.deepcopy(wes)
+    msi["name"] = "MSI"
+    msi["launch_workflow"]["workflow"] = f"{workflow.id}:1"
+    config["platforms"]["NGS360"]["launchers"] = [wes, msi, {"name": "CNV"}]
     return config
 
 
@@ -1098,33 +1117,6 @@ def test_submit_other_action_ignores_launch_job_settings(
     assert "WES_API_ENDPOINT" not in names
 
 
-@pytest.mark.parametrize("reference", [None, "RNA-Seq: GRCm38ERCC.ensembl91"])
-@patch("api.jobs.services.boto3.client")
-@patch("api.actions.services.get_setting_value")
-def test_submit_launch_pipeline_job_requires_configured_reference(
-    mock_get_setting: MagicMock,
-    mock_boto_client: MagicMock,
-    reference,
-    client: TestClient,
-    test_project: Project,
-    launcher: Workflow,
-    mock_s3_client
-):
-    """Test a launch can only name a reference model the platform lists"""
-    mock_get_setting.return_value = "s3://ngs360-resources/pipeline_configs/"
-    mock_batch = _mock_batch(mock_boto_client)
-
-    response = _submit_action(
-        client, test_project, mock_s3_client,
-        {"action": "launch-pipeline", "platform": "NGS360", "reference": reference},
-        _config_launching_workflow(launcher),
-    )
-
-    assert response.status_code == 400
-    assert "Reference" in response.json()["detail"]
-    mock_batch.submit_job.assert_not_called()
-
-
 @patch("api.jobs.services.boto3.client")
 @patch("api.actions.services.get_setting_value")
 def test_submit_launch_pipeline_job_on_platform_that_cannot_launch(
@@ -1134,17 +1126,21 @@ def test_submit_launch_pipeline_job_on_platform_that_cannot_launch(
     test_project: Project,
     mock_s3_client
 ):
-    """Test launching is refused on a platform that names no workflow to launch"""
+    """Test launching is refused on a platform whose launchers are apps of its own"""
     mock_get_setting.return_value = "s3://ngs360-resources/pipeline_configs/"
     mock_batch = _mock_batch(mock_boto_client)
 
     response = _submit_action(client, test_project, mock_s3_client, {
         "action": "launch-pipeline",
         "platform": "Arvados",
-        "reference": "RNA-Seq: GRCh38ERCC.ensembl91",
+        "launcher": "launcher-app-1",
     })
 
     assert response.status_code == 400
+    assert response.json()["detail"] == (
+        "Action 'launch-pipeline' is not configured for platform 'Arvados' "
+        "in project type 'RNA-Seq'"
+    )
     mock_batch.submit_job.assert_not_called()
 
 
@@ -1183,7 +1179,6 @@ def test_submit_launch_runs_registered_workflow(
         "run_fusion": True,
         "platform": "NGS360",
         "project_id": test_project.project_id,
-        # The reference label, resolved to the configured reference model
         "reference_model": "GRCh38ERCC.ensembl91",
         "sample_sheet": {
             "class": "File",
@@ -1300,7 +1295,7 @@ def test_submit_launch_refuses_a_version_not_deployed_on_the_engine(
 @pytest.mark.parametrize("inputs, config_inputs, detail", [
     ({"run_fuson": True}, None, "has no input named: run_fuson"),
     # The configuration stops supplying the sample sheet, and the request has none
-    ({}, {"reference_model": "{{reference}}"}, "requires a value for: sample_sheet"),
+    ({}, {"reference_model": "GRCh38ERCC.ensembl91"}, "requires a value for: sample_sheet"),
 ])
 @patch("api.jobs.services.boto3.client")
 @patch("api.actions.services.get_setting_value")
@@ -1333,7 +1328,7 @@ def test_submit_launch_checks_inputs_against_the_workflow_version(
 
 @patch("api.jobs.services.boto3.client")
 @patch("api.actions.services.get_setting_value")
-def test_submit_launch_takes_the_reference_as_an_input_where_none_are_listed(
+def test_submit_launch_takes_inputs_the_configuration_leaves_to_the_request(
     mock_get_setting: MagicMock,
     mock_boto_client: MagicMock,
     client: TestClient,
@@ -1341,27 +1336,116 @@ def test_submit_launch_takes_the_reference_as_an_input_where_none_are_listed(
     launcher: Workflow,
     mock_s3_client
 ):
-    """Test a platform listing no references needs no reference label for a launch"""
+    """Test an input the configuration does not supply, such as the reference, is the request's"""
     mock_get_setting.return_value = "s3://ngs360-resources/pipeline_configs/"
     mock_batch = _mock_batch(mock_boto_client)
     config = _config_launching_workflow(launcher)
-    ngs360 = config["platforms"]["NGS360"]
-    del ngs360["references"]
-    del ngs360["launch_workflow"]["inputs"]["reference_model"]
+    del config["platforms"]["NGS360"]["launchers"][0]["launch_workflow"]["inputs"]["reference_model"]
 
     response = _submit_action(
         client, test_project, mock_s3_client,
-        {
-            "action": "launch-pipeline",
-            "platform": "NGS360",
-            "inputs": {"reference_model": "GRCm38ERCC.ensembl91"},
-        },
+        {**LAUNCH, "inputs": {"reference_model": "GRCm38ERCC.ensembl91"}},
         config,
     )
 
     assert response.status_code == 201, response.text
     command = mock_batch.submit_job.call_args[1]["containerOverrides"]["command"]
     assert _launch_inputs(mock_s3_client, command)["reference_model"] == "GRCm38ERCC.ensembl91"
+
+
+@pytest.mark.parametrize("name, definition, job_definition", [
+    ("WES", "s3://definitions/launcher-v2.cwl", "runner:2"),
+    ("MSI", "s3://definitions/launcher-v1.cwl", "runner:1"),
+])
+@patch("api.jobs.services.boto3.client")
+@patch("api.actions.services.get_setting_value")
+def test_submit_launch_runs_the_launcher_the_request_names(
+    mock_get_setting: MagicMock,
+    mock_boto_client: MagicMock,
+    name: str,
+    definition: str,
+    job_definition: str,
+    client: TestClient,
+    test_project: Project,
+    launcher: Workflow,
+    mock_s3_client
+):
+    """Test a platform with several launchers runs the workflow of the one named"""
+    mock_get_setting.return_value = "s3://ngs360-resources/pipeline_configs/"
+    mock_batch = _mock_batch(mock_boto_client)
+
+    response = _submit_action(
+        client, test_project, mock_s3_client,
+        {**LAUNCH, "project_type": "WES", "launcher": name},
+        _config_with_several_launchers(launcher),
+    )
+
+    assert response.status_code == 201, response.text
+    call_args = mock_batch.submit_job.call_args[1]
+    assert call_args["containerOverrides"]["command"][1] == definition
+    assert call_args["jobDefinition"] == job_definition
+    # The launcher's name is there for the job name to use
+    assert call_args["jobName"] == f"launch-pipeline-{test_project.project_id}-{name}"
+
+
+@pytest.mark.parametrize("name, detail", [
+    (None, "A launcher is required for"),
+    ("HLA", "Launcher 'HLA' not found for"),
+    # Named in the configuration, but with no workflow to launch it
+    ("CNV", "Launcher 'CNV' not found for"),
+])
+@patch("api.jobs.services.boto3.client")
+@patch("api.actions.services.get_setting_value")
+def test_submit_launch_needs_one_of_the_platforms_launchers(
+    mock_get_setting: MagicMock,
+    mock_boto_client: MagicMock,
+    name: str | None,
+    detail: str,
+    client: TestClient,
+    test_project: Project,
+    launcher: Workflow,
+    mock_s3_client
+):
+    """Test a launch is refused unless it names a launcher the platform can launch"""
+    mock_get_setting.return_value = "s3://ngs360-resources/pipeline_configs/"
+    mock_batch = _mock_batch(mock_boto_client)
+
+    response = _submit_action(
+        client, test_project, mock_s3_client,
+        {**LAUNCH, "project_type": "WES", "launcher": name},
+        _config_with_several_launchers(launcher),
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == (
+        f"{detail} platform 'NGS360' in project type 'WES': one of WES, MSI"
+    )
+    mock_batch.submit_job.assert_not_called()
+
+
+@patch("api.jobs.services.boto3.client")
+@patch("api.actions.services.get_setting_value")
+def test_submit_other_action_has_no_launcher_in_its_job_name(
+    mock_get_setting: MagicMock,
+    mock_boto_client: MagicMock,
+    client: TestClient,
+    test_project: Project,
+    launcher: Workflow,
+    mock_s3_client
+):
+    """Test a job name that carries the launcher renders it empty for the other actions"""
+    mock_get_setting.return_value = "s3://ngs360-resources/pipeline_configs/"
+    mock_batch = _mock_batch(mock_boto_client)
+
+    response = _submit_action(
+        client, test_project, mock_s3_client,
+        {"action": "create-project", "platform": "NGS360", "project_type": "WES"},
+        _config_with_several_launchers(launcher),
+    )
+
+    assert response.status_code == 201, response.text
+    job_name = mock_batch.submit_job.call_args[1]["jobName"]
+    assert job_name == f"create-project-{test_project.project_id}-"
 
 
 def _config_minting_launch_key(workflow: Workflow, hours: int = 72) -> dict:

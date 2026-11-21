@@ -168,7 +168,9 @@ def get_action_types(
         platform: The platform
 
     Returns:
-        List of action types with label, value, and project_type
+        List of action types with label, value, and project_type. For the
+        launch action each also has `launchers`: the names of the launchers to
+        choose from for that project type.
     """
     return services.get_project_types_for_action_and_platform(
         session=session,
