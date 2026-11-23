@@ -134,6 +134,7 @@ Additional documentation is available in the `docs/` directory:
 - [SETUP.md](docs/SETUP.md) - Environment setup instructions
 - [AUTHENTICATION.md](docs/AUTHENTICATION.md) - Authentication setup and configuration
 - [OAuth2_Authorization_Code_Grant_Flow.md](docs/OAuth2_Authorization_Code_Grant_Flow.md) - OAuth2 flow details
+- [SWAGGER_AUTHENTICATION.md](docs/SWAGGER_AUTHENTICATION.md) - Authorizing requests from the interactive API docs
 - [RBAC.md](docs/RBAC.md) - Role-based access control: permission model, roles, and rollout plan
 - [ER_DIAGRAM.md](docs/ER_DIAGRAM.md) - Database entity-relationship diagram
 - [FILE_MODEL.md](docs/FILE_MODEL.md) - File model and entity associations
