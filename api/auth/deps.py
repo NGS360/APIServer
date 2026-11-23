@@ -6,7 +6,11 @@ from typing import Annotated
 import uuid
 
 from fastapi import Depends, HTTPException, status
-from fastapi.security import OAuth2PasswordBearer
+from fastapi.security import (
+    HTTPAuthorizationCredentials,
+    HTTPBearer,
+    OAuth2PasswordBearer,
+)
 from jose import JWTError
 from sqlmodel import Session, select
 
@@ -29,6 +33,23 @@ oauth2_scheme_optional = OAuth2PasswordBearer(
     tokenUrl="/api/v1/auth/login",
     auto_error=False
 )
+
+# Documentation only. The password scheme above gives the Swagger "Authorize"
+# dialog a username/password form and nothing else, so a caller who already
+# holds a token -- an API key, or a JWT from an OAuth provider login, where
+# there is no password to type -- has nowhere to put it. Declaring a plain
+# bearer scheme adds a field that takes the token as is.
+#
+# The token is still read by the schemes above: both look at the same
+# Authorization header, so this one never has to. auto_error=False keeps the
+# 401 for a missing header coming from a single place.
+bearer_scheme = HTTPBearer(
+    auto_error=False,
+    description="A JWT access token or an `ngs360_` API key, without the `Bearer ` prefix.",
+)
+BearerCredentials = Annotated[
+    HTTPAuthorizationCredentials | None, Depends(bearer_scheme)
+]
 
 
 def authenticate_api_key(session: Session, token: str) -> User:
@@ -72,7 +93,8 @@ def authenticate_api_key(session: Session, token: str) -> User:
 
 def get_current_user(
     session: SessionDep,
-    token: Annotated[str, Depends(oauth2_scheme)]
+    token: Annotated[str, Depends(oauth2_scheme)],
+    _bearer: BearerCredentials = None,
 ) -> User:
     """
     Get current authenticated user from JWT token or API key.
@@ -80,6 +102,7 @@ def get_current_user(
     Args:
         session: Database session
         token: JWT access token or API key
+        _bearer: Unused; declares the bearer scheme in the OpenAPI document
 
     Returns:
         Current User object
@@ -171,7 +194,8 @@ def get_current_superuser(
 
 def optional_current_user(
     session: SessionDep,
-    token: Annotated[str | None, Depends(oauth2_scheme_optional)]
+    token: Annotated[str | None, Depends(oauth2_scheme_optional)],
+    _bearer: BearerCredentials = None,
 ) -> User | None:
     """
     Get current user if token is provided, None otherwise
@@ -179,6 +203,7 @@ def optional_current_user(
     Args:
         session: Database session
         token: Optional JWT access token or API key
+        _bearer: Unused; declares the bearer scheme in the OpenAPI document
 
     Returns:
         Current User object or None

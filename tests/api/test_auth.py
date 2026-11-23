@@ -393,6 +393,48 @@ class TestProtectedEndpoints:
         assert response.status_code == 401
 
 
+class TestSwaggerTokenAuthorization:
+    """
+    The OpenAPI document offers a way to authorize with an existing token.
+
+    The password scheme alone gives Swagger's "Authorize" dialog only a
+    username/password form, which is no use to a caller holding an API key or
+    a JWT from an OAuth provider login.
+    """
+
+    def test_bearer_scheme_is_declared(self, client: TestClient):
+        """A plain HTTP bearer scheme sits alongside the password flow"""
+        schemes = client.get("/openapi.json").json()["components"]["securitySchemes"]
+
+        assert schemes["HTTPBearer"]["type"] == "http"
+        assert schemes["HTTPBearer"]["scheme"] == "bearer"
+        # The password form still works for local accounts.
+        assert "password" in schemes["OAuth2PasswordBearer"]["flows"]
+
+    @pytest.mark.parametrize("method, path", [
+        # Guarded directly by CurrentUser.
+        ("get", "/api/v1/auth/me"),
+        # Guarded through the router-level dependency.
+        ("get", "/api/v1/projects"),
+    ])
+    def test_protected_operations_accept_either_scheme(
+        self,
+        client: TestClient,
+        method: str,
+        path: str
+    ):
+        """
+        Each scheme is its own entry in `security`, i.e. alternatives.
+
+        A single entry naming both would mean both are required, and Swagger
+        would then refuse to send a request authorized with only one.
+        """
+        operation = client.get("/openapi.json").json()["paths"][path][method]
+
+        assert {"HTTPBearer": []} in operation["security"]
+        assert {"OAuth2PasswordBearer": []} in operation["security"]
+
+
 class TestLogout:
     """Test logout functionality"""
 
