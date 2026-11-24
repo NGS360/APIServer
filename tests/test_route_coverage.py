@@ -148,6 +148,13 @@ def test_guard_count_is_recorded():
     Pins the size of the guarded surface so growth is visible in review rather
     than incidental.
 
+    100 -> 101: GET /projects/{project_id}/workflows, on project:read in the
+    project plane -- the same guard as the project's other reads, so it refuses
+    no one who could already read the project, and a `restricted` project's
+    workflow list is membership-gated like the rest of it. The workflows router
+    (api/workflows/routes.py) is not mounted in main.py, so its routes are not
+    counted.
+
     86 -> 87: GET /jobs/stats/submitters, which backs the Submitted By filter on
     the jobs tables. Guarded on job:read from the start -- the unguarded GET /jobs
     next to it is backlog, not precedent, and a route whose only caller is the
@@ -175,7 +182,7 @@ def test_guard_count_is_recorded():
     115 -> 118 with the user administration API: GET /rbac/users, GET
     /rbac/users/{username}/access and PATCH /users/{username}.
     """
-    assert len(GUARDED) == 100
+    assert len(GUARDED) == 101
 
 
 def test_the_authentication_backlog_only_shrinks():
