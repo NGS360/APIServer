@@ -805,45 +805,45 @@ def remove_project_member(
 
 
 ###############################################################################
-# Project workflow versions /api/v1/projects/{project_id}/workflow
+# Project Workflow /api/v1/projects/{project_id}/workflows
 ###############################################################################
 
 @router.get(
-    "/{project_id}/workflow",
+    "/{project_id}/workflows",
     response_model=list[ProjectWorkflowVersionPublic],
     tags=["Project Endpoints"],
     dependencies=[Depends(require_project_permission(Permission.PROJECT_READ))],
 )
-def get_project_workflow_versions(
+def get_project_workflows(
     session: SessionDep,
     project: ProjectDep,
-    workflow_id: str | None = Query(None, description="Only this workflow"),
+    workflow_name: str | None = Query(None, description="Fetch workflow by workflow"),
 ) -> list[ProjectWorkflowVersionPublic]:
-    """Workflow versions recorded for this project; an empty list if none match."""
-    return services.get_project_workflow_versions(session, project, workflow_id)
+    """ Return a matching workflow or a list of workflows in a project """
+    workflows = services.get_project_workflows(session, project, workflow_name)
+    return workflows
 
 
-@router.put(
-    "/{project_id}/workflow/{workflow_id}",
+@router.post(
+    "/{project_id}/workflows",
     response_model=ProjectWorkflowVersionPublic,
     tags=["Project Endpoints"],
     dependencies=[Depends(require_project_permission(Permission.PROJECT_UPDATE))],
 )
-def set_project_workflow_version(
+def create_project_workflow(
     session: SessionDep,
     project: ProjectDep,
     workflow_id: str,
     current_user: CurrentUser,
 ) -> ProjectWorkflowVersionPublic:
     """
-    Record the workflow version in this project, creating or overwriting the record.
+    Create/Copy a workflow into a project
 
-    `workflow_id` says which version: bare for the workflow's latest, `:<n>`
-    for that version, `:<alias>` for whatever the alias points at.
+    :workflow_id: The bare id for the workflow (to get its latest version) or 
+                  :<n> for a specific version, or
+                  :<alias> for the version the alias currently points to.
     """
-    return services.set_project_workflow_version(
-        session, project, workflow_id, updated_by=current_user.username
-    )
+    return services.add_workflow_to_project(session, workflow_id, project, current_user)
 
 
 @router.delete(
