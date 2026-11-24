@@ -65,12 +65,11 @@ def create_file(
     - **project_id**: Project business key (string)
     - **sequencing_run_id**: SequencingRun UUID
     - **qcrecord_id**: QCRecord UUID
-    - **pipeline_id**: Pipeline UUID
     - **samples**: Sample associations with optional roles (tumor/normal)
     - **hashes**: Hash values by algorithm (md5, sha256, etc.)
     - **tags**: Key-value metadata (type, format, description, etc.)
     - **created_by**: Optional. The person the file belongs to, which for
-      pipeline registrations is the scientist the work was done for rather
+      automated registrations is the scientist the work was done for rather
       than the caller. Must name a known NGS360 account.
 
     The authenticated caller is recorded separately as **submitted_by** and
@@ -100,7 +99,6 @@ def upload_file(
     project_id: Optional[str] = Form(None, description="Project business key"),
     sequencing_run_id: Optional[uuid.UUID] = Form(None, description="SequencingRun UUID"),
     qcrecord_id: Optional[uuid.UUID] = Form(None, description="QCRecord UUID"),
-    pipeline_id: Optional[uuid.UUID] = Form(None, description="Pipeline UUID"),
     relative_path: Optional[str] = Form(None),
     overwrite: bool = Form(False),
     description: Optional[str] = Form(None),
@@ -118,7 +116,6 @@ def upload_file(
     - **project_id**: Project business key (exactly one entity ID required)
     - **sequencing_run_id**: SequencingRun UUID
     - **qcrecord_id**: QCRecord UUID
-    - **pipeline_id**: Pipeline UUID
     - **relative_path**: Optional subdirectory path within entity folder
     - **overwrite**: If True, creates a new version if file exists
     - **description**: Optional file description
@@ -143,7 +140,6 @@ def upload_file(
             project_id=project_id,
             sequencing_run_id=sequencing_run_id,
             qcrecord_id=qcrecord_id,
-            pipeline_id=pipeline_id,
             is_public=is_public,
             created_by=created_by,
             relative_path=relative_path,
@@ -186,7 +182,7 @@ def list_files(
         None,
         description=(
             "Filter by entity type "
-            "(PROJECT, RUN, SEQUENCING_RUN, SAMPLE, QCRECORD, WORKFLOW_RUN, PIPELINE)"
+            "(PROJECT, RUN, SEQUENCING_RUN, SAMPLE, QCRECORD)"
         )
     ),
     entity_id: Optional[str] = Query(
@@ -597,7 +593,7 @@ def delete_file(
     Hard-delete a file record and all associated child rows.
 
     Cascade-deletes: FileHash, FileTag, FileSample, FileProject,
-    FileSequencingRun, FileQCRecord, FileWorkflowRun, FilePipeline.
+    FileSequencingRun, FileQCRecord.
 
     **This action is irreversible.**
 

@@ -50,8 +50,8 @@ class RBACMode(StrEnum):
 # recorded in docs/RBAC.md under *Graduating a permission to enforce*.
 #
 # Not in this set, and why:
-#   file:download, run:demux, project:submit_action, workflow:create,
-#   workflow:deploy, run:associate, project:ingest, project:manage_members
+#   file:download, run:demux, project:submit_action, run:associate,
+#   project:ingest, project:manage_members
 #       -- have live would_deny in the window
 #   manifest:read, manifest:validate
 #       -- were clean until two callers surfaced *after* the routes closed on
@@ -64,9 +64,6 @@ _GRADUATED: frozenset[Permission] = frozenset({
     Permission.JOB_READ,
     Permission.JOB_UPDATE,
     Permission.MANIFEST_UPLOAD,
-    Permission.PIPELINE_CREATE,
-    Permission.PIPELINE_READ,
-    Permission.PIPELINE_UPDATE,
     Permission.PROJECT_CREATE,
     Permission.PROJECT_READ,
     Permission.PROJECT_UPDATE,
@@ -80,8 +77,6 @@ _GRADUATED: frozenset[Permission] = frozenset({
     Permission.SEARCH_QUERY,
     Permission.SETTING_READ,
     Permission.USER_READ,
-    Permission.WORKFLOW_READ,
-    Permission.WORKFLOW_UPDATE,
 })
 
 

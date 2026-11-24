@@ -129,7 +129,7 @@ class TestRoleDefinitions:
             # user tier
             "member",
             # administrative
-            "admin", "vendor_admin", "workflow_admin",
+            "admin", "vendor_admin",
             # service
             "service_account", "auditor",
             # project
@@ -219,20 +219,6 @@ class TestRoleDefinitions:
             Permission.SETTING_UPDATE,
         ):
             assert excluded not in sa
-
-    def test_workflow_admin_covers_every_workflow_permission(self):
-        """
-        Derived from the catalog, not enumerated, so a new workflow:* permission
-        joins it automatically. For a role whose stated scope is "owns the
-        workflow catalog outright", silently narrowing when the catalog grows
-        would be the bug.
-        """
-        every_workflow_permission = {
-            p for p in Permission if str(p).startswith("workflow:")
-        }
-
-        assert ROLE_DEFINITIONS["workflow_admin"].permissions == \
-            every_workflow_permission
 
     def test_every_global_role_beyond_member_adds_a_write(self):
         """
@@ -593,7 +579,7 @@ class TestTheCollapsedRoster:
         """
         from api.rbac.roles import (_ADMIN_ONLY, _MEMBERSHIP_GATED,
                                     _PROJECT_OWNER_ONLY, _RESERVED,
-                                    _VENDOR_ADMIN_ONLY, _WORKFLOW_ADMIN_ONLY)
+                                    _VENDOR_ADMIN_ONLY)
 
         assert {str(p) for p in _ADMIN_ONLY} == {
             "role:manage", "user:manage", "setting:update", "system:reindex",
@@ -602,20 +588,16 @@ class TestTheCollapsedRoster:
         assert {str(p) for p in _VENDOR_ADMIN_ONLY} == {
             "vendor:create", "vendor:update", "vendor:delete",
         }
-        assert {str(p) for p in _WORKFLOW_ADMIN_ONLY} == {
-            "workflow:create", "workflow:update", "workflow:delete",
-            "workflow:deploy",
-        }
         assert {str(p) for p in _MEMBERSHIP_GATED} == {"project:manage_members"}
         assert {str(p) for p in _PROJECT_OWNER_ONLY} == {"project:restrict"}
-        assert len(_RESERVED) == 15
+        assert len(_RESERVED) == 11
 
     def test_member_is_everything_not_reserved(self):
         from api.rbac.roles import _RESERVED
 
         member = ROLE_DEFINITIONS["member"].permissions
         assert member == ALL_PERMISSIONS - _RESERVED
-        assert len(member) == len(ALL_PERMISSIONS) - 15 == 43
+        assert len(member) == len(ALL_PERMISSIONS) - 11 == 39
 
     def test_admin_still_holds_everything(self):
         assert ROLE_DEFINITIONS["admin"].permissions == ALL_PERMISSIONS
@@ -636,10 +618,6 @@ class TestTheCollapsedRoster:
             (Permission.VENDOR_CREATE, "vendor_admin"),
             (Permission.VENDOR_UPDATE, "vendor_admin"),
             (Permission.VENDOR_DELETE, "vendor_admin"),
-            (Permission.WORKFLOW_CREATE, "workflow_admin"),
-            (Permission.WORKFLOW_UPDATE, "workflow_admin"),
-            (Permission.WORKFLOW_DEPLOY, "workflow_admin"),
-            (Permission.WORKFLOW_DELETE, "workflow_admin"),
         ):
             holders = {n for n, r in ROLE_DEFINITIONS.items()
                        if permission in r.permissions}

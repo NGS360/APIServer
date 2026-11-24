@@ -58,9 +58,9 @@ def test_validation_error_with_bytes_body_returns_422(client: TestClient):
     return a proper 422 response (not crash with a TypeError due to
     bytes not being JSON-serializable).
     """
-    body = b'{ "name": "A workflow", "attributes": [] }'
+    body = b'{ "name": "A vendor", "attributes": [] }'
     response = client.post(
-        "/api/v1/workflows",
+        "/api/v1/vendors",
         content=body,
         headers={"Content-Type": "text/plain"},
     )

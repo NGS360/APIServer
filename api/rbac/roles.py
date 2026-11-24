@@ -92,16 +92,6 @@ _VENDOR_ADMIN_ONLY = frozenset({
     Permission.VENDOR_DELETE,
 })
 
-#: The workflow catalogue's write surface. Reserved on measurement rather than
-#: principle: over 28 days exactly three principals wrote workflows, one of them
-#: an administrator. Reads are much broader and stay in `member`.
-_WORKFLOW_ADMIN_ONLY = frozenset({
-    Permission.WORKFLOW_CREATE,
-    Permission.WORKFLOW_UPDATE,
-    Permission.WORKFLOW_DELETE,
-    Permission.WORKFLOW_DEPLOY,
-})
-
 #: Not granted to any global role. Membership *is* a restricted project's
 #: allowlist, so managing the allowlist is checked as "admin, or an existing
 #: member of that project" in api/rbac/deps.py rather than through a role. It is
@@ -132,7 +122,7 @@ _PROJECT_OWNER_ONLY = frozenset({
 })
 
 _RESERVED = (
-    _ADMIN_ONLY | _VENDOR_ADMIN_ONLY | _WORKFLOW_ADMIN_ONLY | _MEMBERSHIP_GATED
+    _ADMIN_ONLY | _VENDOR_ADMIN_ONLY | _MEMBERSHIP_GATED
     | _PROJECT_OWNER_ONLY
 )
 
@@ -169,7 +159,6 @@ _SERVICE_ACCOUNT = frozenset({
     Permission.FILE_UPDATE,
     Permission.JOB_READ_ALL,
     Permission.JOB_UPDATE,
-    Permission.WORKFLOW_READ,
     # Added 2026-10-16. GET /actions/configs was guarded in the final batch and
     # the Batch event trigger reads it 32 times a week to dispatch jobs -- it had
     # no action:read, so the guard recorded would_deny. Caught by auditing every
@@ -247,14 +236,6 @@ _AUDITOR = READ_PERMISSIONS | {
 # `member`, so this is the write surface and nothing else.
 _VENDOR_ADMIN = frozenset(_VENDOR_ADMIN_ONLY | {Permission.VENDOR_READ})
 
-# The workflow catalogue's owner. Derived from the catalogue rather than listed,
-# so a new workflow:* permission joins it automatically; for this role that is
-# the intent, since "owns the workflow catalogue outright" should not silently
-# narrow when the catalogue grows.
-_WORKFLOW_ADMIN = frozenset(
-    p for p in Permission if str(p).startswith("workflow:")
-)
-
 # --- Project roles --------------------------------------------------------
 # A total order: viewer subset of contributor subset of owner. That is why
 # project_member allows only one role per user per project -- stacking them would
@@ -310,11 +291,6 @@ ROLE_DEFINITIONS: dict[str, RoleDefinition] = {
         "drives the presigned-URL allowlist, so this is who may decide what the "
         "platform will sign.",
         frozenset(_VENDOR_ADMIN),
-    ),
-    "workflow_admin": RoleDefinition(
-        RoleScope.GLOBAL, "Workflow Administrator",
-        "Owns the workflow catalogue outright, including deletion.",
-        frozenset(_WORKFLOW_ADMIN),
     ),
     # --- service roles ---
     "service_account": RoleDefinition(
