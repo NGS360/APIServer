@@ -136,8 +136,18 @@ def downgrade() -> None:
         sa.Column("external_id", sqlmodel.sql.sqltypes.AutoString(), nullable=False),
         sa.Column("created_at", sa.DateTime(), nullable=False),
         sa.Column("created_by", sqlmodel.sql.sqltypes.AutoString(), nullable=False),
-        sa.ForeignKeyConstraint(["workflow_version_id"], ["workflowversion.id"]),
-        sa.ForeignKeyConstraint(["engine"], ["platform.name"]),
+        # Names match 8a5d5a8bb9f6 and 38160a9eca15. Those revisions drop and
+        # re-create workflowdeployment_ibfk_1 by name, so an unnamed FK here would
+        # get an auto-generated name (MySQL: _ibfk_2 for the engine FK) and block
+        # the "Cannot drop index 'uq_platform_name'" step on downgrade.
+        sa.ForeignKeyConstraint(
+            ["workflow_version_id"], ["workflowversion.id"],
+            name="fk_wfdeploy_workflowversion",
+        ),
+        sa.ForeignKeyConstraint(
+            ["engine"], ["platform.name"],
+            name="workflowdeployment_ibfk_1",
+        ),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("workflow_version_id", "engine", name="uq_workflowversion_engine"),
     )
