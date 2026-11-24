@@ -48,6 +48,9 @@ from api.samples.models import (
     Attribute,
 )
 from api.runs.models import SequencingRun, SequencingRunPublic, SampleSequencingRun
+from api.workflow.services import (
+    get_workflow_by_id
+)
 
 logger = logging.getLogger(__name__)
 
@@ -1260,3 +1263,86 @@ def ingest_vendor_data(
         user=user,
         project_id=project.project_id
     )
+
+
+def get_project_workflows(session, project, workflow_name=None) -> [ProjectWorkflow]:
+    '''
+    Return list of workflows associated with a project, optionally filter on workflow name
+    '''
+    stmt = select(ProjectWorkflow).where(
+        ProjectWorkflow.project_id == project.project_id
+    )
+    if workflow_name:   
+        stmt = stmt.where(ProjectWorkflow.name == workflow_name)
+
+    return session.exec(stmt).all()
+
+
+def _resolve_version_from_tag(session: Session, workflow: Workflow, tag: str) -> int:
+    """
+    Find the version from identifier <uuid>[:<tag>]
+    """
+    # Use latest version when no tag is provided
+    if not tag:
+        latest = session.exec(
+            select(func.max(WorkflowVersion.version))
+            .where(WorkflowVersion.workflow_id == workflow.id)
+        ).one()
+        if latest is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Workflow {workflow.id} has no versions to record.",
+            )
+        return latest
+
+    # When tag is not an int, check for this alias
+    if not tag.isdigit():
+        version = session.exec(
+            select(WorkflowVersion.version)
+            .join(
+                WorkflowVersionAlias,
+                WorkflowVersionAlias.workflow_version_id == WorkflowVersion.id,
+            )
+            .where(
+                WorkflowVersionAlias.workflow_id == workflow.id,
+                WorkflowVersionAlias.alias == tag,
+            )
+        ).first()
+        if version is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Alias '{tag}' is not set for workflow {workflow.id}.",
+            )
+        return version
+
+    # When tag is an int, return this version
+    return get_workflow_version_by_num(
+        session, str(workflow.id), int(tag),
+    ).version
+
+
+def add_workflow_to_project(session, workflow_id, project, user) -> ProjectWorkflow:
+    """
+    Add a workflow to a project
+    """
+    base, _, tag = workflow_id.partition(":")
+    workflow = get_workflow_by_id(session, base)
+    version = _resolve_version_from_tag(session, workflow, tag)
+
+    existing_workflow = get_project_workflow(session, project, workflow.id)
+    if existing_workflow is None:
+        existing_workflow = ProjectWorkflowVersion(
+            project_id=project.project_id,
+            workflow_id=workflow.id,
+            version=version,
+            created_by=user.username
+        )
+        session.add(existing_workflow)
+    else:
+        # Update the version of the workflow
+        existing_workflow.version = version
+        existing_workflow.updated_at = datetime.now(tz.utc)
+        existing_workflow.updated_by = user.username
+    session.commit()
+    session.refresh(existing_workflow)
+    return existing_workflow

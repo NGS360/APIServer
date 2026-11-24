@@ -4,6 +4,7 @@ Models for the Project API
 
 from datetime import datetime, timezone
 import uuid
+from sqlalchemy import ForeignKeyConstraint
 from sqlmodel import SQLModel, Field, Relationship, UniqueConstraint
 from typing import List
 from pydantic import ConfigDict, field_validator
@@ -151,3 +152,44 @@ class ProjectsPublic(SQLModel):
     per_page: int
     has_next: bool
     has_prev: bool
+
+
+class ProjectWorkflowVersion(SQLModel, table=True):
+    """
+    This table represents the workflow and version
+    of a workflow that exists within a project
+    """
+
+    __tablename__ = "projectworkflowversion"  # type: ignore[assignment]  # SQLModel declares __tablename__ as a declared_attr
+    __table_args__ = (
+        # One version per project and workflow: this guarantees that a project
+        # cannot end up with two versions of the same workflow.
+        UniqueConstraint(
+            "project_id", "workflow_id", name="uq_project_workflow"
+        ),
+        ForeignKeyConstraint(
+            ["workflow_id", "version"],
+            ["workflowversion.workflow_id", "workflowversion.version"],
+            name="fk_projectworkflowversion_workflowversion",
+        ),
+    )
+
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    project_id: str = Field(foreign_key="project.project_id")
+    workflow_id: uuid.UUID = Field(foreign_key="workflow.id")
+    version: int
+
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    created_by: str = Field(foreign_key="users.username")
+    updated_at: datetime | None = None
+    updated_by: str | None = None
+
+
+class ProjectWorkflowVersionPublic(SQLModel):
+    project_id: str
+    workflow_id: uuid.UUID
+    version: int
+    created_at: datetime
+    created_by: str
+    updated_at: datetime | None = None
+    updated_by: str | None = None

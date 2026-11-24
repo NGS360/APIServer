@@ -29,6 +29,7 @@ from api.project.models import (
     ProjectUpdate,
     ProjectPublic,
     ProjectsPublic,
+    ProjectWorkflowVersionPublic,
 )
 from api.samples.models import (
     SampleCreate,
@@ -787,3 +788,45 @@ def remove_project_member(
     user = rbac_services.get_user_or_404(session, username)
     rbac_services.remove_project_member(session, project.id, user)
     return list_project_members(session, project)
+
+
+###############################################################################
+# Project Workflow /api/v1/projects/{project_id}/workflows
+###############################################################################
+
+@router.get(
+    "/{project_id}/workflows",
+    response_model=[ProjectWorkflowVersionPublic],
+    tags=["Project Endpoints"],
+    dependencies=[Depends(require_project_permission(Permission.PROJECT_READ))],
+)
+def get_project_workflows(
+    session: SessionDep,
+    project: ProjectDep,
+    workflow_name: str | None = Query(None, description="Fetch workflow by name"),
+) -> list[ProjectWorkflowVersionPublic]:
+    """ Return a matching workflow or a list of workflows in a project """
+    workflows = services.get_project_workflows(session, project, workflow_name)
+    return workflows
+
+
+@router.post(
+    "/{project_id}/workflows",
+    response_model=ProjectWorkflowVersionPublic,
+    tags=["Project Endpoints"],
+    dependencies=[Depends(require_project_permission(Permission.PROJECT_UPDATE))],
+)
+def create_project_workflow(
+    session: SessionDep,
+    project: ProjectDep,
+    workflow_id: str,
+    current_user: CurrentUser
+) -> ProjectWorkflowVersionPublic:
+    """
+    Create/Copy a workflow into a project
+
+    :workflow_id: The bare id for the workflow (to get its latest version) or 
+                  :<n> for a specific version, or
+                  :<alias> for the version the alias currently points to.
+    """
+    return services.add_workflow_to_project(session, workflow_id, project, current_user)
