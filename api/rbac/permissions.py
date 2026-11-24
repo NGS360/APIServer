@@ -72,6 +72,8 @@ class Permission(StrEnum):
     VENDOR_UPDATE = "vendor:update"
     VENDOR_DELETE = "vendor:delete"
 
+    WORKFLOW_READ = "workflow:read"
+
     SETTING_READ = "setting:read"
     SETTING_UPDATE = "setting:update"
 
