@@ -796,7 +796,7 @@ def remove_project_member(
 
 @router.get(
     "/{project_id}/workflows",
-    response_model=ProjectWorkflows,
+    response_model=list[ProjectWorkflow],
     tags=["Project Endpoints"],
     dependencies=[Depends(require_project_permission(Permission.PROJECT_READ))],
 )
@@ -804,7 +804,7 @@ def get_project_workflows(
     session: SessionDep,
     project: ProjectDep,
     workflow_name: str | None = Query(None, description="Filter workflows by name"),
-) -> ProjectWorkflows:
+) -> list[ProjectWorkflow]:
     """ Return workflows in a project optionally filtered by workflow name """
     workflows = services.get_project_workflows(session, project, workflow_name)
     return workflows

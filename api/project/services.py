@@ -1279,7 +1279,7 @@ def get_workflow_by_id(
     return workflow
 
 
-def get_project_workflows(session, project, workflow_name=None) -> ProjectWorkflows:
+def get_project_workflows(session, project, workflow_name=None) -> list[ProjectWorkflow]:
     '''
     Return list of workflows associated with a project, optionally filter on workflow name
     '''
