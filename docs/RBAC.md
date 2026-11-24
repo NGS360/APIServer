@@ -239,14 +239,6 @@ These have no path to a project (see *Design Decisions*), so they are global-onl
 | `job:read_all` | G | medium | Removes the "own jobs" filter from `GET /jobs` |
 | `job:submit` | G | **high** | `POST /jobs` |
 | `job:update` | G | medium | `PUT /jobs/{id}` when the payload sets `status` or `log_stream_name` — writeback; service accounts only |
-| `workflow:read` | G | low | All `GET /workflows/...` |
-| `workflow:create` | G | medium | `POST /workflows`, `POST /workflows/{id}/versions` |
-| `workflow:update` | G | **high** | `PUT /workflows/{id}/aliases/{alias}` — repointing `production` changes what executes |
-| `workflow:delete` | G | medium | `DELETE /workflows/{id}/aliases/{alias}` |
-| `workflow:deploy` | G | high | `POST` / `DELETE .../deployments` |
-| `pipeline:read` | G | low | `GET /pipelines`, `/pipelines/{id}` |
-| `pipeline:create` | G | low | `POST /pipelines` |
-| `pipeline:update` | G | medium | `POST` / `DELETE /pipelines/{id}/workflows/...` |
 | `platform:read` | G | low | `GET /platforms`, `/platforms/{name}` |
 | `platform:create` | G | medium | `POST /platforms` |
 | `vendor:read` | G | low | `GET /vendors`, `/vendors/{id}` |
@@ -335,11 +327,10 @@ Collapsed to three tiers on 2026-10-13 (NWP-2213, step 3). Eleven global roles b
 
 | Tier | Role | Purpose | Permissions |
 |---|---|---|---|
-| User | `member` | Default for every authenticated user | **43** — everything not reserved below |
+| User | `member` | Default for every authenticated user | **39** — everything not reserved below |
 | Admin | `admin` | Platform administrator | `ALL_PERMISSIONS`, recomputed at each sync |
 | Admin | `vendor_admin` | Owns the vendor catalogue | `vendor:create`, `vendor:update`, `vendor:delete`, `vendor:read` |
-| Admin | `workflow_admin` | Owns the workflow catalogue | every `workflow:*`, derived from the catalogue |
-| Service | `service_account` | Machine writeback — pipeline results and Batch job status | 15, including the only `job:update` outside `admin` |
+| Service | `service_account` | Machine writeback — pipeline results and Batch job status | 14, including the only `job:update` outside `admin` |
 | Service | `auditor` | Compliance, QA, read-only agents | every `*:read`, plus `file:download`, `search:query`, `role:read` |
 
 **What is reserved, which is the whole design.** `member` is derived as `ALL_PERMISSIONS - reserved`, so a permission added to the catalogue lands in the user tier unless somebody reserves it:
@@ -348,7 +339,6 @@ Collapsed to three tiers on 2026-10-13 (NWP-2213, step 3). Eleven global roles b
 |---|---|
 | `admin` | `role:manage`, `user:manage`, `setting:update`, `system:reindex`, `project:delete`, `job:update` |
 | `vendor_admin` | `vendor:create`, `vendor:update`, `vendor:delete` |
-| `workflow_admin` | `workflow:create`, `workflow:update`, `workflow:delete`, `workflow:deploy` |
 | Nobody — membership-gated | `project:manage_members` |
 | `project_owner` (and `admin`) | `project:restrict` |
 
@@ -713,7 +703,7 @@ AUTHENTICATED = [Depends(get_current_active_user)]
 
 for r in (actions_router, chat_router, files_router, jobs_router, manifest_router,
           project_router, qcmetrics_router, runs_router, samples_router, search_router,
-          settings_router, vendors_router, workflow_router, pipeline_router,
+          settings_router, vendors_router,
           platforms_router, users_router):
     app.include_router(r, prefix=API_PREFIX, dependencies=AUTHENTICATED)
 

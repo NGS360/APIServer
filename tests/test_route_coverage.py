@@ -169,10 +169,13 @@ def test_guard_count_is_recorded():
     sample list to any authenticated caller, which made `restricted` a
     half-measure. These two are the routes that make it whole.
 
+    118 -> 100: the workflow and pipeline routes were removed with their tables
+    (alembic revision e7d2a4c9b1f0). Their guards went with them.
+
     115 -> 118 with the user administration API: GET /rbac/users, GET
     /rbac/users/{username}/access and PATCH /users/{username}.
     """
-    assert len(GUARDED) == 118
+    assert len(GUARDED) == 100
 
 
 def test_the_authentication_backlog_only_shrinks():

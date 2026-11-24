@@ -8,7 +8,7 @@ This module provides functions for:
 - Browsing S3 file systems
 
 Entity associations use typed junction tables (FileProject, FileSequencingRun,
-FileQCRecord, FilePipeline) with real FK constraints.
+FileQCRecord) with real FK constraints.
 """
 
 from datetime import datetime, timezone
@@ -28,7 +28,6 @@ from api.files.models import (
     FileProject,
     FileSequencingRun,
     FileQCRecord,
-    FilePipeline,
     FileCreate,
     FileUpdate,
     FileUploadCreate,
@@ -159,13 +158,6 @@ def create_file(
             file_id=file_record.id,
             qcrecord_id=file_create.qcrecord_id,
             role="output",
-        ))
-
-    if file_create.pipeline_id:
-        _validate_exists_by_uuid(session, "Pipeline", file_create.pipeline_id)
-        session.add(FilePipeline(
-            file_id=file_record.id,
-            pipeline_id=file_create.pipeline_id,
         ))
 
     # Create hash records
@@ -437,7 +429,7 @@ def delete_file(
     Hard-delete a file record and all child rows.
 
     Child rows (FileHash, FileTag, FileSample, FileProject,
-    FileSequencingRun, FileQCRecord, FileWorkflowRun, FilePipeline)
+    FileSequencingRun, FileQCRecord)
     are cascade-deleted automatically by SQLAlchemy.
 
     Args:
@@ -606,17 +598,6 @@ def list_files_by_entity(
             .where(FileQCRecord.qcrecord_id == record_uuid)
         )
 
-    elif normalized == "PIPELINE":
-        try:
-            pl_uuid = uuid_module.UUID(entity_id)
-        except ValueError:
-            return []
-        query = (
-            select(File)
-            .join(FilePipeline)
-            .where(FilePipeline.pipeline_id == pl_uuid)
-        )
-
     elif normalized == "SAMPLE":
         # Sample files use FileSample
         try:
@@ -708,7 +689,6 @@ def _validate_exists_by_uuid(
     model_map = {
         "SequencingRun": ("api.runs.models", "SequencingRun"),
         "QCRecord": ("api.qcmetrics.models", "QCRecord"),
-        "Pipeline": ("api.pipeline.models", "Pipeline"),
     }
 
     if entity_name not in model_map:
@@ -750,8 +730,6 @@ def _validate_upload_entity_exists(
     elif file_upload.qcrecord_id is not None:
         _validate_exists_by_uuid(session, "QCRecord", file_upload.qcrecord_id)
 
-    elif file_upload.pipeline_id is not None:
-        _validate_exists_by_uuid(session, "Pipeline", file_upload.pipeline_id)
 
 
 def _create_upload_entity_association(
@@ -786,13 +764,6 @@ def _create_upload_entity_association(
         session.add(FileQCRecord(
             file_id=file_id,
             qcrecord_id=file_upload.qcrecord_id,
-            role=file_upload.role,
-        ))
-
-    elif file_upload.pipeline_id is not None:
-        session.add(FilePipeline(
-            file_id=file_id,
-            pipeline_id=file_upload.pipeline_id,
             role=file_upload.role,
         ))
 

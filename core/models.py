@@ -6,9 +6,9 @@ to a particular feature.
 from sqlmodel import SQLModel
 
 
-# Defined once, here, rather than per feature module. Projects, samples and
-# workflows all need the same shape, and when each declared its own `Attribute`
-# the three collided on schema name in the generated OpenAPI: FastAPI
+# Defined once, here, rather than per feature module. Projects and samples
+# need the same shape, and when each declared its own `Attribute`
+# the two collided on schema name in the generated OpenAPI: FastAPI
 # disambiguates by fully qualifying, so the spec carried
 # `api__project__models__Attribute` and siblings. Which one kept the plain name
 # depended on the order models happened to be registered, so adding an unrelated

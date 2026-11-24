@@ -64,16 +64,6 @@ class Permission(StrEnum):
     JOB_SUBMIT = "job:submit"
     JOB_UPDATE = "job:update"
 
-    WORKFLOW_READ = "workflow:read"
-    WORKFLOW_CREATE = "workflow:create"
-    WORKFLOW_UPDATE = "workflow:update"
-    WORKFLOW_DELETE = "workflow:delete"
-    WORKFLOW_DEPLOY = "workflow:deploy"
-
-    PIPELINE_READ = "pipeline:read"
-    PIPELINE_CREATE = "pipeline:create"
-    PIPELINE_UPDATE = "pipeline:update"
-
     PLATFORM_READ = "platform:read"
     PLATFORM_CREATE = "platform:create"
 
@@ -217,24 +207,6 @@ CATALOG: dict[Permission, PermissionSpec] = {
         "job", "Submit a batch job (spends compute)", False, "high"),
     Permission.JOB_UPDATE: PermissionSpec(
         "job", "Write job status for any job; service accounts only", False, "medium"),
-
-    Permission.WORKFLOW_READ: PermissionSpec(
-        "workflow", "View workflows, versions, aliases and deployments", False, "low"),
-    Permission.WORKFLOW_CREATE: PermissionSpec(
-        "workflow", "Create workflows and versions", False, "medium"),
-    Permission.WORKFLOW_UPDATE: PermissionSpec(
-        "workflow", "Repoint a version alias; changes what executes", False, "high"),
-    Permission.WORKFLOW_DELETE: PermissionSpec(
-        "workflow", "Delete a version alias", False, "medium"),
-    Permission.WORKFLOW_DEPLOY: PermissionSpec(
-        "workflow", "Create and remove workflow deployments", False, "high"),
-
-    Permission.PIPELINE_READ: PermissionSpec(
-        "pipeline", "View pipelines", False, "low"),
-    Permission.PIPELINE_CREATE: PermissionSpec(
-        "pipeline", "Create a pipeline", False, "low"),
-    Permission.PIPELINE_UPDATE: PermissionSpec(
-        "pipeline", "Add or remove workflows in a pipeline", False, "medium"),
 
     Permission.PLATFORM_READ: PermissionSpec(
         "platform", "View sequencing platforms", False, "low"),

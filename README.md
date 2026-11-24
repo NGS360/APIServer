@@ -140,4 +140,3 @@ Additional documentation is available in the `docs/` directory:
 - [SAMPLE_RUN_ASSOCIATIONS.md](docs/SAMPLE_RUN_ASSOCIATIONS.md) - Sample to sequencing run junction model
 - [SAMPLES_SEARCH.md](docs/SAMPLES_SEARCH.md) - Sample search endpoints
 - [QCMETRICS.md](docs/QCMETRICS.md) - QC metrics model and endpoints
-- [WORKFLOWS_AND_PIPELINES.md](docs/WORKFLOWS_AND_PIPELINES.md) - Workflow and pipeline model
