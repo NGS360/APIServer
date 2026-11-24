@@ -2,8 +2,10 @@
 Services for the Project API
 """
 
-from datetime import datetime, timezone as tz
+from datetime import datetime, timedelta, timezone as tz
+import json
 from typing import Literal
+from uuid import UUID
 import boto3
 import logging
 
@@ -19,8 +21,22 @@ import yaml
 from api.jobs.models import BatchJob, VendorIngestionConfig
 from api.settings.services import get_setting, get_setting_value
 from api.actions.services import get_all_action_configs
-from api.actions.models import ActionOption, ActionPlatform
+from api.actions.models import (
+    ActionOption,
+    ActionPlatform,
+    Launcher,
+    LaunchWorkflow,
+    PlatformConfig,
+)
+from api.files.models import FileUploadCreate
+from api.files.services import create_file_upload
 from api.jobs.services import submit_batch_job
+from api.auth.models import APIKeyCreate, User
+from api.auth.services import (
+    create_user_api_key,
+    job_api_key_name,
+    revoke_user_api_key,
+)
 
 from core.utils import define_search_body, interpolate
 
@@ -31,6 +47,8 @@ from api.project.models import (
     ProjectUpdate,
     ProjectPublic,
     ProjectsPublic,
+    ProjectWorkflowVersion,
+    ProjectWorkflowVersionPublic,
 )
 from api.search.models import SearchDocument
 from api.search.services import (
@@ -48,8 +66,23 @@ from api.samples.models import (
     Attribute,
 )
 from api.runs.models import SequencingRun, SequencingRunPublic, SampleSequencingRun
+from api.workflow.models import (
+    Workflow,
+    WorkflowDeployment,
+    WorkflowVersion,
+    WorkflowVersionAlias,
+)
+from api.workflow.services import (
+    resolve_definition_to_s3,
+    get_workflow_by_id,
+    get_workflow_version_by_num,
+)
 
 logger = logging.getLogger(__name__)
+
+# Where, under a project's files, the inputs object of each workflow launch is
+# written; also the role its file record carries.
+LAUNCH_INPUTS_PATH = "launch_inputs"
 
 
 def generate_project_id(*, session: Session) -> str:
@@ -662,6 +695,240 @@ def reindex_projects(
     add_objects_to_index(client, search_docs, "projects")
 
 
+def _resolve_reference(
+    choices: list[dict[str, str]] | None,
+    choices_name: str,
+    reference: str | None,
+    action: "ActionOption",
+    platform: "ActionPlatform",
+    project_type: str,
+) -> str:
+    """
+    Look a reference label up among a platform's configured choices.
+
+    An export names its reference by label and runs with the value configured
+    for it, so a request can only ever run against something the configuration
+    lists.
+
+    Raises:
+        HTTPException: 400 if the reference is missing or is not a configured choice
+    """
+    if not reference:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Reference is required for {action.value} action"
+        )
+
+    for choice in choices or []:
+        # Each choice is a dict with one key-value pair
+        for label, value in choice.items():
+            if label == reference:
+                return value
+
+    raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail=(
+            f"Reference '{reference}' not found in {choices_name} for "
+            f"platform '{platform.value}' and project type '{project_type}'"
+        )
+    )
+
+
+def _select_launcher(
+    platform_config: PlatformConfig,
+    name: str | None,
+    platform: "ActionPlatform",
+    project_type: str,
+) -> Launcher:
+    """
+    The launcher a launch request means, among those the platform can launch.
+
+    A request names its launcher. It may leave the name out where there is only
+    one to choose from.
+
+    Raises:
+        HTTPException: 400 if the platform launches nothing for the project
+            type, the name matches no launcher, or no name is given and there
+            are several
+    """
+    launchers = platform_config.launchable
+    where = f"platform '{platform.value}' in project type '{project_type}'"
+    if not launchers:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Action '{ActionOption.LAUNCH_PIPELINE.value}' is not configured for {where}"
+        )
+
+    names = ", ".join(launcher.name for launcher in launchers)
+    if name is None:
+        if len(launchers) == 1:
+            return launchers[0]
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"A launcher is required for {where}: one of {names}"
+        )
+
+    for launcher in launchers:
+        if launcher.name == name:
+            return launcher
+    raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail=f"Launcher '{name}' not found for {where}: one of {names}"
+    )
+
+
+def _resolve_launch_workflow_version(
+    session: Session, project: Project, workflow_ref: str
+) -> WorkflowVersion:
+    """
+    The version of a workflow to launch for a project.
+
+    A version recorded for the project wins. Otherwise the reference decides:
+    "<id>:<alias>" or "<id>:<version>" names one, a bare id means the latest.
+    """
+    base, _, tag = workflow_ref.partition(":")
+    workflow = get_workflow_by_id(session, base)
+    recorded = _get_project_workflow_version(session, project, workflow.id)
+    number = (
+        recorded.version if recorded else _resolve_version_from_tag(session, workflow, tag)
+    )
+    return get_workflow_version_by_num(session, str(workflow.id), number)
+
+
+def _check_workflow_inputs(version: WorkflowVersion, inputs: dict) -> None:
+    """
+    Check input values against the inputs the workflow version records.
+
+    Only that each value is for an input the version has, and that each required
+    input has a value: the runner checks types. A version registered without its
+    inputs is not checked at all.
+
+    Raises:
+        HTTPException: 400 naming the unknown or missing inputs
+    """
+    if version.inputs is None:
+        return
+
+    known = {declared["id"] for declared in version.inputs}
+    unknown = sorted(set(inputs) - known)
+    if unknown:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"Version {version.version} of workflow {version.workflow_id} "
+                f"has no input named: {', '.join(unknown)}"
+            )
+        )
+
+    missing = sorted(
+        declared["id"] for declared in version.inputs
+        if declared.get("required") and declared["id"] not in inputs
+    )
+    if missing:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"Version {version.version} of workflow {version.workflow_id} "
+                f"requires a value for: {', '.join(missing)}"
+            )
+        )
+
+
+def _prepare_workflow_launch(
+    session: Session,
+    project: Project,
+    launch_workflow: LaunchWorkflow,
+    template_context: dict,
+    inputs: dict | None,
+    job_name: str,
+    username: str,
+    s3_client=None,
+) -> tuple[list[str], str]:
+    """
+    Prepare a launch that runs a registered workflow with a runner job.
+
+    The runner is given two locations and nothing else: the workflow version's
+    definition, and an inputs object written to the project's files for this
+    launch. It builds the command line from the definition, so no part of it is
+    spelled out in the configuration.
+
+    Which runner, and so which workflow language, is the deployment's business:
+    the job definition comes from it, and neither the definition nor the input
+    values are read here.
+
+    The inputs are the request's values with the configuration's laid over
+    them, so a value the configuration derives from the project cannot be
+    replaced by the request.
+
+    Returns:
+        The runner's arguments and the AWS Batch job definition to run it in
+
+    Raises:
+        HTTPException: If the workflow or its version cannot be found, an input
+            is unknown or a required one is missing, or the version is not
+            deployed on the configured engine
+    """
+    version = _resolve_launch_workflow_version(session, project, launch_workflow.workflow)
+
+    try:
+        configured_inputs = interpolate(launch_workflow.inputs or {}, template_context)
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to interpolate launch workflow inputs: {str(e)}"
+        ) from e
+
+    # A null is how a form sends an input left empty
+    workflow_inputs = {
+        key: value for key, value in (inputs or {}).items() if value is not None
+    }
+    workflow_inputs.update(configured_inputs)
+    _check_workflow_inputs(version, workflow_inputs)
+
+    deployment = session.exec(
+        select(WorkflowDeployment).where(
+            WorkflowDeployment.workflow_version_id == version.id,
+            WorkflowDeployment.engine == launch_workflow.engine,
+        )
+    ).first()
+    if deployment is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"Version {version.version} of workflow {version.workflow_id} "
+                f"is not deployed on '{launch_workflow.engine}'"
+            )
+        )
+
+    definition_uri = resolve_definition_to_s3(session, version.definition_uri)
+
+    # Written before the job exists, so named for the job and the moment
+    # rather than the job's id.
+    stamp = datetime.now(tz.utc).strftime("%Y%m%dT%H%M%S%fZ")
+    inputs_file = create_file_upload(
+        session=session,
+        s3_client=s3_client,
+        file_upload=FileUploadCreate(
+            filename=f"{job_name}.{stamp}.inputs.json",
+            project_id=project.project_id,
+            relative_path=LAUNCH_INPUTS_PATH,
+            role=LAUNCH_INPUTS_PATH,
+            description=(
+                f"Inputs of version {version.version} of workflow "
+                f"{version.workflow_id}, launched as {job_name}"
+            ),
+        ),
+        file_content=json.dumps(workflow_inputs, indent=2).encode("utf-8"),
+        submitted_by=username,
+    )
+
+    logger.info(
+        "Launching version %d of workflow %s for project %s with inputs %s",
+        version.version, version.workflow_id, project.project_id, inputs_file.uri,
+    )
+    return ["--workflow", definition_uri, "--inputs", inputs_file.uri], deployment.external_id
+
+
 def submit_pipeline_job(
     session: Session,
     project: Project,
@@ -672,7 +939,10 @@ def submit_pipeline_job(
     email: str | None = None,
     reference: str | None = None,
     auto_release: bool | None = None,
-    s3_client=None
+    s3_client=None,
+    submitter: User | None = None,
+    inputs: dict | None = None,
+    launcher: str | None = None,
 ) -> BatchJob:
     """
     Submit a pipeline job to AWS Batch.
@@ -681,17 +951,27 @@ def submit_pipeline_job(
     command to use based on the action, interpolates template variables, and submits
     the job to AWS Batch.
 
+    A launch runs one of the platform's launchers, each a registered workflow
+    rather than a command: see _select_launcher and _prepare_workflow_launch.
+
     Args:
         session: Database session
         project: The project object (already validated)
-        action: Pipeline action (create-project or export-project-results)
-        platform: Platform name (arvados or sevenbridges)
+        action: Pipeline action (create-project, export-project-results or
+            launch-pipeline)
+        platform: Platform to run the action on
         project_type: Pipeline type (e.g., RNA-Seq)
         username: Username of the user submitting the job
         email: Email of the user submitting the job (available as template variable)
-        reference: Export reference label (required for export action)
+        reference: Reference label (required for the export action)
         auto_release: Auto-release flag (only valid for export action)
         s3_client: Optional boto3 S3 client
+        submitter: The submitting user, who owns the job's API key when the
+            action's aws_batch settings ask for one
+        inputs: Values for the inputs of the workflow a launch runs (only for
+            the launch action)
+        launcher: Name of the launcher to run (only for the launch action; may
+            be left out where the platform has just one for the project type)
 
     Returns:
         BatchJob instance
@@ -725,6 +1005,7 @@ def submit_pipeline_job(
 
     # Validate action-specific requirements
     reference_value = None
+    selected_launcher = None
     if action == ActionOption.CREATE_PROJECT:
         # Ignore auto_release for create action - just set to None/False
         if auto_release is None:
@@ -734,43 +1015,12 @@ def submit_pipeline_job(
         if auto_release is None:
             auto_release = False
 
-        # Validate reference is provided for export
-        if not reference:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Reference is required for export-project-results action"
-            )
-
-        # Look up reference value from exports list
-        if not platform_config.exports:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=(
-                    f"No exports configured for platform '{platform}' "
-                    f"in project type '{project_type}'"
-                )
-            )
-
-        # Find the matching export entry
-        reference_value = None
-        for export_item in platform_config.exports:
-            # Each export_item is a dict with one key-value pair
-            for label, value in export_item.items():
-                if label == reference:
-                    reference_value = value
-                    break
-            if reference_value:
-                break
-
-        if reference_value is None:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=(
-                    f"Reference '{reference}' not found in exports for "
-                    f"platform '{platform}' and project type "
-                    f"'{project_type}'"
-                )
-            )
+        reference_value = _resolve_reference(
+            platform_config.exports, "exports", reference, action, platform, project_type
+        )
+    elif action == ActionOption.LAUNCH_PIPELINE:
+        auto_release = False
+        selected_launcher = _select_launcher(platform_config, launcher, platform, project_type)
 
     # Prepare template context with all variables needed for interpolation
     template_context = {
@@ -781,22 +1031,40 @@ def submit_pipeline_job(
         "platform": platform.value,
         "action": action.value,
         "reference": reference_value,  # Use the looked-up value, not the label
-        "auto_release": auto_release
+        "auto_release": auto_release,
+        # Empty for the other actions, so a job name shared by all of them can
+        # carry it
+        "launcher": selected_launcher.name if selected_launcher else "",
     }
 
-    # Select and interpolate the appropriate command based on action
+    # What the platform configures for the action: a command to run, or for a
+    # launch the registered workflow of the launcher chosen.
     if action == ActionOption.CREATE_PROJECT:
-        command_template = platform_config.create_project_command
+        configured = platform_config.create_project_command
+    elif action == ActionOption.LAUNCH_PIPELINE:
+        configured = selected_launcher.launch_workflow
     else:  # export-project-results
-        command_template = platform_config.export_command
+        configured = platform_config.export_command
 
-    try:
-        interpolated_command = interpolate(command_template, template_context)
-    except Exception as e:
+    if not configured:
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to interpolate command template: {str(e)}"
-        ) from e
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"Action '{action.value}' is not configured for platform "
+                f"'{platform.value}' in project type '{project_type}'"
+            )
+        )
+
+    # A launch's command is put together further down, once the job has a name
+    command = None
+    if action != ActionOption.LAUNCH_PIPELINE:
+        try:
+            command = interpolate(configured, template_context).split()
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to interpolate command template: {str(e)}"
+            ) from e
 
     # Check if aws_batch config exists
     if not action_config.aws_batch:
@@ -817,15 +1085,38 @@ def submit_pipeline_job(
             detail=f"Failed to interpolate job name template: {str(e)}"
         ) from e
 
+    # What this action changes about the project type's aws_batch on this
+    # platform, if anything. A launch, for one, asks for an API key.
+    override = (platform_config.aws_batch or {}).get(action)
+
+    if action == ActionOption.LAUNCH_PIPELINE:
+        command, job_definition = _prepare_workflow_launch(
+            session=session,
+            project=project,
+            launch_workflow=selected_launcher.launch_workflow,
+            template_context=template_context,
+            inputs=inputs,
+            job_name=interpolated_job_name,
+            username=username,
+            s3_client=s3_client,
+        )
+    else:
+        job_definition = (
+            (override and override.job_definition) or action_config.aws_batch.job_definition
+        )
+
     # Prepare container overrides
     container_overrides = {
-        "command": interpolated_command.split(),
+        "command": command,
         "environment": []
     }
 
     # Add environment variables if specified in aws_batch config
-    if action_config.aws_batch.environment:
-        for env in action_config.aws_batch.environment:
+    environment = list(action_config.aws_batch.environment or [])
+    if override and override.environment:
+        environment.extend(override.environment)
+    if environment:
+        for env in environment:
             try:
                 interpolated_env_value = interpolate(env.value, template_context)
                 container_overrides["environment"].append({
@@ -838,16 +1129,48 @@ def submit_pipeline_job(
                     detail=f"Failed to interpolate environment variable '{env.name}': {str(e)}"
                 ) from e
 
+    # A job that calls back into NGS360 as the submitter (a pipeline launcher)
+    # outlives any session token they hold, so it gets an API key of its own.
+    # The key is the submitter's: every call the job makes is authorized against
+    # their roles and project memberships, as if they had made it themselves.
+    api_key = None
+    if override and override.user_api_key_hours:
+        if submitter is None:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="An API key was requested for a job with no submitter"
+            )
+        api_key, raw_key = create_user_api_key(session, submitter, APIKeyCreate(
+            name=job_api_key_name(interpolated_job_name),
+            expires_at=datetime.now(tz.utc) + timedelta(hours=override.user_api_key_hours),
+        ))
+        container_overrides["environment"].append(
+            {"name": "NGS360_AUTH_TOKEN", "value": raw_key}
+        )
+
     # Submit job to AWS Batch
-    batch_job = submit_batch_job(
-        session=session,
-        job_name=interpolated_job_name,
-        container_overrides=container_overrides,
-        job_def=action_config.aws_batch.job_definition,
-        job_queue=action_config.aws_batch.job_queue,
-        user=username,
-        project_id=project.project_id
-    )
+    try:
+        batch_job = submit_batch_job(
+            session=session,
+            job_name=interpolated_job_name,
+            container_overrides=container_overrides,
+            job_def=job_definition,
+            job_queue=(override and override.job_queue) or action_config.aws_batch.job_queue,
+            user=username,
+            project_id=project.project_id
+        )
+    except Exception:
+        if api_key is not None:
+            revoke_user_api_key(session, submitter, str(api_key.id))
+        raise
+
+    if api_key is not None:
+        # Renamed for the job's id once there is one. That name is how the key is
+        # found and retired when the job ends (see update_batch_job), and how a
+        # key in the user's list is matched to the job that held it.
+        api_key.name = job_api_key_name(batch_job.id)
+        session.add(api_key)
+        session.commit()
     return batch_job
 
 
@@ -1260,3 +1583,184 @@ def ingest_vendor_data(
         user=user,
         project_id=project.project_id
     )
+
+
+###############################################################################
+# Project workflow versions
+###############################################################################
+
+def _get_project_workflow_version(
+    session: Session, project: Project, workflow_id: UUID
+) -> ProjectWorkflowVersion | None:
+    return session.exec(
+        select(ProjectWorkflowVersion).where(
+            ProjectWorkflowVersion.project_id == project.project_id,
+            ProjectWorkflowVersion.workflow_id == workflow_id,
+        )
+    ).first()
+
+
+def _require_project_workflow_version(
+    session: Session, project: Project, workflow_id: UUID
+) -> ProjectWorkflowVersion:
+    record = _get_project_workflow_version(session, project, workflow_id)
+    if not record:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=(
+                f"Project {project.project_id} has no recorded version of "
+                f"workflow {workflow_id}."
+            ),
+        )
+    return record
+
+
+def _project_workflow_version_to_public(
+    record: ProjectWorkflowVersion,
+) -> ProjectWorkflowVersionPublic:
+    return ProjectWorkflowVersionPublic(**record.model_dump())
+
+
+def get_project_workflows(session, project, workflow_name=None) -> [ProjectWorkflow]:
+    '''
+    Return list of workflows associated with a project, optionally filter on workflow name
+    '''
+    stmt = select(ProjectWorkflow).where(
+        ProjectWorkflow.project_id == project.project_id
+    )
+    if workflow_name:   
+        stmt = stmt.where(ProjectWorkflow.name == workflow_name)
+
+    return session.exec(stmt).all()
+
+
+def get_project_workflow_versions(
+    session: Session,
+    project: Project,
+    workflow_id: str | None = None,
+) -> list[ProjectWorkflowVersionPublic]:
+    stmt = select(ProjectWorkflowVersion).where(
+        ProjectWorkflowVersion.project_id == project.project_id
+    )
+    if workflow_id is not None:
+        # Through the usual lookup, so a mistyped id is a 400/404 rather than [].
+        workflow = get_workflow_by_id(session, workflow_id.split(":")[0])
+        stmt = stmt.where(ProjectWorkflowVersion.workflow_id == workflow.id)
+    return [
+        _project_workflow_version_to_public(r) for r in session.exec(stmt).all()
+    ]
+
+
+def _resolve_version_from_tag(session: Session, workflow: Workflow, tag: str) -> int:
+    """
+    Find the version from identifier <uuid>[:<tag>]
+    """
+    # Use latest version when no tag is provided
+    if not tag:
+        latest = session.exec(
+            select(func.max(WorkflowVersion.version))
+            .where(WorkflowVersion.workflow_id == workflow.id)
+        ).one()
+        if latest is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Workflow {workflow.id} has no versions to record.",
+            )
+        return latest
+
+    # When tag is not an int, check for this alias
+    if not tag.isdigit():
+        version = session.exec(
+            select(WorkflowVersion.version)
+            .join(
+                WorkflowVersionAlias,
+                WorkflowVersionAlias.workflow_version_id == WorkflowVersion.id,
+            )
+            .where(
+                WorkflowVersionAlias.workflow_id == workflow.id,
+                WorkflowVersionAlias.alias == tag,
+            )
+        ).first()
+        if version is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Alias '{tag}' is not set for workflow {workflow.id}.",
+            )
+        return version
+
+    # When tag is an int, return this version
+    return get_workflow_version_by_num(
+        session, str(workflow.id), int(tag),
+    ).version
+
+
+def add_workflow_to_project(session, workflow_id, project, user) -> ProjectWorkflow:
+    """
+    Add a workflow to a project
+    """
+    base, _, tag = workflow_id.partition(":")
+    workflow = get_workflow_by_id(session, base)
+    version = _resolve_version_from_tag(session, workflow, tag)
+
+    existing_workflow = get_project_workflow(session, project, workflow.id)
+    if existing_workflow is None:
+        existing_workflow = ProjectWorkflowVersion(
+            project_id=project.project_id,
+            workflow_id=workflow.id,
+            version=version,
+            created_by=user.username
+        )
+        session.add(existing_workflow)
+    else:
+        # Update the version of the workflow
+        existing_workflow.version = version
+        existing_workflow.updated_at = datetime.now(tz.utc)
+        existing_workflow.updated_by = user.username
+    session.commit()
+    session.refresh(existing_workflow)
+    return existing_workflow
+
+
+def set_project_workflow_version(
+    session: Session,
+    project: Project,
+    workflow_id: str,
+    updated_by: str,
+) -> ProjectWorkflowVersionPublic:
+    """
+    Record the workflow version in a project, creating the record or overwriting it.
+    updated_at/updated_by are set only on an overwrite.
+    workflow_id carries which version to record: bare ID for the latest;
+    :<alias> of the version pointed by alias; :<n> for specific version.
+    """
+    base, _, tag = workflow_id.partition(":")
+    workflow = get_workflow_by_id(session, base)
+    version = _resolve_version_from_tag(session, workflow, tag)
+
+    record = _get_project_workflow_version(session, project, workflow.id)
+    if record is None:
+        record = ProjectWorkflowVersion(
+            project_id=project.project_id,
+            workflow_id=workflow.id,
+            version=version,
+            created_by=updated_by,
+        )
+        session.add(record)
+    else:
+        # Stamped only when a version replaces one already recorded
+        record.version = version
+        record.updated_at = datetime.now(tz.utc)
+        record.updated_by = updated_by
+    session.commit()
+    session.refresh(record)
+    return _project_workflow_version_to_public(record)
+
+
+def delete_project_workflow_version(
+    session: Session, project: Project, workflow_id: str
+) -> None:
+    """Remove the record; the project's next run records a version afresh."""
+    workflow = get_workflow_by_id(session, workflow_id.split(':')[0])
+    record = _require_project_workflow_version(session, project, workflow.id)
+    session.delete(record)
+    session.commit()

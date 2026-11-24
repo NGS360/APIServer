@@ -7,6 +7,7 @@ from fastapi import HTTPException, status
 import uuid
 import boto3
 import botocore
+from api.auth.services import retire_job_api_keys
 from core.config import get_settings
 from core.logger import logger
 
@@ -213,10 +214,42 @@ def update_batch_job(
         setattr(job, key, value)
 
     session.add(job)
+
+    # A key minted for the job is retired with it. Only on the two states a job
+    # does not leave: one that is retried goes back through RUNNABLE, and its key
+    # has to last the retry.
+    if update_data.get("status") in (JobStatus.SUCCEEDED, JobStatus.FAILED):
+        job_id, username = job.id, job.user
+        try:
+            # In a savepoint, so that it commits together with the status below
+            # but a failure here undoes only itself: the status write is what
+            # was asked for, and a key left behind still expires on its own.
+            with session.begin_nested():
+                if retire_job_api_keys(session, username, job_id):
+                    logger.info(f"Retiring the API key minted for batch job {job_id}")
+        except Exception:  # pylint: disable=broad-exception-caught
+            logger.exception(f"Could not retire the API key for batch job {job_id}")
+
     session.commit()
     session.refresh(job)
     logger.info(f"Updated batch job: {job.id}")
     return job
+
+
+# Environment variable names that mark a value as a credential. The values reach
+# the container; they are kept out of this service's logs.
+_SECRET_NAME_MARKERS = ("TOKEN", "KEY", "SECRET", "PASSWORD")
+
+
+def _loggable_overrides(container_overrides: Dict[str, Any]) -> Dict[str, Any]:
+    """A copy of container overrides with credential values masked, for logging."""
+    environment = [
+        {**env, "value": "<redacted>"}
+        if any(marker in env.get("name", "").upper() for marker in _SECRET_NAME_MARKERS)
+        else env
+        for env in container_overrides.get("environment", [])
+    ]
+    return {**container_overrides, "environment": environment}
 
 
 def submit_batch_job(
@@ -264,7 +297,7 @@ def submit_batch_job(
     container_overrides["environment"].append(
         {"name": "NGS360_API_ENDPOINT", "value": settings.client_origin}
     )
-    logger.info(f"Container overrides: {container_overrides}")
+    logger.info(f"Container overrides: {_loggable_overrides(container_overrides)}")
 
     try:
         batch_client = boto3.client("batch", region_name=settings.AWS_REGION)

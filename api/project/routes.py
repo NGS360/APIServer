@@ -29,6 +29,7 @@ from api.project.models import (
     ProjectUpdate,
     ProjectPublic,
     ProjectsPublic,
+    ProjectWorkflowVersionPublic,
 )
 from api.samples.models import (
     SampleCreate,
@@ -629,18 +630,29 @@ def submit_pipeline_job(
 
     This endpoint validates the project exists, retrieves the appropriate pipeline
     configuration based on the project type, determines the command to execute
-    based on the action (create-project or export-project-results), interpolates
-    template variables, and submits the job to AWS Batch.
+    based on the action (create-project, export-project-results or
+    launch-pipeline), interpolates template variables, and submits the job to
+    AWS Batch.
+
+    launch-pipeline runs one of the launchers the platform names for the
+    project type: the registered workflow of the launcher the request chooses,
+    with a runner job, rather than a command. Its inputs are the request's
+    `inputs`, with the values the configuration supplies laid over them, checked
+    against the inputs the workflow version records.
 
     Args:
         session: Database session
         project_id: The project ID
         request: Pipeline submission request containing:
-            - action: Pipeline action (create-project or export-project-results)
+            - action: Pipeline action (create-project, export-project-results
+              or launch-pipeline)
             - platform: Platform name (Arvados or SevenBridges)
             - project_type: Pipeline workflow type (e.g., RNA-Seq, WGS)
             - reference: Export reference (required for export-project-results)
             - auto_release: Auto-release flag for export action (default: False)
+            - launcher: Name of the launcher to run (launch-pipeline; may be left
+              out where the platform has just one for the project type)
+            - inputs: Values for the launched workflow's inputs (launch-pipeline)
         current_user: Currently authenticated user
         s3_client: S3 client for retrieving pipeline configs
 
@@ -657,7 +669,10 @@ def submit_pipeline_job(
         email=current_user.email,
         reference=request.reference,
         auto_release=request.auto_release,
-        s3_client=s3_client
+        s3_client=s3_client,
+        submitter=current_user,
+        inputs=request.inputs,
+        launcher=request.launcher,
     )
 
     return BatchJobPublic.model_validate(batch_job)
@@ -787,3 +802,60 @@ def remove_project_member(
     user = rbac_services.get_user_or_404(session, username)
     rbac_services.remove_project_member(session, project.id, user)
     return list_project_members(session, project)
+
+
+###############################################################################
+# Project Workflow /api/v1/projects/{project_id}/workflows
+###############################################################################
+
+@router.get(
+    "/{project_id}/workflows",
+    response_model=list[ProjectWorkflowVersionPublic],
+    tags=["Project Endpoints"],
+    dependencies=[Depends(require_project_permission(Permission.PROJECT_READ))],
+)
+def get_project_workflows(
+    session: SessionDep,
+    project: ProjectDep,
+    workflow_name: str | None = Query(None, description="Fetch workflow by workflow"),
+) -> list[ProjectWorkflowVersionPublic]:
+    """ Return a matching workflow or a list of workflows in a project """
+    workflows = services.get_project_workflows(session, project, workflow_name)
+    return workflows
+
+
+@router.post(
+    "/{project_id}/workflows",
+    response_model=ProjectWorkflowVersionPublic,
+    tags=["Project Endpoints"],
+    dependencies=[Depends(require_project_permission(Permission.PROJECT_UPDATE))],
+)
+def create_project_workflow(
+    session: SessionDep,
+    project: ProjectDep,
+    workflow_id: str,
+    current_user: CurrentUser,
+) -> ProjectWorkflowVersionPublic:
+    """
+    Create/Copy a workflow into a project
+
+    :workflow_id: The bare id for the workflow (to get its latest version) or 
+                  :<n> for a specific version, or
+                  :<alias> for the version the alias currently points to.
+    """
+    return services.add_workflow_to_project(session, workflow_id, project, current_user)
+
+
+@router.delete(
+    "/{project_id}/workflow/{workflow_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    tags=["Project Endpoints"],
+    dependencies=[Depends(require_project_permission(Permission.PROJECT_UPDATE))],
+)
+def delete_project_workflow_version(
+    session: SessionDep,
+    project: ProjectDep,
+    workflow_id: str,
+) -> None:
+    """Remove the record; the project's next run records a version afresh."""
+    services.delete_project_workflow_version(session, project, workflow_id)

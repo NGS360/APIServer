@@ -7,7 +7,7 @@ from fastapi import HTTPException, status
 from sqlmodel import Session
 
 from api.settings.services import get_setting_value
-from .models import ActionConfig, ActionConfigsResponse
+from .models import ActionConfig, ActionConfigsResponse, ActionPlatform
 
 
 def _get_action_configs_s3_location(session: Session) -> tuple[str, str]:
@@ -229,7 +229,7 @@ def get_project_types_for_action_and_platform(
     action: str,
     platform: str,
     s3_client=None
-) -> list[dict[str, str]]:
+) -> list[dict]:
     """
     Get available project types based on action and platform.
 
@@ -240,19 +240,18 @@ def get_project_types_for_action_and_platform(
         s3_client: Optional boto3 S3 client
 
     Returns:
-        List of dictionaries with project type information
+        List of dictionaries with project type information. For the launch
+        action each also lists, under "launchers", the names of the launchers
+        the platform can launch for that project type.
     """
     # Normalize platform name to match YAML keys
-    platform_map = {
-        'arvados': 'Arvados',
-        'sevenbridges': 'SevenBridges'
-    }
+    platform_map = {p.value.lower(): p.value for p in ActionPlatform}
 
     platform_key = platform_map.get(platform.lower())
     if not platform_key:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid platform: {platform}. Must be 'arvados' or 'sevenbridges'"
+            detail=f"Invalid platform: {platform}. Must be one of {sorted(platform_map)}"
         )
 
     # Get all action configs
@@ -268,16 +267,26 @@ def get_project_types_for_action_and_platform(
         platform_config = config.platforms[platform_key]
 
         if action == 'export-project-results':
-            # For export action, return the exports list
-            if platform_config.exports:
-                for export_item in platform_config.exports:
-                    # Each export item is a dict with one key-value pair
-                    for label, value in export_item.items():
-                        result.append({
-                            'label': label,
-                            'value': value,
-                            'project_type': config.project_type
-                        })
+            for choice in platform_config.exports or []:
+                # Each item is a dict with one key-value pair
+                for label, value in choice.items():
+                    result.append({
+                        'label': label,
+                        'value': value,
+                        'project_type': config.project_type
+                    })
+
+        elif action == 'launch-pipeline':
+            # The project type, with the launchers to choose from. A platform
+            # that cannot launch any from here offers nothing.
+            launchers = [launcher.name for launcher in platform_config.launchable]
+            if launchers:
+                result.append({
+                    'label': config.project_type,
+                    'value': config.project_type,
+                    'project_type': config.project_type,
+                    'launchers': launchers
+                })
 
         elif action == 'create-project':
             # For create action, return the project_type if platform is listed

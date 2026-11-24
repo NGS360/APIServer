@@ -3,13 +3,26 @@ Test /projects endpoint
 
 """
 
+import copy
+from datetime import datetime, timedelta, timezone
+import json
 from unittest.mock import patch, MagicMock
+
+import botocore.exceptions
+import pytest
 from fastapi.testclient import TestClient
-from sqlmodel import Session
+from sqlmodel import Session, select
 import yaml
 
-from api.project.models import Project, ProjectAttribute
+from api.platforms.models import Platform
+from api.project.models import Project, ProjectAttribute, ProjectWorkflowVersion
 from api.project.services import generate_project_id
+from api.workflow.models import (
+    Workflow,
+    WorkflowDeployment,
+    WorkflowVersion,
+    WorkflowVersionAlias,
+)
 
 
 def _create_project(session: Session):
@@ -913,6 +926,645 @@ def test_submit_create_project_job(
     call_args = mock_batch.submit_job.call_args[1]
     assert call_args["jobQueue"] == "batch-queue"
     assert call_args["jobDefinition"] == "pipeline-job-def:1"
+
+
+NGS360_PIPELINE_CONFIG = {
+    "project_type": "RNA-Seq",
+    "project_admins": ["admin@example.com"],
+    "platforms": {
+        "Arvados": {
+            "create_project_command": "arvados loadProject -p {{projectid}}",
+            # Apps the user runs on the platform itself: nothing to launch from here
+            "launchers": ["launcher-app-1", "launcher-app-2"],
+        },
+        "NGS360": {
+            "create_project_command": "samples generate --projectid {{projectid}}",
+            # Its launchers are added by _config_launching_workflow, which needs
+            # a registered workflow to name
+            "aws_batch": {
+                "launch-pipeline": {
+                    # For a command; a launch runs where its workflow is deployed
+                    "job_definition": "not-for-a-launch:1",
+                    "environment": [{"name": "WES_API_ENDPOINT", "value": "https://wes"}],
+                },
+            },
+        },
+    },
+    "aws_batch": {
+        "job_name": "{{action}}-{{projectid}}",
+        "job_definition": "ngs360-backend",
+        "job_queue": "batch-queue",
+        "command": "unused",
+        "environment": [{"name": "PROJECT", "value": "{{projectid}}"}],
+    },
+}
+
+
+def _submit_action(client, project, mock_s3_client, body, config=None):
+    """Submit an action against a pipeline config offering the NGS360 platform"""
+    mock_s3_client.setup_bucket(
+        "ngs360-resources", "pipeline_configs/",
+        [{"Key": "pipeline_configs/rna-seq_pipeline.yaml"}], []
+    )
+    mock_s3_client.uploaded_files["ngs360-resources"] = {
+        "pipeline_configs/rna-seq_pipeline.yaml":
+            yaml.dump(config or NGS360_PIPELINE_CONFIG).encode("utf-8")
+    }
+    return client.post(
+        f"/api/v1/projects/{project.project_id}/actions/submit",
+        json={"project_type": "RNA-Seq", **body}
+    )
+
+
+def _mock_batch(mock_boto_client: MagicMock) -> MagicMock:
+    """A mocked AWS Batch client that accepts any job"""
+    mock_batch = MagicMock()
+    mock_batch.submit_job.return_value = {"jobId": "aws-batch-job-123"}
+    mock_boto_client.return_value = mock_batch
+    return mock_batch
+
+
+def _batch_environment(mock_batch: MagicMock) -> dict:
+    """The environment a mocked submit_job was called with, as a dict"""
+    overrides = mock_batch.submit_job.call_args[1]["containerOverrides"]
+    return {env["name"]: env["value"] for env in overrides["environment"]}
+
+
+# The platform's one launcher is launched without being named
+LAUNCH = {"action": "launch-pipeline", "platform": "NGS360"}
+
+BATCH_ENGINE = "AWSBatch"
+OTHER_ENGINE = "AWSHealthOmics (us-east)"
+
+LAUNCHER_INPUTS = [
+    {"id": "sample_sheet", "type": "File", "required": True},
+    {"id": "reference_model", "type": "string", "required": True},
+    {"id": "platform", "type": "string?", "required": False},
+    {"id": "project_id", "type": "string?", "required": False},
+    {"id": "run_fusion", "type": "boolean?", "required": False},
+]
+
+
+@pytest.fixture(name="launcher")
+def launcher_fixture(session: Session) -> Workflow:
+    """
+    A launcher workflow with versions 1-3 and `stable` pointing at version 1.
+
+    Versions 1 and 2 are deployed on the Batch engine, each naming its own job
+    definition. Version 3 -- the latest, so what a bare id means -- is deployed
+    on another engine only, so launching it has to be refused.
+    """
+    session.add(Platform(name=BATCH_ENGINE))
+    session.add(Platform(name=OTHER_ENGINE))
+    workflow = Workflow(name="RNA-Seq Launcher", created_by="testuser")
+    session.add(workflow)
+    session.flush()
+    for number in (1, 2, 3):
+        version = WorkflowVersion(
+            workflow_id=workflow.id, version=number,
+            definition_uri=f"s3://definitions/launcher-v{number}.cwl",
+            inputs=LAUNCHER_INPUTS, created_by="testuser",
+        )
+        session.add(version)
+        session.flush()
+        session.add(WorkflowDeployment(
+            workflow_version_id=version.id,
+            engine=BATCH_ENGINE if number < 3 else OTHER_ENGINE,
+            external_id=f"runner:{number}" if number < 3 else "arn:aws:omics:workflow/3",
+            created_by="testuser",
+        ))
+        if number == 1:
+            session.add(WorkflowVersionAlias(
+                workflow_id=workflow.id, alias="stable",
+                workflow_version_id=version.id, created_by="testuser",
+            ))
+    session.commit()
+    return workflow
+
+
+def _config_launching_workflow(workflow: Workflow, tag: str = ":2", **changes) -> dict:
+    """The NGS360 pipeline config, with the platform launching one registered workflow"""
+    config = copy.deepcopy(NGS360_PIPELINE_CONFIG)
+    config["platforms"]["NGS360"]["launchers"] = [{
+        "name": "RNA-Seq",
+        "launch_workflow": {
+            "workflow": f"{workflow.id}{tag}",
+            "engine": BATCH_ENGINE,
+            "inputs": {
+                "platform": "NGS360",
+                "project_id": "{{projectid}}",
+                "reference_model": "GRCh38ERCC.ensembl91",
+                "sample_sheet": {
+                    "class": "File",
+                    "location": "s3://store/{{projectid}}/{{projectid}}.{{project_type}}.txt",
+                },
+            },
+            **changes,
+        },
+    }]
+    return config
+
+
+def _config_with_several_launchers(workflow: Workflow) -> dict:
+    """
+    A WES pipeline config whose NGS360 platform has more than one launcher.
+
+    WES launches version 2 of the workflow and MSI version 1, so which one ran
+    shows in the definition and the job definition. CNV is named but has no
+    workflow, so it cannot be launched. The job name carries the launcher.
+    """
+    config = _config_launching_workflow(workflow)
+    config["project_type"] = "WES"
+    config["aws_batch"]["job_name"] = "{{action}}-{{projectid}}-{{launcher}}"
+    wes = config["platforms"]["NGS360"]["launchers"][0]
+    wes["name"] = "WES"
+    msi = copy.deepcopy(wes)
+    msi["name"] = "MSI"
+    msi["launch_workflow"]["workflow"] = f"{workflow.id}:1"
+    config["platforms"]["NGS360"]["launchers"] = [wes, msi, {"name": "CNV"}]
+    return config
+
+
+def _launch_inputs(mock_s3_client, command: list[str]) -> dict:
+    """The inputs object a workflow launch wrote, read from where its command points"""
+    assert command[0] == "--workflow" and command[2] == "--inputs"
+    bucket, key = command[3].removeprefix("s3://").split("/", 1)
+    return json.loads(mock_s3_client.uploaded_files[bucket][key])
+
+
+@patch("api.jobs.services.boto3.client")
+@patch("api.actions.services.get_setting_value")
+def test_submit_other_action_ignores_launch_job_settings(
+    mock_get_setting: MagicMock,
+    mock_boto_client: MagicMock,
+    client: TestClient,
+    test_project: Project,
+    mock_s3_client
+):
+    """Test an action with no settings of its own runs in the project type's job definition"""
+    mock_get_setting.return_value = "s3://ngs360-resources/pipeline_configs/"
+    mock_batch = _mock_batch(mock_boto_client)
+
+    response = _submit_action(client, test_project, mock_s3_client, {
+        "action": "create-project",
+        "platform": "NGS360",
+    })
+
+    assert response.status_code == 201
+    call_args = mock_batch.submit_job.call_args[1]
+    assert call_args["jobDefinition"] == "ngs360-backend"
+    names = [env["name"] for env in call_args["containerOverrides"]["environment"]]
+    assert "WES_API_ENDPOINT" not in names
+
+
+@patch("api.jobs.services.boto3.client")
+@patch("api.actions.services.get_setting_value")
+def test_submit_launch_pipeline_job_on_platform_that_cannot_launch(
+    mock_get_setting: MagicMock,
+    mock_boto_client: MagicMock,
+    client: TestClient,
+    test_project: Project,
+    mock_s3_client
+):
+    """Test launching is refused on a platform whose launchers are apps of its own"""
+    mock_get_setting.return_value = "s3://ngs360-resources/pipeline_configs/"
+    mock_batch = _mock_batch(mock_boto_client)
+
+    response = _submit_action(client, test_project, mock_s3_client, {
+        "action": "launch-pipeline",
+        "platform": "Arvados",
+        "launcher": "launcher-app-1",
+    })
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == (
+        "Action 'launch-pipeline' is not configured for platform 'Arvados' "
+        "in project type 'RNA-Seq'"
+    )
+    mock_batch.submit_job.assert_not_called()
+
+
+@patch("api.jobs.services.boto3.client")
+@patch("api.actions.services.get_setting_value")
+def test_submit_launch_runs_registered_workflow(
+    mock_get_setting: MagicMock,
+    mock_boto_client: MagicMock,
+    client: TestClient,
+    test_project: Project,
+    launcher: Workflow,
+    mock_s3_client
+):
+    """Test a launch runs the configured workflow version with a runner job"""
+    mock_get_setting.return_value = "s3://ngs360-resources/pipeline_configs/"
+    mock_batch = _mock_batch(mock_boto_client)
+
+    response = _submit_action(
+        client, test_project, mock_s3_client,
+        {
+            **LAUNCH,
+            # project_id is the configuration's to set, whatever the request says
+            "inputs": {"run_fusion": True, "project_id": "P-SOMEONE-ELSES", "platform": None},
+        },
+        _config_launching_workflow(launcher),
+    )
+
+    assert response.status_code == 201, response.text
+    call_args = mock_batch.submit_job.call_args[1]
+    command = call_args["containerOverrides"]["command"]
+    # The runner is told where the definition and the inputs are, nothing more
+    assert command[:3] == ["--workflow", "s3://definitions/launcher-v2.cwl", "--inputs"]
+    assert f"/project/{test_project.project_id}/launch_inputs/" in command[3]
+    assert command[3].endswith(".inputs.json")
+    assert _launch_inputs(mock_s3_client, command) == {
+        "run_fusion": True,
+        "platform": "NGS360",
+        "project_id": test_project.project_id,
+        "reference_model": "GRCh38ERCC.ensembl91",
+        "sample_sheet": {
+            "class": "File",
+            "location": (
+                f"s3://store/{test_project.project_id}/{test_project.project_id}.RNA-Seq.txt"
+            ),
+        },
+    }
+    # The job definition is the version's deployment on the engine, whatever
+    # the action's aws_batch settings name
+    assert call_args["jobDefinition"] == "runner:2"
+    # Not overridden, so the project type's queue still applies
+    assert call_args["jobQueue"] == "batch-queue"
+    # The action's environment is added to the project type's
+    environment = _batch_environment(mock_batch)
+    assert environment["PROJECT"] == test_project.project_id
+    assert environment["WES_API_ENDPOINT"] == "https://wes"
+
+    # The inputs are kept with the project's files
+    files = client.get(
+        "/api/v1/files", params={"uri": command[3]}
+    ).json()["data"]
+    assert [f["uri"] for f in files] == [command[3]]
+
+
+@pytest.mark.parametrize("tag, definition, job_definition", [
+    (":1", "s3://definitions/launcher-v1.cwl", "runner:1"),
+    (":stable", "s3://definitions/launcher-v1.cwl", "runner:1"),
+    (":2", "s3://definitions/launcher-v2.cwl", "runner:2"),
+])
+@patch("api.jobs.services.boto3.client")
+@patch("api.actions.services.get_setting_value")
+def test_submit_launch_runs_the_workflow_version_the_config_names(
+    mock_get_setting: MagicMock,
+    mock_boto_client: MagicMock,
+    tag: str,
+    definition: str,
+    job_definition: str,
+    client: TestClient,
+    test_project: Project,
+    launcher: Workflow,
+    mock_s3_client
+):
+    """Test the workflow reference picks the version by number or by alias"""
+    mock_get_setting.return_value = "s3://ngs360-resources/pipeline_configs/"
+    mock_batch = _mock_batch(mock_boto_client)
+
+    response = _submit_action(
+        client, test_project, mock_s3_client, LAUNCH, _config_launching_workflow(launcher, tag)
+    )
+
+    assert response.status_code == 201, response.text
+    call_args = mock_batch.submit_job.call_args[1]
+    assert call_args["containerOverrides"]["command"][1] == definition
+    assert call_args["jobDefinition"] == job_definition
+
+
+@patch("api.jobs.services.boto3.client")
+@patch("api.actions.services.get_setting_value")
+def test_submit_launch_prefers_the_version_recorded_for_the_project(
+    mock_get_setting: MagicMock,
+    mock_boto_client: MagicMock,
+    client: TestClient,
+    session: Session,
+    test_project: Project,
+    launcher: Workflow,
+    mock_s3_client
+):
+    """Test a version recorded for the project is launched whatever the config names"""
+    mock_get_setting.return_value = "s3://ngs360-resources/pipeline_configs/"
+    mock_batch = _mock_batch(mock_boto_client)
+    session.add(ProjectWorkflowVersion(
+        project_id=test_project.project_id, workflow_id=launcher.id, version=1,
+        created_by="testuser",
+    ))
+    session.commit()
+
+    response = _submit_action(
+        client, test_project, mock_s3_client, LAUNCH, _config_launching_workflow(launcher, ":2")
+    )
+
+    assert response.status_code == 201, response.text
+    call_args = mock_batch.submit_job.call_args[1]
+    assert call_args["containerOverrides"]["command"][1] == "s3://definitions/launcher-v1.cwl"
+    assert call_args["jobDefinition"] == "runner:1"
+
+
+@patch("api.jobs.services.boto3.client")
+@patch("api.actions.services.get_setting_value")
+def test_submit_launch_refuses_a_version_not_deployed_on_the_engine(
+    mock_get_setting: MagicMock,
+    mock_boto_client: MagicMock,
+    client: TestClient,
+    test_project: Project,
+    launcher: Workflow,
+    mock_s3_client
+):
+    """Test the latest version, deployed only on another engine, cannot be launched"""
+    mock_get_setting.return_value = "s3://ngs360-resources/pipeline_configs/"
+    mock_batch = _mock_batch(mock_boto_client)
+
+    response = _submit_action(
+        client, test_project, mock_s3_client, LAUNCH,
+        _config_launching_workflow(launcher, tag=""),
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == (
+        f"Version 3 of workflow {launcher.id} is not deployed on '{BATCH_ENGINE}'"
+    )
+    mock_batch.submit_job.assert_not_called()
+
+
+@pytest.mark.parametrize("inputs, config_inputs, detail", [
+    ({"run_fuson": True}, None, "has no input named: run_fuson"),
+    # The configuration stops supplying the sample sheet, and the request has none
+    ({}, {"reference_model": "GRCh38ERCC.ensembl91"}, "requires a value for: sample_sheet"),
+])
+@patch("api.jobs.services.boto3.client")
+@patch("api.actions.services.get_setting_value")
+def test_submit_launch_checks_inputs_against_the_workflow_version(
+    mock_get_setting: MagicMock,
+    mock_boto_client: MagicMock,
+    inputs: dict,
+    config_inputs: dict | None,
+    detail: str,
+    client: TestClient,
+    test_project: Project,
+    launcher: Workflow,
+    mock_s3_client
+):
+    """Test an unknown input or a missing required one is refused before anything is written"""
+    mock_get_setting.return_value = "s3://ngs360-resources/pipeline_configs/"
+    mock_batch = _mock_batch(mock_boto_client)
+    changes = {} if config_inputs is None else {"inputs": config_inputs}
+
+    response = _submit_action(
+        client, test_project, mock_s3_client, {**LAUNCH, "inputs": inputs},
+        _config_launching_workflow(launcher, **changes),
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == f"Version 2 of workflow {launcher.id} {detail}"
+    mock_batch.submit_job.assert_not_called()
+    assert list(mock_s3_client.uploaded_files) == ["ngs360-resources"]
+
+
+@patch("api.jobs.services.boto3.client")
+@patch("api.actions.services.get_setting_value")
+def test_submit_launch_takes_inputs_the_configuration_leaves_to_the_request(
+    mock_get_setting: MagicMock,
+    mock_boto_client: MagicMock,
+    client: TestClient,
+    test_project: Project,
+    launcher: Workflow,
+    mock_s3_client
+):
+    """Test an input the configuration does not supply, such as the reference, is the request's"""
+    mock_get_setting.return_value = "s3://ngs360-resources/pipeline_configs/"
+    mock_batch = _mock_batch(mock_boto_client)
+    config = _config_launching_workflow(launcher)
+    del config["platforms"]["NGS360"]["launchers"][0]["launch_workflow"]["inputs"]["reference_model"]
+
+    response = _submit_action(
+        client, test_project, mock_s3_client,
+        {**LAUNCH, "inputs": {"reference_model": "GRCm38ERCC.ensembl91"}},
+        config,
+    )
+
+    assert response.status_code == 201, response.text
+    command = mock_batch.submit_job.call_args[1]["containerOverrides"]["command"]
+    assert _launch_inputs(mock_s3_client, command)["reference_model"] == "GRCm38ERCC.ensembl91"
+
+
+@pytest.mark.parametrize("name, definition, job_definition", [
+    ("WES", "s3://definitions/launcher-v2.cwl", "runner:2"),
+    ("MSI", "s3://definitions/launcher-v1.cwl", "runner:1"),
+])
+@patch("api.jobs.services.boto3.client")
+@patch("api.actions.services.get_setting_value")
+def test_submit_launch_runs_the_launcher_the_request_names(
+    mock_get_setting: MagicMock,
+    mock_boto_client: MagicMock,
+    name: str,
+    definition: str,
+    job_definition: str,
+    client: TestClient,
+    test_project: Project,
+    launcher: Workflow,
+    mock_s3_client
+):
+    """Test a platform with several launchers runs the workflow of the one named"""
+    mock_get_setting.return_value = "s3://ngs360-resources/pipeline_configs/"
+    mock_batch = _mock_batch(mock_boto_client)
+
+    response = _submit_action(
+        client, test_project, mock_s3_client,
+        {**LAUNCH, "project_type": "WES", "launcher": name},
+        _config_with_several_launchers(launcher),
+    )
+
+    assert response.status_code == 201, response.text
+    call_args = mock_batch.submit_job.call_args[1]
+    assert call_args["containerOverrides"]["command"][1] == definition
+    assert call_args["jobDefinition"] == job_definition
+    # The launcher's name is there for the job name to use
+    assert call_args["jobName"] == f"launch-pipeline-{test_project.project_id}-{name}"
+
+
+@pytest.mark.parametrize("name, detail", [
+    (None, "A launcher is required for"),
+    ("HLA", "Launcher 'HLA' not found for"),
+    # Named in the configuration, but with no workflow to launch it
+    ("CNV", "Launcher 'CNV' not found for"),
+])
+@patch("api.jobs.services.boto3.client")
+@patch("api.actions.services.get_setting_value")
+def test_submit_launch_needs_one_of_the_platforms_launchers(
+    mock_get_setting: MagicMock,
+    mock_boto_client: MagicMock,
+    name: str | None,
+    detail: str,
+    client: TestClient,
+    test_project: Project,
+    launcher: Workflow,
+    mock_s3_client
+):
+    """Test a launch is refused unless it names a launcher the platform can launch"""
+    mock_get_setting.return_value = "s3://ngs360-resources/pipeline_configs/"
+    mock_batch = _mock_batch(mock_boto_client)
+
+    response = _submit_action(
+        client, test_project, mock_s3_client,
+        {**LAUNCH, "project_type": "WES", "launcher": name},
+        _config_with_several_launchers(launcher),
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == (
+        f"{detail} platform 'NGS360' in project type 'WES': one of WES, MSI"
+    )
+    mock_batch.submit_job.assert_not_called()
+
+
+@patch("api.jobs.services.boto3.client")
+@patch("api.actions.services.get_setting_value")
+def test_submit_other_action_has_no_launcher_in_its_job_name(
+    mock_get_setting: MagicMock,
+    mock_boto_client: MagicMock,
+    client: TestClient,
+    test_project: Project,
+    launcher: Workflow,
+    mock_s3_client
+):
+    """Test a job name that carries the launcher renders it empty for the other actions"""
+    mock_get_setting.return_value = "s3://ngs360-resources/pipeline_configs/"
+    mock_batch = _mock_batch(mock_boto_client)
+
+    response = _submit_action(
+        client, test_project, mock_s3_client,
+        {"action": "create-project", "platform": "NGS360", "project_type": "WES"},
+        _config_with_several_launchers(launcher),
+    )
+
+    assert response.status_code == 201, response.text
+    job_name = mock_batch.submit_job.call_args[1]["jobName"]
+    assert job_name == f"create-project-{test_project.project_id}-"
+
+
+def _config_minting_launch_key(workflow: Workflow, hours: int = 72) -> dict:
+    """The NGS360 pipeline config, with the launch action asking for a user API key"""
+    config = _config_launching_workflow(workflow)
+    launch = config["platforms"]["NGS360"]["aws_batch"]["launch-pipeline"]
+    launch["user_api_key_hours"] = hours
+    return config
+
+
+@patch("api.jobs.services.boto3.client")
+@patch("api.actions.services.get_setting_value")
+def test_submit_launch_mints_submitter_api_key(
+    mock_get_setting: MagicMock,
+    mock_boto_client: MagicMock,
+    client: TestClient,
+    session: Session,
+    test_project: Project,
+    launcher: Workflow,
+    mock_s3_client
+):
+    """Test an action asking for a key gets one owned by the submitter, named for the job"""
+    from api.auth.models import APIKey, User
+    from core.security import hash_api_key
+
+    mock_get_setting.return_value = "s3://ngs360-resources/pipeline_configs/"
+    mock_batch = _mock_batch(mock_boto_client)
+
+    before = datetime.now(timezone.utc)
+    response = _submit_action(
+        client, test_project, mock_s3_client, LAUNCH, _config_minting_launch_key(launcher, 72)
+    )
+
+    assert response.status_code == 201
+    environment = _batch_environment(mock_batch)
+    (api_key,) = session.exec(select(APIKey)).all()
+    assert api_key.hashed_key == hash_api_key(environment["NGS360_AUTH_TOKEN"])
+    # The key reaches the job through its environment and is not among the
+    # inputs written to the project's files
+    command = mock_batch.submit_job.call_args[1]["containerOverrides"]["command"]
+    launch_inputs = json.dumps(_launch_inputs(mock_s3_client, command))
+    assert environment["NGS360_AUTH_TOKEN"] not in launch_inputs
+    # The job is not told its key's id: the key is retired from here when the
+    # job ends, not by the job.
+    assert "NGS360_AUTH_KEY_ID" not in environment
+    assert session.get(User, api_key.user_id).username == "testuser"
+    assert api_key.is_active
+    assert api_key.name == "Batch job aws-batch-job-123"
+    expires_at = api_key.expires_at.replace(tzinfo=timezone.utc)
+    ttl = timedelta(hours=72)
+    assert before + ttl <= expires_at <= datetime.now(timezone.utc) + ttl
+
+
+@pytest.mark.parametrize("body", [
+    LAUNCH,                                               # launch not asking for a key
+    {"action": "create-project", "platform": "NGS360"},  # another action, same platform
+])
+@patch("api.jobs.services.boto3.client")
+@patch("api.actions.services.get_setting_value")
+def test_submit_action_not_asking_for_a_key_mints_nothing(
+    mock_get_setting: MagicMock,
+    mock_boto_client: MagicMock,
+    body,
+    client: TestClient,
+    session: Session,
+    test_project: Project,
+    launcher: Workflow,
+    mock_s3_client
+):
+    """Test only the action whose settings ask for a key is given a credential"""
+    from api.auth.models import APIKey
+
+    mock_get_setting.return_value = "s3://ngs360-resources/pipeline_configs/"
+    mock_batch = _mock_batch(mock_boto_client)
+
+    # create-project runs against a config where launch does ask for a key
+    config = (
+        _config_launching_workflow(launcher) if body is LAUNCH
+        else _config_minting_launch_key(launcher)
+    )
+    response = _submit_action(client, test_project, mock_s3_client, body, config)
+
+    assert response.status_code == 201
+    environment = _batch_environment(mock_batch)
+    assert "NGS360_AUTH_TOKEN" not in environment
+    assert "NGS360_AUTH_KEY_ID" not in environment
+    assert session.exec(select(APIKey)).all() == []
+
+
+@patch("api.jobs.services.boto3.client")
+@patch("api.actions.services.get_setting_value")
+def test_submit_launch_failure_revokes_minted_key(
+    mock_get_setting: MagicMock,
+    mock_boto_client: MagicMock,
+    client: TestClient,
+    session: Session,
+    test_project: Project,
+    launcher: Workflow,
+    mock_s3_client
+):
+    """Test a key minted for a job AWS Batch refused does not stay usable"""
+    from api.auth.models import APIKey
+
+    mock_get_setting.return_value = "s3://ngs360-resources/pipeline_configs/"
+    mock_batch = MagicMock()
+    mock_batch.submit_job.side_effect = botocore.exceptions.ClientError(
+        {"Error": {"Code": "ClientException", "Message": "no such queue"}}, "SubmitJob"
+    )
+    mock_boto_client.return_value = mock_batch
+
+    response = _submit_action(
+        client, test_project, mock_s3_client, LAUNCH, _config_minting_launch_key(launcher)
+    )
+
+    assert response.status_code == 500
+    (api_key,) = session.exec(select(APIKey)).all()
+    session.refresh(api_key)
+    assert not api_key.is_active
+    assert api_key.revoked_at is not None
 
 
 @patch("api.jobs.services.boto3.client")

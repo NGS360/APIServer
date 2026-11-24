@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 import logging
 
 from fastapi import HTTPException, status
+from sqlalchemy import and_, not_, or_
 from sqlmodel import Session, select, func
 
 from api.auth.models import (
@@ -511,6 +512,24 @@ def get_user_by_email(session: Session, email: str) -> User | None:
 
 MAX_API_KEYS_PER_USER = 25
 
+# A key minted for a Batch job is named for it. The name is the only link
+# between the two: it is how the key is found again when the job ends, and how
+# the key listing tells a job's key from one its owner created.
+JOB_API_KEY_NAME_PREFIX = "Batch job "
+
+
+def job_api_key_name(job_ref: str) -> str:
+    """The name of the API key minted for a Batch job, from the job's id."""
+    return f"{JOB_API_KEY_NAME_PREFIX}{job_ref}"[:100]
+
+
+def _is_expired():
+    """SQL condition: the key has an expiry and it has passed."""
+    return and_(
+        APIKey.expires_at.is_not(None),
+        APIKey.expires_at < datetime.now(timezone.utc),
+    )
+
 
 def create_user_api_key(
     session: Session, user: User, data: APIKeyCreate
@@ -521,10 +540,14 @@ def create_user_api_key(
     Returns:
         Tuple of (APIKey record, raw_key)
     """
+    # An expired key can no longer authenticate but keeps is_active set, so
+    # counting on the flag alone would let keys nobody retired -- a job's key
+    # whose job ended unreported, say -- hold their owner's quota forever.
     active_count = session.exec(
         select(func.count()).select_from(APIKey).where(
             APIKey.user_id == user.id,
             APIKey.is_active.is_(True),
+            not_(_is_expired()),
         )
     ).one()
 
@@ -552,17 +575,34 @@ def create_user_api_key(
 
 
 def list_user_api_keys(
-    session: Session, user: User, page: int = 1, per_page: int = 20
+    session: Session, user: User, page: int = 1, per_page: int = 20,
+    include_job_keys: bool = False,
 ) -> tuple[list[APIKey], int]:
-    """List API keys for a user (paginated)."""
+    """
+    List API keys for a user (paginated).
+
+    A key minted for a Batch job is left out once it is retired or expired,
+    unless include_job_keys is set. Every launch mints one, its owner never
+    asked for it, and once it is spent there is nothing they can do with it, so
+    listing them all would bury the keys the user actually manages. A job's key
+    that still works is listed like any other, so its owner can revoke it while
+    the job runs. The records themselves are kept either way.
+    """
+    owned = [APIKey.user_id == user.id]
+    if not include_job_keys:
+        owned.append(not_(and_(
+            APIKey.name.startswith(JOB_API_KEY_NAME_PREFIX, autoescape=True),
+            or_(APIKey.is_active.is_(False), _is_expired()),
+        )))
+
     count = session.exec(
-        select(func.count()).select_from(APIKey).where(APIKey.user_id == user.id)
+        select(func.count()).select_from(APIKey).where(*owned)
     ).one()
 
     offset = (page - 1) * per_page
     keys = session.exec(
         select(APIKey)
-        .where(APIKey.user_id == user.id)
+        .where(*owned)
         .order_by(APIKey.created_at.desc())
         .offset(offset)
         .limit(per_page)
@@ -628,6 +668,38 @@ def revoke_user_api_key(
         session.refresh(api_key)
 
     return api_key
+
+
+def retire_job_api_keys(session: Session, username: str, job_id: str) -> int:
+    """
+    Retire the API key minted for a Batch job, once the job has ended.
+
+    The job is what the key was for, so the job ending is what ends the key,
+    however it ended -- including killed, cancelled or timed out, where nothing
+    inside the job is left to clean up after itself.
+
+    Matched by name among the submitter's own keys, so a job can only ever
+    retire a key belonging to the user who submitted it.
+
+    Does not commit: the caller commits it together with the job's final
+    status, so the two cannot disagree.
+
+    Returns:
+        The number of keys retired; 0 if the job had none.
+    """
+    keys = session.exec(
+        select(APIKey).join(User, User.id == APIKey.user_id).where(
+            User.username == username,
+            APIKey.name == job_api_key_name(job_id),
+            APIKey.is_active.is_(True),
+        )
+    ).all()
+    now = datetime.now(timezone.utc)
+    for api_key in keys:
+        api_key.is_active = False
+        api_key.revoked_at = now
+        session.add(api_key)
+    return len(keys)
 
 
 def delete_user_api_key(
