@@ -1204,6 +1204,67 @@ def test_submit_launch_runs_registered_workflow(
     assert [f["uri"] for f in files] == [command[3]]
 
 
+@pytest.mark.parametrize("size, requirements", [
+    # Not stated: the runner's job definition decides
+    ({}, None),
+    ({"vcpus": 2, "memory": 2560}, [
+        {"type": "VCPU", "value": "2"}, {"type": "MEMORY", "value": "2560"},
+    ]),
+    # Either alone leaves the other to the job definition
+    ({"memory": 4608}, [{"type": "MEMORY", "value": "4608"}]),
+    ({"vcpus": 4}, [{"type": "VCPU", "value": "4"}]),
+])
+@patch("api.jobs.services.boto3.client")
+@patch("api.actions.services.get_setting_value")
+def test_submit_launch_sizes_the_runner_job_as_the_launcher_states(
+    mock_get_setting: MagicMock,
+    mock_boto_client: MagicMock,
+    client: TestClient,
+    test_project: Project,
+    launcher: Workflow,
+    mock_s3_client,
+    size: dict,
+    requirements: list | None,
+):
+    """Test a launch gives the runner job the vCPUs and memory its launcher states"""
+    mock_get_setting.return_value = "s3://ngs360-resources/pipeline_configs/"
+    mock_batch = _mock_batch(mock_boto_client)
+
+    response = _submit_action(
+        client, test_project, mock_s3_client, LAUNCH,
+        _config_launching_workflow(launcher, **size),
+    )
+
+    assert response.status_code == 201, response.text
+    overrides = mock_batch.submit_job.call_args[1]["containerOverrides"]
+    assert overrides.get("resourceRequirements") == requirements
+
+
+@pytest.mark.parametrize("size", [{"memory": 0}, {"vcpus": -1}, {"memory": "plenty"}])
+@patch("api.jobs.services.boto3.client")
+@patch("api.actions.services.get_setting_value")
+def test_submit_launch_refuses_a_job_size_that_is_not_a_positive_number(
+    mock_get_setting: MagicMock,
+    mock_boto_client: MagicMock,
+    client: TestClient,
+    test_project: Project,
+    launcher: Workflow,
+    mock_s3_client,
+    size: dict,
+):
+    """Test a launcher whose job size is not a positive number is not launched"""
+    mock_get_setting.return_value = "s3://ngs360-resources/pipeline_configs/"
+    mock_batch = _mock_batch(mock_boto_client)
+
+    response = _submit_action(
+        client, test_project, mock_s3_client, LAUNCH,
+        _config_launching_workflow(launcher, **size),
+    )
+
+    assert response.status_code >= 400, response.text
+    mock_batch.submit_job.assert_not_called()
+
+
 @pytest.mark.parametrize("tag, definition, job_definition", [
     (":1", "s3://definitions/launcher-v1.cwl", "runner:1"),
     (":stable", "s3://definitions/launcher-v1.cwl", "runner:1"),

@@ -1111,6 +1111,17 @@ def submit_pipeline_job(
         "environment": []
     }
 
+    # A launcher's workflow may state the size of its runner job
+    if action == ActionOption.LAUNCH_PIPELINE:
+        size = selected_launcher.launch_workflow
+        resource_requirements = [
+            {"type": resource, "value": str(value)}
+            for resource, value in (("VCPU", size.vcpus), ("MEMORY", size.memory))
+            if value is not None
+        ]
+        if resource_requirements:
+            container_overrides["resourceRequirements"] = resource_requirements
+
     # Add environment variables if specified in aws_batch config
     environment = list(action_config.aws_batch.environment or [])
     if override and override.environment:
