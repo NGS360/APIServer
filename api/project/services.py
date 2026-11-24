@@ -1589,7 +1589,6 @@ def ingest_vendor_data(
 # Project workflow versions
 ###############################################################################
 
-
 def _get_project_workflow_version(
     session: Session, project: Project, workflow_id: UUID
 ) -> ProjectWorkflowVersion | None:
@@ -1620,6 +1619,19 @@ def _project_workflow_version_to_public(
     record: ProjectWorkflowVersion,
 ) -> ProjectWorkflowVersionPublic:
     return ProjectWorkflowVersionPublic(**record.model_dump())
+
+
+def get_project_workflows(session, project, workflow_name=None) -> [ProjectWorkflow]:
+    '''
+    Return list of workflows associated with a project, optionally filter on workflow name
+    '''
+    stmt = select(ProjectWorkflow).where(
+        ProjectWorkflow.project_id == project.project_id
+    )
+    if workflow_name:   
+        stmt = stmt.where(ProjectWorkflow.name == workflow_name)
+
+    return session.exec(stmt).all()
 
 
 def get_project_workflow_versions(
@@ -1680,6 +1692,33 @@ def _resolve_version_from_tag(session: Session, workflow: Workflow, tag: str) ->
     return get_workflow_version_by_num(
         session, str(workflow.id), int(tag),
     ).version
+
+
+def add_workflow_to_project(session, workflow_id, project, user) -> ProjectWorkflow:
+    """
+    Add a workflow to a project
+    """
+    base, _, tag = workflow_id.partition(":")
+    workflow = get_workflow_by_id(session, base)
+    version = _resolve_version_from_tag(session, workflow, tag)
+
+    existing_workflow = get_project_workflow(session, project, workflow.id)
+    if existing_workflow is None:
+        existing_workflow = ProjectWorkflowVersion(
+            project_id=project.project_id,
+            workflow_id=workflow.id,
+            version=version,
+            created_by=user.username
+        )
+        session.add(existing_workflow)
+    else:
+        # Update the version of the workflow
+        existing_workflow.version = version
+        existing_workflow.updated_at = datetime.now(tz.utc)
+        existing_workflow.updated_by = user.username
+    session.commit()
+    session.refresh(existing_workflow)
+    return existing_workflow
 
 
 def set_project_workflow_version(
