@@ -803,8 +803,8 @@ def remove_project_member(
 def get_project_workflows(
     session: SessionDep,
     project: ProjectDep,
-    workflow_name: str | None = Query(None, description="Filter workflows by name"),
+    name: str | None = Query(None, description="Filter workflows by name"),
 ) -> list[ProjectWorkflow]:
     """ Return workflows in a project optionally filtered by workflow name """
-    workflows = services.get_project_workflows(session, project, workflow_name)
+    workflows = services.get_project_workflows(session, project, name)
     return workflows
