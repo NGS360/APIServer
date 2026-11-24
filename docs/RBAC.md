@@ -197,7 +197,7 @@ Two things generalise. **An unauthenticated write path cannot be made accountabl
 
 ## Permission Catalog
 
-58 permissions across 18 resources. **Scope** is `G` for global-only (may not appear in a project role) or `P` for project-scopable (may appear in either plane). **Risk** indicates blast radius, for the benefit of anyone composing a custom role.
+51 permissions across 17 resources. **Scope** is `G` for global-only (may not appear in a project role) or `P` for project-scopable (may appear in either plane). **Risk** indicates blast radius, for the benefit of anyone composing a custom role.
 
 ### Project-owned data
 
@@ -245,6 +245,7 @@ These have no path to a project (see *Design Decisions*), so they are global-onl
 | `vendor:create` | G | low | `POST /vendors` |
 | `vendor:update` | G | low | `PUT /vendors/{id}` |
 | `vendor:delete` | G | medium | `DELETE /vendors/{id}` |
+| `workflow:read` | G | low | `GET /workflows/{workflow_id}` |
 | `setting:read` | G | medium | `GET /settings`, `GET /settings/{key}` |
 | `setting:update` | G | **critical** | `PUT /settings/{key}` — controls bucket URIs and the validation Lambda ARN |
 
@@ -289,7 +290,7 @@ class Permission(StrEnum):
     PROJECT_SUBMIT_ACTION = "project:submit_action"
     PROJECT_INGEST = "project:ingest"
     SAMPLE_READ = "sample:read"
-    # ... 58 members total
+    # ... 51 members total
 
 
 Risk = Literal["low", "medium", "high", "critical"]
@@ -327,7 +328,7 @@ Collapsed to three tiers on 2026-10-13 (NWP-2213, step 3). Eleven global roles b
 
 | Tier | Role | Purpose | Permissions |
 |---|---|---|---|
-| User | `member` | Default for every authenticated user | **39** — everything not reserved below |
+| User | `member` | Default for every authenticated user | **40** — everything not reserved below |
 | Admin | `admin` | Platform administrator | `ALL_PERMISSIONS`, recomputed at each sync |
 | Admin | `vendor_admin` | Owns the vendor catalogue | `vendor:create`, `vendor:update`, `vendor:delete`, `vendor:read` |
 | Service | `service_account` | Machine writeback — pipeline results and Batch job status | 14, including the only `job:update` outside `admin` |
@@ -342,7 +343,7 @@ Collapsed to three tiers on 2026-10-13 (NWP-2213, step 3). Eleven global roles b
 | Nobody — membership-gated | `project:manage_members` |
 | `project_owner` (and `admin`) | `project:restrict` |
 
-That is 15 of 58. `tests/api/test_rbac_catalog.py::TestTheCollapsedRoster` pins all five sets and `member`'s size, so adding a permission fails the suite until someone decides which side of the line it belongs on.
+That is 15 of 51. `tests/api/test_rbac_catalog.py::TestTheCollapsedRoster` pins all five sets and `member`'s size, so adding a permission fails the suite until someone decides which side of the line it belongs on.
 
 **Retired:** `lab_manager`, `demux_operator`, `manifest_operator`, `workflow_publisher`, `platform_admin`. Their holders are covered by the widened `member`, except `workflow_publisher` — its permissions are reserved to `workflow_admin`, so migration `a71c4e08b2f6` grants that role to its holders rather than letting them lose access silently.
 
@@ -467,18 +468,7 @@ So the guard against over-granting cuts both ways, and the lesson is narrower th
 
 `manifest_operator` is the ordinary case: 15 scientists and one service account were using `GET /manifest`, `POST /manifest` and `POST /manifest/validate`, and `member` holds none of those. Only `lab_manager` and `admin` did, at sixteen permissions beyond `member` including `run:create` and `project:ingest` — nothing a person uploading a manifest needs. `manifest:*` is global-only by necessity, since a manifest names an arbitrary S3 URI and no resolver maps it to a project, so this could not have been project membership.
 
-**Second worked example, 2026-09-06 — `workflow_publisher` and `workflow_admin`.** The same shape, found the same way. `POST /workflows`, `POST /workflows/{id}/versions` and `POST /workflows/{id}/versions/{v}/deployments` had exactly one caller in 30 days of production, on a personal API key whose only role is `member`. All 29 requests returned `201` — and all 29 were recorded as `would_deny`, on `workflow:create` (15) and `workflow:deploy` (14). They were succeeding only because the mode is `dry_run`; under `enforce` every one of them is a 403. That is a Phase 1 blocker with a name attached, not an unidentified caller.
-
-The off-the-shelf answer was `platform_admin`, which carries these permissions — along with **thirty others**, including `setting:update`, `system:reindex` and `vendor:delete`. Thirty permissions with no demonstrated need, to fix two.
-
-So two roles instead, splitting a privilege that `platform_admin` conflates:
-
-- **`workflow_publisher`** — `workflow:create`, `workflow:update`, `workflow:deploy`. Publishing a workflow and destroying one are different privileges; `workflow:delete` never appeared among the refusals and stays out until it does. `workflow:read` is omitted because `member` already grants it.
-- **`workflow_admin`** — every `workflow:*` permission, **derived from the catalog rather than enumerated**. For a role whose stated scope is "owns the workflow catalog outright", silently narrowing when a new `workflow:*` permission is added would be the bug, so it is computed the way `admin` is.
-
-Both qualify under the rule: workflow writes are on a global resource. `workflow_publisher` is a strict subset of `workflow_admin`, which is a subset of `platform_admin`, so nobody needs two of them.
-
-Note what made this findable at all: the dry-run decision log names the principal, the permission and the count, so the grant could be sized from what was actually refused rather than from what a role was called. **That is the argument for staying in `dry_run` until the `would_deny` set is empty** — see [Enforcement mode](#enforcement-mode).
+The dry-run decision log names the principal, the permission and the count, so the grant could be sized from what was actually refused rather than from what a role was called. **That is the argument for staying in `dry_run` until the `would_deny` set is empty** — see [Enforcement mode](#enforcement-mode).
 
 **The roster is now pinned by a test.** Adding or removing a builtin role fails `test_the_role_roster_is_pinned`, and a global role that adds only reads fails `test_every_global_role_beyond_member_adds_a_write`. Neither guard existed until a role was added and nothing noticed — route counts had been pinned since Phase 4c, but the rule above was unenforced. Personas that differ only in *which projects* they touch — bioinformatician, PI, sequencing tech, external collaborator — are already expressed by project membership. Adding a global role per persona would re-implement project scoping in the global plane, which is exactly what this design avoids. Requests like "contributor without delete" are real, and they are served by custom roles, which is the reason roles are database rows.
 

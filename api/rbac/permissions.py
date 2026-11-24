@@ -24,7 +24,7 @@ from typing import Literal
 
 
 class Permission(StrEnum):
-    """Every permission the API recognises. 58 across 18 resources."""
+    """Every permission the API recognises. 51 across 17 resources."""
 
     # --- Project-owned data ------------------------------------------------
     PROJECT_READ = "project:read"
@@ -223,6 +223,9 @@ CATALOG: dict[Permission, PermissionSpec] = {
         "vendor", "Change a vendor", False, "low"),
     Permission.VENDOR_DELETE: PermissionSpec(
         "vendor", "Delete a vendor", False, "medium"),
+
+    Permission.WORKFLOW_READ: PermissionSpec(
+        "workflow", "View workflows", False, "low"),
 
     Permission.SETTING_READ: PermissionSpec(
         "setting", "View platform settings", False, "medium"),

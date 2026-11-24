@@ -597,7 +597,7 @@ class TestTheCollapsedRoster:
 
         member = ROLE_DEFINITIONS["member"].permissions
         assert member == ALL_PERMISSIONS - _RESERVED
-        assert len(member) == len(ALL_PERMISSIONS) - 11 == 39
+        assert len(member) == len(ALL_PERMISSIONS) - 11 == 40
 
     def test_admin_still_holds_everything(self):
         assert ROLE_DEFINITIONS["admin"].permissions == ALL_PERMISSIONS
