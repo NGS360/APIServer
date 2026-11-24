@@ -731,7 +731,6 @@ def _validate_upload_entity_exists(
         _validate_exists_by_uuid(session, "QCRecord", file_upload.qcrecord_id)
 
 
-
 def _create_upload_entity_association(
     session: Session,
     file_id: uuid_module.UUID,
