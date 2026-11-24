@@ -1,6 +1,7 @@
 """
 Routes/endpoints for the Workflows API
 """
+from uuid import UUID
 
 from fastapi import (
     APIRouter, Depends, HTTPException, status
@@ -11,22 +12,22 @@ from api.rbac.deps import (
     require_permission
 )
 from api.rbac.permissions import Permission
-from api.workflows import services
-from api.workflows.models import (
-    Workflow
+from api.project import services
+from api.project.models import (
+    ProjectWorkflow
 )
 router = APIRouter(prefix="/workflows")
 
 
 @router.get(
     "/{workflow_id}",
-    response_model=Workflow,
+    response_model=ProjectWorkflow,
     tags=["Workflow Endpoints"],
     dependencies=[Depends(require_permission(Permission.WORKFLOW_READ))],
 )
 def get_workflow_by_id(
-    session: SessionDep, workflow_id: str,
-) -> Workflow:
+    session: SessionDep, workflow_id: UUID,
+) -> ProjectWorkflow:
     """Returns a single workflow by its ID."""
     workflow = services.get_workflow_by_id(
         session=session, workflow_id=workflow_id,

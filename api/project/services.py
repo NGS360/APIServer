@@ -4,6 +4,8 @@ Services for the Project API
 
 from datetime import datetime, timezone as tz
 from typing import Literal
+from uuid import UUID
+
 import boto3
 import logging
 
@@ -31,6 +33,7 @@ from api.project.models import (
     ProjectUpdate,
     ProjectPublic,
     ProjectsPublic,
+    ProjectWorkflow
 )
 from api.search.models import SearchDocument
 from api.search.services import (
@@ -1260,3 +1263,30 @@ def ingest_vendor_data(
         user=user,
         project_id=project.project_id
     )
+
+
+###############################################################################
+# Project Workflow Methods
+###############################################################################
+
+def get_workflow_by_id(
+    session: Session, workflow_id: UUID
+) -> ProjectWorkflow | None:
+    ''' Return a single workflow by id UUID '''
+    workflow = session.exec(
+        select(ProjectWorkflow).where(ProjectWorkflow.id == workflow_id)
+    ).first()
+    return workflow
+
+
+def get_project_workflows(session, project, workflow_name=None) -> ProjectWorkflows:
+    '''
+    Return list of workflows associated with a project, optionally filter on workflow name
+    '''
+    stmt = select(ProjectWorkflow).where(
+        ProjectWorkflow.project_id == project.project_id
+    )
+    if workflow_name:
+        stmt = stmt.where(ProjectWorkflow.name == workflow_name)
+
+    return session.exec(stmt).all()

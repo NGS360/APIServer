@@ -29,6 +29,7 @@ from api.project.models import (
     ProjectUpdate,
     ProjectPublic,
     ProjectsPublic,
+    ProjectWorkflow
 )
 from api.samples.models import (
     SampleCreate,
@@ -787,3 +788,23 @@ def remove_project_member(
     user = rbac_services.get_user_or_404(session, username)
     rbac_services.remove_project_member(session, project.id, user)
     return list_project_members(session, project)
+
+
+###############################################################################
+# Project Workflow Endpoints /api/v1/projects/{project_id}/workflows
+###############################################################################
+
+@router.get(
+    "/{project_id}/workflows",
+    response_model=ProjectWorkflows,
+    tags=["Project Endpoints"],
+    dependencies=[Depends(require_project_permission(Permission.PROJECT_READ))],
+)
+def get_project_workflows(
+    session: SessionDep,
+    project: ProjectDep,
+    workflow_name: str | None = Query(None, description="Filter workflows by name"),
+) -> ProjectWorkflows:
+    """ Return workflows in a project optionally filtered by workflow name """
+    workflows = services.get_project_workflows(session, project, workflow_name)
+    return workflows
