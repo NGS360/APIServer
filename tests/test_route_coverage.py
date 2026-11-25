@@ -184,11 +184,12 @@ def test_guard_count_is_recorded():
 
     101 -> 102: POST /projects/{project_id}/workflows/copy, on workflow:create in
     the project plane. The copy also checks project:read on its source project in
-    the handler, which the guard count does not see. POST
-    /projects/{project_id}/workflows (create) is commented out in routes.py, so
-    it is not counted.
+    the handler, which the guard count does not see.
+
+    102 -> 103: POST /projects/{project_id}/workflows (create), on workflow:create
+    in the project plane.
     """
-    assert len(GUARDED) == 102
+    assert len(GUARDED) == 103
 
 
 def test_the_authentication_backlog_only_shrinks():

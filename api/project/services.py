@@ -5,9 +5,11 @@ Services for the Project API
 from datetime import datetime, timezone as tz
 from typing import Literal
 from uuid import UUID
+import gzip
 
 import boto3
 import logging
+from smart_open import open as smart_open
 
 from fastapi import HTTPException, status
 from api.utils import check_duplicate_attribute_keys
@@ -35,6 +37,7 @@ from api.project.models import (
     ProjectPublic,
     ProjectsPublic,
     ProjectWorkflow,
+    ProjectWorkflowCreate,
     WorkflowAttribute,
     WorkflowVersion,
     WorkflowVersionAlias,
@@ -1335,22 +1338,82 @@ def _commit_new_workflow(session: Session, project_id: str, name: str) -> None:
         ) from exc
 
 
+_GZIP_MAGIC = b"\x1f\x8b"
+
+
+def _read_workflow_body(workflow: ProjectWorkflowCreate) -> bytes:
+    '''
+    Return the gzipped workflow definition bytes, from the inline body or from
+    definition_uri. Raises 400 if neither is given.
+
+    An inline body is raw workflow text and is always compressed here. A file
+    fetched from definition_uri is compressed unless it is already gzip data.
+    '''
+    if workflow.body:
+        return gzip.compress(workflow.body)
+    if workflow.definition_uri:
+        # Read the workflow definition using smart_open
+        with smart_open(workflow.definition_uri, 'rb') as f:
+            raw = f.read()
+        if raw.startswith(_GZIP_MAGIC):
+            return raw
+        return gzip.compress(raw)
+
+    raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail="No workflow body or definition_uri provided",
+    )
+
+
 def create_project_workflow(
-    session: Session, project: Project, name: str, created_by: str,
+    session: Session, project: Project, workflow: ProjectWorkflowCreate, created_by: str,
 ) -> ProjectWorkflow:
     '''
-    Create an empty workflow in a project. Versions are added separately.
+    Create a workflow in a project along with its first version (version 1).
+
+    The body is read before anything is written, and the workflow and version
+    are committed together, so a failed read leaves no workflow behind.
     '''
-    _raise_if_workflow_name_taken(session, project.project_id, name)
-    workflow = ProjectWorkflow(
+    _raise_if_workflow_name_taken(session, project.project_id, workflow.name)
+    # Check duplicate keys here: the unique constraints would otherwise fail at
+    # commit and be reported as a duplicate workflow name.
+    check_duplicate_attribute_keys(workflow.attributes or [], "workflow attributes")
+    check_duplicate_attribute_keys(
+        workflow.version_attributes or [], "workflow version attributes",
+    )
+    compressed_body = _read_workflow_body(workflow)
+
+    new_workflow = ProjectWorkflow(
         project_id=project.project_id,
-        name=name,
+        name=workflow.name,
         created_by=created_by,
     )
-    session.add(workflow)
-    _commit_new_workflow(session, project.project_id, name)
-    session.refresh(workflow)
-    return workflow
+    session.add(new_workflow)
+    for attr in workflow.attributes or []:
+        session.add(WorkflowAttribute(
+            workflow_id=new_workflow.id, key=attr.key, value=attr.value,
+        ))
+
+    # definition_uri is a NOT NULL source reference; an inline body has none,
+    # so it is stored as an empty string.
+    new_version = WorkflowVersion(
+        workflow_id=new_workflow.id,
+        version=1,
+        definition_uri=workflow.definition_uri or "",
+        body=compressed_body,
+        inputs=workflow.inputs,
+        outputs=workflow.outputs,
+        created_by=created_by,
+    )
+    session.add(new_version)
+    for attr in workflow.version_attributes or []:
+        session.add(WorkflowVersionAttribute(
+            workflowversion_id=new_version.id, key=attr.key, value=attr.value,
+        ))
+
+    _commit_new_workflow(session, project.project_id, workflow.name)
+    session.refresh(new_workflow)
+    return new_workflow
 
 
 def copy_project_workflow(

@@ -11,7 +11,7 @@ from sqlalchemy import ForeignKeyConstraint
 from sqlalchemy.dialects import mysql
 from sqlmodel import SQLModel, Field, Relationship, UniqueConstraint
 from typing import List
-from pydantic import ConfigDict, field_validator
+from pydantic import ConfigDict, field_validator, model_validator
 
 from api.rbac.permissions import Permission
 from api.runs.models import SequencingRunPublic
@@ -260,7 +260,7 @@ class WorkflowVersion(SQLModel, table=True):
 
     id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
     workflow_id: uuid.UUID = Field(foreign_key="projectworkflow.id")
-    version: int
+    version: int = Field(default=1)
 
     # Source reference only; may be overwritten, so `body` is the authoritative copy.
     definition_uri: str
@@ -319,9 +319,36 @@ class ProjectWorkflow(SQLModel, table=True):
     aliases: List["WorkflowVersionAlias"] | None = Relationship(back_populates="workflow")
 
 
+class WorkflowAttributeCreate(SQLModel):
+    """ Attribute supplied on a workflow create request (no ids; the service sets them) """
+    key: str = Field(min_length=1)
+    value: str
+
+
+class WorkflowVersionAttributeCreate(SQLModel):
+    """ Attribute supplied on a workflow version create request """
+    key: str = Field(min_length=1)
+    value: str
+
+
 class ProjectWorkflowCreate(SQLModel):
     """Request body for POST /projects/{project_id}/workflows."""
     name: str = Field(min_length=1, max_length=255)
+    attributes: List[WorkflowAttributeCreate] | None = None
+    version_attributes: List[WorkflowVersionAttributeCreate] | None = None
+
+    # Provide a definition_uri or body but not both
+    definition_uri: str | None = None
+    body: bytes | None = None
+
+    inputs: list[dict] | None = None
+    outputs: list[dict] | None = None
+
+    @model_validator(mode="after")
+    def _definition_uri_or_body_not_both(self):
+        if self.definition_uri and self.body:
+            raise ValueError("Provide either definition_uri or body, not both")
+        return self
 
 
 class ProjectWorkflowCopy(SQLModel):

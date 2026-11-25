@@ -103,7 +103,6 @@ def viewer_client_fixture(client_with_permissions):
     return client_with_permissions(frozenset(), username="viewer")
 
 
-@pytest.mark.skip(reason="POST /projects/{project_id}/workflows is commented out in routes.py")
 class TestCreate:
 
     def test_a_project_contributor_creates_a_workflow(self, session, contributor_client):
@@ -112,7 +111,7 @@ class TestCreate:
 
         response = contributor_client.post(
             CREATE_URL.format(project_id=project.project_id),
-            json={"name": "germline"},
+            json={"name": "germline", "body": "workflow text"},
         )
 
         assert response.status_code == 201, response.text
@@ -120,9 +119,94 @@ class TestCreate:
         assert body["name"] == "germline"
         assert body["project_id"] == project.project_id
         assert body["created_by"] == "contrib"
-        assert session.exec(
+
+        workflow = session.exec(
             select(ProjectWorkflow).where(ProjectWorkflow.name == "germline")
         ).one()
+        version = session.exec(
+            select(WorkflowVersion).where(WorkflowVersion.workflow_id == workflow.id)
+        ).one()
+        assert version.version == 1
+        assert version.definition_uri == ""
+        assert version.created_by == "contrib"
+        assert gzip.decompress(version.body) == b"workflow text"
+
+    def test_attributes_and_version_attributes_are_stored(self, session, contributor_client):
+        project = make_project(session, "C005")
+        grant_project_role(session, project, "contrib", "project_contributor")
+
+        response = contributor_client.post(
+            CREATE_URL.format(project_id=project.project_id),
+            json={
+                "name": "attrs",
+                "body": "workflow text",
+                "attributes": [{"key": "owner", "value": "lab"}],
+                "version_attributes": [{"key": "tool", "value": "gatk"}],
+            },
+        )
+
+        assert response.status_code == 201, response.text
+        workflow = session.exec(
+            select(ProjectWorkflow).where(ProjectWorkflow.name == "attrs")
+        ).one()
+        attrs = session.exec(
+            select(WorkflowAttribute).where(WorkflowAttribute.workflow_id == workflow.id)
+        ).all()
+        assert [(a.key, a.value) for a in attrs] == [("owner", "lab")]
+        version = session.exec(
+            select(WorkflowVersion).where(WorkflowVersion.workflow_id == workflow.id)
+        ).one()
+        version_attrs = session.exec(
+            select(WorkflowVersionAttribute).where(
+                WorkflowVersionAttribute.workflowversion_id == version.id
+            )
+        ).all()
+        assert [(a.key, a.value) for a in version_attrs] == [("tool", "gatk")]
+
+    def test_duplicate_attribute_keys_are_rejected_and_nothing_is_created(
+        self, session, contributor_client,
+    ):
+        project = make_project(session, "C006")
+        grant_project_role(session, project, "contrib", "project_contributor")
+
+        response = contributor_client.post(
+            CREATE_URL.format(project_id=project.project_id),
+            json={
+                "name": "dupes",
+                "body": "workflow text",
+                "attributes": [{"key": "owner", "value": "a"}, {"key": "Owner", "value": "b"}],
+            },
+        )
+
+        assert response.status_code == 400, response.text
+        assert session.exec(
+            select(ProjectWorkflow).where(ProjectWorkflow.name == "dupes")
+        ).first() is None
+
+    def test_a_missing_body_is_rejected_and_nothing_is_created(self, session, contributor_client):
+        project = make_project(session, "C003")
+        grant_project_role(session, project, "contrib", "project_contributor")
+
+        response = contributor_client.post(
+            CREATE_URL.format(project_id=project.project_id),
+            json={"name": "empty"},
+        )
+
+        assert response.status_code == 400, response.text
+        assert session.exec(
+            select(ProjectWorkflow).where(ProjectWorkflow.name == "empty")
+        ).first() is None
+
+    def test_body_and_definition_uri_together_are_rejected(self, session, contributor_client):
+        project = make_project(session, "C004")
+        grant_project_role(session, project, "contrib", "project_contributor")
+
+        response = contributor_client.post(
+            CREATE_URL.format(project_id=project.project_id),
+            json={"name": "both", "body": "text", "definition_uri": "s3://x/y.wdl"},
+        )
+
+        assert response.status_code == 422, response.text
 
     def test_a_viewer_is_refused(self, session, viewer_client):
         project = make_project(session, "C002")
@@ -145,8 +229,9 @@ class TestCreate:
         grant_project_role(session, project, "contrib", "project_contributor")
         url = CREATE_URL.format(project_id=project.project_id)
 
-        assert contributor_client.post(url, json={"name": "germline"}).status_code == 201
-        response = contributor_client.post(url, json={"name": "germline"})
+        payload = {"name": "germline", "body": "workflow text"}
+        assert contributor_client.post(url, json=payload).status_code == 201
+        response = contributor_client.post(url, json=payload)
 
         assert response.status_code == 409
 
@@ -335,13 +420,13 @@ class TestCopyLineage:
         assert second.status_code == 201, second.text
         assert second.json()["copied_from_workflow_id"] == first["id"]
 
-    @pytest.mark.skip(reason="POST /projects/{project_id}/workflows is commented out in routes.py")
     def test_a_created_workflow_has_no_source(self, session, contributor_client):
         project = make_project(session, "L006")
         grant_project_role(session, project, "contrib", "project_contributor")
 
         response = contributor_client.post(
-            CREATE_URL.format(project_id=project.project_id), json={"name": "fresh"},
+            CREATE_URL.format(project_id=project.project_id),
+            json={"name": "fresh", "body": "workflow text"},
         )
 
         assert response.status_code == 201

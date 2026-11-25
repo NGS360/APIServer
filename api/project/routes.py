@@ -812,24 +812,30 @@ def get_project_workflows(
     return workflows
 
 
-# @router.post(
-#     "/{project_id}/workflows",
-#     response_model=ProjectWorkflow,
-#     tags=["Project Endpoints"],
-#     status_code=status.HTTP_201_CREATED,
-#     responses={409: {"description": "The project already has a workflow with this name"}},
-#     dependencies=[Depends(require_project_permission(Permission.WORKFLOW_CREATE))],
-# )
-# def create_workflow_in_project(
-#     session: SessionDep,
-#     project: ProjectDep,
-#     workflow_in: ProjectWorkflowCreate,
-#     current_user: CurrentUser,
-# ) -> ProjectWorkflow:
-#     """ Create an empty workflow in a project. Versions are added separately. """
-#     return services.create_project_workflow(
-#         session, project, workflow_in.name, created_by=current_user.username,
-#     )
+@router.post(
+    "/{project_id}/workflows",
+    response_model=ProjectWorkflow,
+    tags=["Project Endpoints"],
+    status_code=status.HTTP_201_CREATED,
+    responses={
+        400: {"description": "Neither body nor definition_uri was provided, or definition_uri could not be read"},
+        409: {"description": "The project already has a workflow with this name"},
+    },
+    dependencies=[Depends(require_project_permission(Permission.WORKFLOW_CREATE))],
+)
+def create_workflow_in_project(
+    session: SessionDep,
+    project: ProjectDep,
+    workflow_in: ProjectWorkflowCreate,
+    current_user: CurrentUser,
+) -> ProjectWorkflow:
+    """
+    Create a workflow in a project along with its first version (version 1).
+    The version's definition comes from `body` or `definition_uri`, one of which is required.
+    """
+    return services.create_project_workflow(
+        session, project, workflow_in, created_by=current_user.username,
+    )
 
 
 @router.post(
