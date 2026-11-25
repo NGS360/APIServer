@@ -76,6 +76,12 @@ class LaunchWorkflow(SQLModel):
     # templates, with the variables the commands have. These win over a value
     # for the same input in the request.
     inputs: Dict[str, Any] | None = None
+    # The size of the runner job for this workflow: vCPUs, and memory in MiB.
+    # What the workflow's tools may use comes out of the job's reservation, so
+    # a workflow that needs more than the runner's job definition reserves
+    # says so here. Either left out keeps the job definition's value.
+    vcpus: int | None = Field(default=None, gt=0)
+    memory: int | None = Field(default=None, gt=0)
 
 
 class Launcher(SQLModel):
