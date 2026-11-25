@@ -578,6 +578,7 @@ class TestTheCollapsedRoster:
         which side of the line it belongs on.
         """
         from api.rbac.roles import (_ADMIN_ONLY, _MEMBERSHIP_GATED,
+                                    _PROJECT_CONTRIBUTOR_ONLY,
                                     _PROJECT_OWNER_ONLY, _RESERVED,
                                     _VENDOR_ADMIN_ONLY)
 
@@ -590,14 +591,15 @@ class TestTheCollapsedRoster:
         }
         assert {str(p) for p in _MEMBERSHIP_GATED} == {"project:manage_members"}
         assert {str(p) for p in _PROJECT_OWNER_ONLY} == {"project:restrict"}
-        assert len(_RESERVED) == 11
+        assert {str(p) for p in _PROJECT_CONTRIBUTOR_ONLY} == {"workflow:create"}
+        assert len(_RESERVED) == 12
 
     def test_member_is_everything_not_reserved(self):
         from api.rbac.roles import _RESERVED
 
         member = ROLE_DEFINITIONS["member"].permissions
         assert member == ALL_PERMISSIONS - _RESERVED
-        assert len(member) == len(ALL_PERMISSIONS) - 11 == 40
+        assert len(member) == len(ALL_PERMISSIONS) - 12 == 40
 
     def test_admin_still_holds_everything(self):
         assert ROLE_DEFINITIONS["admin"].permissions == ALL_PERMISSIONS

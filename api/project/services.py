@@ -14,6 +14,7 @@ from api.utils import check_duplicate_attribute_keys
 from pydantic import PositiveInt, ValidationError
 from pytz import timezone
 from sqlmodel import Session, func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
 from opensearchpy import OpenSearch
 import yaml
@@ -33,7 +34,11 @@ from api.project.models import (
     ProjectUpdate,
     ProjectPublic,
     ProjectsPublic,
-    ProjectWorkflow
+    ProjectWorkflow,
+    WorkflowAttribute,
+    WorkflowVersion,
+    WorkflowVersionAlias,
+    WorkflowVersionAttribute,
 )
 from api.search.models import SearchDocument
 from api.search.services import (
@@ -1290,3 +1295,128 @@ def get_project_workflows(session, project, workflow_name=None) -> list[ProjectW
         stmt = stmt.where(ProjectWorkflow.name == workflow_name)
 
     return session.exec(stmt).all()
+
+
+def get_project_of_workflow(session: Session, workflow: ProjectWorkflow) -> Project:
+    ''' Return the Project a workflow belongs to '''
+    return session.exec(
+        select(Project).where(Project.project_id == workflow.project_id)
+    ).one()
+
+
+def _raise_if_workflow_name_taken(session: Session, project_id: str, name: str) -> None:
+    taken = session.exec(
+        select(ProjectWorkflow.id).where(
+            ProjectWorkflow.project_id == project_id,
+            ProjectWorkflow.name == name,
+        )
+    ).first()
+    if taken is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Project {project_id} already has a workflow named '{name}'.",
+        )
+
+
+def _commit_new_workflow(session: Session, project_id: str, name: str) -> None:
+    """
+    Commit, translating the (project_id, name) unique constraint into a 409.
+
+    The pre-check in _raise_if_workflow_name_taken can race with another
+    request; the constraint is the one that actually holds.
+    """
+    try:
+        session.commit()
+    except IntegrityError as exc:
+        session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Project {project_id} already has a workflow named '{name}'.",
+        ) from exc
+
+
+def create_project_workflow(
+    session: Session, project: Project, name: str, created_by: str,
+) -> ProjectWorkflow:
+    '''
+    Create an empty workflow in a project. Versions are added separately.
+    '''
+    _raise_if_workflow_name_taken(session, project.project_id, name)
+    workflow = ProjectWorkflow(
+        project_id=project.project_id,
+        name=name,
+        created_by=created_by,
+    )
+    session.add(workflow)
+    _commit_new_workflow(session, project.project_id, name)
+    session.refresh(workflow)
+    return workflow
+
+
+def copy_project_workflow(
+    session: Session,
+    source: ProjectWorkflow,
+    target: Project,
+    created_by: str,
+    name: str | None = None,
+) -> ProjectWorkflow:
+    '''
+    Copy a workflow, with its attributes, every version (including the
+    compressed body and per-version attributes) and its aliases, into the target
+    project.
+
+    The copy gets new ids, and its versions keep the source version numbers.
+    Aliases are re-pointed at the copied versions. Provenance (created_by,
+    created_at) is set to the copy, not carried over from the source.
+    '''
+    new_name = name or source.name
+    _raise_if_workflow_name_taken(session, target.project_id, new_name)
+
+    workflow = ProjectWorkflow(
+        project_id=target.project_id,
+        name=new_name,
+        created_by=created_by,
+        copied_from_workflow_id=source.id,
+    )
+    session.add(workflow)
+    session.flush()
+
+    for attr in source.attributes or []:
+        session.add(WorkflowAttribute(
+            workflow_id=workflow.id, key=attr.key, value=attr.value,
+        ))
+
+    version_ids: dict[UUID, UUID] = {}
+    for version in sorted(source.versions or [], key=lambda v: v.version):
+        # WorkflowVersion checks content_hash against body on construction, so
+        # passing the source's hash also verifies the copy.
+        copied = WorkflowVersion(
+            workflow_id=workflow.id,
+            version=version.version,
+            definition_uri=version.definition_uri,
+            body=version.body,
+            compression=version.compression,
+            content_hash=version.content_hash,
+            inputs=version.inputs,
+            outputs=version.outputs,
+            created_by=created_by,
+        )
+        session.add(copied)
+        session.flush()
+        version_ids[version.id] = copied.id
+        for attr in version.attributes or []:
+            session.add(WorkflowVersionAttribute(
+                workflowversion_id=copied.id, key=attr.key, value=attr.value,
+            ))
+
+    for alias in source.aliases or []:
+        session.add(WorkflowVersionAlias(
+            workflow_id=workflow.id,
+            workflow_version_id=version_ids[alias.workflow_version_id],
+            alias=alias.alias,
+            created_by=created_by,
+        ))
+
+    _commit_new_workflow(session, target.project_id, new_name)
+    session.refresh(workflow)
+    return workflow

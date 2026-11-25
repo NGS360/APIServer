@@ -121,9 +121,20 @@ _PROJECT_OWNER_ONLY = frozenset({
     Permission.PROJECT_RESTRICT,
 })
 
+#: Not granted to the global `member` role. Held through project roles only:
+#: `project_contributor` and above, in the projects a caller is enrolled in.
+#:
+#: Reserved on the conservative side of the line. Creating a workflow changes
+#: what a project runs, and no caller should gain that across every project by
+#: default. Flip this to leave it in `member` if ordinary users should create
+#: workflows everywhere.
+_PROJECT_CONTRIBUTOR_ONLY = frozenset({
+    Permission.WORKFLOW_CREATE,
+})
+
 _RESERVED = (
     _ADMIN_ONLY | _VENDOR_ADMIN_ONLY | _MEMBERSHIP_GATED
-    | _PROJECT_OWNER_ONLY
+    | _PROJECT_OWNER_ONLY | _PROJECT_CONTRIBUTOR_ONLY
 )
 
 # The default role, and now the only one an ordinary user needs: everything that
@@ -254,6 +265,7 @@ _PROJECT_CONTRIBUTOR = _PROJECT_VIEWER | {
     Permission.SAMPLE_CREATE,
     Permission.SAMPLE_UPDATE,
     Permission.SAMPLE_DELETE,
+    Permission.WORKFLOW_CREATE,
     Permission.QCRECORD_CREATE,
     Permission.QCRECORD_DELETE,
     Permission.FILE_CREATE,

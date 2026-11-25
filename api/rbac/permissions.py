@@ -73,6 +73,7 @@ class Permission(StrEnum):
     VENDOR_DELETE = "vendor:delete"
 
     WORKFLOW_READ = "workflow:read"
+    WORKFLOW_CREATE = "workflow:create"
 
     SETTING_READ = "setting:read"
     SETTING_UPDATE = "setting:update"
@@ -226,6 +227,8 @@ CATALOG: dict[Permission, PermissionSpec] = {
 
     Permission.WORKFLOW_READ: PermissionSpec(
         "workflow", "View workflows", False, "low"),
+    Permission.WORKFLOW_CREATE: PermissionSpec(
+        "workflow", "Create a workflow in a project, or copy one into it", True, "medium"),
 
     Permission.SETTING_READ: PermissionSpec(
         "setting", "View platform settings", False, "medium"),

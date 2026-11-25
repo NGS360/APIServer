@@ -329,12 +329,13 @@ class TestReadsRemainGlobalByDecision:
 
         member = {str(p) for p in ROLE_DEFINITIONS["member"].permissions}
         scopable = {str(p) for p in PROJECT_SCOPABLE}
-        # Every project-scopable permission except the three reserved ones. The
-        # role collapse (NWP-2213 step 3) made the user tier the complement of
-        # what is reserved, so this set is now defined by its absences rather
-        # than by its contents.
+        # Every project-scopable permission except the reserved ones. The role
+        # collapse (NWP-2213 step 3) made the user tier the complement of what is
+        # reserved, so this set is now defined by its absences rather than by its
+        # contents. workflow:create is reserved to project_contributor, not member.
         assert member & scopable == scopable - {
             "project:delete", "project:manage_members", "project:restrict",
+            "workflow:create",
         }
 
         # What is *not* here, which is the part worth pinning:

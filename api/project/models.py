@@ -308,6 +308,28 @@ class ProjectWorkflow(SQLModel, table=True):
     created_by: str = Field(foreign_key="users.username")
 
     # Relationships
+    # The source workflow this one was copied from. Nulled if that source is deleted.
+    copied_from_workflow_id: uuid.UUID | None = Field(
+        default=None,
+        foreign_key="projectworkflow.id",
+        ondelete="SET NULL",
+    )
     attributes: List["WorkflowAttribute"] | None = Relationship(back_populates="workflow")
     versions: List["WorkflowVersion"] | None = Relationship(back_populates="workflow")
     aliases: List["WorkflowVersionAlias"] | None = Relationship(back_populates="workflow")
+
+
+class ProjectWorkflowCreate(SQLModel):
+    """Request body for POST /projects/{project_id}/workflows."""
+    name: str = Field(min_length=1, max_length=255)
+
+
+class ProjectWorkflowCopy(SQLModel):
+    """
+    Request body for POST /projects/{project_id}/workflows/copy.
+
+    `name` is the name for the copy in the target project; it defaults to the
+    source workflow's name.
+    """
+    source_workflow_id: uuid.UUID
+    name: str | None = Field(default=None, min_length=1, max_length=255)

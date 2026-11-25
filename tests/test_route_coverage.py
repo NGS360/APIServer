@@ -181,8 +181,14 @@ def test_guard_count_is_recorded():
 
     115 -> 118 with the user administration API: GET /rbac/users, GET
     /rbac/users/{username}/access and PATCH /users/{username}.
+
+    101 -> 102: POST /projects/{project_id}/workflows/copy, on workflow:create in
+    the project plane. The copy also checks project:read on its source project in
+    the handler, which the guard count does not see. POST
+    /projects/{project_id}/workflows (create) is commented out in routes.py, so
+    it is not counted.
     """
-    assert len(GUARDED) == 101
+    assert len(GUARDED) == 102
 
 
 def test_the_authentication_backlog_only_shrinks():

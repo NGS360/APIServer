@@ -246,6 +246,7 @@ These have no path to a project (see *Design Decisions*), so they are global-onl
 | `vendor:update` | G | low | `PUT /vendors/{id}` |
 | `vendor:delete` | G | medium | `DELETE /vendors/{id}` |
 | `workflow:read` | G | low | `GET /workflows/{workflow_id}` |
+| `workflow:create` | P | medium | `POST /projects/{id}/workflows`, `POST /projects/{id}/workflows/copy` (target project; the copy source additionally needs `project:read`) |
 | `setting:read` | G | medium | `GET /settings`, `GET /settings/{key}` |
 | `setting:update` | G | **critical** | `PUT /settings/{key}` — controls bucket URIs and the validation Lambda ARN |
 
@@ -342,8 +343,9 @@ Collapsed to three tiers on 2026-10-13 (NWP-2213, step 3). Eleven global roles b
 | `vendor_admin` | `vendor:create`, `vendor:update`, `vendor:delete` |
 | Nobody — membership-gated | `project:manage_members` |
 | `project_owner` (and `admin`) | `project:restrict` |
+| `project_contributor` (and above), in enrolled projects only | `workflow:create` |
 
-That is 15 of 51. `tests/api/test_rbac_catalog.py::TestTheCollapsedRoster` pins all five sets and `member`'s size, so adding a permission fails the suite until someone decides which side of the line it belongs on.
+That is 12 of 52. `tests/api/test_rbac_catalog.py::TestTheCollapsedRoster` pins all six sets and `member`'s size, so adding a permission fails the suite until someone decides which side of the line it belongs on.
 
 **Retired:** `lab_manager`, `demux_operator`, `manifest_operator`, `workflow_publisher`, `platform_admin`. Their holders are covered by the widened `member`, except `workflow_publisher` — its permissions are reserved to `workflow_admin`, so migration `a71c4e08b2f6` grants that role to its holders rather than letting them lose access silently.
 
@@ -379,7 +381,7 @@ What this does **not** change is the narrowing itself. `run:create` and `run:ass
 | Role | Permissions |
 |------|-------------|
 | `project_viewer` | `project:read`, `sample:read`, `qcrecord:read`, `file:read`, `file:download` |
-| `project_contributor` | `project_viewer` + `project:update`, `sample:create`, `sample:update`, `sample:delete`, `qcrecord:create`, `qcrecord:delete`, `file:create`, `file:update`, `file:delete`, `project:submit_action`, `project:ingest` |
+| `project_contributor` | `project_viewer` + `project:update`, `sample:create`, `sample:update`, `sample:delete`, `workflow:create`, `qcrecord:create`, `qcrecord:delete`, `file:create`, `file:update`, `file:delete`, `project:submit_action`, `project:ingest` |
 | `project_owner` | `project_contributor` + `project:manage_members`, `project:delete`, `project:restrict` |
 
 ### Why this set, and how to evaluate additions
