@@ -1508,7 +1508,7 @@ def test_ingest_vendor_data(
 
     # Test
     response = client.post(
-        f"/api/v1/projects/{test_project.project_id}/ingest?"
+        f"/api/v1/projects/{test_project.project_id}/actions/ingest?"
         "files_uri=s3://vendor-data-bucket/incoming/project123&"
         "manifest_uri=s3://vendor-data-bucket/project123/manifest.csv"
     )

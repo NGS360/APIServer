@@ -152,14 +152,14 @@ class TestWritesAreScopedToTheProject:
         assert "project:submit_action" in response.json()["detail"]
 
     def test_a_contributor_can_ingest_into_their_own_project(self, contributor, mine):
-        response = contributor.post(f"/api/v1/projects/{mine.project_id}/ingest",
+        response = contributor.post(f"/api/v1/projects/{mine.project_id}/actions/ingest",
                                     json={})
         assert response.status_code != 403
 
     def test_the_same_contributor_cannot_ingest_into_another_project(
         self, contributor, theirs
     ):
-        response = contributor.post(f"/api/v1/projects/{theirs.project_id}/ingest",
+        response = contributor.post(f"/api/v1/projects/{theirs.project_id}/actions/ingest",
                                     json={})
         assert response.status_code == 403
         assert "project:ingest" in response.json()["detail"]
@@ -170,7 +170,7 @@ class TestNonMembersAreRefused:
 
     @pytest.mark.parametrize("method,path,body", [
         ("post", "samples", {"sample_id": "S-9"}),
-        ("post", "ingest", {}),
+        ("post", "actions/ingest", {}),
         ("post", "actions/submit", {"action_name": "noop", "arguments": {}}),
         ("post", "members", {"username": "someone", "role": "project_viewer"}),
     ])
