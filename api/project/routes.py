@@ -664,11 +664,11 @@ def submit_pipeline_job(
 
 
 ###############################################################################
-# Action Submission Endpoint /api/v1/projects/{project_id}/ingest
+# Vendor Ingest Endpoint /api/v1/projects/{project_id}/actions/ingest
 ###############################################################################
 
 @router.post(
-    "/{project_id}/ingest",
+    "/{project_id}/actions/ingest",
     tags=["Project Endpoints"],
     status_code=status.HTTP_201_CREATED,
     response_model=BatchJobPublic,

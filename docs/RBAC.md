@@ -210,7 +210,7 @@ Two things generalise. **An unauthenticated write path cannot be made accountabl
 | `project:manage_members` | P | **critical** | `GET/POST/PATCH/DELETE /projects/{id}/members`. Raised from medium 2026-09-18: project membership *is* the project-level grant plane, so a caller who can add themselves has granted themselves every project-scoped permission on that project. `critical` puts it in `ALWAYS_ENFORCE`, which is what keeps these routes refused while the mode is `dry_run` — they previously leaned on a `CurrentSuperuser` check for that |
 | `project:restrict` | P | **critical** | the `restricted` field on `PUT`/`PATCH /projects/{id}`, checked only when the value changes. The other half of `project:manage_members`: that one decides who is on the allowlist, this one decides whether the allowlist is consulted at all. `critical` puts it in `ALWAYS_ENFORCE`, so it refuses rather than logs while the mode is `dry_run` — safe here because the permission is new and has no callers to discover |
 | `project:submit_action` | P | **high** | `POST /projects/{id}/actions/submit` — spends AWS Batch |
-| `project:ingest` | P | **high** | `POST /projects/{id}/ingest` — spends AWS Batch, writes S3 |
+| `project:ingest` | P | **high** | `POST /projects/{id}/actions/ingest` — spends AWS Batch, writes S3 |
 | `sample:read` | P | low | `GET /projects/{id}/samples`, `GET/POST /samples/search` |
 | `sample:create` | P | low | `POST /projects/{id}/samples`, `/samples/upload`, `/samples/bulk` |
 | `sample:update` | P | low | `PUT /projects/{id}/samples/{sample_id}` |
