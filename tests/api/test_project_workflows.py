@@ -183,6 +183,56 @@ class TestCreate:
             select(ProjectWorkflow).where(ProjectWorkflow.name == "dupes")
         ).first() is None
 
+    def test_a_zip_definition_uri_is_unpacked_and_stored_as_gzip(
+        self, session, contributor_client, tmp_path,
+    ):
+        import io
+        import zipfile
+
+        project = make_project(session, "C007")
+        grant_project_role(session, project, "contrib", "project_contributor")
+        archive = tmp_path / "wf.zip"
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as zf:
+            zf.writestr("main.wdl", "workflow zipped {}")
+        archive.write_bytes(buf.getvalue())
+
+        response = contributor_client.post(
+            CREATE_URL.format(project_id=project.project_id),
+            json={"name": "zipped", "definition_uri": str(archive)},
+        )
+
+        assert response.status_code == 201, response.text
+        workflow = session.exec(
+            select(ProjectWorkflow).where(ProjectWorkflow.name == "zipped")
+        ).one()
+        version = session.exec(
+            select(WorkflowVersion).where(WorkflowVersion.workflow_id == workflow.id)
+        ).one()
+        assert gzip.decompress(version.body) == b"workflow zipped {}"
+
+    def test_a_gzip_definition_uri_is_stored_without_recompressing(
+        self, session, contributor_client, tmp_path,
+    ):
+        project = make_project(session, "C008")
+        grant_project_role(session, project, "contrib", "project_contributor")
+        path = tmp_path / "wf.wdl.gz"
+        path.write_bytes(gzip.compress(b"workflow gzipped {}"))
+
+        response = contributor_client.post(
+            CREATE_URL.format(project_id=project.project_id),
+            json={"name": "gzipped", "definition_uri": str(path)},
+        )
+
+        assert response.status_code == 201, response.text
+        workflow = session.exec(
+            select(ProjectWorkflow).where(ProjectWorkflow.name == "gzipped")
+        ).one()
+        version = session.exec(
+            select(WorkflowVersion).where(WorkflowVersion.workflow_id == workflow.id)
+        ).one()
+        assert gzip.decompress(version.body) == b"workflow gzipped {}"
+
     def test_a_missing_body_is_rejected_and_nothing_is_created(self, session, contributor_client):
         project = make_project(session, "C003")
         grant_project_role(session, project, "contrib", "project_contributor")

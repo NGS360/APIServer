@@ -6,6 +6,9 @@ from datetime import datetime, timezone as tz
 from typing import Literal
 from uuid import UUID
 import gzip
+import io
+import zipfile
+import zlib
 
 import boto3
 import logging
@@ -1339,30 +1342,75 @@ def _commit_new_workflow(session: Session, project_id: str, name: str) -> None:
 
 
 _GZIP_MAGIC = b"\x1f\x8b"
+# Local file headers, plus the empty and spanned archive signatures.
+_ZIP_MAGICS = (b"PK\x03\x04", b"PK\x05\x06", b"PK\x07\x08")
+# Largest workflow definition accepted, both as uploaded and once decompressed.
+# Guards against zip and gzip bombs in content fetched from a URI.
+_MAX_WORKFLOW_BYTES = 10 * 1024 * 1024
+
+
+def _bad_workflow(detail: str) -> HTTPException:
+    return HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=detail)
+
+
+def _read_limited(stream, what: str) -> bytes:
+    """ Read at most _MAX_WORKFLOW_BYTES from stream; 400 if there is more """
+    data = stream.read(_MAX_WORKFLOW_BYTES + 1)
+    if len(data) > _MAX_WORKFLOW_BYTES:
+        raise _bad_workflow(
+            f"Workflow definition from {what} exceeds {_MAX_WORKFLOW_BYTES} bytes"
+        )
+    return data
+
+
+def _gzipped_definition(raw: bytes) -> bytes:
+    """
+    Return a workflow definition as gzip bytes, whatever form `raw` arrived in:
+
+    - gzip data is checked to decompress and then kept as it is;
+    - a zip archive must hold exactly one file, which is unpacked and compressed;
+    - anything else is treated as plain workflow text and compressed.
+    """
+    if raw.startswith(_GZIP_MAGIC):
+        try:
+            with gzip.GzipFile(fileobj=io.BytesIO(raw)) as gz:
+                _read_limited(gz, "gzip data")
+        except (OSError, EOFError, zlib.error) as exc:
+            raise _bad_workflow("Workflow definition is not valid gzip data") from exc
+        return raw
+
+    if raw.startswith(_ZIP_MAGICS):
+        try:
+            with zipfile.ZipFile(io.BytesIO(raw)) as zf:
+                files = [info for info in zf.infolist() if not info.is_dir()]
+                if len(files) != 1:
+                    raise _bad_workflow(
+                        "Zip archive must contain exactly one workflow file, "
+                        f"found {len(files)}"
+                    )
+                with zf.open(files[0]) as member:
+                    text = _read_limited(member, "zip archive")
+        except zipfile.BadZipFile as exc:
+            raise _bad_workflow("Workflow definition is not a valid zip archive") from exc
+        return gzip.compress(text)
+
+    return gzip.compress(_read_limited(io.BytesIO(raw), "plain text"))
 
 
 def _read_workflow_body(workflow: ProjectWorkflowCreate) -> bytes:
     '''
-    Return the gzipped workflow definition bytes, from the inline body or from
-    definition_uri. Raises 400 if neither is given.
-
-    An inline body is raw workflow text and is always compressed here. A file
-    fetched from definition_uri is compressed unless it is already gzip data.
+    Return the gzipped workflow definition, from the inline body or from
+    definition_uri. Raises 400 if neither is given or the content is unusable.
     '''
     if workflow.body:
-        return gzip.compress(workflow.body)
+        return _gzipped_definition(_read_limited(io.BytesIO(workflow.body), "body"))
     if workflow.definition_uri:
         # Read the workflow definition using smart_open
         with smart_open(workflow.definition_uri, 'rb') as f:
-            raw = f.read()
-        if raw.startswith(_GZIP_MAGIC):
-            return raw
-        return gzip.compress(raw)
+            raw = _read_limited(f, "definition_uri")
+        return _gzipped_definition(raw)
 
-    raise HTTPException(
-        status_code=status.HTTP_400_BAD_REQUEST,
-        detail="No workflow body or definition_uri provided",
-    )
+    raise _bad_workflow("No workflow body or definition_uri provided")
 
 
 def create_project_workflow(
