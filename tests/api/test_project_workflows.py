@@ -103,7 +103,6 @@ def viewer_client_fixture(client_with_permissions):
     return client_with_permissions(frozenset(), username="viewer")
 
 
-@pytest.mark.skip(reason="POST /projects/{project_id}/workflows is commented out in routes.py")
 class TestCreate:
 
     def test_a_project_contributor_creates_a_workflow(self, session, contributor_client):
@@ -112,7 +111,7 @@ class TestCreate:
 
         response = contributor_client.post(
             CREATE_URL.format(project_id=project.project_id),
-            json={"name": "germline"},
+            json={"name": "germline", "body": "workflow text"},
         )
 
         assert response.status_code == 201, response.text
@@ -120,9 +119,144 @@ class TestCreate:
         assert body["name"] == "germline"
         assert body["project_id"] == project.project_id
         assert body["created_by"] == "contrib"
-        assert session.exec(
+
+        workflow = session.exec(
             select(ProjectWorkflow).where(ProjectWorkflow.name == "germline")
         ).one()
+        version = session.exec(
+            select(WorkflowVersion).where(WorkflowVersion.workflow_id == workflow.id)
+        ).one()
+        assert version.version == 1
+        assert version.definition_uri == ""
+        assert version.created_by == "contrib"
+        assert gzip.decompress(version.body) == b"workflow text"
+
+    def test_attributes_and_version_attributes_are_stored(self, session, contributor_client):
+        project = make_project(session, "C005")
+        grant_project_role(session, project, "contrib", "project_contributor")
+
+        response = contributor_client.post(
+            CREATE_URL.format(project_id=project.project_id),
+            json={
+                "name": "attrs",
+                "body": "workflow text",
+                "attributes": [{"key": "owner", "value": "lab"}],
+                "version_attributes": [{"key": "tool", "value": "gatk"}],
+            },
+        )
+
+        assert response.status_code == 201, response.text
+        workflow = session.exec(
+            select(ProjectWorkflow).where(ProjectWorkflow.name == "attrs")
+        ).one()
+        attrs = session.exec(
+            select(WorkflowAttribute).where(WorkflowAttribute.workflow_id == workflow.id)
+        ).all()
+        assert [(a.key, a.value) for a in attrs] == [("owner", "lab")]
+        version = session.exec(
+            select(WorkflowVersion).where(WorkflowVersion.workflow_id == workflow.id)
+        ).one()
+        version_attrs = session.exec(
+            select(WorkflowVersionAttribute).where(
+                WorkflowVersionAttribute.workflowversion_id == version.id
+            )
+        ).all()
+        assert [(a.key, a.value) for a in version_attrs] == [("tool", "gatk")]
+
+    def test_duplicate_attribute_keys_are_rejected_and_nothing_is_created(
+        self, session, contributor_client,
+    ):
+        project = make_project(session, "C006")
+        grant_project_role(session, project, "contrib", "project_contributor")
+
+        response = contributor_client.post(
+            CREATE_URL.format(project_id=project.project_id),
+            json={
+                "name": "dupes",
+                "body": "workflow text",
+                "attributes": [{"key": "owner", "value": "a"}, {"key": "Owner", "value": "b"}],
+            },
+        )
+
+        assert response.status_code == 400, response.text
+        assert session.exec(
+            select(ProjectWorkflow).where(ProjectWorkflow.name == "dupes")
+        ).first() is None
+
+    def test_a_zip_definition_uri_is_unpacked_and_stored_as_gzip(
+        self, session, contributor_client, tmp_path,
+    ):
+        import io
+        import zipfile
+
+        project = make_project(session, "C007")
+        grant_project_role(session, project, "contrib", "project_contributor")
+        archive = tmp_path / "wf.zip"
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as zf:
+            zf.writestr("main.wdl", "workflow zipped {}")
+        archive.write_bytes(buf.getvalue())
+
+        response = contributor_client.post(
+            CREATE_URL.format(project_id=project.project_id),
+            json={"name": "zipped", "definition_uri": str(archive)},
+        )
+
+        assert response.status_code == 201, response.text
+        workflow = session.exec(
+            select(ProjectWorkflow).where(ProjectWorkflow.name == "zipped")
+        ).one()
+        version = session.exec(
+            select(WorkflowVersion).where(WorkflowVersion.workflow_id == workflow.id)
+        ).one()
+        assert gzip.decompress(version.body) == b"workflow zipped {}"
+
+    def test_a_gzip_definition_uri_is_stored_without_recompressing(
+        self, session, contributor_client, tmp_path,
+    ):
+        project = make_project(session, "C008")
+        grant_project_role(session, project, "contrib", "project_contributor")
+        path = tmp_path / "wf.wdl.gz"
+        path.write_bytes(gzip.compress(b"workflow gzipped {}"))
+
+        response = contributor_client.post(
+            CREATE_URL.format(project_id=project.project_id),
+            json={"name": "gzipped", "definition_uri": str(path)},
+        )
+
+        assert response.status_code == 201, response.text
+        workflow = session.exec(
+            select(ProjectWorkflow).where(ProjectWorkflow.name == "gzipped")
+        ).one()
+        version = session.exec(
+            select(WorkflowVersion).where(WorkflowVersion.workflow_id == workflow.id)
+        ).one()
+        assert gzip.decompress(version.body) == b"workflow gzipped {}"
+
+    def test_a_missing_body_is_rejected_and_nothing_is_created(self, session, contributor_client):
+        project = make_project(session, "C003")
+        grant_project_role(session, project, "contrib", "project_contributor")
+
+        response = contributor_client.post(
+            CREATE_URL.format(project_id=project.project_id),
+            json={"name": "empty"},
+        )
+
+        assert response.status_code == 400, response.text
+        assert session.exec(
+            select(ProjectWorkflow).where(ProjectWorkflow.name == "empty")
+        ).first() is None
+
+    def test_body_and_definition_uri_together_are_rejected(self, session, contributor_client):
+        project = make_project(session, "C004")
+        grant_project_role(session, project, "contrib", "project_contributor")
+
+        response = contributor_client.post(
+            CREATE_URL.format(project_id=project.project_id),
+            json={"name": "both", "body": "text", "definition_uri": "s3://x/y.wdl"},
+        )
+
+        assert response.status_code == 422, response.text
 
     def test_a_viewer_is_refused(self, session, viewer_client):
         project = make_project(session, "C002")
@@ -145,8 +279,9 @@ class TestCreate:
         grant_project_role(session, project, "contrib", "project_contributor")
         url = CREATE_URL.format(project_id=project.project_id)
 
-        assert contributor_client.post(url, json={"name": "germline"}).status_code == 201
-        response = contributor_client.post(url, json={"name": "germline"})
+        payload = {"name": "germline", "body": "workflow text"}
+        assert contributor_client.post(url, json=payload).status_code == 201
+        response = contributor_client.post(url, json=payload)
 
         assert response.status_code == 409
 
@@ -335,13 +470,13 @@ class TestCopyLineage:
         assert second.status_code == 201, second.text
         assert second.json()["copied_from_workflow_id"] == first["id"]
 
-    @pytest.mark.skip(reason="POST /projects/{project_id}/workflows is commented out in routes.py")
     def test_a_created_workflow_has_no_source(self, session, contributor_client):
         project = make_project(session, "L006")
         grant_project_role(session, project, "contrib", "project_contributor")
 
         response = contributor_client.post(
-            CREATE_URL.format(project_id=project.project_id), json={"name": "fresh"},
+            CREATE_URL.format(project_id=project.project_id),
+            json={"name": "fresh", "body": "workflow text"},
         )
 
         assert response.status_code == 201
@@ -353,3 +488,96 @@ class TestRoleGrant:
     def test_contributor_holds_workflow_create_and_viewer_does_not(self):
         assert Permission.WORKFLOW_CREATE in ROLE_DEFINITIONS["project_contributor"].permissions
         assert Permission.WORKFLOW_CREATE not in ROLE_DEFINITIONS["project_viewer"].permissions
+
+
+VERSIONS_URL = "/api/v1/projects/{project_id}/workflows/{workflow_id}/versions"
+
+
+class TestCreateVersion:
+
+    def create_workflow(self, client, project) -> uuid.UUID:
+        response = client.post(
+            CREATE_URL.format(project_id=project.project_id),
+            json={"name": "germline", "body": "v1 text"},
+        )
+        assert response.status_code == 201, response.text
+        return uuid.UUID(response.json()["id"])
+
+    def test_a_new_version_gets_the_next_number(self, session, contributor_client):
+        project = make_project(session, "V001")
+        grant_project_role(session, project, "contrib", "project_contributor")
+        workflow_id = self.create_workflow(contributor_client, project)
+        url = VERSIONS_URL.format(project_id=project.project_id, workflow_id=workflow_id)
+
+        first = contributor_client.post(url, json={"body": "v2 text"})
+        second = contributor_client.post(url, json={
+            "body": "v3 text",
+            "version_attributes": [{"key": "tool", "value": "gatk"}],
+        })
+
+        assert first.status_code == 201, first.text
+        assert first.json()["version"] == 2
+        assert second.status_code == 201, second.text
+        assert second.json()["version"] == 3
+        assert "body" not in second.json()
+
+        stored = session.exec(
+            select(WorkflowVersion).where(
+                WorkflowVersion.workflow_id == workflow_id, WorkflowVersion.version == 3,
+            )
+        ).one()
+        assert gzip.decompress(stored.body) == b"v3 text"
+        attrs = session.exec(
+            select(WorkflowVersionAttribute).where(
+                WorkflowVersionAttribute.workflowversion_id == stored.id
+            )
+        ).all()
+        assert [(a.key, a.value) for a in attrs] == [("tool", "gatk")]
+
+    def test_a_workflow_in_another_project_is_not_found(self, session, contributor_client):
+        source = make_project(session, "V002")
+        target = make_project(session, "V003")
+        grant_project_role(session, source, "contrib", "project_contributor")
+        grant_project_role(session, target, "contrib", "project_contributor")
+        workflow_id = self.create_workflow(contributor_client, source)
+
+        response = contributor_client.post(
+            VERSIONS_URL.format(project_id=target.project_id, workflow_id=workflow_id),
+            json={"body": "v2 text"},
+        )
+
+        assert response.status_code == 404, response.text
+
+    def test_a_viewer_is_refused(self, session, viewer_client):
+        project = make_project(session, "V004")
+        grant_project_role(session, project, "viewer", "project_viewer")
+        # Created directly: the test client acts as the viewer, so a contributor
+        # request can't be made in the same test.
+        workflow = ProjectWorkflow(project_id=project.project_id, name="germline", created_by="contrib")
+        session.add(workflow)
+        session.commit()
+        session.refresh(workflow)
+        workflow_id = workflow.id
+
+        response = viewer_client.post(
+            VERSIONS_URL.format(project_id=project.project_id, workflow_id=workflow_id),
+            json={"body": "v2 text"},
+        )
+
+        assert response.status_code == 403, response.text
+
+    def test_a_missing_body_adds_no_version(self, session, contributor_client):
+        project = make_project(session, "V005")
+        grant_project_role(session, project, "contrib", "project_contributor")
+        workflow_id = self.create_workflow(contributor_client, project)
+
+        response = contributor_client.post(
+            VERSIONS_URL.format(project_id=project.project_id, workflow_id=workflow_id),
+            json={},
+        )
+
+        assert response.status_code == 400, response.text
+        versions = session.exec(
+            select(WorkflowVersion).where(WorkflowVersion.workflow_id == workflow_id)
+        ).all()
+        assert [v.version for v in versions] == [1]

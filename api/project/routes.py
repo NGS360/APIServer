@@ -3,6 +3,7 @@ Routes/endpoints for the Project API
 """
 
 from typing import Literal, List as TypingList
+from uuid import UUID
 from fastapi import (
     APIRouter, Depends, HTTPException, Query, Request, UploadFile, status,
 )
@@ -32,6 +33,8 @@ from api.project.models import (
     ProjectWorkflow,
     ProjectWorkflowCopy,
     ProjectWorkflowCreate,
+    ProjectWorkflowVersionCreate,
+    WorkflowVersionPublic,
 )
 from api.samples.models import (
     SampleCreate,
@@ -812,24 +815,64 @@ def get_project_workflows(
     return workflows
 
 
-# @router.post(
-#     "/{project_id}/workflows",
-#     response_model=ProjectWorkflow,
-#     tags=["Project Endpoints"],
-#     status_code=status.HTTP_201_CREATED,
-#     responses={409: {"description": "The project already has a workflow with this name"}},
-#     dependencies=[Depends(require_project_permission(Permission.WORKFLOW_CREATE))],
-# )
-# def create_workflow_in_project(
-#     session: SessionDep,
-#     project: ProjectDep,
-#     workflow_in: ProjectWorkflowCreate,
-#     current_user: CurrentUser,
-# ) -> ProjectWorkflow:
-#     """ Create an empty workflow in a project. Versions are added separately. """
-#     return services.create_project_workflow(
-#         session, project, workflow_in.name, created_by=current_user.username,
-#     )
+@router.post(
+    "/{project_id}/workflows",
+    response_model=ProjectWorkflow,
+    tags=["Project Endpoints"],
+    status_code=status.HTTP_201_CREATED,
+    responses={
+        400: {"description": "Neither body nor definition_uri was provided, or definition_uri could not be read"},
+        409: {"description": "The project already has a workflow with this name"},
+    },
+    dependencies=[Depends(require_project_permission(Permission.WORKFLOW_CREATE))],
+)
+def create_workflow_in_project(
+    session: SessionDep,
+    project: ProjectDep,
+    workflow_in: ProjectWorkflowCreate,
+    current_user: CurrentUser,
+) -> ProjectWorkflow:
+    """
+    Create a workflow in a project along with its first version (version 1).
+    The version's definition comes from `body` or `definition_uri`, one of which is required.
+    """
+    return services.create_project_workflow(
+        session, project, workflow_in, created_by=current_user.username,
+    )
+
+
+@router.post(
+    "/{project_id}/workflows/{workflow_id}/versions",
+    response_model=WorkflowVersionPublic,
+    tags=["Project Endpoints"],
+    status_code=status.HTTP_201_CREATED,
+    responses={
+        400: {"description": "Neither body nor definition_uri was provided, or the definition could not be read"},
+        404: {"description": "The workflow does not exist in this project"},
+        409: {"description": "A concurrent request added a version first; retry"},
+    },
+    dependencies=[Depends(require_project_permission(Permission.WORKFLOW_CREATE))],
+)
+def create_workflow_version(
+    session: SessionDep,
+    project: ProjectDep,
+    workflow_id: UUID,
+    version_in: ProjectWorkflowVersionCreate,
+    current_user: CurrentUser,
+) -> WorkflowVersionPublic:
+    """
+    Add a new version to a workflow. The version number is one more than the
+    workflow's latest version. The definition comes from `body` or `definition_uri`.
+    """
+    workflow = services.get_workflow_by_id(session, workflow_id)
+    if workflow is None or workflow.project_id != project.project_id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Workflow {workflow_id} not found in project {project.project_id}.",
+        )
+    return services.create_project_workflow_version(
+        session, workflow, version_in, created_by=current_user.username,
+    )
 
 
 @router.post(

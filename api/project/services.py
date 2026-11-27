@@ -5,9 +5,14 @@ Services for the Project API
 from datetime import datetime, timezone as tz
 from typing import Literal
 from uuid import UUID
+import gzip
+import io
+import zipfile
+import zlib
 
 import boto3
 import logging
+from smart_open import open as smart_open
 
 from fastapi import HTTPException, status
 from api.utils import check_duplicate_attribute_keys
@@ -35,6 +40,8 @@ from api.project.models import (
     ProjectPublic,
     ProjectsPublic,
     ProjectWorkflow,
+    ProjectWorkflowCreate,
+    WorkflowDefinitionInput,
     WorkflowAttribute,
     WorkflowVersion,
     WorkflowVersionAlias,
@@ -1335,22 +1342,174 @@ def _commit_new_workflow(session: Session, project_id: str, name: str) -> None:
         ) from exc
 
 
+_GZIP_MAGIC = b"\x1f\x8b"
+# Local file headers, plus the empty and spanned archive signatures.
+_ZIP_MAGICS = (b"PK\x03\x04", b"PK\x05\x06", b"PK\x07\x08")
+# Largest workflow definition accepted, both as uploaded and once decompressed.
+# Guards against zip and gzip bombs in content fetched from a URI.
+_MAX_WORKFLOW_BYTES = 10 * 1024 * 1024
+
+
+def _bad_workflow(detail: str) -> HTTPException:
+    return HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=detail)
+
+
+def _read_limited(stream, what: str) -> bytes:
+    """ Read at most _MAX_WORKFLOW_BYTES from stream; 400 if there is more """
+    data = stream.read(_MAX_WORKFLOW_BYTES + 1)
+    if len(data) > _MAX_WORKFLOW_BYTES:
+        raise _bad_workflow(
+            f"Workflow definition from {what} exceeds {_MAX_WORKFLOW_BYTES} bytes"
+        )
+    return data
+
+
+def _gzipped_definition(raw: bytes) -> bytes:
+    """
+    Return a workflow definition as gzip bytes, whatever form `raw` arrived in:
+
+    - gzip data is checked to decompress and then kept as it is;
+    - a zip archive must hold exactly one file, which is unpacked and compressed;
+    - anything else is treated as plain workflow text and compressed.
+    """
+    if raw.startswith(_GZIP_MAGIC):
+        try:
+            with gzip.GzipFile(fileobj=io.BytesIO(raw)) as gz:
+                _read_limited(gz, "gzip data")
+        except (OSError, EOFError, zlib.error) as exc:
+            raise _bad_workflow("Workflow definition is not valid gzip data") from exc
+        return raw
+
+    if raw.startswith(_ZIP_MAGICS):
+        try:
+            with zipfile.ZipFile(io.BytesIO(raw)) as zf:
+                files = [info for info in zf.infolist() if not info.is_dir()]
+                if len(files) != 1:
+                    raise _bad_workflow(
+                        "Zip archive must contain exactly one workflow file, "
+                        f"found {len(files)}"
+                    )
+                with zf.open(files[0]) as member:
+                    text = _read_limited(member, "zip archive")
+        except zipfile.BadZipFile as exc:
+            raise _bad_workflow("Workflow definition is not a valid zip archive") from exc
+        return gzip.compress(text)
+
+    return gzip.compress(_read_limited(io.BytesIO(raw), "plain text"))
+
+
+def _read_workflow_body(workflow: WorkflowDefinitionInput) -> bytes:
+    '''
+    Return the gzipped workflow definition, from the inline body or from
+    definition_uri. Raises 400 if neither is given or the content is unusable.
+    '''
+    if workflow.body:
+        return _gzipped_definition(_read_limited(io.BytesIO(workflow.body), "body"))
+    if workflow.definition_uri:
+        # Read the workflow definition using smart_open
+        with smart_open(workflow.definition_uri, 'rb') as f:
+            raw = _read_limited(f, "definition_uri")
+        return _gzipped_definition(raw)
+
+    raise _bad_workflow("No workflow body or definition_uri provided")
+
+
 def create_project_workflow(
-    session: Session, project: Project, name: str, created_by: str,
+    session: Session, project: Project, workflow: ProjectWorkflowCreate, created_by: str,
 ) -> ProjectWorkflow:
     '''
-    Create an empty workflow in a project. Versions are added separately.
+    Create a workflow in a project along with its first version (version 1).
+
+    The body is read before anything is written, and the workflow and version
+    are committed together, so a failed read leaves no workflow behind.
     '''
-    _raise_if_workflow_name_taken(session, project.project_id, name)
-    workflow = ProjectWorkflow(
+    _raise_if_workflow_name_taken(session, project.project_id, workflow.name)
+    # Check duplicate keys here: the unique constraints would otherwise fail at
+    # commit and be reported as a duplicate workflow name.
+    check_duplicate_attribute_keys(workflow.attributes or [], "workflow attributes")
+    check_duplicate_attribute_keys(
+        workflow.version_attributes or [], "workflow version attributes",
+    )
+    compressed_body = _read_workflow_body(workflow)
+
+    new_workflow = ProjectWorkflow(
         project_id=project.project_id,
-        name=name,
+        name=workflow.name,
         created_by=created_by,
     )
-    session.add(workflow)
-    _commit_new_workflow(session, project.project_id, name)
-    session.refresh(workflow)
-    return workflow
+    session.add(new_workflow)
+    for attr in workflow.attributes or []:
+        session.add(WorkflowAttribute(
+            workflow_id=new_workflow.id, key=attr.key, value=attr.value,
+        ))
+
+    # definition_uri is a NOT NULL source reference; an inline body has none,
+    # so it is stored as an empty string.
+    new_version = WorkflowVersion(
+        workflow_id=new_workflow.id,
+        version=1,
+        definition_uri=workflow.definition_uri or "",
+        body=compressed_body,
+        inputs=workflow.inputs,
+        outputs=workflow.outputs,
+        created_by=created_by,
+    )
+    session.add(new_version)
+    for attr in workflow.version_attributes or []:
+        session.add(WorkflowVersionAttribute(
+            workflowversion_id=new_version.id, key=attr.key, value=attr.value,
+        ))
+
+    _commit_new_workflow(session, project.project_id, workflow.name)
+    session.refresh(new_workflow)
+    return new_workflow
+
+
+def create_project_workflow_version(
+    session: Session,
+    workflow: ProjectWorkflow,
+    data: WorkflowDefinitionInput,
+    created_by: str,
+) -> WorkflowVersion:
+    '''
+    Add a version to an existing workflow, numbered one above its latest version.
+
+    The body is read before anything is written. The version and its attributes
+    are committed together. The unique (workflow_id, version) constraint rejects
+    a concurrent request that picked the same number, which is reported as 409.
+    '''
+    check_duplicate_attribute_keys(data.version_attributes or [], "workflow version attributes")
+    compressed_body = _read_workflow_body(data)
+
+    latest = session.exec(
+        select(func.max(WorkflowVersion.version)).where(
+            WorkflowVersion.workflow_id == workflow.id
+        )
+    ).one()
+    new_version = WorkflowVersion(
+        workflow_id=workflow.id,
+        version=(latest or 0) + 1,
+        definition_uri=data.definition_uri or "",
+        body=compressed_body,
+        inputs=data.inputs,
+        outputs=data.outputs,
+        created_by=created_by,
+    )
+    session.add(new_version)
+    for attr in data.version_attributes or []:
+        session.add(WorkflowVersionAttribute(
+            workflowversion_id=new_version.id, key=attr.key, value=attr.value,
+        ))
+    try:
+        session.commit()
+    except IntegrityError as exc:
+        session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Workflow {workflow.id} got a new version at the same time; retry.",
+        ) from exc
+    session.refresh(new_version)
+    return new_version
 
 
 def copy_project_workflow(
