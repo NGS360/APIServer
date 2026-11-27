@@ -188,8 +188,12 @@ def test_guard_count_is_recorded():
 
     102 -> 103: POST /projects/{project_id}/workflows (create), on workflow:create
     in the project plane.
+
+    103 -> 104: POST /projects/{project_id}/workflows/{workflow_id}/versions, on
+    workflow:create in the project plane. The handler also checks that the
+    workflow belongs to the project in the path.
     """
-    assert len(GUARDED) == 103
+    assert len(GUARDED) == 104
 
 
 def test_the_authentication_backlog_only_shrinks():

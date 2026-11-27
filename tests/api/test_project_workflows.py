@@ -488,3 +488,96 @@ class TestRoleGrant:
     def test_contributor_holds_workflow_create_and_viewer_does_not(self):
         assert Permission.WORKFLOW_CREATE in ROLE_DEFINITIONS["project_contributor"].permissions
         assert Permission.WORKFLOW_CREATE not in ROLE_DEFINITIONS["project_viewer"].permissions
+
+
+VERSIONS_URL = "/api/v1/projects/{project_id}/workflows/{workflow_id}/versions"
+
+
+class TestCreateVersion:
+
+    def create_workflow(self, client, project) -> uuid.UUID:
+        response = client.post(
+            CREATE_URL.format(project_id=project.project_id),
+            json={"name": "germline", "body": "v1 text"},
+        )
+        assert response.status_code == 201, response.text
+        return uuid.UUID(response.json()["id"])
+
+    def test_a_new_version_gets_the_next_number(self, session, contributor_client):
+        project = make_project(session, "V001")
+        grant_project_role(session, project, "contrib", "project_contributor")
+        workflow_id = self.create_workflow(contributor_client, project)
+        url = VERSIONS_URL.format(project_id=project.project_id, workflow_id=workflow_id)
+
+        first = contributor_client.post(url, json={"body": "v2 text"})
+        second = contributor_client.post(url, json={
+            "body": "v3 text",
+            "version_attributes": [{"key": "tool", "value": "gatk"}],
+        })
+
+        assert first.status_code == 201, first.text
+        assert first.json()["version"] == 2
+        assert second.status_code == 201, second.text
+        assert second.json()["version"] == 3
+        assert "body" not in second.json()
+
+        stored = session.exec(
+            select(WorkflowVersion).where(
+                WorkflowVersion.workflow_id == workflow_id, WorkflowVersion.version == 3,
+            )
+        ).one()
+        assert gzip.decompress(stored.body) == b"v3 text"
+        attrs = session.exec(
+            select(WorkflowVersionAttribute).where(
+                WorkflowVersionAttribute.workflowversion_id == stored.id
+            )
+        ).all()
+        assert [(a.key, a.value) for a in attrs] == [("tool", "gatk")]
+
+    def test_a_workflow_in_another_project_is_not_found(self, session, contributor_client):
+        source = make_project(session, "V002")
+        target = make_project(session, "V003")
+        grant_project_role(session, source, "contrib", "project_contributor")
+        grant_project_role(session, target, "contrib", "project_contributor")
+        workflow_id = self.create_workflow(contributor_client, source)
+
+        response = contributor_client.post(
+            VERSIONS_URL.format(project_id=target.project_id, workflow_id=workflow_id),
+            json={"body": "v2 text"},
+        )
+
+        assert response.status_code == 404, response.text
+
+    def test_a_viewer_is_refused(self, session, viewer_client):
+        project = make_project(session, "V004")
+        grant_project_role(session, project, "viewer", "project_viewer")
+        # Created directly: the test client acts as the viewer, so a contributor
+        # request can't be made in the same test.
+        workflow = ProjectWorkflow(project_id=project.project_id, name="germline", created_by="contrib")
+        session.add(workflow)
+        session.commit()
+        session.refresh(workflow)
+        workflow_id = workflow.id
+
+        response = viewer_client.post(
+            VERSIONS_URL.format(project_id=project.project_id, workflow_id=workflow_id),
+            json={"body": "v2 text"},
+        )
+
+        assert response.status_code == 403, response.text
+
+    def test_a_missing_body_adds_no_version(self, session, contributor_client):
+        project = make_project(session, "V005")
+        grant_project_role(session, project, "contrib", "project_contributor")
+        workflow_id = self.create_workflow(contributor_client, project)
+
+        response = contributor_client.post(
+            VERSIONS_URL.format(project_id=project.project_id, workflow_id=workflow_id),
+            json={},
+        )
+
+        assert response.status_code == 400, response.text
+        versions = session.exec(
+            select(WorkflowVersion).where(WorkflowVersion.workflow_id == workflow_id)
+        ).all()
+        assert [v.version for v in versions] == [1]

@@ -331,10 +331,8 @@ class WorkflowVersionAttributeCreate(SQLModel):
     value: str
 
 
-class ProjectWorkflowCreate(SQLModel):
-    """Request body for POST /projects/{project_id}/workflows."""
-    name: str = Field(min_length=1, max_length=255)
-    attributes: List[WorkflowAttributeCreate] | None = None
+class WorkflowDefinitionInput(SQLModel):
+    """ The definition and version-level fields shared by the create-workflow and create-version requests """
     version_attributes: List[WorkflowVersionAttributeCreate] | None = None
 
     # Provide a definition_uri or body but not both
@@ -349,6 +347,30 @@ class ProjectWorkflowCreate(SQLModel):
         if self.definition_uri and self.body:
             raise ValueError("Provide either definition_uri or body, not both")
         return self
+
+
+class ProjectWorkflowCreate(WorkflowDefinitionInput):
+    """Request body for POST /projects/{project_id}/workflows."""
+    name: str = Field(min_length=1, max_length=255)
+    attributes: List[WorkflowAttributeCreate] | None = None
+
+
+class ProjectWorkflowVersionCreate(WorkflowDefinitionInput):
+    """Request body for POST /projects/{project_id}/workflows/{workflow_id}/versions."""
+
+
+class WorkflowVersionPublic(SQLModel):
+    """ A workflow version as returned by the API. The stored body is left out. """
+    id: uuid.UUID
+    workflow_id: uuid.UUID
+    version: int
+    definition_uri: str
+    compression: str
+    content_hash: str
+    inputs: list[dict] | None
+    outputs: list[dict] | None
+    created_at: datetime
+    created_by: str
 
 
 class ProjectWorkflowCopy(SQLModel):

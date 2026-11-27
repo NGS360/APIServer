@@ -41,6 +41,7 @@ from api.project.models import (
     ProjectsPublic,
     ProjectWorkflow,
     ProjectWorkflowCreate,
+    WorkflowDefinitionInput,
     WorkflowAttribute,
     WorkflowVersion,
     WorkflowVersionAlias,
@@ -1397,7 +1398,7 @@ def _gzipped_definition(raw: bytes) -> bytes:
     return gzip.compress(_read_limited(io.BytesIO(raw), "plain text"))
 
 
-def _read_workflow_body(workflow: ProjectWorkflowCreate) -> bytes:
+def _read_workflow_body(workflow: WorkflowDefinitionInput) -> bytes:
     '''
     Return the gzipped workflow definition, from the inline body or from
     definition_uri. Raises 400 if neither is given or the content is unusable.
@@ -1462,6 +1463,53 @@ def create_project_workflow(
     _commit_new_workflow(session, project.project_id, workflow.name)
     session.refresh(new_workflow)
     return new_workflow
+
+
+def create_project_workflow_version(
+    session: Session,
+    workflow: ProjectWorkflow,
+    data: WorkflowDefinitionInput,
+    created_by: str,
+) -> WorkflowVersion:
+    '''
+    Add a version to an existing workflow, numbered one above its latest version.
+
+    The body is read before anything is written. The version and its attributes
+    are committed together. The unique (workflow_id, version) constraint rejects
+    a concurrent request that picked the same number, which is reported as 409.
+    '''
+    check_duplicate_attribute_keys(data.version_attributes or [], "workflow version attributes")
+    compressed_body = _read_workflow_body(data)
+
+    latest = session.exec(
+        select(func.max(WorkflowVersion.version)).where(
+            WorkflowVersion.workflow_id == workflow.id
+        )
+    ).one()
+    new_version = WorkflowVersion(
+        workflow_id=workflow.id,
+        version=(latest or 0) + 1,
+        definition_uri=data.definition_uri or "",
+        body=compressed_body,
+        inputs=data.inputs,
+        outputs=data.outputs,
+        created_by=created_by,
+    )
+    session.add(new_version)
+    for attr in data.version_attributes or []:
+        session.add(WorkflowVersionAttribute(
+            workflowversion_id=new_version.id, key=attr.key, value=attr.value,
+        ))
+    try:
+        session.commit()
+    except IntegrityError as exc:
+        session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Workflow {workflow.id} got a new version at the same time; retry.",
+        ) from exc
+    session.refresh(new_version)
+    return new_version
 
 
 def copy_project_workflow(
