@@ -45,3 +45,8 @@ dev = [
     "pytest>=8.4.1",
     "pytest-cov>=7.1.0",
 ]
+
+[tool.coverage.run]
+source = ["api",
+          "core"
+]

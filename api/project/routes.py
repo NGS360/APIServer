@@ -29,6 +29,9 @@ from api.project.models import (
     ProjectUpdate,
     ProjectPublic,
     ProjectsPublic,
+    ProjectWorkflow,
+    ProjectWorkflowCopy,
+    ProjectWorkflowCreate,
 )
 from api.samples.models import (
     SampleCreate,
@@ -787,3 +790,93 @@ def remove_project_member(
     user = rbac_services.get_user_or_404(session, username)
     rbac_services.remove_project_member(session, project.id, user)
     return list_project_members(session, project)
+
+
+###############################################################################
+# Project Workflow Endpoints /api/v1/projects/{project_id}/workflows
+###############################################################################
+
+@router.get(
+    "/{project_id}/workflows",
+    response_model=list[ProjectWorkflow],
+    tags=["Project Endpoints"],
+    dependencies=[Depends(require_project_permission(Permission.PROJECT_READ))],
+)
+def get_project_workflows(
+    session: SessionDep,
+    project: ProjectDep,
+    name: str | None = Query(None, description="Filter workflows by name"),
+) -> list[ProjectWorkflow]:
+    """ Return workflows in a project optionally filtered by workflow name """
+    workflows = services.get_project_workflows(session, project, name)
+    return workflows
+
+
+# @router.post(
+#     "/{project_id}/workflows",
+#     response_model=ProjectWorkflow,
+#     tags=["Project Endpoints"],
+#     status_code=status.HTTP_201_CREATED,
+#     responses={409: {"description": "The project already has a workflow with this name"}},
+#     dependencies=[Depends(require_project_permission(Permission.WORKFLOW_CREATE))],
+# )
+# def create_workflow_in_project(
+#     session: SessionDep,
+#     project: ProjectDep,
+#     workflow_in: ProjectWorkflowCreate,
+#     current_user: CurrentUser,
+# ) -> ProjectWorkflow:
+#     """ Create an empty workflow in a project. Versions are added separately. """
+#     return services.create_project_workflow(
+#         session, project, workflow_in.name, created_by=current_user.username,
+#     )
+
+
+@router.post(
+    "/{project_id}/workflows/copy",
+    response_model=ProjectWorkflow,
+    tags=["Project Endpoints"],
+    status_code=status.HTTP_201_CREATED,
+    responses={
+        404: {"description": "The source workflow does not exist"},
+        409: {"description": "The project already has a workflow with this name"},
+    },
+    dependencies=[Depends(require_project_permission(Permission.WORKFLOW_CREATE))],
+)
+def copy_workflow_into_project(
+    request: Request,
+    session: SessionDep,
+    project: ProjectDep,
+    source_workflow: ProjectWorkflowCopy,
+    current_user: CurrentUser,
+    authz: AuthzDep,
+) -> ProjectWorkflow:
+    """
+    Copy a workflow, with its versions, attributes and aliases, into this project.
+
+    The target project is checked by the route guard (workflow:create). The
+    source is checked here: the caller must hold project:read on the source
+    project, because a copy would otherwise read a workflow they could not view.
+    """
+    source = services.get_workflow_by_id(session, source_workflow.source_workflow_id)
+    if source is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Workflow {source_workflow.source_workflow_id} not found.",
+        )
+
+    source_project = services.get_project_of_workflow(session, source)
+    decide(
+        request,
+        authz.has_in_project(Permission.PROJECT_READ, source_project.id),
+        (Permission.PROJECT_READ,),
+        scope=f"source project {source_project.project_id}",
+    )
+
+    return services.copy_project_workflow(
+        session,
+        source=source,
+        target=project,
+        created_by=current_user.username,
+        name=source_workflow.name,
+    )

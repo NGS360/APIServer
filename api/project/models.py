@@ -3,7 +3,12 @@ Models for the Project API
 """
 
 from datetime import datetime, timezone
+import gzip
+import hashlib
 import uuid
+from sqlalchemy import JSON, Column, LargeBinary
+from sqlalchemy import ForeignKeyConstraint
+from sqlalchemy.dialects import mysql
 from sqlmodel import SQLModel, Field, Relationship, UniqueConstraint
 from typing import List
 from pydantic import ConfigDict, field_validator
@@ -151,3 +156,180 @@ class ProjectsPublic(SQLModel):
     per_page: int
     has_next: bool
     has_prev: bool
+
+
+class WorkflowAttribute(SQLModel, table=True):
+    """ Attribute of a workflow """
+    __table_args__ = (
+        UniqueConstraint("workflow_id", "key", name="uq_workflow_attribute_key"),
+    )
+
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    workflow_id: uuid.UUID = Field(foreign_key="projectworkflow.id")
+    key: str
+    value: str
+
+    # Relationships
+    workflow: "ProjectWorkflow" = Relationship(back_populates="attributes")
+
+
+class WorkflowVersionAttribute(SQLModel, table=True):
+    """ Attribute of a specific version of a workflow """
+    __table_args__ = (
+        UniqueConstraint(
+            "workflowversion_id", "key", name="uq_workflow_version_attribute_key",
+        ),
+    )
+
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    workflowversion_id: uuid.UUID = Field(foreign_key="workflowversion.id")
+    key: str
+    value: str
+
+    # Relationships
+    workflowversion: "WorkflowVersion" = Relationship(back_populates="attributes")
+
+
+class WorkflowVersionAlias(SQLModel, table=True):
+    """ Named pointer to a specific version of a workflow (e.g. production, development). """
+    __table_args__ = (
+        UniqueConstraint("workflow_id", "alias", name="uq_workflow_alias"),
+        # The version must belong to the same workflow as the alias.
+        ForeignKeyConstraint(
+            ["workflow_id", "workflow_version_id"],
+            ["workflowversion.workflow_id", "workflowversion.id"],
+            name="fk_workflow_alias_version_same_workflow",
+        ),
+    )
+
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    workflow_id: uuid.UUID = Field(foreign_key="projectworkflow.id")
+    workflow_version_id: uuid.UUID
+    alias: str
+
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    created_by: str = Field(foreign_key="users.username")
+
+    updated_at: datetime | None = None
+    updated_by: str | None = Field(foreign_key="users.username", default=None)
+
+    # Relationships
+    workflow: "ProjectWorkflow" = Relationship(back_populates="aliases")
+    # Read-only: workflow_id/workflow_version_id are written by the columns, and the
+    # composite FK already overlaps the workflow relationship.
+    workflow_version: "WorkflowVersion" = Relationship(
+        sa_relationship_kwargs={"viewonly": True},
+    )
+
+
+class WorkflowVersion(SQLModel, table=True):
+    """
+    Versioned definition of a workflow.
+
+    `version` is assigned by the service layer (max + 1 per workflow); the unique
+    constraint on (workflow_id, version) rejects a concurrent duplicate.
+
+    `body` is the authoritative copy of the workflow text, stored compressed.
+    `compression` names the codec used; the default and currently only supported
+    value is "gzip". Decode with gzip.decompress(body).
+    `content_hash` is the SHA-256 hex digest of the *uncompressed* text, so the
+    integrity of `body` can be verified after decompression. It is computed
+    from `body` on construction and must not be supplied by the caller.
+    `definition_uri` is a source reference only and may be overwritten.
+    """
+
+    def __init__(self, **data):
+        # SQLModel skips validators on table models, so compute the hash here.
+        # Rows loaded from the database do not pass through __init__.
+        body = data.get("body")
+        if body is not None:
+            if data.get("compression", "gzip") != "gzip":
+                raise ValueError(
+                    f"Unsupported compression: {data.get('compression')!r}")
+            computed = hashlib.sha256(gzip.decompress(body)).hexdigest()
+            supplied = data.get("content_hash")
+            if supplied is not None and supplied != computed:
+                raise ValueError("content_hash does not match body")
+            data["content_hash"] = computed
+        super().__init__(**data)
+    __table_args__ = (
+        UniqueConstraint("workflow_id", "version", name="uq_workflow_version"),
+        # Target for the composite FK from WorkflowVersionAlias.
+        UniqueConstraint("workflow_id", "id", name="uq_workflow_version_workflow_id"),
+    )
+
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    workflow_id: uuid.UUID = Field(foreign_key="projectworkflow.id")
+    version: int
+
+    # Source reference only; may be overwritten, so `body` is the authoritative copy.
+    definition_uri: str
+    # Compressed binary of the workflow text. LONGBLOB: MySQL BLOB caps at 64 KB.
+    body: bytes = Field(
+        sa_column=Column(
+            LargeBinary().with_variant(mysql.LONGBLOB(), "mysql"),
+            nullable=False,
+        ),
+    )
+    # Codec used for `body`. Default and only supported value: "gzip".
+    compression: str = Field(default="gzip", max_length=16)
+    # SHA-256 hex digest of the uncompressed workflow text.
+    content_hash: str = Field(max_length=64)
+
+    inputs: list[dict] | None = Field(default=None, sa_column=Column(JSON))
+    outputs: list[dict] | None = Field(default=None, sa_column=Column(JSON))
+
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    created_by: str = Field(foreign_key="users.username")
+
+    # Relationships
+    workflow: "ProjectWorkflow" = Relationship(back_populates="versions")
+    attributes: List["WorkflowVersionAttribute"] | None = Relationship(
+        back_populates="workflowversion",
+    )
+    # deployments: List["WorkflowDeployment"] | None = Relationship(
+    #    back_populates="workflowversion",
+    # )
+
+
+class ProjectWorkflow(SQLModel, table=True):
+    """
+    A workflow within a project.
+    """
+    __table_args__ = (
+        UniqueConstraint("project_id", "name", name="uq_project_workflow_name"),
+    )
+
+    id: uuid.UUID = Field(default_factory=uuid.uuid4, primary_key=True)
+    project_id: str = Field(foreign_key="project.project_id")
+    name: str
+
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    created_by: str = Field(foreign_key="users.username")
+
+    # Relationships
+    # The source workflow this one was copied from. Nulled if that source is deleted.
+    copied_from_workflow_id: uuid.UUID | None = Field(
+        default=None,
+        foreign_key="projectworkflow.id",
+        ondelete="SET NULL",
+    )
+    attributes: List["WorkflowAttribute"] | None = Relationship(back_populates="workflow")
+    versions: List["WorkflowVersion"] | None = Relationship(back_populates="workflow")
+    aliases: List["WorkflowVersionAlias"] | None = Relationship(back_populates="workflow")
+
+
+class ProjectWorkflowCreate(SQLModel):
+    """Request body for POST /projects/{project_id}/workflows."""
+    name: str = Field(min_length=1, max_length=255)
+
+
+class ProjectWorkflowCopy(SQLModel):
+    """
+    Request body for POST /projects/{project_id}/workflows/copy.
+
+    `name` is the name for the copy in the target project; it defaults to the
+    source workflow's name.
+    """
+    source_workflow_id: uuid.UUID
+    name: str | None = Field(default=None, min_length=1, max_length=255)
